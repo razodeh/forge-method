@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=799e59b5b2a74cd86afb86e4a151dd3eb94faaf46103612544a3522620b65f4d — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=dd2625e016958a9a16ba002cee2814eca9b7296bb5761eb5c367b3f62fa717ff — edits will be overwritten; use overrides/
 id: em
 name: Engineering Manager / Delivery Lead
 version: 1.0.0
@@ -55,9 +55,7 @@ limits:
   wall_clock_ms: 600000
   max_cost_usd: 3
 parallel_safety:
-  file_ownership:
-    - docs/forge/kb/delivery/risks/**
-    - docs/forge/sessions/retros/**
+  file_ownership: []
   exclusive: false
 gates:
   produces_evidence_for:

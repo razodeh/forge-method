@@ -61,8 +61,12 @@ limits:
   wall_clock_ms: 600000
   max_cost_usd: 3.0
 
+# `PLAN-M14.md` P42: both globs were stale -- `Risk`'s real registry path is `docs/forge/kb/risks.md`
+# (a bare file, not under `kb/delivery/risks/**`) and `SessionRecord`'s is
+# `docs/forge/sessions/SESSION-*.md` (not under `sessions/retros/**`); em's own real outputs above never
+# lived at either path.
 parallel_safety:
-  file_ownership: ['docs/forge/kb/delivery/risks/**', 'docs/forge/sessions/retros/**']
+  file_ownership: []
   exclusive: false
 
 gates:

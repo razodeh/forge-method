@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=4cf298a3bab2face235133555c3393c8ce4fc9b4e3619c547b962c24cae05c0c — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=4108255fd56b54d85aa6704ac0999024bbe2f9fc0ae303dcca1cdcc1946b051a — edits will be overwritten; use overrides/
 id: architect
 name: System Architect
 version: 1.2.0
@@ -77,8 +77,6 @@ limits:
 parallel_safety:
   file_ownership:
     - docs/forge/kb/architecture/**
-    - docs/forge/kb/decisions/**
-    - docs/forge/specs/interfaces/**
   exclusive: true
 gates:
   produces_evidence_for:

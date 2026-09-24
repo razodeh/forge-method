@@ -42,14 +42,21 @@ outputs:
     cardinality: many
 
 # A fresh critic round found this piece's own first draft claimed `kb_write`/`exclusive: true`
-# `file_ownership` over `architecture/integration/**` (a strict subpath of `architect.agent.yaml`'s own
-# spec-verbatim exclusive claim over `architecture/**`) and, separately, an *identical* exclusive
-# `docs/forge/specs/interfaces/**` claim to architect's own -- both real, unconditional overlaps against
-# `05` §5.9's own validator rule ("file_ownership globs don't overlap with another agent marked
-# exclusive"). `architect`'s own claims cannot be narrowed (byte-for-byte pinned to the literal worked
-# example). Resolved the same way `domain-modeler.agent.yaml` resolves the identical tension: this
-# specialist proposes into architect's own owned namespaces rather than exclusively owning a subset of
-# them.
+# `file_ownership` over `architecture/integration/**` -- a real, unconditional overlap against `05`
+# §5.9's own validator rule ("file_ownership globs don't overlap with another agent marked exclusive"):
+# a strict subpath of `architect.agent.yaml`'s own spec-verbatim exclusive claim over `architecture/**`,
+# which cannot itself be narrowed (byte-for-byte pinned to the literal worked example). Resolved the same
+# way `domain-modeler.agent.yaml` resolves the identical tension: this specialist proposes into
+# architect's own owned namespace rather than exclusively owning a subset of it.
+#
+# This role also declares an `InterfaceContract` output at the identical registry path
+# (`docs/forge/specs/interfaces/*.yaml`) architect itself declares one at. Marking THIS role exclusive
+# over that path (as an earlier draft, before `PLAN-M14.md` P42's own reconciliation, also tried) would
+# be a real `output-ownership-overlap` violation the other direction: architect's own declared
+# `InterfaceContract` output would then lie inside this role's exclusive claim. Neither role needs
+# `file_ownership` over it to write there -- an `agent` step's real claim is `produces` plus its declared
+# `outputs`' own registry paths (`06` §6.7, `PLAN-M13.md` P14), never `file_ownership` (enforced nowhere
+# at run time, only by this validator) -- so leaving it unclaimed by both is correct, not a gap.
 kb_write: []
 kb_propose:
   - architecture/integration/**

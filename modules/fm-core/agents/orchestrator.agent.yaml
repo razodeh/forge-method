@@ -55,8 +55,12 @@ limits:
   wall_clock_ms: 600000
   max_cost_usd: 3.0
 
+# `PLAN-M14.md` P42: `docs/forge/sessions/handoffs/**` was stale -- `HandoffRecord`'s real `18` §18.7
+# registry path is `docs/forge/reports/handoffs.md` (`outputs[]` above), a different directory this
+# claim never covered; orchestrator runs no shipped step that writes a file at all (`tools.write:
+# false`), so it owns nothing real to claim exclusively.
 parallel_safety:
-  file_ownership: ['docs/forge/sessions/handoffs/**']
+  file_ownership: []
   exclusive: true
 
 gates:

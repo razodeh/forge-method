@@ -1,5 +1,7 @@
 /** `05` §5.3's own worked example, transcribed verbatim (as amended by `PLAN-M13.md` P15: `write: true`, the
- * ceiling and the two real brief keys). */
+ * ceiling and the two real brief keys; `PLAN-M14.md` P42: `parallel_safety.file_ownership` drops
+ * `docs/forge/kb/decisions/**` and `docs/forge/specs/interfaces/**`, both real `output-ownership-overlap`
+ * violations against other roles' declared `ADR`/`InterfaceContract` outputs). */
 export const ARCHITECT = `
 id: architect
 name: System Architect
@@ -80,7 +82,7 @@ limits:
   max_cost_usd: 6.00
 
 parallel_safety:
-  file_ownership: [ "docs/forge/kb/architecture/**", "docs/forge/kb/decisions/**", "docs/forge/specs/interfaces/**" ]
+  file_ownership: [ "docs/forge/kb/architecture/**" ]
   exclusive: true
 
 gates:

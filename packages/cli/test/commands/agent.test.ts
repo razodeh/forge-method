@@ -24,6 +24,7 @@ import {
   agentShow,
   agentValidateAll,
   agentValidateOne,
+  type AgentValidationFinding,
 } from '../../src/commands/agent.ts';
 import { cleanupAll, createTestProject } from './upgrade/helpers.ts';
 
@@ -206,6 +207,92 @@ describe('agentValidateAll — fixture roster', () => {
     ).toBe(true);
   });
 
+  it('reports a real unregistered-output-type warning for a scaffolded, non-registry output type; a registered type and "Code" both stay exempt', async () => {
+    const project = await createTestProject();
+    // `agentNew`'s own scaffold (`AGENT_TEMPLATE`) declares `type: 'Report'`, which is itself not a `18`
+    // §18.7 registry type nor "Code" -- a real, already-present unregistered output, no further hand-edit
+    // needed to exercise the warning branch.
+    await agentNew({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'outputter', 'Outputter');
+    const unregisteredFindings = async (): Promise<readonly AgentValidationFinding[]> =>
+      (await agentValidateOne({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'outputter')).filter(
+        (finding) => finding.code === 'unregistered-output-type',
+      );
+    const first = await unregisteredFindings();
+    expect(first).toHaveLength(1);
+    expect(first[0]?.severity).toBe('warning');
+    expect(first[0]?.message).toContain('"Report"');
+
+    const { readTextFile, writeFileAtomic } = await import('@forge/core/fs');
+    const relPath = `${AGENTS_ROOT}/outputter.yaml`;
+    const text = await readTextFile(project.paths.resolveWithin(relPath));
+    // A registered type (`Task`) does not warn.
+    await writeFileAtomic(
+      project.paths.resolveWithin(relPath),
+      text.replace(
+        "outputs:\n  - type: Report\n    schema: report.schema.json\n    path: report.md\n",
+        "outputs:\n  - type: Task\n    schema: task.schema.json\n    path: docs/forge/specs/tasks/TASK-*.md\n    cardinality: many\n",
+      ),
+    );
+    expect(await unregisteredFindings()).toEqual([]);
+
+    // The special-cased "Code" does not warn either.
+    await writeFileAtomic(
+      project.paths.resolveWithin(relPath),
+      (await readTextFile(project.paths.resolveWithin(relPath))).replace(
+        "outputs:\n  - type: Task\n    schema: task.schema.json\n    path: docs/forge/specs/tasks/TASK-*.md\n    cardinality: many\n",
+        "outputs:\n  - type: Code\n    schema: code-change.schema.json\n    path: 'src/**'\n",
+      ),
+    );
+    expect(await unregisteredFindings()).toEqual([]);
+  });
+
+  it("reports a real output-ownership-overlap error, naming both real agents, when one agent's declared output's registry sample lies inside another's exclusive file_ownership", async () => {
+    const project = await createTestProject();
+    await agentNew({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'owner', 'Owner');
+    await agentNew({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'producer', 'Producer');
+    const { readTextFile, writeFileAtomic } = await import('@forge/core/fs');
+
+    const ownerRelPath = `${AGENTS_ROOT}/owner.yaml`;
+    const ownerText = await readTextFile(project.paths.resolveWithin(ownerRelPath));
+    await writeFileAtomic(
+      project.paths.resolveWithin(ownerRelPath),
+      ownerText.replace(
+        'parallel_safety:\n  file_ownership: []\n  exclusive: false\n',
+        "parallel_safety:\n  file_ownership:\n    - docs/forge/kb/decisions/**\n  exclusive: true\n",
+      ),
+    );
+
+    const producerRelPath = `${AGENTS_ROOT}/producer.yaml`;
+    const producerText = await readTextFile(project.paths.resolveWithin(producerRelPath));
+    await writeFileAtomic(
+      project.paths.resolveWithin(producerRelPath),
+      producerText.replace(
+        "outputs:\n  - type: Report\n    schema: report.schema.json\n    path: report.md\n",
+        "outputs:\n  - type: ADR\n    schema: adr.schema.json\n    path: docs/forge/kb/decisions/ADR-*.md\n    cardinality: many\n",
+      ),
+    );
+
+    const findings = await agentValidateAll({ paths: project.paths, agentsRoot: AGENTS_ROOT });
+    const overlapFindings = findings.filter((finding) => finding.code === 'output-ownership-overlap');
+    expect(overlapFindings.length).toBeGreaterThan(0);
+    for (const finding of overlapFindings) expect(finding.severity).toBe('error');
+    // Both real agents are implicated (`overlapFindings`'s own established reasoning), not just the one
+    // that declares the output.
+    expect(overlapFindings.some((finding) => finding.agentId === 'producer')).toBe(true);
+    expect(overlapFindings.some((finding) => finding.agentId === 'owner')).toBe(true);
+
+    const scopedToProducer = await agentValidateOne(
+      { paths: project.paths, agentsRoot: AGENTS_ROOT },
+      'producer',
+    );
+    expect(scopedToProducer.some((finding) => finding.code === 'output-ownership-overlap')).toBe(true);
+    const scopedToOwner = await agentValidateOne(
+      { paths: project.paths, agentsRoot: AGENTS_ROOT },
+      'owner',
+    );
+    expect(scopedToOwner.some((finding) => finding.code === 'output-ownership-overlap')).toBe(true);
+  });
+
   it('reports a real schema-invalid agent as a finding, without crashing the whole roster check', async () => {
     const project = await createTestProject();
     const { writeFileAtomic } = await import('@forge/core/fs');
@@ -226,9 +313,17 @@ describe('agentValidateAll — fixture roster', () => {
 });
 
 describe('agentValidateAll — real, complete A2/A3 roster', () => {
-  // Genuinely clean: every shipped agent's `prompt.system`/`prompt.briefs.*` reference resolves to real,
-  // non-empty content (`PLAN-M13.md` P1 added the check, P3a/P3b authored the content).
-  it('reports no findings against the real, complete, currently-shipped roster: every prompt reference resolves', async () => {
+  // Every shipped agent's `prompt.system`/`prompt.briefs.*` reference resolves to real, non-empty content
+  // (`PLAN-M13.md` P1 added the check, P3a/P3b authored the content), no `output-ownership-overlap` error
+  // remains (`PLAN-M14.md` P42 reconciled architect/orchestrator/em's own `file_ownership`), and no
+  // `kb-write-overlap`/`ceiling-exceeded`/`unknown-*` finding fires either: genuinely clean of every ERROR.
+  // Not genuinely clean of every finding: exactly Q224's own seven `unregistered-output-type` WARNINGS
+  // remain, one per real output type the registry, `Code`, nor (this validator has no project- or
+  // repo-level notion of "which modules are installed", `SPEC-QUESTIONS.md`'s own Discloses for P42) a
+  // module's own `provides.artifactTypes` names -- each a deliberate, already-justified content choice
+  // (Q224: "no step declares one" on four roles no shipped workflow runs; `fm-web`'s own real
+  // `ComponentSpec`), not a bug this piece's own new check should silently paper over.
+  it('reports exactly Q224\'s seven unregistered-output-type warnings against the real, complete, currently-shipped roster, and no error', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'forge-cli-agent-real-'));
     try {
       const result = await runInit(
@@ -240,7 +335,26 @@ describe('agentValidateAll — real, complete A2/A3 roster', () => {
 
       const paths = new ProjectPaths(dir);
       const findings = await agentValidateAll({ paths, agentsRoot: AGENTS_ROOT });
-      expect(findings).toEqual([]);
+      expect(findings.every((finding) => finding.severity === 'warning')).toBe(true);
+      expect(findings.every((finding) => finding.code === 'unregistered-output-type')).toBe(true);
+      expect(
+        findings.map((finding) => `${finding.agentId}:${finding.message}`).sort(),
+      ).toEqual(
+        [
+          ['compliance', 'ComplianceMatrix'],
+          ['critic', 'ObjectionList'],
+          ['domain-modeler', 'ContextMap'],
+          ['finops', 'CostModel'],
+          ['frontend', 'ComponentSpec'],
+          ['techwriter', 'Readme'],
+          ['techwriter', 'DocsSet'],
+        ]
+          .map(
+            ([agentId, type]) =>
+              `${agentId}:outputs names ${JSON.stringify(type)}, which is neither a registered artifact type (18 §18.7) nor "Code".`,
+          )
+          .sort(),
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

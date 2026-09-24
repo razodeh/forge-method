@@ -45,10 +45,16 @@ outputs:
     path: docs/forge/kb/*/views/*.mmd
     cardinality: many
 
-# The identical file_ownership/kb_write overlap reasoning fm-core's own older copy of this file already
-# documents: both `architecture/integration/**` and `docs/forge/specs/interfaces/**` are already
-# architect's own exclusive claims (05 §5.9's own validator rule), so this specialist proposes into
-# architect's own namespace rather than exclusively owning a subset of it.
+# The identical file_ownership/kb_write overlap reasoning fm-core's own copy of this file documents in
+# full: `architecture/integration/**` is a strict subpath of architect's own exclusive
+# `docs/forge/kb/architecture/**` claim, so this specialist proposes into architect's own namespace
+# rather than exclusively owning a subset of it. `docs/forge/specs/interfaces/**` (this role's own
+# `InterfaceContract` output path, also architect's) is deliberately NOT claimed exclusively either:
+# since `PLAN-M14.md` P42 reconciled architect's own claim off that same path (a real
+# `output-ownership-overlap`, `05` §5.9's new rule, against every non-architect `InterfaceContract`
+# declarer), this role marking itself exclusive there instead would just move the identical violation
+# onto architect's own `InterfaceContract` output. Neither role needs `file_ownership` over it to write
+# there -- the real claim is `produces` plus declared `outputs`' own registry paths (`06` §6.7).
 kb_write: []
 kb_propose:
   - architecture/integration/**

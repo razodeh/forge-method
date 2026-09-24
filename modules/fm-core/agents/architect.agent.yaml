@@ -80,13 +80,16 @@ limits:
   wall_clock_ms: 900000
   max_cost_usd: 6.0
 
+# `PLAN-M14.md` P42: this used to also claim `docs/forge/kb/decisions/**`/`docs/forge/specs/interfaces/**`
+# exclusively -- both real, unconditional `output-ownership-overlap` violations (`05` §5.9's own new rule):
+# `data-architect`/`platform`/`security`/`sre`/`mobile` each declare `ADR` (registry path
+# `docs/forge/kb/decisions/ADR-*.md`, inside the first dropped claim) and `integration-architect` declares
+# `InterfaceContract` (`docs/forge/specs/interfaces/*.yaml`, inside the second) without themselves being
+# architect. Architect's own `ADR`/`InterfaceContract` outputs need no exclusive claim to be written: the
+# step's real claim is `produces` plus its declared `outputs`' own registry paths (`06` §6.7,
+# `PLAN-M13.md` P14), not `file_ownership` (enforced nowhere at run time, only by this validator).
 parallel_safety:
-  file_ownership:
-    [
-      'docs/forge/kb/architecture/**',
-      'docs/forge/kb/decisions/**',
-      'docs/forge/specs/interfaces/**',
-    ]
+  file_ownership: ['docs/forge/kb/architecture/**']
   exclusive: true
 
 gates:

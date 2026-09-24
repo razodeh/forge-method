@@ -24,12 +24,18 @@
  * every workflow `brief:` (and, from P2c, every gate `brief:`) resolves to real, non-empty content
  * (`SPEC-QUESTIONS.md` Q197). For a while that made a fresh `forge init` report 62 `unknown-prompt` and
  * 53 `unknown-brief` findings, asserted here as an itemized list. P2a/P2b/P2c (briefs) and P3a/P3b
- * (prompts) authored all of it, so both validators are asserted clean (`[]`) again; a missing or
+ * (prompts) authored all of it, so both validators were asserted clean (`[]`) again; a missing or
  * empty content file now fails this test with the offending id.
+ *
+ * **`PLAN-M14.md` P42.** `forge agent validate --all` is no longer literally `[]`: its own new
+ * `unregistered-output-type` check fires exactly Q224's own seven times, a deliberate, already-justified
+ * content gap (`SPEC-QUESTIONS.md`), not a regression -- asserted explicitly, by real agent id and
+ * message, below, alongside "no error of any kind" (which IS still asserted unconditionally).
  *
  * @see specs/22 M6
  * @see PLAN-M6.md C9
  * @see PLAN-M13.md P1
+ * @see PLAN-M14.md P42
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -103,11 +109,33 @@ describe('E1 init', () => {
     });
     expect(specGraphCheck.ok).toBe(true);
 
-    // This milestone's own exit-test line, part 1: `forge agent validate --all`. Not genuinely clean
-    // right now -- see this file's own top-of-file doc comment (`PLAN-M13.md` P1, `SPEC-QUESTIONS.md`
-    // Q197): every real `unknown-prompt` finding is asserted explicitly, by real agent id, below.
+    // This milestone's own exit-test line, part 1: `forge agent validate --all`. Not genuinely clean of
+    // every finding right now -- `PLAN-M14.md` P42's own `unregistered-output-type` warning fires exactly
+    // Q224's own seven times (six real output types no shipped step runs, plus `fm-web`'s own
+    // `ComponentSpec`, `SPEC-QUESTIONS.md`), a deliberate content choice, not a bug -- but genuinely clean
+    // of every ERROR: no `output-ownership-overlap`, `kb-write-overlap`, `ceiling-exceeded` or
+    // `unknown-*`/`schema` finding.
     const agentFindings = await agentValidateAll({ paths, agentsRoot: '.forge/agents' });
-    expect(agentFindings).toEqual([]);
+    expect(agentFindings.every((finding) => finding.severity === 'warning')).toBe(true);
+    expect(agentFindings.every((finding) => finding.code === 'unregistered-output-type')).toBe(true);
+    expect(
+      agentFindings.map((finding) => `${finding.agentId}:${finding.message}`).sort(),
+    ).toEqual(
+      [
+        ['compliance', 'ComplianceMatrix'],
+        ['critic', 'ObjectionList'],
+        ['domain-modeler', 'ContextMap'],
+        ['finops', 'CostModel'],
+        ['frontend', 'ComponentSpec'],
+        ['techwriter', 'Readme'],
+        ['techwriter', 'DocsSet'],
+      ]
+        .map(
+          ([agentId, type]) =>
+            `${agentId}:outputs names ${JSON.stringify(type)}, which is neither a registered artifact type (18 §18.7) nor "Code".`,
+        )
+        .sort(),
+    );
 
     // Part 3: `forge template validate --all`.
     const templateResults = await templateValidateAll();

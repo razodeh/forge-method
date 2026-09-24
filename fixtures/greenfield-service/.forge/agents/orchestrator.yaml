@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=9b091060c8ac89803ac8b382ee8e667c615353cc0a090a093999df13adc38c84 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=7e430ca2ebaba8fdf167652f1ecfd0d87e64f94eaee2c87f0ce55b5f0b6a7153 — edits will be overwritten; use overrides/
 id: orchestrator
 name: Delivery Orchestrator
 version: 1.0.0
@@ -50,8 +50,7 @@ limits:
   wall_clock_ms: 600000
   max_cost_usd: 3
 parallel_safety:
-  file_ownership:
-    - docs/forge/sessions/handoffs/**
+  file_ownership: []
   exclusive: true
 gates:
   produces_evidence_for: []

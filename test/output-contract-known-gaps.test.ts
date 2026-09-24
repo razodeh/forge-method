@@ -106,7 +106,15 @@ const ENGINE_WRITTEN_TYPES: ReadonlySet<string> = new Set(['ReviewReport']);
  * that P15's grants made writable (their roles own a narrower territory than the registry paths of what the
  * steps declare, e.g. a `HandoffRecord` in `reports/handoffs.md` for an agent that owns only its own KB
  * section), plus `plan-stages:review-stages` and `store-release:prepare-store-submission`, which P15 gave
- * `outputs` and which are therefore checked for the first time.
+ * `outputs` and which are therefore checked for the first time. `PLAN-M14.md` P42 (`SPEC-QUESTIONS.md`)
+ * adds four more (32 -> 36): architect's own `parallel_safety.file_ownership` dropped
+ * `docs/forge/kb/decisions/**`/`docs/forge/specs/interfaces/**` (both real `output-ownership-overlap`
+ * violations against other roles' declared `ADR`/`InterfaceContract` outputs, `05` §5.9's new rule), so
+ * the four architect-run steps that declare `ADR`/`InterfaceContract` (`shape-solution:select-architecture`,
+ * `shape-solution:select-stack`, `migrate:plan-migration`, `build-stage:freeze-contracts`) are no longer
+ * covered by architect's own narrower `file_ownership` either -- still not a gap, for the identical reason
+ * every other entry here isn't: the step's real claim is `produces` plus its declared outputs' own
+ * registry paths, not `file_ownership`.
  */
 const OWNERSHIP_ONLY_STEPS: readonly string[] = [
   'initialize-project:decide-repo-strategy',
@@ -142,6 +150,11 @@ const OWNERSHIP_ONLY_STEPS: readonly string[] = [
   'shape-solution:model-data',
   'shape-solution:threat-model',
   'verify-stage:verify-nfrs',
+  // `PLAN-M14.md` P42: newly uncovered by architect's own reconciled, narrower `file_ownership`.
+  'shape-solution:select-architecture',
+  'shape-solution:select-stack',
+  'migrate:plan-migration',
+  'build-stage:freeze-contracts',
 ];
 
 /** Steps whose agent is a run-time template: cannot be classified from the workflow alone. */

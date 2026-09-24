@@ -14,6 +14,7 @@ import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
 import { WORKFLOW_INDEX } from '@forge/templates';
+import { artifactTypeById } from '@forge/schemas';
 
 import { loadAgentDefinition } from '../../src/schema/load.ts';
 import { AgentRegistry } from '../../src/registry/registry.ts';
@@ -345,6 +346,64 @@ describe('A3: the seventeen Build / Quality & operations / Facilitation roster a
     it("every reviewer/critic/diagnostician/test-architect agent (05 §5.2's own separation-of-duties roster) never self-approves a gate", () => {
       for (const id of ['reviewer', 'critic', 'diagnostician', 'test-architect'] as const) {
         expect(loadAgent(id).gates.may_approve).toEqual([]);
+      }
+    });
+
+    // `PLAN-M14.md` P42: `orchestrator`/`em` used to claim `docs/forge/sessions/handoffs/**`,
+    // `docs/forge/kb/delivery/risks/**` and `docs/forge/sessions/retros/**` -- none of them the real `18`
+    // §18.7 registry path of the output each role actually declares (`HandoffRecord` at
+    // `docs/forge/reports/handoffs.md`; `Risk` at `docs/forge/kb/risks.md`; `SessionRecord` at
+    // `docs/forge/sessions/SESSION-*.md`), so `forge agent validate`'s claim never covered what it named.
+    it("no A2/A3 agent's file_ownership names a stale docs/forge/sessions/handoffs, docs/forge/kb/delivery/risks or docs/forge/sessions/retros path", () => {
+      const STALE_SEGMENTS = [
+        'docs/forge/sessions/handoffs',
+        'docs/forge/kb/delivery/risks',
+        'docs/forge/sessions/retros',
+      ];
+      for (const id of [...FULL_ROSTER_IDS, ...BASE_DOCUMENT_IDS]) {
+        for (const glob of loadAgent(id).parallel_safety.file_ownership) {
+          for (const stale of STALE_SEGMENTS) {
+            expect(
+              glob === stale || glob.startsWith(`${stale}/`),
+              `${id}'s file_ownership ("${glob}") names the stale "${stale}" path`,
+            ).toBe(false);
+          }
+        }
+      }
+    });
+
+    // `PLAN-M14.md` P42's own `output-ownership-overlap` rule (`05` §5.9), recomputed here at the
+    // definition level over the real fm-core roster: the concrete sample path a registered output type's
+    // own declared `path` names (every placeholder read as a literal `x` -- the same "one representative
+    // concrete path" `outputPathCoveredBy` (`@forge/engine`, unreachable from this package, `02` §2.2's
+    // own boundary graph) uses) must never fall inside another role's exclusive `file_ownership` claim.
+    // Sound because `checkOutputsAgreeWithRegistry` (`schema/load.ts`, `PLAN-M14.md` P33) already enforces,
+    // at load time, that a REGISTERED type's own declared `path` ends with the registry's own tail, so the
+    // agent's own declared path and the registry's own path cannot disagree for any type this test checks
+    // (`Code` and an unregistered type are skipped before `outputSample` is ever called on them).
+    function outputSample(outputPath: string): string {
+      return outputPath.replace(/\*/g, 'x').replace(/\{[^}]+\}/g, 'x');
+    }
+
+    it("no exclusive agent's file_ownership glob covers another role's declared output sample (05 §5.9's new output-ownership-overlap rule)", () => {
+      const agents = [...FULL_ROSTER_IDS, ...BASE_DOCUMENT_IDS].map(loadAgent);
+      for (const owner of agents) {
+        if (!owner.parallel_safety.exclusive || owner.parallel_safety.file_ownership.length === 0) {
+          continue;
+        }
+        for (const producer of agents) {
+          if (producer.id === owner.id) continue;
+          for (const output of producer.outputs) {
+            if (output.type === 'Code' || artifactTypeById(output.type) === undefined) continue;
+            const sample = outputSample(output.path);
+            for (const glob of owner.parallel_safety.file_ownership) {
+              expect(
+                globsOverlap(glob, sample),
+                `${owner.id}'s exclusive file_ownership ("${glob}") covers ${producer.id}'s declared ${output.type} output ("${output.path}")`,
+              ).toBe(false);
+            }
+          }
+        }
       }
     });
   });

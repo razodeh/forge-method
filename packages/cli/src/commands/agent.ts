@@ -27,8 +27,10 @@ import {
 import { listResolvableContentReferences } from '@forge/agents/prompt';
 import { loadAgentDefinition } from '@forge/agents/schema';
 import type { AgentDefinition, AgentIssue } from '@forge/agents/schema';
-import { readProjectAgent } from '@forge/engine/dispatch';
+import { outputGlob, outputPathCoveredBy, readProjectAgent, type DocRoots } from '@forge/engine/dispatch';
 import { globsOverlap } from '@forge/engine/plan';
+import { artifactTypeById } from '@forge/schemas';
+import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { FRAMEWORK_INDEX, SKILL_INDEX } from '@forge/templates';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import type { InstalledAsset } from '@forge/adapter-kit/types';
@@ -191,6 +193,93 @@ function overlapFindings(agents: readonly AgentDefinition[]): readonly AgentVali
   return findings;
 }
 
+/** The `18` §18.7 configured doc roots this check judges an output's registry sample path against
+ * (`outputGlob`, `outputPathCoveredBy`): the shipped defaults, since neither `AgentCommandContext` nor
+ * `agentValidateAll`'s own caller carries a real project's configured `paths` today -- the identical
+ * "no project configuration to resolve a configured root against" stance `packages/agents/src/schema/
+ * load.ts`'s own `checkOutputsAgreeWithRegistry` (`PLAN-M14.md` P33) already takes for the closely
+ * related "does this output's declared path match the registry" check. */
+const DEFAULT_DOC_ROOTS: DocRoots = DEFAULT_CONFIG.paths;
+
+/** `05` §5.9's own new "declared output type is real" check (`PLAN-M14.md` P42): an `outputs[]` entry
+ * whose `type` names neither a `18` §18.7 registry type (`artifactTypeById`) nor the special-cased
+ * `Code` (`src/**`, an implementation role's own real output, never itself a registered artifact) is a
+ * warning, not an error -- a role no shipped step runs may still name a real, human-meaningful
+ * deliverable type the registry has no entry for (`SPEC-QUESTIONS.md` Q224's own seven such
+ * declarations on the shipped roster, kept deliberately there, not removed here). A type a module
+ * registers itself via its own `provides.artifactTypes` (`fm-web/module.yaml`'s own `ComponentSpec`) is,
+ * by this same measure, ALSO reported: this function has no project- or repo-level notion of "which
+ * modules are installed" to check that third case against (`AgentCommandContext` carries only
+ * `paths`/`agentsRoot`) -- see `SPEC-QUESTIONS.md`'s own Discloses for this piece. */
+function unregisteredOutputTypeFindings(
+  agents: readonly AgentDefinition[],
+): readonly AgentValidationFinding[] {
+  const findings: AgentValidationFinding[] = [];
+  for (const agent of agents) {
+    for (const output of agent.outputs) {
+      if (output.type === 'Code' || artifactTypeById(output.type) !== undefined) continue;
+      findings.push({
+        agentId: agent.id,
+        severity: 'warning',
+        code: 'unregistered-output-type',
+        message:
+          `outputs names ${JSON.stringify(output.type)}, which is neither a registered artifact ` +
+          `type (18 §18.7) nor "Code".`,
+      });
+    }
+  }
+  return findings;
+}
+
+/** `05` §5.9's own new "an output isn't claimed by someone else's exclusive territory" check
+ * (`PLAN-M14.md` P42): for every ordered pair of distinct real agents (producer, owner), a registered
+ * output type the producer declares whose registry sample path (`outputGlob`, `*` read as a literal
+ * `x` -- `outputPathCoveredBy`) lies inside the owner's `parallel_safety.exclusive: true` claim is an
+ * error, reported against BOTH real agents (`overlapFindings`'s own established reasoning just above:
+ * `validate <id>` surfaces it regardless which of the two ids a caller asks about). An owner not marked
+ * exclusive, or whose `file_ownership` is empty, claims nothing this check can ever find covered. An
+ * unregistered producer output (`Code`, or a type `unregisteredOutputTypeFindings` already warned
+ * about) has no registry sample to check and is skipped here -- that gap is its own, separate finding. */
+function outputOwnershipOverlapFindings(
+  agents: readonly AgentDefinition[],
+  roots: DocRoots,
+): readonly AgentValidationFinding[] {
+  const findings: AgentValidationFinding[] = [];
+  const checkDirection = (producer: AgentDefinition, owner: AgentDefinition): void => {
+    if (!owner.parallel_safety.exclusive || owner.parallel_safety.file_ownership.length === 0) {
+      return;
+    }
+    for (const output of producer.outputs) {
+      const definition = artifactTypeById(output.type);
+      if (definition === undefined) continue;
+      if (!outputPathCoveredBy(definition.id, roots, owner.parallel_safety.file_ownership)) continue;
+      const sample = outputGlob(definition.id, roots);
+      findings.push({
+        agentId: producer.id,
+        severity: 'error',
+        code: 'output-ownership-overlap',
+        message: `outputs declares ${definition.id} (${sample}), which lies inside ${owner.id}'s exclusive file_ownership.`,
+      });
+      findings.push({
+        agentId: owner.id,
+        severity: 'error',
+        code: 'output-ownership-overlap',
+        message: `exclusive file_ownership covers ${producer.id}'s declared ${definition.id} output (${sample}).`,
+      });
+    }
+  };
+  for (let i = 0; i < agents.length; i++) {
+    for (let j = i + 1; j < agents.length; j++) {
+      const a = agents[i];
+      const b = agents[j];
+      if (a === undefined || b === undefined) continue;
+      checkDirection(a, b);
+      checkDirection(b, a);
+    }
+  }
+  return findings;
+}
+
 /** `05` §5.9's own "declared frameworks exist"/"[skills] referenced exist" checks, against
  * `@forge/templates`' own real, shipped `FRAMEWORK_INDEX`/`SKILL_INDEX` — the same real registries
  * `writeRegenerableContent` itself already materializes into every real project's own `.forge/
@@ -340,6 +429,8 @@ export async function agentValidateAll(
   return [
     ...findings,
     ...overlapFindings(agents),
+    ...outputOwnershipOverlapFindings(agents, DEFAULT_DOC_ROOTS),
+    ...unregisteredOutputTypeFindings(agents),
     ...agents.flatMap((agent) => referenceFindings(agent, promptPaths)),
     ...agents.flatMap((agent) => ceilingFindings(agent)),
   ];

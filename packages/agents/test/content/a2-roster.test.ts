@@ -145,7 +145,7 @@ limits:
   max_cost_usd: 6.00
 
 parallel_safety:
-  file_ownership: [ "docs/forge/kb/architecture/**", "docs/forge/kb/decisions/**", "docs/forge/specs/interfaces/**" ]
+  file_ownership: [ "docs/forge/kb/architecture/**" ]
   exclusive: true                  # only one architect lane at a time
 
 gates:
