@@ -430,7 +430,11 @@ describe('`show`: an elicit question can show a register entry an earlier step p
     const projectRoot = await createTempRepo('show-found');
     await writeHandoffs(projectRoot, [
       { id: 'HO-0001', step: 'capture-constraints', delivered: ['subtype: constraints-captured'] },
-      { id: 'HO-0002', step: 'propose-level', delivered: ['subtype: level-proposal', 'L2: a new capability'] },
+      {
+        id: 'HO-0002',
+        step: 'propose-level',
+        delivered: ['subtype: level-proposal', 'L2: a new capability'],
+      },
     ]);
     const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
     const ctx = createTestContext({ projectRoot, ask: port });

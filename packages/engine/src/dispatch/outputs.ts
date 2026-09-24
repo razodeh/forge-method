@@ -1236,7 +1236,7 @@ export async function readRegisterEntries(
   subtype?: string,
 ): Promise<readonly RegisterEntry[]> {
   const definition = artifactTypeById(type);
-  if (definition === undefined || definition.collection !== true) return [];
+  if (definition?.collection !== true) return [];
   const register = REGISTER_SCHEMAS[definition.id];
   const entrySchema = ENTRY_ONLY_SCHEMAS[definition.id];
   if (register === undefined && entrySchema === undefined) return [];

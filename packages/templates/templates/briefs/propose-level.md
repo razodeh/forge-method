@@ -1,7 +1,7 @@
 Propose the scale level (L0 to L4) for this project, with reasoning a human can accept or override
 in one read. The next step, `confirm-level`, shows the human this whole handoff entry -- every field
-you write below, not only the reasoning -- before asking them to confirm or change the level, so write
-each one for that reader.
+you write below, not only the reasoning -- before asking them to confirm or change the level, so
+write each one for that reader.
 
 ### Inputs
 

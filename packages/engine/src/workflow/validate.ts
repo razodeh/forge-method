@@ -233,7 +233,11 @@ function checkUniqueElicitQuestions(steps: readonly WorkflowStep[]): readonly Va
  * never the fuzzy per-entry text match `dispatch/outputs.ts`' own `carriesSubtype` applies to real
  * produced content at run time: that is a different question (is what was actually written the right
  * shape), asked by a different piece of code, at a different time. */
-function stepDeclaresOutput(step: WorkflowStep, type: string, subtype: string | undefined): boolean {
+function stepDeclaresOutput(
+  step: WorkflowStep,
+  type: string,
+  subtype: string | undefined,
+): boolean {
   if (step.kind !== 'agent') return false;
   return (step.outputs ?? []).some(
     (output) => output.type === type && (subtype === undefined || output.subtype === subtype),
@@ -281,7 +285,7 @@ function checkElicitShow(addressable: readonly WorkflowStep[]): readonly Validat
       const label = `Step "${step.id ?? '(unidentified)'}"'s question "${question.name}"`;
       const stepId = step.id === undefined ? {} : { stepId: step.id };
       const definition = artifactTypeById(show.type);
-      if (definition === undefined || definition.collection !== true) {
+      if (definition?.collection !== true) {
         issues.push({
           code: 'elicit-show-not-a-register',
           severity: 'error',
@@ -290,13 +294,15 @@ function checkElicitShow(addressable: readonly WorkflowStep[]): readonly Validat
         });
         continue;
       }
-      const ancestors = step.id === undefined ? new Set<string>() : transitiveDependsOn(step.id, byId);
+      const ancestors =
+        step.id === undefined ? new Set<string>() : transitiveDependsOn(step.id, byId);
       const produced = [...ancestors].some((id) => {
         const ancestor = byId.get(id);
         return ancestor !== undefined && stepDeclaresOutput(ancestor, show.type, show.subtype);
       });
       if (!produced) {
-        const subtypeText = show.subtype === undefined ? '' : ` (subtype ${JSON.stringify(show.subtype)})`;
+        const subtypeText =
+          show.subtype === undefined ? '' : ` (subtype ${JSON.stringify(show.subtype)})`;
         issues.push({
           code: 'elicit-show-not-produced',
           severity: 'error',

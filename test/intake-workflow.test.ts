@@ -346,7 +346,10 @@ async function answersFile(dir: string, answers: Record<string, string>): Promis
 
 /** Wraps a real `AskPort`, recording every `AskRequest` it is handed (`PLAN-M14.md` P41's own `show` /
  * `AskRequest.context` still passes through the real port unchanged -- the wrapper only observes). */
-function recordingAskPort(inner: AskPort): { readonly port: AskPort; readonly requests: AskRequest[] } {
+function recordingAskPort(inner: AskPort): {
+  readonly port: AskPort;
+  readonly requests: AskRequest[];
+} {
   const requests: AskRequest[] = [];
   return {
     requests,
@@ -447,7 +450,8 @@ describe('the shipped intake workflow, run with --answers', () => {
     expect(result.runState.runStatus).toBe('completed');
 
     const confirmRequest = requests.find(
-      (request) => request.stepId === 'intake:confirm-level' && request.question.name === 'levelConfirmed',
+      (request) =>
+        request.stepId === 'intake:confirm-level' && request.question.name === 'levelConfirmed',
     );
     if (confirmRequest === undefined) throw new Error('confirm-level was never asked');
     // The scripted LEVEL_HANDOFF's own real text (its id and the analyst's scripted reasoning line)
@@ -464,8 +468,11 @@ describe('the shipped intake workflow, run with --answers', () => {
       .split('\n')
       .filter((line) => line.trim() !== '')
       .map((line) => JSON.parse(line) as { type: string; stepId?: string; payload?: unknown })
-      .find((event) => event.type === 'ElicitationRequested' && event.stepId === 'intake:confirm-level');
-    const payload = requested?.payload as { questions?: readonly { shown?: unknown }[] } | undefined;
+      .find(
+        (event) => event.type === 'ElicitationRequested' && event.stepId === 'intake:confirm-level',
+      );
+    const payload = requested?.payload as
+      { questions?: readonly { shown?: unknown }[] } | undefined;
     expect(payload?.questions?.[0]?.shown).toEqual({
       type: 'HandoffRecord',
       subtype: 'level-proposal',

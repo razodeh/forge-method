@@ -1,8 +1,8 @@
-<!-- forge:generated v=0.0.0 hash=73d3a840897bc4dd3934f99b2a2ba2a7d33cb4bb28c38558efa3c6c8aeb25086 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=77214ac9f7062c331d7759b992e858c589bd8a57f27ca4edbb075a72aa76aae8 — edits will be overwritten; use overrides/ -->
 Propose the scale level (L0 to L4) for this project, with reasoning a human can accept or override
 in one read. The next step, `confirm-level`, shows the human this whole handoff entry -- every field
-you write below, not only the reasoning -- before asking them to confirm or change the level, so write
-each one for that reader.
+you write below, not only the reasoning -- before asking them to confirm or change the level, so
+write each one for that reader.
 
 ### Inputs
 

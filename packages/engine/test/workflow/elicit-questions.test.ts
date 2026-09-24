@@ -192,9 +192,9 @@ describe('an elicit question can `show` a register entry an earlier step produce
     ]);
     const structureIssues = validateStructure(workflow);
     expect(structureIssues.map((issue) => issue.code)).toContain('elicit-show-not-a-register');
-    expect(structureIssues.find((issue) => issue.code === 'elicit-show-not-a-register')?.stepId).toBe(
-      'confirm',
-    );
+    expect(
+      structureIssues.find((issue) => issue.code === 'elicit-show-not-a-register')?.stepId,
+    ).toBe('confirm');
     const compiled = compilePlan(workflow, {});
     expect(compiled.success).toBe(false);
     if (compiled.success) return;
@@ -252,12 +252,9 @@ describe('an elicit question can `show` a register entry an earlier step produce
   it('a producer reached transitively, through an intermediate step, is a real ancestor', () => {
     const workflow = parse([
       producer('propose', 'HandoffRecord', 'level-proposal'),
-      [
-        '  - id: between',
-        '    kind: command',
-        '    dependsOn: [propose]',
-        '    run: "true"',
-      ].join('\n'),
+      ['  - id: between', '    kind: command', '    dependsOn: [propose]', '    run: "true"'].join(
+        '\n',
+      ),
       [
         '  - id: confirm',
         '    kind: elicit',

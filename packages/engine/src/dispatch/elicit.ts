@@ -235,7 +235,11 @@ async function runElicit(node: StepNode, ctx: ExecuteStepContext): Promise<StepO
     };
   }
 
-  const refuse = (code: 'RUN-101' | 'RUN-102' | 'RUN-105', question: string, reason: string): StepOutcome => {
+  const refuse = (
+    code: 'RUN-101' | 'RUN-102' | 'RUN-105',
+    question: string,
+    reason: string,
+  ): StepOutcome => {
     const error = new ForgeError(code, { stepId: node.id, question, reason });
     return {
       stepId: node.id,
@@ -266,7 +270,9 @@ async function runElicit(node: StepNode, ctx: ExecuteStepContext): Promise<StepO
       docRootsOf(ctx),
       show.subtype,
     );
-    const withId = found.flatMap((entry) => (entry.id === undefined ? [] : [{ ...entry, id: entry.id }]));
+    const withId = found.flatMap((entry) =>
+      entry.id === undefined ? [] : [{ ...entry, id: entry.id }],
+    );
     const entry = withId.at(-1);
     if (entry === undefined) {
       const subtypeText = show.subtype === undefined ? '' : ` (subtype ${show.subtype})`;
@@ -294,7 +300,9 @@ async function runElicit(node: StepNode, ctx: ExecuteStepContext): Promise<StepO
             : {
                 shown: {
                   type: question.show.type,
-                  ...(question.show.subtype === undefined ? {} : { subtype: question.show.subtype }),
+                  ...(question.show.subtype === undefined
+                    ? {}
+                    : { subtype: question.show.subtype }),
                   id: entry.id,
                 },
               }),

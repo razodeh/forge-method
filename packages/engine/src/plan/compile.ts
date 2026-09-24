@@ -920,7 +920,7 @@ function elicitShowIssues(
       const { show } = question;
       if (show === undefined) continue;
       const definition = artifactTypeById(show.type);
-      if (definition === undefined || definition.collection !== true) {
+      if (definition?.collection !== true) {
         issues.push(
           issue(
             'elicit-show-not-a-register',
@@ -933,8 +933,7 @@ function elicitShowIssues(
       const produced = [...ancestorsOf(node.id)].some((id) => {
         const ancestor = byId.get(id);
         return (
-          ancestor !== undefined &&
-          ancestor.kind === 'agent' &&
+          ancestor?.kind === 'agent' &&
           ancestor.outputs.some(
             (output) =>
               output.type === show.type &&
