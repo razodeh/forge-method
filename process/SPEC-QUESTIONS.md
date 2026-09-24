@@ -22889,3 +22889,135 @@ though `ask.ts` itself never imports it (it throws `USR-003` unconditionally, be
 limits concept is ever reached).
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P32`.
+
+## Q259 — M14 P26: `forge story verify --scope story` runs the story's own test files through the validated path form — a three-round critic loop found real, symlink-shaped bugs in EACH of rounds 2 and 3 (both fixed with reproduced-then-fixed regression tests), plus round-1 hardening and coverage gaps, no round 4
+
+**Context.** `PLAN-M14.md` P26, depending on P5 (`validateTestPath`/`expandTrustedInvocation` in
+`engine/dispatch/test-path.ts`) and P25 (the `verify`/`done` phase split), both already landed. Before
+this piece, a scoped `test:<layer>` check (` --scope story`/` --story`, `09` §9.8's own spelling) always
+ran the WHOLE configured layer command — `story.ts`'s own doc comment said plainly "the Story schema
+has no test-path list to scope by." The brief's mandate: derive that list from `files_expected`
+instead (`isTestPath`-filtered, globs expanded against the real tree, each resulting path run through
+`validateTestPath`), and hand the closed result to the runner as a new `TestRunOptions.files`.
+
+**Built.** `story.ts` gains `resolveScopedTestFiles`: `story.files_expected.filter(isTestPath)` (empty
+→ the pre-P26 whole-layer run, with an updated note); each literal entry a direct candidate, each glob
+entry expanded by a new `expandGlob` (depth-first from `literalPrefix(glob)`, `minimatch` against the
+full project-relative path, `MAX_SCOPED_TEST_FILES` = 50 matched-file cap and `MAX_DIRS_VISITED` = 5000
+directory-visited cap, both independently named as the refusal reason when tripped); every resulting
+candidate then re-checked with `validateTestPath`. One bad entry anywhere — malformed, a `..` escape, a
+symlink, a glob matching nothing, over either cap — makes the WHOLE check `unverifiable`, naming the
+reason, and calls the runner zero times; otherwise the sorted, de-duplicated file list is handed to the
+runner once. `run.ts`'s `TestRunOptions` gains `files?: readonly string[]`, threaded through
+`runAndNormalize` (`reporter.ts`) into both `runVitest` (a space-joined, individually `shellQuote`d
+positional-file form, added alongside the pre-existing single-`fileFilter` retry-in-isolation path,
+never combined with it) and `runPytest` (the identical positional form — pytest's own `-k`/node-id
+filter previously left a bare `fileFilter` silently ignored without a `testNameFilter`, which is why
+`files` is a distinct parameter rather than reusing it). `StoryVerifyContext` gains `testRoots`, wired
+from `execution.testRoots` in `bin.ts`.
+
+**Round 1 (fresh, context-free): no bugs in the shipped logic itself, but real hardening and
+test-coverage gaps, all fixed.** (1) `expandGlob`'s symlink avoidance relied only on
+`listDirEntriesSorted`'s `isDirectory` correctly reporting `false` for a symlinked directory — true on
+every filesystem observed here, but Node's own docs allow a `stat`-following fallback on a filesystem
+whose `readdir` does not report `d_type`; separately, nothing bounded directories VISITED (only
+matched), so a symlink cycle or a huge mismatched subtree could recurse without ever tripping the file
+cap. Fixed: an explicit `lstat`-based check before recursing into any directory, plus the new
+`MAX_DIRS_VISITED` cap. (2)-(3) No test drove a symlink through the glob-expansion path itself (only a
+literal path), and no test proved the 50-file cap engaging across MULTIPLE `files_expected` entries
+combined, neither one alone over the cap. Fixed: two new tests. (4) A glob entry with a `..` escape
+surfaced the generic "matches no existing file" instead of naming the escape the way a literal path
+does. Fixed: a new `globEscapeReason` helper, checked before any filesystem walk.
+
+**Round 2 (fresh, context-free): one REAL bug, reproduced against the real `storyVerify`, fixed with a
+regression test.** The round-1 `lstat` guard protected every directory DISCOVERED while listing a
+parent (checked inside the `for` loop, before recursing into a child) — but never the directory a
+glob's own walk STARTS AT (`literalPrefix(glob)`, the default `relative` on the very first call, which
+never passes through that loop at all). Reproduced directly: `files_expected: ['aliasTests/*.test.ts']`
+where `aliasTests` is itself a symlinked directory read straight through it — a real, passing, scoped
+check over a test file reached only via the symlink. Fixed by moving the `lstat` check to the TOP of
+`expandGlob` itself, run unconditionally on `relative` (including the very first call) before
+`listDirEntriesSorted` ever touches it; two new tests (the reproduced single-segment case, and the
+`MAX_DIRS_VISITED` cap, which round 1 had added but never actually exercised in a test).
+
+**Round 3 (fresh, context-free; ran the real test suite and typecheck itself rather than trusting round
+2's own claims): one FURTHER real bug, one real test-quality gap.** The round-2 fix's own claim ("no
+gap... a symlinked directory is never itself listed") was still false for any glob whose
+`literalPrefix` spans TWO OR MORE literal segments: `lstat` only ever reports whether the FINAL path
+component is a symlink — every earlier component is transparently resolved by the OS the same way
+opening any path always resolves it — so `lstat('aliasTests/subdir')` says nothing about `aliasTests`
+itself when `subdir` (the checked, final component) is a genuinely real directory sitting inside the
+symlink's target. Reproduced directly, again against the real `storyVerify`:
+`files_expected: ['aliasTests/subdir/*.test.ts']`, `aliasTests` the symlink, `subdir` real — scoped,
+run, reported `pass`. Fixed with a new `everySegmentIsReal` helper that `lstat`s every path segment of
+`relative` individually (not the joined string as one unit), replacing the round-2 single-`lstat` check
+in `expandGlob`; a new regression test reproduces the exact two-segment shape. Separately, round 3
+found `StoryVerifyContext.testRoots` (wired in round 1, the `bin.ts` one-line change) had zero test
+coverage — and closer analysis while fixing it found something round 3 itself had not gone as far as
+noticing: with the plan's own literal `files_expected.filter(isTestPath)` gate applied BEFORE any
+`testRoots`-aware check ever runs, a configured non-empty `testRoots` can never actually change any
+outcome today (a raw entry naming only a non-conventionally-named test directory, e.g. `spec/**`, is
+filtered out before expansion is even attempted; every entry that DOES survive the gate already matches
+`isTestPath`'s own directory-prefix or filename-suffix fallback on its own, independent of `testRoots`).
+The one case that IS observable: `execution.testRoots: []` — configured, but deliberately empty,
+`validateTestPath`'s own documented "accepts no path at all" — refuses even a conventionally-named
+`tests/a.test.ts` `isTestPath`'s built-in fallback would otherwise accept. Fixed: a new end-to-end test
+proving exactly that `[]` case, and an honest addendum to `testRoots`'s own doc comment disclosing the
+narrower-than-it-sounds reality, rather than a misleadingly generic comment implying the field always
+matters. No round 4: round 3 found nothing further after these two fixes were re-verified (typecheck,
+lint, and the full 131-test scoped suite, all green).
+
+**Mutation evidence.** Three real breaks, each run against the ALREADY-COMMITTED state (so revert via
+`git checkout --` was safe), confirmed failing for the stated reason, then restored:
+`resolveScopedTestFiles`'s own `validateTestPath` loop replaced with an always-`{ok:true}` stub —
+5 tests failed (the malformed-token, `..`-escape, single-segment-symlink, glob-discovered-symlink, and
+`testRoots: []` rows — the round-1/round-3 fail-closed gate collapsed into one shared checkpoint in this
+implementation, so one mutation breaks all of them together, disclosed here rather than forcing an
+artificial code split to match a row count); `runLayer`'s `files !== undefined ? { files } : {}`
+replaced with an unconditional `{}` — 2 unit tests failed (`files: undefined` where a real file list was
+expected) AND the real-subprocess `bin-story-verify.test.ts` scoped-check test failed too (the
+previously-excluded red `other.test.js` now ran and failed the check, proving real narrowing, not just
+flag acceptance); `everySegmentIsReal` narrowed back to a single `lstat` on the joined string (the
+round-2, pre-round-3 shape) — exactly 1 test failed, the round-3 multi-segment regression test, and it
+failed for the EXACT reproduced reason (the runner was actually called with
+`files: ['aliasTests/subdir/foo.test.ts']`, a test reached through the symlinked ancestor).
+
+**Verification.** `pnpm typecheck` clean across all 21 packages (repeatedly, after every fix round,
+both in the shared working tree and again in the clean worktree below). Combined `pnpm lint`
+(`eslint . --max-warnings 0 && prettier --check .`) clean across the WHOLE repo (including other
+agents' own concurrent, uncommitted work at the time). `pnpm run boundaries` clean. Scoped suite: 131
+tests across `story.test.ts` (62), `loop/test/run.test.ts` (31), `loop/test/reporter.test.ts` (22), and
+the real-subprocess `bin-story-verify.test.ts` (16) — all green, re-run after every fix. Rule 14/15
+clean-`git worktree` verification at the actual committed sha (`git worktree add
+<scratch>/wt-p26-verify-story-scope <sha>`, a distinctive name per this exact wave's own standing
+instruction — another piece's generically-named worktree had been mistaken for debris and deleted by a
+different agent's own cleanup this wave): `pnpm install --offline --frozen-lockfile`, full `pnpm
+typecheck` (21/21), the same 131 tests, `pnpm run boundaries`, and `eslint --max-warnings 0` on every
+touched file, all green there too; worktree removed afterward.
+
+**Shared working tree.** `packages/cli/src/bin.ts` (this piece's one line, `testRoots:
+config.execution.testRoots,` inside `runStoryCommand`) was shared with P32's own concurrent rename
+(`loadProjectAgent` → `readProjectAgent`, an unrelated doc-comment line ~2700 lines away). Isolated via
+hand-built patch (`git diff -- bin.ts > patch`, then `git apply --cached`) THREE separate times across
+this piece's own lifetime: the shared git index was independently reset (unstaging both this piece's
+and P32's own in-progress hunks together) twice more after the first isolation, each time discovered via
+a routine `git status --porcelain` re-check rather than assumed still in place, and each time
+re-isolated immediately before proceeding (once by `git reset -- bin.ts` + a fresh `git apply --cached`
+when P32's rename was still uncommitted and sharing the file, and once by a plain `git add` once P32's
+own commit had landed and the working-tree diff on `bin.ts` was confirmed to be this piece's one line
+alone). The committed blob was verified directly (`git show <sha>:packages/cli/src/bin.ts`, and again
+via the clean-worktree check above) to contain only the one `testRoots:` line. `git stash` never used
+against any shared file; every `git add` was exact-file, never `-A`/`.`.
+
+**Discloses.** `Story.test_paths` (M13-approved, never built) stays unbuilt; the scoped list is derived
+from `files_expected` alone, as the brief names. `ecosystem: 'unknown'` cannot be scoped (the whole-run
+`ecosystem` detection happens inside `testRun`'s default rule, downstream of where `files` is applied).
+`build:lint`/`build:typecheck` are never scoped by `--scope story` — only `test:<layer>` checks read
+`files_expected` at all. `execution.testRoots`, though threaded through in full, changes `--scope
+story`'s outcome only for the `testRoots: []` (deliberately empty) case today, per round 3's finding
+above — the plan's own literal `files_expected.filter(isTestPath)` gate would need to become
+`testRoots`-aware itself for a non-empty configured value to matter; documented in `testRoots`'s own
+doc comment rather than silently left to look more capable than it is. `MAX_SCOPED_TEST_FILES` (50) and
+`MAX_DIRS_VISITED` (5000) are both new, deliberate ceilings `09` §9.3 does not itself state.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P26`.

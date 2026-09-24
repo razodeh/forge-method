@@ -17063,3 +17063,102 @@ by the time that account was read, but worth using directly on the next shared-f
 concept is ever reached).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q258`.
+
+## M14 P26 — `forge story verify --scope story` runs the story's own test files through the validated path form (`cli/commands/story.ts`, `cli/commands/loop/test/{run,reporter}.ts`, `cli/bin.ts`; new/edited tests in `cli/test/commands/story.test.ts`, `cli/test/commands/loop/test/{run,reporter}.test.ts`, `cli/test/bin-story-verify.test.ts`)
+
+**Context.** `PLAN-M14.md` P26, depending on the already-landed P5 (`validateTestPath` in
+`engine/dispatch/test-path.ts`) and P25 (the `verify`/`done` phase split). Before this piece, a scoped
+`test:<layer>` check always ran the whole configured layer command — the Story schema, `story.ts`'s own
+doc comment said, "has no test-path list to scope by."
+
+**Built.** `story.ts` gains `resolveScopedTestFiles`: `story.files_expected.filter(isTestPath)` (empty
+→ the whole layer still runs, note updated); each literal entry a direct candidate, each glob entry
+expanded by a new `expandGlob` from `literalPrefix(glob)` (`minimatch` against the project-relative
+path; `MAX_SCOPED_TEST_FILES` = 50 matched files and `MAX_DIRS_VISITED` = 5000 directories visited,
+both independent, disclosed caps); every candidate re-checked with `validateTestPath`. One bad entry
+anywhere — malformed, `..`, a symlink, a glob matching nothing, over either cap — makes the WHOLE check
+`unverifiable`, naming the reason, and the runner is called zero times; otherwise the sorted,
+de-duplicated list runs once via a new `TestRunOptions.files`, threaded through `runAndNormalize` into
+`runVitest`/`runPytest`'s own positional-file form (space-joined, individually `shellQuote`d), never
+combined with the pre-existing single-`fileFilter` retry-in-isolation path. `StoryVerifyContext` gains
+`testRoots`, wired from `execution.testRoots` in `bin.ts`.
+
+**Round 1 (fresh, context-free): no bugs in the shipped logic, but real hardening and coverage gaps.**
+`expandGlob`'s symlink avoidance relied only on `isDirectory` correctly reporting `false` for a
+symlinked directory (true on every filesystem observed, but not guaranteed by Node's own docs on every
+filesystem), with no bound on directories visited, only matched files. Fixed: an `lstat`-based check
+before recursing, plus the new `MAX_DIRS_VISITED`. No test drove a symlink through the glob-expansion
+path itself, and none proved the cap engaging across multiple `files_expected` entries combined —
+fixed with two new tests. A `..`-escaping glob surfaced a generic message instead of naming the escape
+— fixed with a new `globEscapeReason` helper.
+
+**Round 2 (fresh, context-free): one REAL bug, reproduced against the real `storyVerify`.** The
+round-1 `lstat` guard protected every directory DISCOVERED while listing a parent, never the directory
+a glob's own walk STARTS AT (`literalPrefix(glob)`, the very first call's default `relative`, which
+never passes through that check at all). Reproduced: `files_expected: ['aliasTests/*.test.ts']`,
+`aliasTests` itself a symlinked directory, read straight through — a real, passing, scoped check over a
+test file reached only via the symlink. Fixed by moving the `lstat` check to the top of `expandGlob`,
+run unconditionally on `relative` before any listing; two new tests (the reproduced case, and
+`MAX_DIRS_VISITED`, which round 1 added but never actually exercised).
+
+**Round 3 (fresh, context-free; ran the real suite and typecheck itself): one FURTHER real bug, one
+real test-quality gap.** The round-2 fix's own "no gap" claim was still false for a glob whose literal
+prefix spans two or more segments: `lstat` only ever reports its own final path component — every
+earlier one is transparently resolved the same way opening any path always resolves it — so
+`lstat('aliasTests/subdir')` says nothing about `aliasTests` itself when `subdir` is a genuinely real
+directory sitting inside the symlink's target. Reproduced again, against the real `storyVerify`:
+`files_expected: ['aliasTests/subdir/*.test.ts']` scoped, ran, and reported `pass` through the symlinked
+ancestor. Fixed with `everySegmentIsReal`, `lstat`ing every path segment individually rather than the
+joined string as one unit; a new regression test reproduces the exact two-segment shape. Separately,
+round 3 found `testRoots` untested — and fixing it surfaced that, given the plan's own literal
+`files_expected.filter(isTestPath)` gate running BEFORE any `testRoots`-aware check, a configured
+non-empty `testRoots` can never actually change any outcome today; the one case that IS observable,
+`execution.testRoots: []` ("accepts no path at all"), got a new end-to-end test and an honest addendum
+to `testRoots`'s own doc comment disclosing exactly this, rather than a comment implying it always
+matters. No round 4: nothing further after re-verification (typecheck, lint, the full 131-test scoped
+suite, all green).
+
+**Mutation evidence.** Three real breaks against the already-committed state (`git checkout --` safe),
+each confirmed failing for the stated reason, then restored: `validateTestPath`'s own call replaced
+with an always-`{ok:true}` stub — 5 tests failed (malformed-token, `..`-escape, both symlink rows, and
+`testRoots: []` — one shared fail-closed checkpoint in this implementation, so one mutation breaks all
+five together, rather than the "two rows plus one" split the plan's own illustrative text anticipated,
+disclosed here honestly instead of forcing an artificial code split to match it); `runLayer`'s
+`files !== undefined ? { files } : {}` replaced with an unconditional `{}` — 2 unit tests failed AND the
+real-subprocess `bin-story-verify.test.ts` scoped-check test failed too (the previously-excluded red
+`other.test.js` ran and failed the check for real, proving narrowing, not just flag acceptance);
+`everySegmentIsReal` narrowed back to a single `lstat` on the joined string (the round-2 shape) —
+exactly 1 test failed, the round-3 regression test, for the exact reproduced reason.
+
+**Verification.** `pnpm typecheck` clean across all 21 packages, repeatedly, in the shared tree and
+again in a clean worktree. Combined `pnpm lint` clean across the whole repo. `pnpm run boundaries`
+clean. 131 tests across `story.test.ts` (62), `loop/test/run.test.ts` (31), `loop/test/reporter.test.ts`
+(22), and the real-subprocess `bin-story-verify.test.ts` (16), all green, re-run after every fix round.
+
+**Rule 14/15 clean-worktree verification.** `git worktree add <scratch>/wt-p26-verify-story-scope <sha>`
+(a distinctive name per this wave's own standing note — another piece's generically-named worktree had
+been mistaken for debris and deleted by a different agent's own cleanup this exact wave); `pnpm install
+--offline --frozen-lockfile`, full `pnpm typecheck` (21/21), the same 131 tests, `pnpm run boundaries`,
+and `eslint --max-warnings 0` on every touched file, all green; worktree removed afterward.
+
+**Shared working tree.** `bin.ts` (this piece's one line, `testRoots: config.execution.testRoots,`
+inside `runStoryCommand`) was shared with P32's own concurrent rename ~2700 lines away. Isolated via
+hand-built patch (`git diff -- bin.ts > patch`, `git apply --cached`) three separate times across this
+piece's lifetime — the shared git index was independently reset twice more after the first isolation
+(discovered each time via a routine `git status --porcelain` re-check, never assumed still in place)
+— once re-isolated via `git reset -- bin.ts` plus a fresh `git apply --cached` while P32's rename was
+still uncommitted, once by a plain `git add` once P32's own commit had landed and the working-tree diff
+on `bin.ts` was confirmed to be this piece's one line alone. The committed blob was verified directly
+(`git show <sha>:packages/cli/src/bin.ts`, and again in the clean-worktree check) to hold only that one
+line. `git stash` never used against any shared file; every `git add` was exact-file, never `-A`/`.`.
+
+**Discloses.** `Story.test_paths` (M13-approved, never built) stays unbuilt; the list is derived from
+`files_expected` alone. `ecosystem: 'unknown'` cannot be scoped; `build:lint`/`build:typecheck` are
+never scoped — only `test:<layer>` checks read `files_expected` at all. `execution.testRoots`, though
+threaded through in full, changes `--scope story`'s outcome only for the `testRoots: []` case today
+(round 3's finding above) — the plan's own literal `files_expected.filter(isTestPath)` gate would need
+to become `testRoots`-aware itself for a non-empty configured value to matter; documented honestly in
+`testRoots`'s own doc comment. `MAX_SCOPED_TEST_FILES` (50) and `MAX_DIRS_VISITED` (5000) are both new,
+deliberate ceilings `09` §9.3 does not itself state.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q259`.
