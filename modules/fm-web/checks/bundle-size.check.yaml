@@ -15,6 +15,12 @@
 # show success; a build nobody made has not been shown to be under budget, nor has one whose files are all
 # empty). It used to treat a
 # missing directory as an empty list and pass.
+#
+# `appliesTo`/`severity` (`PLAN-M14.md` P22, `15` §15.7's own standalone-check shape) are what make this a real,
+# attachable check: `loadGateRegistry` (`PLAN-M14.md` P20) reads them and joins this check onto every gate named
+# in `appliesTo.gates` -- `module.yaml`'s own `checks:` list stays documentary (never read for attachment). This
+# ships on `G-Verify` (`10` §10.3's own catalogue; a content proposal the project owner may re-place) at
+# `severity: error`, the identical placement `checks/a11y.check.yaml` documents for the identical reason.
 id: bundle:size
 name: Bundle size budget
 description: >
@@ -23,6 +29,9 @@ description: >
 run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="dist";const budgetBytes=250000;function isDir(p){try{return fs.statSync(p).isDirectory();}catch(e){if(e.code==="ENOENT")return false;throw e;}}function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(/\.(js|mjs|css)$/i.test(e.name)&&!e.name.toLowerCase().endsWith(".map"))files.push(p);}return files;}let bytes=0,filesFound=0,errors=0,reason;if(!isDir(dir)){errors=1;reason="no dist/ directory found: build the app before this gate runs";}else{for(const f of walk(dir)){filesFound++;bytes+=fs.statSync(f).size;}if(filesFound===0){errors=1;reason="no built JS or CSS files found under dist/";}else if(bytes===0){errors=1;reason="every built JS/CSS file under dist/ is empty";}}const out={bytes,budgetBytes,filesFound,errors};if(reason)out.reason=reason;console.log(JSON.stringify(out));'''
 parser: json
 failOn: 'bytes > budgetBytes || errors > 0'
+appliesTo:
+  gates: [G-Verify]
+severity: error
 remedy: >
   Re-run the command above locally to see the real total and the budget it was compared against, then
   either reduce the shipped bundle (code-split a route, lazy-load a heavy dependency, drop an unused

@@ -9,8 +9,12 @@
  * every gate check from the shipped `templates/checks/*.gate.yaml` through the REAL `loadGateRegistry`
  * (`PLAN-M14.md` P20's own loader — exercising the identical parse/attach path a real project's `.forge/checks/`
  * goes through, not a second, hand-rolled YAML reader that could silently drift from it) plus each module's own
- * `checks/*.check.yaml` (still hand-derived: the shipped module files carry no `appliesTo`/`severity` of their own
- * yet — P22 — so they are not real attachable checks for the loader to find), runs each, and requires:
+ * `checks/*.check.yaml` (still hand-derived, even once the shipped module files carry a real `appliesTo`/
+ * `severity` of their own, `PLAN-M14.md` P22: `shippedGateRegistry` below is rooted directly at
+ * `packages/templates/templates/checks/` with no `.forge/manifest.yaml`/`.forge/modules/<id>/checks/` of its
+ * own, so real attachment through `appliesTo` would not happen there regardless — this file needs every
+ * module check's own command line exercised against a real project root, not merely proof that it attaches,
+ * which `gates.test.ts`/`gate-validate.test.ts` already cover), runs each, and requires:
  *  - the commands the CLI still rejects are exactly the pinned set, and each of them evaluates to FAIL;
  *  - every other command exits 0 or 1, prints a JSON object, carries every path its `failOn` reads, and the
  *    evaluator gives it a REAL verdict (no fail-closed reason), with exit 0 exactly when it passes;
@@ -60,8 +64,9 @@ interface ShippedCheck {
  * never change mid-run), rooted directly at `packages/templates/templates/checks/` so `checksRoot` is
  * `.` and the real loader reads exactly this test's own `CHECKS_DIR`, nothing else: that directory has
  * no `.forge/overrides/checks/` or `.forge/manifest.yaml` of its own, so this exercises the plain
- * `*.gate.yaml`-only path (the module checks below carry no `appliesTo` yet, P22, so they cannot attach
- * for real regardless of root). */
+ * `*.gate.yaml`-only path (the module checks below carry a real `appliesTo` since `PLAN-M14.md` P22, but
+ * cannot attach for real here regardless of that: there is no manifest at this root for `loadGateRegistry`'s
+ * own module-check scan to find). */
 let templatesRegistry: ReturnType<typeof loadGateRegistry> | undefined;
 function shippedGateRegistry(): ReturnType<typeof loadGateRegistry> {
   templatesRegistry ??= loadGateRegistry(new ProjectPaths(CHECKS_DIR), '.');

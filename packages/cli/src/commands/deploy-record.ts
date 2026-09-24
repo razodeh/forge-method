@@ -96,21 +96,21 @@ const REPOSITORY_REMEDY = 'Run the command inside a git repository with at least
 
 const DRY_RUN_REMEDY =
   'Provide a real --env <ENV-id> recorded (and committed) in kb/delivery/environments.md as a delivery-target ' +
-  'environment, --sha naming a commit in this repository\'s history, and --ran-at as a zoned ISO-8601 instant ' +
+  "environment, --sha naming a commit in this repository's history, and --ran-at as a zoned ISO-8601 instant " +
   'that is not in the future and not before that commit.';
 
 const ROLLBACK_REMEDY =
   'Provide a real --env <ENV-id> recorded (and committed) in kb/delivery/environments.md as a delivery-target ' +
-  'environment, --from-sha and --to-sha naming commits in this repository\'s history with --to-sha a strict ' +
+  "environment, --from-sha and --to-sha naming commits in this repository's history with --to-sha a strict " +
   'ancestor of --from-sha, --rehearsed-at as a zoned ISO-8601 instant that is not in the future and not before ' +
-  '--from-sha, and --health-url/--health-status/--health-checked-at showing a 2xx response on the environment\'s ' +
+  "--from-sha, and --health-url/--health-status/--health-checked-at showing a 2xx response on the environment's " +
   'own (non-local) host at or after --rehearsed-at.';
 
 const DEPLOYMENT_REMEDY =
   'Provide a real --env <ENV-id> recorded (and committed) in kb/delivery/environments.md, --sha naming a commit ' +
-  'in this repository\'s history, --deployed-at as a zoned ISO-8601 instant that is not in the future and not ' +
+  "in this repository's history, --deployed-at as a zoned ISO-8601 instant that is not in the future and not " +
   'before that commit, and --health-url/--health-status/--health-checked-at showing a 2xx response on the ' +
-  'environment\'s own (non-local) host at or after --deployed-at.';
+  "environment's own (non-local) host at or after --deployed-at.";
 
 /** The registered environment named `envId`, read from the COMMITTED register exactly like the checks read it
  * (`readCommittedTree`: an uncommitted edit to `environments.md` changes nothing here) — or the reason it cannot
@@ -122,7 +122,8 @@ async function resolveEnvironment(
   envId: string,
   requireTarget: boolean,
 ): Promise<
-  { readonly ok: true; readonly environment: Environment } | { readonly ok: false; readonly message: string }
+  | { readonly ok: true; readonly environment: Environment }
+  | { readonly ok: false; readonly message: string }
 > {
   const file = `${ctx.kbRoot}/${ENVIRONMENTS_FILE}`;
   if (!committed.files.has(file)) {
@@ -188,7 +189,10 @@ function coerceStatus(raw: string): number | string {
 
 async function readRepository(
   ctx: DeployRecordContext,
-): Promise<{ readonly ok: true; readonly tree: CommittedTree } | { readonly ok: false; readonly outcome: DeployRecordOutcome }> {
+): Promise<
+  | { readonly ok: true; readonly tree: CommittedTree }
+  | { readonly ok: false; readonly outcome: DeployRecordOutcome }
+> {
   const committed = await readCommittedTree(ctx.projectRoot);
   if (!committed.ok) {
     return {
@@ -299,7 +303,8 @@ export async function recordDeployment(
 
   const status = coerceStatus(fields.healthStatus);
   const checked = deployedUrl(fields.healthUrl);
-  if ('reason' in checked) return refuse(`${file} health.url: ${checked.reason}`, DEPLOYMENT_REMEDY);
+  if ('reason' in checked)
+    return refuse(`${file} health.url: ${checked.reason}`, DEPLOYMENT_REMEDY);
   if (checked.host !== where.host) {
     return refuse(
       `${file} health.url is on ${checked.host}, not the environment's ${where.host}`,
@@ -307,9 +312,17 @@ export async function recordDeployment(
     );
   }
   if (typeof status !== 'number' || !Number.isInteger(status) || status < 200 || status > 299) {
-    return refuse(`${file} health.status is ${oneLine(status, 20)}, not a 2xx response`, DEPLOYMENT_REMEDY);
+    return refuse(
+      `${file} health.status is ${oneLine(status, 20)}, not a 2xx response`,
+      DEPLOYMENT_REMEDY,
+    );
   }
-  const checkedAtProblem = await instantProblem(ctx, file, 'health.checked_at', fields.healthCheckedAt);
+  const checkedAtProblem = await instantProblem(
+    ctx,
+    file,
+    'health.checked_at',
+    fields.healthCheckedAt,
+  );
   if (checkedAtProblem !== undefined) return refuse(checkedAtProblem, DEPLOYMENT_REMEDY);
   if (Date.parse(fields.healthCheckedAt) < Date.parse(fields.deployedAt)) {
     return refuse(

@@ -4,11 +4,12 @@
  *
  * @see specs/10 §10.3
  */
-import { cp, mkdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import * as YAML from 'yaml';
 
 import { loadGateRegistry } from '../../../src/commands/run/gates.ts';
 import { CHECKS_ROOT, FIXTURE_GATE_ID, cleanupAll, createTestProject } from './helpers.ts';
@@ -395,16 +396,21 @@ describe('*.check.yaml attachment through appliesTo', () => {
     expect((error as Error).message).toContain(FIXTURE_GATE_ID);
   });
 
-  // `SPEC-QUESTIONS.md` Q229 D3's stance, extended by this piece to check files (this piece's own
-  // Discloses note): a real, shipped module's own check files carry no `appliesTo`/`severity` at all
-  // until `PLAN-M14.md` P22 gives them one -- installing one today (`forge module add`, which really
-  // does copy a module's own `checks/` into `.forge/modules/<id>/checks/` verbatim, `module.ts:453-470`)
-  // makes `loadGateRegistry` refuse every gate, not merely leave the new check unattached. This is a
-  // reproduced, real, PINNED instance of that disclosed consequence -- once P22 lands and gives
-  // `fm-mobile`'s own `device-matrix.check.yaml` a real `appliesTo`/`severity`, this test starts failing
-  // (no more GATE-506), which is the correct, expected signal that the gap it pins has closed.
-  it('installing a real shipped module (fm-mobile) makes loadGateRegistry refuse every gate, until P22 gives its check an appliesTo/severity', async () => {
+  // `SPEC-QUESTIONS.md` Q229 D3's stance, extended by `PLAN-M14.md` P20 to check files (its own
+  // Discloses note): before `PLAN-M14.md` P22, a real, shipped module's own check files carried no
+  // `appliesTo`/`severity` at all, so installing one (`forge module add`, which really does copy a
+  // module's own `checks/` into `.forge/modules/<id>/checks/` verbatim, `module.ts:453-470`) made
+  // `loadGateRegistry` refuse every gate, not merely leave the new check unattached. `PLAN-M14.md` P22
+  // closes that: this is the real, positive proof the real, shipped `fm-mobile` check now attaches for
+  // real once the project it installs into has the `G-Verify` gate it names.
+  it("installing a real shipped module (fm-mobile) attaches its own check for real, now that PLAN-M14.md P22 gives it an appliesTo/severity", async () => {
     const project = await createTestProject();
+    // The real gate `device-matrix.check.yaml`'s own shipped `appliesTo.gates` names (`10` §10.3's own
+    // catalogue; this fixture project's own `CHECKS_ROOT` otherwise carries only `FIXTURE_GATE_ID`).
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, 'G-Verify.gate.yaml'),
+      `id: G-Verify\nchecks:\n${PASSING_CHECK}`,
+    );
     await writeFile(
       path.join(project.dir, '.forge/manifest.yaml'),
       'version: 1\nmodules:\n  - id: fm-mobile\n    version: "1.0.0"\n    checksum: "x"\n',
@@ -414,8 +420,48 @@ describe('*.check.yaml attachment through appliesTo', () => {
       path.join(project.dir, '.forge/modules/fm-mobile/checks'),
       { recursive: true },
     );
+    const registry = await loadGateRegistry(project.paths, CHECKS_ROOT);
+    const attached = registry
+      .get('G-Verify')
+      ?.checks.deterministic.find((check) => check.id === 'device-matrix:coverage');
+    expect(attached).toMatchObject({
+      id: 'device-matrix:coverage',
+      source: 'modules/fm-mobile/checks/device-matrix.check.yaml',
+    });
+  });
+
+  // `PLAN-M14.md` P22's own mutation evidence: `appliesTo` removed from a real shipped check file is the
+  // identical "names unknown gate" / structurally-invalid failure any hand-authored check file gets --
+  // this pins that the real, shipped file is not special-cased, by removing its `appliesTo` for real (in
+  // a private copy) and confirming `loadGateRegistry` refuses it exactly as `GATE-506` names.
+  it('a real shipped check file with appliesTo stripped is GATE-506, not silently unattached', async () => {
+    const project = await createTestProject();
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, 'G-Verify.gate.yaml'),
+      `id: G-Verify\nchecks:\n${PASSING_CHECK}`,
+    );
+    await writeFile(
+      path.join(project.dir, '.forge/manifest.yaml'),
+      'version: 1\nmodules:\n  - id: fm-mobile\n    version: "1.0.0"\n    checksum: "x"\n',
+    );
+    await mkdir(path.join(project.dir, '.forge/modules/fm-mobile/checks'), { recursive: true });
+    const real = YAML.parse(
+      await readFile(path.join(REAL_MODULES_DIR, 'fm-mobile/checks/device-matrix.check.yaml'), 'utf8'),
+    ) as Record<string, unknown>;
+    // Parsed and re-serialized (never a text-based strip): the real file's own doc comments legitimately
+    // mention "appliesTo" in prose, so a text match for its absence would be meaningless; the real check
+    // here is that the loader refuses a check document with no real `appliesTo` field, whatever the file's
+    // own surrounding YAML comments say about it (comments are dropped by `YAML.parse`/`YAML.stringify`
+    // regardless, so this mutation also proves the loader reads structure, not text).
+    const { appliesTo: _appliesTo, ...withoutAppliesTo } = real;
+    expect(withoutAppliesTo['id']).toBe('device-matrix:coverage');
+    await writeFile(
+      path.join(project.dir, '.forge/modules/fm-mobile/checks/device-matrix.check.yaml'),
+      YAML.stringify(withoutAppliesTo),
+    );
     const error = await loadGateRegistry(project.paths, CHECKS_ROOT).catch((e: unknown) => e);
     expect(error).toMatchObject({ code: 'GATE-506' });
     expect((error as Error).message).toContain('modules/fm-mobile/checks/device-matrix.check.yaml');
+    expect((error as Error).message).toContain('appliesTo');
   });
 });

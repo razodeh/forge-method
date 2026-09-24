@@ -119,7 +119,10 @@ provides:
 
   gates: []
 
-  # The two real, standalone `*.check.yaml` files this module's own Surface names by exact id.
+  # The two real, standalone `*.check.yaml` files this module's own Surface names by exact id. This list
+  # itself stays documentary (`PLAN-M14.md` P22): what actually attaches each check to a gate is its own
+  # `appliesTo.gates` (`G-Verify` for both, a content proposal the project owner may re-place), read by
+  # `loadGateRegistry` -- nothing here is ever consulted for attachment.
   checks: ['lineage:coverage', 'data-quality:tests']
 
   skills: []

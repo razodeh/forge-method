@@ -93,7 +93,10 @@ provides:
   # content anywhere in this repository (fm-core's own module.yaml notes that no such file existed
   # before this piece: every deterministic check fm-core's own gates run was declared inline inside the
   # owning gate). See checks/a11y.check.yaml and checks/bundle-size.check.yaml for the real command,
-  # parser, and failOn expression each one declares.
+  # parser, and failOn expression each one declares. This list itself stays documentary (`PLAN-M14.md`
+  # P22): what actually attaches each check to a gate is its own `appliesTo.gates` (`G-Verify` for both,
+  # a content proposal the project owner may re-place), read by `loadGateRegistry` -- nothing here is
+  # ever consulted for attachment.
   checks: [a11y:audit, bundle:size]
 
   # No fm-web-specific skill exists yet (no accessibility- or bundle-size-specific procedural-knowledge

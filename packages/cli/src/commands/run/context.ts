@@ -140,6 +140,45 @@ export async function integrationBranchOfRun(
   }
 }
 
+/** `runs/<runId>/manifest.json`'s own `integrationTipAtStart` field (`PLAN-M14.md` P9's real write,
+ * `runWorkflow`, `IntegrationSyncResult`'s own doc comment below) -- the sha the integration branch was
+ * fast-forwarded to (or already at) when THIS run started, and what `PLAN-M14.md` P22 supplies to the
+ * in-run gate evaluator as `FORGE_BASE_REF` (`buildRunEngineContext` below) so `api:breaking-change`
+ * (the one shipped check that reads it, `modules/fm-service/checks/api-breaking-change.check.yaml`) has
+ * a real base to diff against, not merely `HEAD` (which would only ever show a lane's own uncommitted
+ * edits by the time a gate step runs, since every lane is committed before it is integrated).
+ *
+ * Read directly from the manifest already on disk by the time this is ever called -- `runWorkflow`
+ * writes it before ever calling `buildRunEngineContext`, and `resumeWorkflow` reads the SAME manifest a
+ * still-earlier `runWorkflow` invocation already wrote -- rather than threaded through as its own
+ * `BuildRunContextInput` field, so neither caller needs a change of its own for this.
+ *
+ * Absent -- never a hard failure -- for `forge review`/`debug`/`session`/`panel` (none of which write a
+ * manifest at all, `review.ts`'s own doc comment) and for a manifest that cannot be read or parsed at
+ * all (the identical tolerant stance `installedModuleIds` above already takes for the same reason): the
+ * gate evaluator's own env is then simply built with no `FORGE_BASE_REF`, and `api:breaking-change`
+ * fails with its own stated reason ("FORGE_BASE_REF is not set") rather than this call refusing to build
+ * a context at all over an unrelated gap. Unlike `integrationBranchOfRun` above (a real caller-facing
+ * `forge merge` needs the right answer or a loud `RUN-054`), a missing/corrupt `FORGE_BASE_REF` here has
+ * an already-correct, already-documented fallback behaviour built into the one check that reads it. */
+async function integrationTipAtStartOfRun(
+  paths: ProjectPaths,
+  runId: string,
+): Promise<string | undefined> {
+  const manifestPath = paths.resolveState(`runs/${runId}/manifest.json`);
+  if (!(await pathExists(manifestPath))) return undefined;
+  try {
+    const manifest = JSON.parse(await readTextFile(manifestPath)) as {
+      readonly integrationTipAtStart?: unknown;
+    };
+    return typeof manifest.integrationTipAtStart === 'string'
+      ? manifest.integrationTipAtStart
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `ExecuteStepContext.tools`, which no production code reads any more: every session (agent steps,
  * participants, and since `PLAN-M13.md` P27 `forge debug`) resolves a per-agent grant. Read-only, so a future
  * reader of the dead field cannot be handed write access by accident. */
@@ -641,12 +680,21 @@ export async function buildRunEngineContext(
   );
   const gateRegistry = await loadGateRegistry(input.paths, input.checksRoot);
   const model = await resolveModel(input.adapter);
+  // `PLAN-M14.md` P22: the in-run gate evaluator's own env carries `FORGE_BASE_REF` when this run's
+  // manifest names one (`integrationTipAtStartOfRun` above) -- never `input.commandEnv` itself, which is
+  // also what `mergeQueue`/`ctx.commandEnv` use for their own, unrelated purposes (the launcher shim's
+  // `PATH`/`FORGE_RUN_ID`).
+  const integrationTipAtStart = await integrationTipAtStartOfRun(input.paths, input.runId);
+  const gateEnv =
+    integrationTipAtStart === undefined
+      ? input.commandEnv
+      : { ...input.commandEnv, FORGE_BASE_REF: integrationTipAtStart };
 
   return {
     adapter: input.adapter,
     vcs: createVcsFacade(input.projectRoot, input.runId),
     telemetry: createTelemetryFacade(input.projectRoot, input.runId, now),
-    gates: createGateEvaluator(gateRegistry, { env: input.commandEnv }),
+    gates: createGateEvaluator(gateRegistry, { env: gateEnv }),
     gateRegistry,
     mergeQueue: createMergeQueueFacade(integrationPath, undefined, { env: input.commandEnv }),
     commandEnv: input.commandEnv,

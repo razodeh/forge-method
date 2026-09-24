@@ -17,13 +17,13 @@
  * @see PLAN-M6.md T2
  * @see SPEC-QUESTIONS.md Q91
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import { describe, expect, it } from 'vitest';
 
-import { evaluateGate } from '@forge/engine/gates';
+import { evaluateGate, validateCheckDocument } from '@forge/engine/gates';
 import type { CheckRunner, GateDefinition } from '@forge/engine/gates';
 import { GATE_INDEX, type GateId } from '@forge/templates';
 
@@ -230,4 +230,81 @@ describe('every gate round-trips through the real evaluateGate (M5 P14)', () => 
       expect(result.checks.find((c) => c.checkId === firstCheckId)?.reason).toBeUndefined();
     },
   );
+});
+
+/**
+ * The seven shipped `modules/*\/checks/*.check.yaml` files (`PLAN-M14.md` P22): each must carry a real
+ * `appliesTo.gates` (naming a real, shipped gate id -- one of `ALL_GATE_IDS` above) and a `severity`, so
+ * `loadGateRegistry` (`PLAN-M14.md` P20, `@forge/cli/commands/run/gates.ts`) can actually attach it to a
+ * real gate rather than refusing the whole registry (`GATE-506`) the moment a project installs the
+ * module (the disclosed gap `PLAN-M14.md` P20's own Discloses note names, closed here).
+ */
+describe('the seven shipped module check files (PLAN-M14.md P22)', () => {
+  const modulesRoot = path.join(repoRoot, 'modules');
+
+  interface ShippedCheckFile {
+    readonly module: string;
+    readonly relPath: string;
+    readonly raw: unknown;
+  }
+
+  function shippedCheckFiles(): readonly ShippedCheckFile[] {
+    const files: ShippedCheckFile[] = [];
+    for (const module of readdirSync(modulesRoot).sort()) {
+      const checksDir = path.join(modulesRoot, module, 'checks');
+      let names: readonly string[];
+      try {
+        names = readdirSync(checksDir).filter((name) => name.endsWith('.check.yaml')).sort();
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        const relPath = path.join('modules', module, 'checks', name);
+        files.push({
+          module,
+          relPath,
+          raw: parseYaml(readFileSync(path.join(checksDir, name), 'utf8')),
+        });
+      }
+    }
+    return files;
+  }
+
+  it('there are exactly seven, none of them lost or double-counted by this scan', () => {
+    expect(shippedCheckFiles()).toHaveLength(7);
+  });
+
+  it.each(shippedCheckFiles().map((file): [string, ShippedCheckFile] => [file.relPath, file]))(
+    '%s parses strictly (validateCheckDocument) with a real appliesTo.gates and a severity',
+    (_label, file) => {
+      const result = validateCheckDocument(file.raw);
+      expect(result.problems, file.relPath).toEqual([]);
+      const document = result.document;
+      if (document === undefined) throw new Error(`${file.relPath} did not parse`);
+      expect(document.appliesTo.gates.length, file.relPath).toBeGreaterThan(0);
+      for (const gateId of document.appliesTo.gates) {
+        expect(ALL_GATE_IDS, `${file.relPath} names a real shipped gate`).toContain(gateId);
+      }
+      expect(['error', 'warn'], file.relPath).toContain(document.severity);
+    },
+  );
+
+  it('the seven ids/gates/severities match this piece\'s own content proposal exactly', () => {
+    const byId = new Map(
+      shippedCheckFiles().map((file) => {
+        const { document } = validateCheckDocument(file.raw);
+        if (document === undefined) throw new Error(`${file.relPath} did not parse`);
+        return [document.id, { gates: [...document.appliesTo.gates].sort(), severity: document.severity }];
+      }),
+    );
+    expect(Object.fromEntries(byId)).toEqual({
+      'contract:verify': { gates: ['G-Integration'], severity: 'error' },
+      'api:breaking-change': { gates: ['G-Integration'], severity: 'error' },
+      'a11y:audit': { gates: ['G-Verify'], severity: 'error' },
+      'bundle:size': { gates: ['G-Verify'], severity: 'error' },
+      'lineage:coverage': { gates: ['G-Verify'], severity: 'error' },
+      'data-quality:tests': { gates: ['G-Verify'], severity: 'error' },
+      'device-matrix:coverage': { gates: ['G-Verify'], severity: 'error' },
+    });
+  });
 });

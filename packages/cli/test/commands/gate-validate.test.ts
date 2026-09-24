@@ -18,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import * as YAML from 'yaml';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { ProjectPaths, writeFileAtomic } from '@forge/core/fs';
 
@@ -548,13 +549,15 @@ describe('standalone *.check.yaml findings (appliesTo attachment)', () => {
     ]);
   });
 
-  // `SPEC-QUESTIONS.md` Q229 D3's stance, extended to check files by this piece's own Discloses note:
-  // a real, shipped module's own check files carry no `appliesTo`/`severity` at all until `PLAN-M14.md`
-  // P22 -- `loadGateRegistry` (`gates.test.ts`'s own equivalent case) refuses every gate outright the
-  // moment one is installed, but `gateValidateAll` is the escape hatch the Discloses note names
-  // ("workflow validate --all says which"): it must NOT throw on the identical input, and must report
-  // exactly what is wrong with the file instead, diagnosably, for every gate at once.
-  it('installing a real shipped module (fm-mobile) does not throw here -- it reports the missing appliesTo/severity diagnosably', async () => {
+  // `SPEC-QUESTIONS.md` Q229 D3's stance, extended to check files by `PLAN-M14.md` P20's own Discloses
+  // note: before `PLAN-M14.md` P22, a real, shipped module's own check files carried no
+  // `appliesTo`/`severity` at all, so `loadGateRegistry` (`gates.test.ts`'s own equivalent case) refused
+  // every gate outright the moment one was installed, and `gateValidateAll` was the escape hatch the
+  // Discloses note named ("workflow validate --all says which"), reporting the missing fields
+  // diagnosably instead of throwing. `PLAN-M14.md` P22 closes that gap for real: a fresh `forge init`
+  // project (which ships the real `G-Verify` gate `device-matrix.check.yaml`'s own `appliesTo.gates`
+  // names, `10` §10.3's own catalogue) now attaches fm-mobile's check cleanly, with zero findings.
+  it("installing a real shipped module (fm-mobile) attaches cleanly, zero findings, now that PLAN-M14.md P22 gives it a real appliesTo/severity", async () => {
     const project = await createProject();
     await writeFileAtomic(
       project.paths.resolveWithin('.forge/manifest.yaml'),
@@ -564,6 +567,29 @@ describe('standalone *.check.yaml findings (appliesTo attachment)', () => {
       path.join(REAL_MODULES_DIR, 'fm-mobile/checks'),
       project.paths.resolveWithin('.forge/modules/fm-mobile/checks'),
       { recursive: true },
+    );
+    const results = await gateValidateAll(ctxFor(project));
+    expect(results.get('modules/fm-mobile/checks/device-matrix')).toBeUndefined();
+  });
+
+  // `PLAN-M14.md` P22's own mutation evidence, the `gateValidateAll` side of the identical proof
+  // `gates.test.ts`'s own equivalent case makes for `loadGateRegistry`: a real shipped check file with
+  // `appliesTo`/`severity` stripped is reported here diagnosably (never silently, and never a throw),
+  // proving the real file is read by structure, not merely "present" once P22 landed.
+  it('a real shipped check file with appliesTo/severity stripped is reported diagnosably here too', async () => {
+    const project = await createProject();
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/manifest.yaml'),
+      'version: 1\nmodules:\n  - id: fm-mobile\n    version: "1.0.0"\n    checksum: "x"\n',
+    );
+    await mkdir(project.paths.resolveWithin('.forge/modules/fm-mobile/checks'), { recursive: true });
+    const real = YAML.parse(
+      await readFile(path.join(REAL_MODULES_DIR, 'fm-mobile/checks/device-matrix.check.yaml'), 'utf8'),
+    ) as Record<string, unknown>;
+    const { appliesTo: _appliesTo, severity: _severity, ...withoutEither } = real;
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/modules/fm-mobile/checks/device-matrix.check.yaml'),
+      YAML.stringify(withoutEither),
     );
     const results = await gateValidateAll(ctxFor(project));
     const issues = results.get('modules/fm-mobile/checks/device-matrix') ?? [];

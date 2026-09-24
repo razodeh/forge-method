@@ -152,7 +152,9 @@ describe('recordDryRun', () => {
     });
     expectWritten(outcome, file('ENV-002'));
     if (!outcome.ok) throw new Error('unreachable');
-    const written = JSON.parse(await readFile(path.join(fx.dir, outcome.written), 'utf8')) as unknown;
+    const written = JSON.parse(
+      await readFile(path.join(fx.dir, outcome.written), 'utf8'),
+    ) as unknown;
     expect(written).toMatchObject({
       v: 1,
       kind: 'dry-run',
@@ -181,7 +183,11 @@ describe('recordDryRun', () => {
       [
         'sha not in history',
         () =>
-          recordDryRun(fx.ctx, { env: 'ENV-002', sha: 'a'.repeat(40), ranAt: '2050-01-01T00:00:00Z' }),
+          recordDryRun(fx.ctx, {
+            env: 'ENV-002',
+            sha: 'a'.repeat(40),
+            ranAt: '2050-01-01T00:00:00Z',
+          }),
         'not in this repository',
       ],
       [
@@ -276,7 +282,9 @@ describe('recordRollback', () => {
     const outcome = await recordRollback(fx.ctx, validFields(fx));
     expectWritten(outcome, file('ENV-002'));
     if (!outcome.ok) throw new Error('unreachable');
-    const written = JSON.parse(await readFile(path.join(fx.dir, outcome.written), 'utf8')) as unknown;
+    const written = JSON.parse(
+      await readFile(path.join(fx.dir, outcome.written), 'utf8'),
+    ) as unknown;
     expect(written).toMatchObject({
       v: 1,
       kind: 'rollback',
@@ -285,7 +293,11 @@ describe('recordRollback', () => {
       from_sha: fx.base,
       to_sha: fx.root,
       rehearsed_at: '2050-01-01T00:00:00Z',
-      health: { url: 'https://staging.example.com/healthz', status: 200, checked_at: '2050-01-01T00:05:00Z' },
+      health: {
+        url: 'https://staging.example.com/healthz',
+        status: 200,
+        checked_at: '2050-01-01T00:05:00Z',
+      },
     });
     await commitAll(fx.dir);
     expect((await deployRollbackCheck(fx.ctx)).violations).toEqual([]);
@@ -308,16 +320,36 @@ describe('recordRollback', () => {
     ['from_sha not in history', () => ({ fromSha: 'a'.repeat(40) }), 'not in this repository'],
     ['to_sha not in history', () => ({ toSha: 'b'.repeat(40) }), 'not in this repository'],
     ['equal shas', (fx) => ({ toSha: fx.base }), 'from a commit to itself'],
-    ['to_sha not an ancestor of from_sha', (fx) => ({ fromSha: fx.root, toSha: fx.base }), 'not a rollback to an earlier version'],
+    [
+      'to_sha not an ancestor of from_sha',
+      (fx) => ({ fromSha: fx.root, toSha: fx.base }),
+      'not a rollback to an earlier version',
+    ],
     ['zone-less rehearsed_at', () => ({ rehearsedAt: '2050-01-01T00:00:00' }), 'rehearsed_at'],
     ['future rehearsed_at', () => ({ rehearsedAt: '2200-01-01T00:00:00Z' }), 'in the future'],
-    ['rehearsed_at before from_sha', () => ({ rehearsedAt: '2020-01-01T00:00:00Z' }), 'before the commit'],
+    [
+      'rehearsed_at before from_sha',
+      () => ({ rehearsedAt: '2020-01-01T00:00:00Z' }),
+      'before the commit',
+    ],
     ['a local health url', () => ({ healthUrl: 'http://localhost:9999/healthz' }), 'local address'],
-    ['a health url on another host', () => ({ healthUrl: 'https://evil.example.net/h' }), "not the environment's"],
+    [
+      'a health url on another host',
+      () => ({ healthUrl: 'https://evil.example.net/h' }),
+      "not the environment's",
+    ],
     ['a non-2xx health status', () => ({ healthStatus: '503' }), 'not a 2xx response'],
     ['a non-numeric health status', () => ({ healthStatus: 'ok' }), 'not a 2xx response'],
-    ['checked_at before rehearsed_at', () => ({ healthCheckedAt: '2020-01-01T00:05:00Z' }), 'before rehearsed_at'],
-    ['a zone-less checked_at', () => ({ healthCheckedAt: '2050-01-01T00:05:00' }), 'health.checked_at'],
+    [
+      'checked_at before rehearsed_at',
+      () => ({ healthCheckedAt: '2020-01-01T00:05:00Z' }),
+      'before rehearsed_at',
+    ],
+    [
+      'a zone-less checked_at',
+      () => ({ healthCheckedAt: '2050-01-01T00:05:00' }),
+      'health.checked_at',
+    ],
   ])('refuses %s, with a real reason and no file written', async (_label, delta, expected) => {
     const fx = await project([DEV, STAGING]);
     const outcome = await recordRollback(fx.ctx, { ...validFields(fx), ...delta(fx) });
@@ -347,14 +379,20 @@ describe('recordDeployment', () => {
     const outcome = await recordDeployment(fx.ctx, validFields(fx));
     expectWritten(outcome, file('ENV-001'));
     if (!outcome.ok) throw new Error('unreachable');
-    const written = JSON.parse(await readFile(path.join(fx.dir, outcome.written), 'utf8')) as unknown;
+    const written = JSON.parse(
+      await readFile(path.join(fx.dir, outcome.written), 'utf8'),
+    ) as unknown;
     expect(written).toMatchObject({
       v: 1,
       environment: 'ENV-001',
       outcome: 'succeeded',
       sha: fx.base,
       deployed_at: '2050-01-01T00:00:00Z',
-      health: { url: 'https://dev.example.com/healthz', status: 200, checked_at: '2050-01-01T00:05:00Z' },
+      health: {
+        url: 'https://dev.example.com/healthz',
+        status: 200,
+        checked_at: '2050-01-01T00:05:00Z',
+      },
     });
     expect(written).not.toHaveProperty('kind');
     await commitAll(fx.dir);
@@ -367,11 +405,23 @@ describe('recordDeployment', () => {
     ['sha not in history', () => ({ sha: 'a'.repeat(40) }), 'not in this repository'],
     ['zone-less deployed_at', () => ({ deployedAt: '2050-01-01T00:00:00' }), 'deployed_at'],
     ['future deployed_at', () => ({ deployedAt: '2200-01-01T00:00:00Z' }), 'in the future'],
-    ['deployed_at before the commit', () => ({ deployedAt: '2020-01-01T00:00:00Z' }), 'before the commit'],
+    [
+      'deployed_at before the commit',
+      () => ({ deployedAt: '2020-01-01T00:00:00Z' }),
+      'before the commit',
+    ],
     ['a local health url', () => ({ healthUrl: 'http://localhost:9999/healthz' }), 'local address'],
-    ['a health url on another host', () => ({ healthUrl: 'https://evil.example.net/h' }), "not the environment's"],
+    [
+      'a health url on another host',
+      () => ({ healthUrl: 'https://evil.example.net/h' }),
+      "not the environment's",
+    ],
     ['a non-2xx health status', () => ({ healthStatus: '503' }), 'not a 2xx response'],
-    ['checked_at before deployed_at', () => ({ healthCheckedAt: '2020-01-01T00:05:00Z' }), 'before deployed_at'],
+    [
+      'checked_at before deployed_at',
+      () => ({ healthCheckedAt: '2020-01-01T00:05:00Z' }),
+      'before deployed_at',
+    ],
   ])('refuses %s, with a real reason and no file written', async (_label, delta, expected) => {
     const fx = await project([DEV]);
     const outcome = await recordDeployment(fx.ctx, { ...validFields(fx), ...delta(fx) });
@@ -395,8 +445,12 @@ function unwrapped(text: string): string {
 
 describe('the delivery briefs carry the literal forge deploy record commands (PLAN-M14.md P23)', () => {
   it('design-cicd-pipeline.md names the dry-run and rollback forms', async () => {
-    const text = unwrapped(await readFile(path.join(briefsRoot, 'design-cicd-pipeline.md'), 'utf8'));
-    expect(text).toContain('forge deploy record dry-run --env <ENV-id> --sha <commit> --ran-at <instant>');
+    const text = unwrapped(
+      await readFile(path.join(briefsRoot, 'design-cicd-pipeline.md'), 'utf8'),
+    );
+    expect(text).toContain(
+      'forge deploy record dry-run --env <ENV-id> --sha <commit> --ran-at <instant>',
+    );
     expect(text).toContain(
       'forge deploy record rollback --env <ENV-id> --from-sha --to-sha --rehearsed-at --health-url ' +
         '--health-status --health-checked-at',

@@ -102,7 +102,11 @@ provides:
   gates: []
 
   # The one real, standalone `*.check.yaml` file this module ships. See
-  # checks/device-matrix.check.yaml for the real command, parser, and failOn expression.
+  # checks/device-matrix.check.yaml for the real command, parser, and failOn expression. This list itself
+  # stays documentary (`PLAN-M14.md` P22): what actually attaches the check to a gate is its own
+  # `appliesTo.gates` (`G-Verify`, a content proposal the project owner may re-place onto `G-Deliver`
+  # alongside `store-release.workflow.yaml`'s own gate step -- see the header comment above), read by
+  # `loadGateRegistry` -- nothing here is ever consulted for attachment.
   checks: ['device-matrix:coverage']
 
   # No fm-mobile-specific skill exists yet (no device-matrix- or offline-first-specific procedural-

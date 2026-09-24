@@ -117,7 +117,11 @@ provides:
 
   gates: []
 
-  # The two real, standalone `*.check.yaml` files 19 §19.1's own worked example names by exact id.
+  # The two real, standalone `*.check.yaml` files 19 §19.1's own worked example names by exact id. This
+  # list itself stays documentary (`PLAN-M14.md` P22): what actually attaches each check to a gate is its
+  # own `appliesTo.gates` (`G-Integration` for both, matching 19 §19.1's own worked example placement; a
+  # content proposal the project owner may re-place), read by `loadGateRegistry` -- nothing here is ever
+  # consulted for attachment.
   checks: ['contract:verify', 'api:breaking-change']
 
   skills: []

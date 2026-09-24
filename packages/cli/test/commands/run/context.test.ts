@@ -33,6 +33,7 @@ import {
   cleanupAll,
   createTestProject,
   fixtureAdapter,
+  type TestProject,
 } from './helpers.ts';
 
 afterEach(cleanupAll);
@@ -658,6 +659,104 @@ describe('the integration branch of a run (PLAN-M13.md P19)', () => {
     });
     expect(ctx.integrationBase).toBe('forge/integration/mvp');
     expect(await currentBranch(ctx.integrationPath)).toBe('forge/integration/mvp');
+  });
+});
+
+// `PLAN-M14.md` P22: the in-run gate evaluator's own env carries `FORGE_BASE_REF`, read from the run's own
+// manifest (`integrationTipAtStart`, `PLAN-M14.md` P9's real write, `run.ts`) — real, not stubbed: a real
+// gate/check YAML file, a real `ctx.gates.evaluate` call, and a real spawned `node -e ...` reading
+// `process.env.FORGE_BASE_REF` for real.
+describe("the in-run gate evaluator's own FORGE_BASE_REF (PLAN-M14.md P9/P22)", () => {
+  const BASE_REF_GATE_ID = 'G-BaseRef';
+  /** Prints `{"ref": <FORGE_BASE_REF or "">, "errors": <0 or 1>}`, the identical "flat object, an
+   * errors field failOn reads" shape every real shipped check uses -- `failOn` fires (fails the check)
+   * exactly when `FORGE_BASE_REF` is unset. */
+  const BASE_REF_GATE_YAML = `id: ${BASE_REF_GATE_ID}
+checks:
+  deterministic:
+    - id: base-ref-probe
+      run: "node -e \\"const ref=process.env.FORGE_BASE_REF||'';console.log(JSON.stringify({ref,errors:ref===''?1:0}))\\""
+      parser: json
+      failOn: "errors > 0"
+`;
+
+  async function writeManifest(
+    project: TestProject,
+    runId: string,
+    integrationTipAtStart: string | undefined,
+  ): Promise<void> {
+    const dir = project.paths.resolveState(`runs/${runId}`);
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'manifest.json'),
+      JSON.stringify({
+        workflowId: 'w',
+        expressionContext: {},
+        ...(integrationTipAtStart === undefined ? {} : { integrationTipAtStart }),
+      }),
+    );
+  }
+
+  it("supplies the run's own integrationTipAtStart as FORGE_BASE_REF to a real spawned check", async () => {
+    const project = await createTestProject();
+    await writeFile(path.join(project.dir, CHECKS_ROOT, `${BASE_REF_GATE_ID}.gate.yaml`), BASE_REF_GATE_YAML);
+    const { stdout: sha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir });
+    const tip = sha.trim();
+    await writeManifest(project, 'run-base-ref', tip);
+
+    const ctx = await buildRunEngineContext({
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: project.config,
+      runId: 'run-base-ref',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    });
+    const report = await ctx.gates.evaluate(BASE_REF_GATE_ID, project.dir);
+    const check = report.checks.find((c) => c.checkId === 'base-ref-probe');
+    expect(check?.reason).toBeUndefined();
+    expect(check?.passed).toBe(true);
+    expect(JSON.parse(check?.stdout ?? '{}')).toEqual({ ref: tip, errors: 0 });
+  });
+
+  it('leaves FORGE_BASE_REF unset (the check fails on its own stated reason) when the manifest has no integrationTipAtStart', async () => {
+    const project = await createTestProject();
+    await writeFile(path.join(project.dir, CHECKS_ROOT, `${BASE_REF_GATE_ID}.gate.yaml`), BASE_REF_GATE_YAML);
+    await writeManifest(project, 'run-no-tip', undefined);
+
+    const ctx = await buildRunEngineContext({
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: project.config,
+      runId: 'run-no-tip',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    });
+    const report = await ctx.gates.evaluate(BASE_REF_GATE_ID, project.dir);
+    const check = report.checks.find((c) => c.checkId === 'base-ref-probe');
+    expect(check?.passed).toBe(false);
+    expect(JSON.parse(check?.stdout ?? '{}')).toEqual({ ref: '', errors: 1 });
+  });
+
+  it('leaves FORGE_BASE_REF unset for a runId with no manifest at all (forge review/debug/session/panel never write one)', async () => {
+    const project = await createTestProject();
+    await writeFile(path.join(project.dir, CHECKS_ROOT, `${BASE_REF_GATE_ID}.gate.yaml`), BASE_REF_GATE_YAML);
+
+    const ctx = await buildRunEngineContext({
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: project.config,
+      runId: 'review-no-manifest',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    });
+    const report = await ctx.gates.evaluate(BASE_REF_GATE_ID, project.dir);
+    const check = report.checks.find((c) => c.checkId === 'base-ref-probe');
+    expect(check?.passed).toBe(false);
+    expect(JSON.parse(check?.stdout ?? '{}')).toEqual({ ref: '', errors: 1 });
   });
 });
 

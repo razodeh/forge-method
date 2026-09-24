@@ -34,6 +34,12 @@
 # level-2 heading (or end of file) via a real, tested regex, and `hasSource`/`hasTarget` are checked
 # against that extracted section only -- see test/fm-data-checks.test.ts's own regression fixture
 # (an empty Lineage section followed by an unrelated Changelog section naming Source/Target).
+#
+# `appliesTo`/`severity` (`PLAN-M14.md` P22, `15` §15.7's own standalone-check shape) are what make this a real,
+# attachable check: `loadGateRegistry` (`PLAN-M14.md` P20) reads them and joins this check onto every gate named
+# in `appliesTo.gates` -- `module.yaml`'s own `checks:` list stays documentary (never read for attachment). This
+# ships on `G-Verify` (`10` §10.3's own catalogue; a content proposal the project owner may re-place) at
+# `severity: error`.
 id: lineage:coverage
 name: Pipeline lineage coverage
 description: >
@@ -42,6 +48,9 @@ description: >
 run: 'node -e ''const fs=require("node:fs");const path=require("node:path");const dir="docs/forge/kb/data/pipelines";function isDir(p){try{return fs.statSync(p).isDirectory();}catch(e){if(e.code==="ENOENT")return false;throw e;}}function walk(d){let files=[];let entries;try{entries=fs.readdirSync(d,{withFileTypes:true});}catch(e){if(e.code==="ENOENT")return files;throw e;}for(const e of entries){const p=path.join(d,e.name);if(e.isDirectory())files=files.concat(walk(p));else if(e.name.toLowerCase().endsWith(".md"))files.push(p);}return files;}function lineageSection(text){const m=/##[ \t]*lineage[^\n]*\n([\s\S]*?)(?=\n##[ \t]|$)/i.exec(text.replace(/<!--[\s\S]*?-->/g,""));return m?m[1]:null;}let violations=0,pipelinesScanned=0,errors=0,reason;if(!isDir(dir)){errors=1;reason="no docs/forge/kb/data/pipelines directory found: document each pipeline before this gate runs";}else{for(const f of walk(dir)){pipelinesScanned++;const text=fs.readFileSync(f,"utf8");const section=lineageSection(text);const hasSource=section!==null&&/^[ \t]*(?:[-*][ \t]*)?source:[ \t]*\S/im.test(section);const hasTarget=section!==null&&/^[ \t]*(?:[-*][ \t]*)?target:[ \t]*\S/im.test(section);if(!hasSource||!hasTarget)violations++;}if(pipelinesScanned===0){errors=1;reason="no pipeline documents (*.md) found under docs/forge/kb/data/pipelines";}}const out={violations,pipelinesScanned,errors};if(reason)out.reason=reason;console.log(JSON.stringify(out));'''
 parser: json
 failOn: 'violations > 0 || errors > 0'
+appliesTo:
+  gates: [G-Verify]
+severity: error
 remedy: >
   Re-run the command above locally and read its printed counts, then open each pipeline doc under
   docs/forge/kb/data/pipelines/ named by a violation: add a "## Lineage" section naming both a real

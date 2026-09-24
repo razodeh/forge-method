@@ -50,11 +50,11 @@ State each of these explicitly in the ADR; each is checkable.
   long-lived static keys. Secrets are referenced by name, never written into the ADR or a file.
 - Every stage writes machine-readable results under `docs/forge/reports/` so gates read the verdict.
 - The deploy-dry-run stage and the rollback-rehearsal stage each write their own evidence with
-  `forge deploy record dry-run --env <ENV-id> --sha <commit> --ran-at <instant>` and `forge deploy
-  record rollback --env <ENV-id> --from-sha --to-sha --rehearsed-at --health-url --health-status
-  --health-checked-at` — never a hand-authored file, since the command validates before writing — and
-  commit the record under `docs/forge/reports/deployments/`, which `forge deploy --dry-run` / `forge
-  deploy --rollback-check` (`G-Deliver`) then read back.
+  `forge deploy record dry-run --env <ENV-id> --sha <commit> --ran-at <instant>` and
+  `forge deploy record rollback --env <ENV-id> --from-sha --to-sha --rehearsed-at --health-url --health-status --health-checked-at`
+  — never a hand-authored file, since the command validates before writing — and commit the record
+  under `docs/forge/reports/deployments/`, which `forge deploy --dry-run` /
+  `forge deploy --rollback-check` (`G-Deliver`) then read back.
 - Reversibility, blast radius and a revisit trigger are filled in.
 
 ### Do not

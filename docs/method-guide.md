@@ -99,10 +99,10 @@ The rules that make this real rather than theatre (`specs/10` §10.3):
    without an explicit config flag and a typed acknowledgement.
 
 FORGE has no deploy executor of its own: the real pipeline runs the dry run, the rollback rehearsal
-and the deployment itself, then writes each as a record with `forge deploy record
-<dry-run|rollback|deployment>` — a validating writer that refuses (writing nothing) rather than
-commit a malformed one — and commits it. `forge deploy --dry-run`/`--rollback-check` then read those
-records back for `G-Deliver`.
+and the deployment itself, then writes each as a record with
+`forge deploy record <dry-run|rollback|deployment>` — a validating writer that refuses (writing
+nothing) rather than commit a malformed one — and commits it.
+`forge deploy --dry-run`/`--rollback-check` then read those records back for `G-Deliver`.
 
 The ten gates FORGE ships (`fm-core`) are `G-Problem`, `G-Product`, `G-Design`, `G-Foundation`,
 `G-Ready`, `G-Verify`, `G-Stable`, `G-Integration` (L4 only), `G-Deliver`, `G-Operate` — run

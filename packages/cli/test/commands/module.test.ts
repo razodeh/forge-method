@@ -2,11 +2,12 @@
  * `forge module <list|info|add|remove|update>` (`19` §19.5, `PLAN-M11.md` P5).
  */
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 // Test-only (`*.test.ts` files are exempted from the "no bare tmpdir" rule — see
 // `packages/extensions/test/install/npm-fixture-registry.ts`'s own identical note).
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Writable } from 'node:stream';
 
@@ -24,7 +25,8 @@ import {
   type InstallOptions,
   type ModuleCommandContext,
 } from '../../src/commands/module.ts';
-import { cleanupAll, createTestProject, registerCleanup } from './upgrade/helpers.ts';
+import { gateCheck, gateList, type GateCommandContext } from '../../src/commands/run/gate-commands.ts';
+import { cleanupAll, createTestProject, registerCleanup, type TestProject } from './upgrade/helpers.ts';
 
 afterEach(cleanupAll);
 
@@ -741,5 +743,109 @@ describe('installBundleTree — round-2 critic fixes', () => {
       ? (await readdir(modulesDir)).filter((name) => name.startsWith('.install-staging-'))
       : [];
     expect(leftoverStaging).toEqual([]);
+  });
+});
+
+// `PLAN-M14.md` P22: the seven shipped module check files gain a real `appliesTo`/`severity`, so
+// installing a real, shipped module through `forge module add` attaches its own checks to a real gate
+// for real (`loadGateRegistry`, `PLAN-M14.md` P20) -- `gate check`/`gate list` are the real, unmodified
+// `@forge/cli/commands/run/gate-commands.ts` entry points a real `forge gate check`/`gate list` uses.
+describe('a real shipped module attaches its checks through a real gate (PLAN-M14.md P22)', () => {
+  const REAL_MODULES_DIR = fileURLToPath(new URL('../../../../modules/', import.meta.url));
+
+  function gateCtxFor(project: TestProject): GateCommandContext {
+    return {
+      paths: project.paths,
+      projectRoot: project.dir,
+      checksRoot: '.forge/checks',
+      agentsRoot: '.forge/agents',
+      runId: 'test-run',
+    };
+  }
+
+  it("forge module add fm-web attaches a11y:audit/bundle:size to the real G-Verify gate -- gate list shows both with source, gate check runs both (each fails with its own reason on a project with no dist/)", async () => {
+    const project = await createTestProject();
+    // fm-web's own module.yaml declares `requires: [fm-core]`.
+    await moduleAdd(
+      ctxFor(project),
+      'fm-core',
+      path.join(REAL_MODULES_DIR, 'fm-core'),
+      installOptions({ consent: { yes: true } }),
+    );
+    await moduleAdd(
+      ctxFor(project),
+      'fm-web',
+      path.join(REAL_MODULES_DIR, 'fm-web'),
+      installOptions({ consent: { yes: true } }),
+    );
+
+    const gates = await gateList(gateCtxFor(project));
+    const verify = gates.find((gate) => gate.id === 'G-Verify');
+    const a11y = verify?.checks.deterministic.find((check) => check.id === 'a11y:audit');
+    const bundle = verify?.checks.deterministic.find((check) => check.id === 'bundle:size');
+    expect(a11y).toMatchObject({ id: 'a11y:audit', source: 'modules/fm-web/checks/a11y.check.yaml' });
+    expect(bundle).toMatchObject({
+      id: 'bundle:size',
+      source: 'modules/fm-web/checks/bundle-size.check.yaml',
+    });
+
+    const report = await gateCheck(gateCtxFor(project), 'G-Verify');
+    expect(report.passed).toBe(false);
+    const a11yResult = report.checks.find((check) => check.checkId === 'a11y:audit');
+    const bundleResult = report.checks.find((check) => check.checkId === 'bundle:size');
+    // A fresh project has no `dist/`: both checks give a REAL verdict (their own `failOn` genuinely
+    // fired on cleanly-parsed output, `errors: 1` -- `DeterministicCheckResult.reason` is reserved for a
+    // fail-CLOSED reason, e.g. an unparseable/refused output, never populated here), and each printed
+    // its own stated `reason` naming the missing dist/ directory (`10` §10.3, `PLAN-M13.md` P35/P41: "a
+    // check must positively show success").
+    expect(a11yResult?.passed).toBe(false);
+    expect(a11yResult?.reason).toBeUndefined();
+    expect(JSON.parse(a11yResult?.stdout ?? '{}')).toMatchObject({
+      errors: 1,
+      reason: expect.stringContaining('no dist/ directory found') as unknown,
+    });
+    expect(bundleResult?.passed).toBe(false);
+    expect(bundleResult?.reason).toBeUndefined();
+    expect(JSON.parse(bundleResult?.stdout ?? '{}')).toMatchObject({
+      errors: 1,
+      reason: expect.stringContaining('no dist/ directory found') as unknown,
+    });
+  });
+
+  // `PLAN-M14.md` P22's own mutation evidence: `bundle:size` pointed at `G-Deliver` (a real, different
+  // shipped gate) instead of `G-Verify` -- `gate list` must show it attached where its OWN `appliesTo`
+  // now names, never where this piece's own content proposal originally placed it.
+  it('bundle:size re-pointed at G-Deliver attaches there instead of G-Verify (gate list reflects the check file, not a cached assumption)', async () => {
+    const project = await createTestProject();
+    const real = YAML.parse(
+      await readFile(path.join(REAL_MODULES_DIR, 'fm-web/checks/bundle-size.check.yaml'), 'utf8'),
+    ) as { appliesTo: { gates: readonly string[] } } & Record<string, unknown>;
+    const repointed = { ...real, appliesTo: { gates: ['G-Deliver'] } };
+
+    await writeFile(
+      project.paths.resolveWithin('.forge/manifest.yaml'),
+      'version: 1\nmodules:\n  - id: fm-web\n    version: "1.0.0"\n    checksum: "x"\n',
+    );
+    await mkdir(project.paths.resolveWithin('.forge/modules/fm-web/checks'), { recursive: true });
+    await writeFile(
+      project.paths.resolveWithin('.forge/modules/fm-web/checks/bundle-size.check.yaml'),
+      YAML.stringify(repointed),
+    );
+    // `a11y.check.yaml` stays unmutated, still real, still naming `G-Verify` for real.
+    await writeFile(
+      project.paths.resolveWithin('.forge/modules/fm-web/checks/a11y.check.yaml'),
+      await readFile(path.join(REAL_MODULES_DIR, 'fm-web/checks/a11y.check.yaml'), 'utf8'),
+    );
+
+    const gates = await gateList(gateCtxFor(project));
+    const verify = gates.find((gate) => gate.id === 'G-Verify');
+    const deliver = gates.find((gate) => gate.id === 'G-Deliver');
+    expect(verify?.checks.deterministic.some((check) => check.id === 'bundle:size')).toBe(false);
+    expect(deliver?.checks.deterministic.find((check) => check.id === 'bundle:size')).toMatchObject({
+      id: 'bundle:size',
+      source: 'modules/fm-web/checks/bundle-size.check.yaml',
+    });
+    // `a11y:audit` is untouched: still on G-Verify, proving the mutation is isolated to bundle:size alone.
+    expect(verify?.checks.deterministic.some((check) => check.id === 'a11y:audit')).toBe(true);
   });
 });
