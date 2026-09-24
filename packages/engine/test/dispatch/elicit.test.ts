@@ -626,6 +626,33 @@ describe('`show`: an elicit question can show a register entry an earlier step p
     expect(types).toContain('StepFailed');
   });
 
+  it('a configured reports root landing under a denied prefix (.git) fails RUN-105 as data, never an uncaught throw (CFG-004, round-2 critic)', async () => {
+    const projectRoot = await createTempRepo('show-denied-root');
+    const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+    const ctx = createTestContext({
+      projectRoot,
+      ask: port,
+      docRoots: {
+        kb: 'docs/kb',
+        specs: 'docs/specs',
+        plans: 'docs/plans',
+        sessions: 'docs/sessions',
+        // Real, schema-accepted input (pathsSchema puts no restriction on paths.reports, unlike
+        // paths.release) -- ProjectPaths.resolveWithin throws CFG-004 for a denied prefix, a different
+        // code than the CFG-003 case above, and readRegisterEntries must catch this one too.
+        reports: '.git',
+      },
+    });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-105');
+    expect(asked).toEqual([]);
+    const types = (await eventsOf(projectRoot, ctx.runId)).map((event) => event.type);
+    expect(types).toContain('StepFailed');
+  });
+
   it('an oversized field is clipped to a bounded line, not printed in full (critic round 1)', async () => {
     const projectRoot = await createTempRepo('show-long-line');
     const huge = `L2: ${'x'.repeat(1000)}`;

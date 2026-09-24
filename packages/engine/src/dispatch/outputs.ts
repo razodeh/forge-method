@@ -1230,11 +1230,14 @@ export interface RegisterEntry {
  * `REGISTER_SCHEMAS` nor `ENTRY_ONLY_SCHEMAS` has it, which also covers a type that is not
  * `collection: true` at all -- `validateStructure`'s own `elicit-show-not-a-register` already refuses
  * this at author time, so a real caller only ever reaches an empty result here for a genuine run-time
- * miss), `tree` cannot reach the configured root at all (`CFG-003` -- a relocated `paths.*` pointing
- * outside the project tree, `output-ids.ts`'s own `resolveWithinOrSkip` treats an unreachable root the
- * identical way), the register file does not exist under `tree`, or it does not parse. A caller
- * (`runElicit`) decides what an empty result means (`RUN-105`, before `ElicitationRequested`); this
- * function only ever describes what it found.
+ * miss), `tree` cannot reach the configured root at all -- `CFG-003` (escapes the project tree
+ * entirely: a relocated `paths.*` pointing outside it, `output-ids.ts`'s own `resolveWithinOrSkip`
+ * treats an unreachable root the identical way) or `CFG-004` (lands under a denied prefix: `.git/`,
+ * `.forge/state/`, `node_modules/` -- `pathsSchema` puts no restriction on `paths.kb`/`paths.reports`/
+ * etc., unlike `paths.release`, so `paths.reports: .git` is real, schema-accepted input a round-2
+ * critic found still threw uncaught here with only `CFG-003` caught) -- the register file does not
+ * exist under `tree`, or it does not parse. A caller (`runElicit`) decides what an empty result means
+ * (`RUN-105`, before `ElicitationRequested`); this function only ever describes what it found.
  */
 export async function readRegisterEntries(
   tree: string,
@@ -1253,7 +1256,7 @@ export async function readRegisterEntries(
   try {
     absolute = new ProjectPaths(tree).resolveWithin(relative);
   } catch (cause) {
-    if (isForgeError(cause) && cause.code === 'CFG-003') return [];
+    if (isForgeError(cause) && (cause.code === 'CFG-003' || cause.code === 'CFG-004')) return [];
     throw cause;
   }
   if (!(await pathExists(absolute))) return [];
