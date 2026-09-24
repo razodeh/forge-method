@@ -2780,7 +2780,10 @@ describe('forge implement / forge refactor / forge deploy (real subprocess dispa
       await execa('git', ['add', '-A'], { cwd: dir });
       await execa('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: dir });
       const forms = [
-        ['dry-run', ['--env', 'ENV-999', '--sha', 'a'.repeat(40), '--ran-at', '2050-01-01T00:00:00Z']],
+        [
+          'dry-run',
+          ['--env', 'ENV-999', '--sha', 'a'.repeat(40), '--ran-at', '2050-01-01T00:00:00Z'],
+        ],
         [
           'rollback',
           [
@@ -2994,7 +2997,11 @@ openQuestionsPolicy: warn
     await mkdir(path.join(dir, '.forge'), { recursive: true });
     await writeFile(path.join(dir, '.forge/config.yaml'), YAML.stringify(DEFAULT_CONFIG), 'utf8');
     await mkdir(path.join(dir, '.forge/checks'), { recursive: true });
-    await writeFile(path.join(dir, '.forge/checks', `${BASE_REF_GATE_ID}.gate.yaml`), BASE_REF_GATE_YAML, 'utf8');
+    await writeFile(
+      path.join(dir, '.forge/checks', `${BASE_REF_GATE_ID}.gate.yaml`),
+      BASE_REF_GATE_YAML,
+      'utf8',
+    );
     await writeFile(path.join(dir, '.gitignore'), '.forge/state/\n', 'utf8');
     await execa('git', ['add', '-A'], { cwd: dir });
     await execa('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: dir });
@@ -3016,7 +3023,9 @@ openQuestionsPolicy: warn
     const result = run(['gate', 'check', BASE_REF_GATE_ID, '--json', '-C', dir]);
     expect(result.status).toBe(3);
     const parsed = JSON.parse(result.stdout) as {
-      readonly report: { readonly checks: readonly { readonly checkId: string; readonly stdout: string }[] };
+      readonly report: {
+        readonly checks: readonly { readonly checkId: string; readonly stdout: string }[];
+      };
     };
     const check = parsed.report.checks.find((c) => c.checkId === 'base-ref-probe');
     expect(JSON.parse(check?.stdout ?? '{}')).toEqual({ ref: '', errors: 1 });
@@ -3031,7 +3040,9 @@ openQuestionsPolicy: warn
     });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
-      readonly report: { readonly checks: readonly { readonly checkId: string; readonly stdout: string }[] };
+      readonly report: {
+        readonly checks: readonly { readonly checkId: string; readonly stdout: string }[];
+      };
     };
     const check = parsed.report.checks.find((c) => c.checkId === 'base-ref-probe');
     expect(JSON.parse(check?.stdout ?? '{}')).toEqual({ ref: tip, errors: 0 });
