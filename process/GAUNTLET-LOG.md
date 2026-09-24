@@ -17817,3 +17817,73 @@ content proposal, not decided. `module.yaml`'s `checks:` lists are still not cro
 module's own real check-file `appliesTo` content (unchanged from `Q263`).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q265`.
+
+## M14 P23 — `forge deploy record <dry-run|rollback|deployment>`, a validating writer for the delivery records (`cli/bin.ts`, new `cli/commands/deploy-record.ts`, `cli/commands/deploy-evidence.ts`, the two `design-cicd-pipeline.md`/`design-deployment-strategy.md` briefs, `deliver-stage.workflow.yaml` comment, `specs/03` §3.2.5, `docs/method-guide.md`; new/edited tests in `cli/test/commands/deploy-record.test.ts`, `cli/test/bin.test.ts`)
+
+**Context.** `PLAN-M14.md` P23, depends on none. Validates a proposed dry-run/rollback/deployment record
+against the exact rules `deploy-evidence.ts`/`doctor/rules-delivery.ts` already enforce, and writes it
+only if every rule passes — before this piece the only way to produce
+`docs/forge/reports/deployments/<ENV-id>.*.json` was hand-authored JSON with no feedback until the next
+gate run.
+
+**Built.** `commands/deploy-record.ts` (new): `recordDryRun`/`recordRollback`/`recordDeployment`,
+validate-then-write, `{ok:true, written}` or `{ok:false, message, remedy}`, never partial. Six of
+`deploy-evidence.ts`'s private classifiers are exported (`STAGING`, `isTarget`, `isRehearsalTarget`,
+`isAncestor`, `commitProblem`, `instantProblem`, `rollbackProblem`) rather than duplicated;
+`recordRollback` runs the reused `rollbackProblem` in full against an in-memory `CommittedTree` holding
+the proposed record, so its ancestor/equal-sha/health checks are bit-identical to the check that reads it
+back later. `bin.ts` routes `args[0] === 'record'` unconditionally before `parseCommandFlags`, so an
+environment named "record" can never be deployed to; every refusal is `EXIT_CODES.usage` with a plain
+message+remedy (no new `ForgeError` code needed). The two delivery briefs and the workflow comment now
+name the literal commands the real pipeline runs; `03` §3.2.5 and `docs/method-guide.md` gain their own
+entries.
+
+**Tests.** `deploy-record.test.ts` (37 cases): each record makes its real check pass once committed;
+every refusal category the brief names writes no file and carries a remedy naming the flag; atomic
+replace; a record valid at write time later reported stale by the check once the repository changes
+further. `bin.test.ts`: no kind, unknown kind, missing flag, combined with `--dry-run`, all three forms
+refusing through the real CLI for an unknown environment.
+
+**Mutation evidence** (all four named in the brief, red then green): ancestor validation removed from
+`rollbackProblem`; write moved before validation in `recordDryRun`; a JSON key renamed; the rollback
+command deleted from `design-cicd-pipeline.md`. Two more mutations proved the critic-round fixes
+themselves load-bearing (see `SPEC-QUESTIONS.md` `Q266`).
+
+**Critic round 1.** Two real bugs, both fixed: (1) `recordRollback` gated `--env` on the broad `isTarget`
+instead of the narrower `isRehearsalTarget` `deployRollbackCheck` itself uses, so it could write a
+"successful" rollback record for a pure-production environment the check would then never read — fixed
+by exporting and gating on `isRehearsalTarget`. (2) `runDeployRecordCommand` built its context with no
+`documentRoots`, so it could spuriously refuse a record the real check (built a few lines away with the
+wide list) would have accepted — fixed by matching the wide list at both call sites. One disclosed,
+safe-direction-only gap (`recordDeployment` stricter than the check it models on two instant fields; the
+mandate's own general rule supports it) and two low-value nitpicks left as-is.
+
+**Critic round 2.** Confirmed both round-1 fixes hold (independently reproduced each original bug live
+in an isolated worktree). Two real, fixed quality gaps in the fix itself: the rollback remedy text still
+read "a delivery-target environment" after the gate narrowed (now names the real, not-positively-
+production constraint); the production-only regression test's health URL was left at STAGING's host, so
+it failed pre-fix for an unrelated reason rather than the real bug (now uses production's own host, and
+now fails pre-fix because the write actually succeeds). One disclosed tradeoff (the `documentRoots` fix
+has no CLI/subprocess-level regression test, only a unit test whose own doc comment says so; the two
+lists were independently diffed character-for-character instead). No round 3.
+
+**Decision.** Ship as built, both critic rounds' real bugs and both round-2 quality gaps fixed; the two
+disclosed items left as recorded tradeoffs, not code changes.
+
+**Discloses.** Records are self-attested; a later commit can make a record stale by the time a check next
+reads it, proven directly (a record valid when written is reported stale after a further commit lands).
+The `deliver-stage` run still fails at `deploy` until the pipeline has recorded for real; the Waiver on
+`G-Deliver` stays available. `recordDeployment` accepts any registered environment (not gated by
+`isTarget`), deliberately — its shape is what `skeletonDeployedViolations` reads for the development
+environment specifically, and `isTarget` excludes dev.
+
+**Shared-working-tree incident.** A `git commit --amend --no-edit` meant to fold a small formatting fix
+into this piece's own commit instead amended whatever commit HEAD had drifted to in the shared index at
+that moment (`M14 P22`'s own fresh commit) — caught immediately, both agents' content independently
+confirmed correct throughout (only the commit boundary was wrong), not rewritten further once more
+commits had stacked on top; full honest account, corroborated from the other side, in `SPEC-QUESTIONS.md`
+`Q265` and `Q266`. Every commit after the incident used a pathspec-limited `git commit -- <paths>`,
+verified against a fresh `git status` immediately beforehand, specifically so this class of mistake
+cannot repeat.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q266`.
