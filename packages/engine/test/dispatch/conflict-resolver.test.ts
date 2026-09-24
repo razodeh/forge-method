@@ -9,7 +9,7 @@
  * @see specs/20 §20.1, §20.5
  * @see PLAN-M14.md P38
  */
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -17,6 +17,7 @@ import { execa } from 'execa';
 import type { PlatformAdapter, SessionHandle, SessionRequest, SessionResult } from '@forge/adapter-kit';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents } from '@forge/telemetry/events';
+import { createLaneWorktree, processMergeCandidate, type MergeCandidate } from '@forge/vcs';
 import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
@@ -450,6 +451,232 @@ describe('createAgentConflictResolver -- end to end through the real merge queue
     ).toBe(true);
     expect(
       events.some((event) => event.type === 'UsageRecorded' && event.stepId === 'wf:produce'),
+    ).toBe(true);
+  });
+});
+
+// --- Critic round 1 findings (gauntlet loop) -------------------------------------------------------
+//
+// A fresh, context-free critic reproduced six real gaps against the round-1 version of this module, all
+// fixed (`fingerprint`/`fingerprintCandidates` replacing a bare git-status-code comparison, an ordinary-
+// file check on every conflicted path, a `node.kind` check, and an empty-`conflictedFiles` short circuit
+// -- `conflict-resolver.ts`'s own module doc comment has the fuller "what and why" for each) plus one
+// genuine, disclosed-not-fixed limitation (worktreePath/stepId pairing is trusted, not cross-checked).
+// These pin the fixed behaviour so none of the six can regress silently.
+
+describe('createAgentConflictResolver -- critic round 1: content tampering the git-status-code comparison alone would miss', () => {
+  it('an already-UNTRACKED file (present before the session, status "??" both before and after) whose CONTENT the session overwrites is refused MERGE-RESOLVER-OUT-OF-CLAIM, and the tampered content does not survive (deleted -- an untracked path has no HEAD version to restore, `revertOutOfClaimPath`\'s own two-case shape)', async () => {
+    const worktreePath = await conflictWorktree('untracked-tamper');
+    await writeFile(path.join(worktreePath, 'secret.env'), 'SAFE=1\n');
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId.endsWith(':resolve-conflict'), {
+      text: ['fixed it, and quietly rewrote an unrelated untracked file too'],
+      writeFiles: [
+        { relativePath: 'same.txt', content: 'merged content\n' },
+        { relativePath: 'secret.env', content: 'PWNED=1\n' },
+      ],
+    });
+    const ctx = await contextWithStep(adapter);
+    const resolver = createAgentConflictResolver(ctx);
+
+    await expect(
+      resolver(describeConflict(worktreePath, 'wf:step')),
+    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-OUT-OF-CLAIM' });
+    await expect(readFile(path.join(worktreePath, 'secret.env'), 'utf8')).rejects.toThrow();
+  });
+
+  it('the same untracked-content tamper is refused BEFORE the real merge queue would ever stage/commit it (git add -A never runs, since the resolver itself throws first)', async () => {
+    const projectRoot = await createTempRepo('untracked-tamper-escalation');
+    await writeFile(path.join(projectRoot, 'fileA.txt'), 'orig A\n');
+    await execa('git', ['add', '-A'], { cwd: projectRoot });
+    await execa('git', ['commit', '-q', '-m', 'seed fileA'], { cwd: projectRoot });
+    const baseSha = (await execa('git', ['rev-parse', 'HEAD'], { cwd: projectRoot })).stdout.trim();
+    const integrationPath = path.join(projectRoot, '.forge', 'state', 'integration');
+    await execa(
+      'git',
+      ['worktree', 'add', '--quiet', '-b', 'forge/integration/build', integrationPath, baseSha],
+      { cwd: projectRoot },
+    );
+    const handle = await createLaneWorktree(projectRoot, {
+      runId: 'run-escalation',
+      stepId: 'wf:step',
+      integrationBase: baseSha,
+    });
+    await writeFile(path.join(handle.path, 'fileA.txt'), 'lane A\n');
+    await execa('git', ['add', '-A'], { cwd: handle.path });
+    await execa('git', ['commit', '-q', '-m', 'lane commit'], { cwd: handle.path });
+    await writeFile(path.join(integrationPath, 'fileA.txt'), 'integration A\n');
+    await execa('git', ['add', '-A'], { cwd: integrationPath });
+    await execa('git', ['commit', '-q', '-m', 'integration change'], { cwd: integrationPath });
+    // Pre-exists in the lane worktree, untracked -- e.g. a real secret gitignored in the project root but
+    // never gitignored inside a freshly created worktree.
+    await writeFile(path.join(handle.path, 'secret.env'), 'SAFE=1\n');
+
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId.endsWith(':resolve-conflict'), {
+      text: ['fixed the conflict, and rewrote the untracked secret.env too'],
+      writeFiles: [
+        { relativePath: 'fileA.txt', content: 'merged content\n' },
+        { relativePath: 'secret.env', content: 'PWNED=1\n' },
+      ],
+    });
+    const stepNode = baseNode({
+      id: 'wf:step',
+      kind: 'agent',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 5 },
+    });
+    const base = createTestContext({ projectRoot, adapter, runId: 'run-escalation' });
+    const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[stepNode.id, stepNode]]) };
+    const resolver = createAgentConflictResolver(ctx);
+    const candidate: MergeCandidate = {
+      handle,
+      stepId: 'wf:step',
+      runId: 'run-escalation',
+      declaredClaim: [],
+      conflictPolicy: 'agent',
+    };
+
+    // `processMergeCandidate` preserves the resolver's own thrown value and aborts the rebase -- the
+    // whole landing never completes, so `secret.env` never reaches the integration branch at all.
+    await expect(
+      processMergeCandidate(candidate, {
+        integrationPath,
+        conflictResolver: resolver,
+        preChecks: [],
+        postChecks: [],
+      }),
+    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-OUT-OF-CLAIM' });
+    await expect(
+      execa('git', ['cat-file', '-e', 'HEAD:secret.env'], { cwd: integrationPath }),
+    ).rejects.toThrow();
+  });
+
+  it('an already-staged, non-conflicting TRACKED file (status "M " before and after) whose content the session further tampers with -- re-staged to keep the identical code -- is still caught by a real content comparison, not the status code', async () => {
+    const dir = await createTempRepo('staged-clean-tamper');
+    await writeFile(path.join(dir, 'other.txt'), 'original other\n');
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '-q', '-m', 'seed other.txt'], { cwd: dir });
+    await writeFile(path.join(dir, 'other.txt'), 'already staged, non-conflicting change\n');
+    await execa('git', ['add', 'other.txt'], { cwd: dir });
+    await writeFile(path.join(dir, 'same.txt'), CONFLICT_MARKERS);
+
+    const adapter = adapterWithStartSession(async (req) => {
+      await writeFile(path.join(req.cwd, 'same.txt'), 'merged\n');
+      await writeFile(path.join(req.cwd, 'other.txt'), 'a DIFFERENT tampered value, but re-staged\n');
+      await execa('git', ['add', 'other.txt'], { cwd: req.cwd }); // keeps its status at "M ", not "MM"
+      return emptyHandle('s', OK_RESULT);
+    });
+    const stepNode = baseNode({ id: 'wf:step', kind: 'agent' });
+    const base = createTestContext({ projectRoot: await freshProjectRoot('x'), adapter, runId: 'run-x' });
+    const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[stepNode.id, stepNode]]) };
+    const resolver = createAgentConflictResolver(ctx);
+
+    await expect(
+      resolver(describeConflict(dir, 'wf:step')),
+    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-OUT-OF-CLAIM' });
+    // Restored from HEAD (`revertOutOfClaimPath`'s own doc comment: what the lane worktree looked like
+    // right before this conflicting change was even attempted) -- not the intermediate, already-staged
+    // value that existed just before the session ran.
+    await expect(readFile(path.join(dir, 'other.txt'), 'utf8')).resolves.toBe('original other\n');
+  });
+
+  it('a conflicted (in-claim) path replaced by a symlink escaping the worktree is refused MERGE-RESOLVER-INVALID-CONTENT, not accepted as resolved', async () => {
+    const worktreePath = await conflictWorktree('symlink-escape');
+    const outsideDir = await mkdtemp(path.join(tmpdir(), 'conflict-resolver-outside-'));
+    const outsideFile = path.join(outsideDir, 'external-target.txt');
+    await writeFile(outsideFile, 'clean content, no markers, lives outside the worktree entirely\n');
+
+    const adapter = adapterWithStartSession(async (req) => {
+      const target = path.join(req.cwd, 'same.txt');
+      await execa('rm', ['-f', target]);
+      await symlink(outsideFile, target);
+      return emptyHandle('s', OK_RESULT);
+    });
+    const ctx = await contextWithStep(adapter);
+    const resolver = createAgentConflictResolver(ctx);
+
+    await expect(
+      resolver(describeConflict(worktreePath, 'wf:step')),
+    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-INVALID-CONTENT' });
+  });
+
+  it('a hand-built stepGraph node whose kind is not "agent" (but which carries an agent field anyway -- a malformed/adversarial shape no real compiler output produces) is refused MERGE-RESOLVER-NO-STEP, no session dispatched', async () => {
+    const worktreePath = await conflictWorktree('kind-mismatch');
+    let sawSession = false;
+    const adapter = adapterWithStartSession((req) => {
+      if (req.stepId.endsWith(':resolve-conflict')) sawSession = true;
+      return new FakePlatformAdapter().startSession(req);
+    });
+    const malformedNode = node({
+      id: 'wf:gate',
+      kind: 'gate',
+      gate: 'some-gate',
+      agent: toAgentId('engineer'),
+      brief: 'not actually an agent step',
+    });
+    const base = createTestContext({ projectRoot: await freshProjectRoot('x'), adapter, runId: 'run-kind' });
+    const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[malformedNode.id, malformedNode]]) };
+    const resolver = createAgentConflictResolver(ctx);
+
+    await expect(
+      resolver(describeConflict(worktreePath, 'wf:gate')),
+    ).rejects.toMatchObject({ code: 'MERGE-RESOLVER-NO-STEP' });
+    expect(sawSession).toBe(false);
+  });
+
+  it('an empty conflictedFiles list (a malformed/empty MergeConflictDescription) is reported unresolved, with no session dispatched -- never vacuously "resolved"', async () => {
+    const worktreePath = await conflictWorktree('empty-conflicted-set');
+    let sawSession = false;
+    const adapter = adapterWithStartSession((req) => {
+      if (req.stepId.endsWith(':resolve-conflict')) sawSession = true;
+      return new FakePlatformAdapter().startSession(req);
+    });
+    const ctx = await contextWithStep(adapter);
+    const resolver = createAgentConflictResolver(ctx);
+
+    const description: MergeConflictDescription = {
+      laneId: 'lane-1',
+      stepId: 'wf:step',
+      runId: 'run-1',
+      declaredClaim: [],
+      conflictedFiles: [],
+      diff: '',
+      worktreePath,
+    };
+    await expect(resolver(description)).resolves.toBe('unresolved');
+    expect(sawSession).toBe(false);
+    await expect(readFile(path.join(worktreePath, 'same.txt'), 'utf8')).resolves.toContain('<<<<<<<');
+  });
+
+  it('DISCLOSED, not fixed: worktreePath/stepId are trusted as a paired fact with no cross-check against ctx.laneRegistry -- a mismatched pair still runs a real session and spends real budget (true of every real caller in this codebase today, which always builds the pair correctly; recorded so this is a documented limitation, not a silent gap)', async () => {
+    const wrongWorktree = await conflictWorktree('mismatched-worktree');
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId.endsWith(':resolve-conflict'), {
+      text: ['resolved the wrong lane entirely'],
+      writeFiles: [{ relativePath: 'same.txt', content: 'merged\n' }],
+      costUsd: 0.42,
+    });
+    const stepNode = baseNode({
+      id: 'wf:real-step',
+      kind: 'agent',
+      limits: { maxTurns: 20, wallClockMs: 600_000, maxCostUsd: 1 },
+    });
+    const projectRoot = await freshProjectRoot('mismatch');
+    const base = createTestContext({ projectRoot, adapter, runId: 'run-mismatch' });
+    const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[stepNode.id, stepNode]]) };
+    const resolver = createAgentConflictResolver(ctx);
+
+    const outcome = await resolver(describeConflict(wrongWorktree, 'wf:real-step'));
+    expect(outcome).toBe('resolved');
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-mismatch')) events.push(event);
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'UsageRecorded' &&
+          event.stepId === 'wf:real-step' &&
+          (event.payload as { costUsd?: number }).costUsd === 0.42,
+      ),
     ).toBe(true);
   });
 });

@@ -33,23 +33,40 @@
  *    lane worktree did not move (`MERGE-RESOLVER-TREE-MOVED` — belt-and-braces against a platform whose
  *    own tool-grant enforcement is not airtight, or a future capability this grant does not yet cover),
  *    nothing outside the declared conflicted set changed (restored first, then
- *    `MERGE-RESOLVER-OUT-OF-CLAIM`), and no conflict markers remain in the files it was asked to fix.
- *    Only a session that passes every check is reported `'resolved'`; any other outcome — markers left,
- *    an unfixed unmerged path, the adapter itself throwing — is `'unresolved'`, not a thrown refusal: the
- *    ordinary "this conflict could not be resolved" outcome `06` §6.5 already has a home for
- *    (`MergeOutcome.conflict-unresolved{reason:'resolver-unresolved'}`), not a new failure mode.
+ *    `MERGE-RESOLVER-OUT-OF-CLAIM` — a real BYTE-CONTENT comparison, `fingerprint`'s own doc comment,
+ *    never merely the git status code: a gauntlet critic proved a status-code-only comparison misses a
+ *    session that tampers with an already-untracked or already-staged path's own content while keeping
+ *    its status code unchanged, and that such a miss is not merely "left on disk" but genuinely lands in
+ *    the real merge commit via `merge-queue.ts`'s own `git add -A`), every declared conflicted path that
+ *    still exists is an ordinary file, never a symlink or other special entry
+ *    (`MERGE-RESOLVER-INVALID-CONTENT` — the identical critic found a conflicted path replaced by a
+ *    symlink escaping the worktree was otherwise accepted as resolved), and no conflict markers remain in
+ *    the files it was asked to fix. Only a session that passes every check is reported `'resolved'`; any
+ *    other outcome — markers left, an unfixed unmerged path, the adapter itself throwing — is
+ *    `'unresolved'`, not a thrown refusal: the ordinary "this conflict could not be resolved" outcome `06`
+ *    §6.5 already has a home for (`MergeOutcome.conflict-unresolved{reason:'resolver-unresolved'}`), not a
+ *    new failure mode.
  *
- * The three refusal codes and the two verification codes below are dispatch-layer, unregistered codes —
- * the identical `MERGE-CONFLICT-UNRESOLVED`/`MERGE-PRE-CHECK-FAILED`/... precedent `integrate.ts` already
- * establishes for this whole merge-failure vocabulary (none of them fit `codes.ts`'s own closed ten-prefix
- * registry, `MERGE` among them) — carried here as a thrown `@forge/vcs` `VcsError` (itself a plain,
- * unregistered `{code,message,remedy}` triple, `errors.ts`'s own doc comment) rather than a `ForgeError`,
- * since `MergeConflictResolver`'s own return type has no room for a code on an ordinary `'unresolved'`
- * result: `processMergeCandidate`/`mergeIntoLane` both already preserve a resolver's own thrown value
- * exactly and abort the in-progress rebase/merge before letting it propagate (their own doc comments), so
- * throwing here is what turns into the caller's typed `StepFailureInfo{source:'vcs', code:'MERGE-
- * RESOLVER-*'}` via `runVcsStep` (`vcs-step.ts`) — the same path `VCS-MISSING-CONFLICT-RESOLVER` already
- * takes.
+ * The refusal and verification codes below are dispatch-layer, unregistered codes — the identical
+ * `MERGE-CONFLICT-UNRESOLVED`/`MERGE-PRE-CHECK-FAILED`/... precedent `integrate.ts` already establishes
+ * for this whole merge-failure vocabulary (none of them fit `codes.ts`'s own closed ten-prefix registry,
+ * `MERGE` among them) — carried here as a thrown `@forge/vcs` `VcsError` (itself a plain, unregistered
+ * `{code,message,remedy}` triple, `errors.ts`'s own doc comment) rather than a `ForgeError`, since
+ * `MergeConflictResolver`'s own return type has no room for a code on an ordinary `'unresolved'` result:
+ * `processMergeCandidate`/`mergeIntoLane` both already preserve a resolver's own thrown value exactly and
+ * abort the in-progress rebase/merge before letting it propagate (their own doc comments), so throwing
+ * here is what turns into the caller's typed `StepFailureInfo{source:'vcs', code:'MERGE-RESOLVER-*'}` via
+ * `runVcsStep` (`vcs-step.ts`) — the same path `VCS-MISSING-CONFLICT-RESOLVER` already takes.
+ *
+ * **Known, disclosed limitations** (a gauntlet critic round found these; neither is fixed here — see the
+ * gauntlet-log entry for the full reasoning): (1) `description.worktreePath`/`.stepId` are trusted as
+ * paired, caller-supplied facts with no cross-check against `ctx.laneRegistry` — true of every real
+ * caller in this codebase today (`processMergeCandidate`/`join.ts` both build the description from their
+ * own internal, correctly-paired `MergeCandidate`/`LaneHandle`), but not structurally enforced here; (2)
+ * the out-of-claim check enumerates candidate paths via `git status` (this module's own established
+ * convention), which does not list a `.gitignore`d path at all — a resolver session that tampers with an
+ * already-ignored file (never one `git add -A` would sweep into the landing commit, unlike the untracked
+ * case this piece does now catch) would not be caught by it.
  *
  * @see specs/06 §6.5
  * @see specs/05 §5.3, §5.5
@@ -57,7 +74,8 @@
  * @see specs/18 §18.4
  * @see PLAN-M14.md P38
  */
-import { readFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, readFile, readlink, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -144,6 +162,24 @@ function outOfClaimFailure(node: StepNode, paths: readonly string[]): VcsError {
   });
 }
 
+/** A gauntlet critic reproduced this for real: a conflicted (declared, IN-claim) path replaced by a
+ * symlink pointing outside the lane worktree entirely is not "outside the claim" by path name, but its
+ * real content is not merged file content at all -- accepting it as `'resolved'` would let a confined
+ * session smuggle an arbitrary filesystem escape through the one path it was explicitly allowed to touch.
+ * Never silently reverted (there is no well-defined "correct" content to revert a conflicted path TO --
+ * unlike an out-of-claim path, this one was always going to change): refused outright instead. */
+function invalidContentFailure(node: StepNode, path_: string): VcsError {
+  return new VcsError({
+    code: 'MERGE-RESOLVER-INVALID-CONTENT',
+    message:
+      `The conflict-resolution session for step "${node.id}" left "${path_}" as something other than an ` +
+      'ordinary file (a symlink or other special entry) -- refused, not treated as resolved.',
+    remedy:
+      'Inspect the lane worktree directly; the rebase/merge was aborted. A resolver session must resolve ' +
+      'a conflicted path to ordinary file content (or delete it), never a symlink or other special entry.',
+  });
+}
+
 /** (a): the step this conflict belongs to, or `undefined` when there is none to run a session for -- a
  * `<node.id>:decide` lane not (yet) in `ctx.stepGraph` (`P39`'s own DECIDE lane, or any conflict driven
  * with no compiled plan at all, `MergeConflictDescription.stepId`'s own doc comment), or an in-lane
@@ -168,9 +204,12 @@ async function remainingBudgetFor(ctx: ExecuteStepContext, node: StepNode): Prom
 
 /** `git status --porcelain=v1 -z` as a path -> XY-code map -- the identical simple (rename-naive, like
  * `merge-queue.ts`'s own `conflictStatuses` and `inline-tree.ts`'s own `readStatus`) parsing this
- * codebase already establishes for the identical shape of need. Used only to detect which paths a
- * session touched (out-of-claim check below), never to interpret a conflicted path's own status (that
- * is `description.conflictedFiles`, already computed by the caller). */
+ * codebase already establishes for the identical shape of need. Used only to ENUMERATE which paths might
+ * have been touched (a real byte-content comparison, `fingerprint` below, is what actually decides) --
+ * never to interpret a conflicted path's own status (that is `description.conflictedFiles`, already
+ * computed by the caller). A path git itself considers ignored is not enumerated here (the same default
+ * `git status` already applies) -- a known, narrower scope than a full filesystem walk would give,
+ * disclosed rather than silently assumed complete. */
 async function readStatusEntries(cwd: string): Promise<ReadonlyMap<string, string>> {
   const { stdout } = await execa('git', ['status', '--porcelain=v1', '-z'], { cwd });
   const entries = new Map<string, string>();
@@ -178,6 +217,69 @@ async function readStatusEntries(cwd: string): Promise<ReadonlyMap<string, strin
     entries.set(entry.slice(3), entry.slice(0, 2));
   }
   return entries;
+}
+
+/** A gauntlet critic demonstrated concretely that comparing only the two-character porcelain XY code
+ * before/after (this module's own first version) misses a session that overwrites an ALREADY-untracked
+ * file's content (its code stays `"??"` either way -- and, worse, that survives completely undetected
+ * into the real landing commit: `merge-queue.ts`'s own `stageResolution` runs `git add -A` once this
+ * module reports `'resolved'`, sweeping the tampered untracked file up with it) or one that re-stages an
+ * already-staged file with different content but an identical code (`"M "` -> `"M "`). Git's own status
+ * vocabulary answers "does this path differ from HEAD/the index," not "did its real content change,"
+ * which is a different question once a path already differed before the session ever ran -- so this
+ * compares actual bytes (or, for a symlink, its own target string), never the status code alone. */
+interface PathFingerprint {
+  readonly kind: 'missing' | 'file' | 'symlink' | 'other' | 'oversized';
+  readonly digest?: string | undefined;
+}
+
+const MISSING_FINGERPRINT: PathFingerprint = { kind: 'missing' };
+
+/** Bound on how much of a candidate file this reads to fingerprint it -- the identical `MAX_ARTIFACT_BYTES`
+ * figure `facades.ts`'s own `readAtRevision` already uses for "far beyond any real document." A file past
+ * this is fingerprinted as `'oversized'` (never read into memory) and, since two `'oversized'` entries
+ * never compare equal to each other either, is always conservatively treated as touched -- safe-by-default
+ * (a false positive here only means an unusually large stray file gets reverted/refused, never silently
+ * accepted) rather than reading an arbitrary amount of untrusted-sized data into memory to hash it. */
+const MAX_FINGERPRINT_BYTES = 8 * 1024 * 1024;
+
+function sameFingerprint(a: PathFingerprint, b: PathFingerprint): boolean {
+  return a.kind === b.kind && a.kind !== 'oversized' && a.digest === b.digest;
+}
+
+async function fingerprint(worktreePath: string, relPath: string): Promise<PathFingerprint> {
+  const target = path.join(worktreePath, relPath);
+  let stats;
+  try {
+    stats = await lstat(target);
+  } catch {
+    return MISSING_FINGERPRINT;
+  }
+  if (stats.isSymbolicLink()) {
+    const linkTarget = await readlink(target).catch(() => '');
+    return { kind: 'symlink', digest: createHash('sha256').update(linkTarget).digest('hex') };
+  }
+  if (!stats.isFile()) return { kind: 'other' };
+  if (stats.size > MAX_FINGERPRINT_BYTES) return { kind: 'oversized' };
+  const content = await readFile(target).catch(() => undefined);
+  if (content === undefined) return MISSING_FINGERPRINT;
+  return { kind: 'file', digest: createHash('sha256').update(content).digest('hex') };
+}
+
+/** Fingerprints every path `readStatusEntries` enumerates (excluding `allowed`, the declared conflicted
+ * set, which is never checked this way) -- called once before the session starts (`resolveOneConflict`)
+ * so the "before" byte content is captured before anything can change it. */
+async function fingerprintCandidates(
+  worktreePath: string,
+  status: ReadonlyMap<string, string>,
+  allowed: ReadonlySet<string>,
+): Promise<ReadonlyMap<string, PathFingerprint>> {
+  const result = new Map<string, PathFingerprint>();
+  for (const candidate of status.keys()) {
+    if (allowed.has(candidate)) continue;
+    result.set(candidate, await fingerprint(worktreePath, candidate));
+  }
+  return result;
 }
 
 async function resolveHead(cwd: string): Promise<string> {
@@ -202,10 +304,19 @@ async function lastForgeStepTrailer(cwd: string, relPath: string): Promise<strin
 
 /** Reverts one path a resolver session touched outside the declared conflicted set: restored from `HEAD`
  * (the lane worktree's own position mid-rebase/merge -- what it looked like right before this
- * conflicting change was even attempted) when it exists there, deleted otherwise (a file the session
- * itself created). The identical two-case shape `inline-tree.ts`'s own `restoreIntegrationTree` already
- * uses for the identical "put back what a step was never allowed to touch" need, scoped here to one path
- * at a time rather than everything not already dirty. */
+ * conflicting change was even attempted) when it exists there, deleted otherwise. The identical two-case
+ * shape `inline-tree.ts`'s own `restoreIntegrationTree` already uses for the identical "put back what a
+ * step was never allowed to touch" need, scoped here to one path at a time rather than everything not
+ * already dirty. The "delete" branch also covers an already-UNTRACKED path the session merely tampered
+ * with the CONTENT of (`fingerprint`'s own doc comment: real content, not the git status code, is what
+ * flags it here) -- such a path has no HEAD version to restore, so its own pre-tamper content is not
+ * recovered, only removed; this module keeps a content DIGEST of the "before" state
+ * (`fingerprintCandidates`), never the actual bytes, so there is nothing to write back even though the
+ * file legitimately held something before. Deletion still fully satisfies this function's own real
+ * purpose -- the tampered content never survives into what gets staged and landed -- and losing an
+ * untracked path's own pre-existing content this way is a strictly better outcome than a lane worktree
+ * that keeps stray untracked files around at all (`06` §6.4's own lane lifecycle has no legitimate reason
+ * for one to exist there in the first place). */
 async function revertOutOfClaimPath(worktreePath: string, relPath: string): Promise<void> {
   const atHead = await execa('git', ['cat-file', '-e', `HEAD:${relPath}`], {
     cwd: worktreePath,
@@ -439,21 +550,27 @@ async function runResolverSession(
 
 /** (c): every check runs regardless of the others having already failed -- an out-of-claim write is
  * restored even when HEAD also moved, so as little damage as possible survives whichever failure this
- * call reports. Throws (never returns) for the two guardrail violations (`MERGE-RESOLVER-TREE-MOVED`,
- * `MERGE-RESOLVER-OUT-OF-CLAIM`); returns `false` for "not actually resolved" (markers remain), `true`
- * for a real, clean resolution. */
+ * call reports. Throws (never returns) for the guardrail violations (`MERGE-RESOLVER-TREE-MOVED`,
+ * `MERGE-RESOLVER-OUT-OF-CLAIM`, `MERGE-RESOLVER-INVALID-CONTENT`); returns `false` for "not actually
+ * resolved" (markers remain), `true` for a real, clean resolution. */
 async function verifyResolution(
   node: StepNode,
   description: MergeConflictDescription,
   headBefore: string,
-  statusBefore: ReadonlyMap<string, string>,
+  fingerprintsBefore: ReadonlyMap<string, PathFingerprint>,
 ): Promise<boolean> {
   const headAfter = await resolveHead(description.worktreePath);
-  const statusAfter = await readStatusEntries(description.worktreePath);
   const allowed = new Set(description.conflictedFiles.map((file) => file.path));
-  const everyPath = new Set([...statusBefore.keys(), ...statusAfter.keys()]);
-  const touched = [...everyPath].filter((entry) => statusBefore.get(entry) !== statusAfter.get(entry));
-  const outOfClaim = touched.filter((entry) => !allowed.has(entry));
+  const statusAfter = await readStatusEntries(description.worktreePath);
+  const candidates = new Set(
+    [...fingerprintsBefore.keys(), ...statusAfter.keys()].filter((entry) => !allowed.has(entry)),
+  );
+  const outOfClaim: string[] = [];
+  for (const candidate of candidates) {
+    const before = fingerprintsBefore.get(candidate) ?? MISSING_FINGERPRINT;
+    const after = await fingerprint(description.worktreePath, candidate);
+    if (!sameFingerprint(before, after)) outOfClaim.push(candidate);
+  }
 
   if (outOfClaim.length > 0) {
     for (const entry of outOfClaim) await revertOutOfClaimPath(description.worktreePath, entry);
@@ -466,6 +583,21 @@ async function verifyResolution(
   if (headAfter !== headBefore) throw treeMovedFailure(node, headBefore, headAfter);
   if (outOfClaim.length > 0) throw outOfClaimFailure(node, outOfClaim);
 
+  // A gauntlet critic demonstrated concretely that a conflicted (in-claim) path replaced by a symlink
+  // escaping the worktree entirely was accepted as resolved: content-validity, not merely "the path name
+  // is on the allowed list," is what this checks. A path that no longer exists is a legitimate delete
+  // resolution (`hasConflictMarkers`'s own doc comment); one that exists but is not an ordinary file never is.
+  for (const file of description.conflictedFiles) {
+    const target = path.join(description.worktreePath, file.path);
+    let stats;
+    try {
+      stats = await lstat(target);
+    } catch {
+      continue;
+    }
+    if (!stats.isFile()) throw invalidContentFailure(node, file.path);
+  }
+
   for (const file of description.conflictedFiles) {
     if (await hasConflictMarkers(description.worktreePath, file.path)) return false;
   }
@@ -476,9 +608,20 @@ async function resolveOneConflict(
   ctx: ExecuteStepContext,
   description: MergeConflictDescription,
 ): Promise<'resolved' | 'unresolved'> {
+  // A gauntlet critic found a malformed/empty `conflictedFiles` (nothing to check at all) was vacuously
+  // reported `'resolved'` -- checked first, before any refusal or session, since there is nothing here
+  // worth spending a session on either way.
+  if (description.conflictedFiles.length === 0) return 'unresolved';
+
   // (a) Refuse before any session exists.
   const node = resolveNode(ctx, description.stepId);
-  if (node === undefined || node.agent === undefined) throw noStepFailure(description);
+  // A gauntlet critic found `node.kind` was never checked -- only `node.agent !== undefined` -- so a
+  // malformed `StepNode` of any other kind that happened to carry an `agent` field (which `compilePlan`'s
+  // own invariant should never itself produce, but this module has no way to verify that on its own) would
+  // still get a full confined session run against it.
+  if (node === undefined || node.kind !== 'agent' || node.agent === undefined) {
+    throw noStepFailure(description);
+  }
 
   let agent: AgentDefinition;
   try {
@@ -494,12 +637,21 @@ async function resolveOneConflict(
   if (remainingUsd <= 0) throw budgetFailure(node, remainingUsd);
 
   // (b) One confined session -- captured just before, so refusal-only calls above pay nothing extra.
+  // Fingerprints (real byte content, not merely the git status code -- `fingerprintCandidates`'s own doc
+  // comment) are captured here, before the session ever runs, so a path that was already dirty/untracked
+  // before this attempt still has its own real "before" content on record.
   const headBefore = await resolveHead(description.worktreePath);
+  const allowed = new Set(description.conflictedFiles.map((file) => file.path));
   const statusBefore = await readStatusEntries(description.worktreePath);
+  const fingerprintsBefore = await fingerprintCandidates(
+    description.worktreePath,
+    statusBefore,
+    allowed,
+  );
   const session = await runResolverSession(ctx, node, agent, description, remainingUsd);
   if (session === undefined || !session.ok) return 'unresolved';
 
   // (c) Verify -- only a session that both ended ok AND passes every check is ever reported resolved.
-  const resolved = await verifyResolution(node, description, headBefore, statusBefore);
+  const resolved = await verifyResolution(node, description, headBefore, fingerprintsBefore);
   return resolved ? 'resolved' : 'unresolved';
 }
