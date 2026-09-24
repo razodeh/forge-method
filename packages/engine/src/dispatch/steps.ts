@@ -312,9 +312,11 @@ export async function createLaneForStep(
   if (!base.ok) return base;
   const { tipSha, heads } = base.value;
 
-  // Checked before any git operation at all (not merely before each join's own message is built): the
-  // identical "reject before touching git" discipline `resolveRevision`'s own doc comment already
-  // establishes for a flag-shaped ref, applied here to a newline instead of a flag.
+  // Checked before any git operation THIS FUNCTION ITSELF performs -- `resolveLaneBase` above already
+  // ran its own read-only git calls (`resolveRevision`/`isAncestor`) to discover `heads` in the first
+  // place, but nothing writes anything, and no join message is ever built, before this: the identical
+  // "reject before touching git" discipline `resolveRevision`'s own doc comment already establishes for
+  // a flag-shaped ref, applied here to a newline instead of a flag.
   if (hasNewline(ctx.runId)) {
     return { ok: false, failure: invalidJoinFieldFailure('runId') };
   }
