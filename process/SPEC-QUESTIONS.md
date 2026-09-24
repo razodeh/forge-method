@@ -24236,3 +24236,178 @@ either) — only its failure path and its flag-reaches-git wiring are tested, th
 `commitInLane`'s own pre-existing `sign` test already accepted.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P37`.
+
+## Q268 — M14 P38: `conflictPolicy: agent` resolves a residual conflict with one confined session of the lane's own agent — a one-round critic (real, throwaway tests run against the real code, not just reading) found six real findings, all fixed (three of them a genuine security gap: a status-code-only comparison let a resolver session's content tampering of an already-dirty path survive undetected into the real landing commit); plus one separate, self-found consequence of the default wiring (three pre-existing tests corrected, not weakened)
+
+`createAgentConflictResolver(ctx)` (new `packages/engine/src/dispatch/conflict-resolver.ts`) returns a
+`MergeConflictResolver`; `runEngine` sets it as `ctx.conflictResolver` whenever the caller left it unset
+(the context copy that already sets `stepGraph`), so `conflictPolicy: 'agent'` now actually resolves a
+conflict instead of throwing `VCS-MISSING-CONFLICT-RESOLVER` — the first real caller of `Q264`/P35's own
+per-call `conflictResolver` seam, which that piece's own Discloses named explicitly as unbuilt until now.
+
+Given a `MergeConflictDescription`: (a) refuses before any session exists — no writable, agent-bearing
+step for the conflict in `ctx.stepGraph` (`MERGE-RESOLVER-NO-STEP`; also what an in-lane join always
+gets now, since `join.ts`'s own `JoinConflictDescription` never carries a `stepId` — `createLaneForStep`
+threads `ctx.conflictResolver` through to `mergeIntoLane` too, `MergeConflictResolver` being structurally
+wider than `JoinConflictResolver` needs no cast; still strictly better than the untyped
+`VCS-MISSING-CONFLICT-RESOLVER` a join under `agent`/`human` got before with no resolver at all), a
+read-only agent (`MERGE-RESOLVER-READ-ONLY`), or the step's own cost ceiling already spent
+(`MERGE-RESOLVER-BUDGET`, read fresh from the event log's own `UsageRecorded` sum so a second resolution
+on the same lane sees the first spent). (b) one confined session via `assembleAgentSession`
+(`callerConfinesWrites: true`, taint forced `'external'` so `restrictGrantForTaint` strips exec/network
+but keeps write, `role: 'resolve-conflict'`): block [4] names each conflicted path with its porcelain
+status and last `Forge-Step` trailer, the step and its brief, and the integration branch as the other
+side; the diff arrives fenced as untrusted content in the user turn, never the system prompt. Never
+commits — a sibling of `runAgentWork`, not a call to it; usage is recorded against the lane's own step
+id; a prompt record is persisted under `<stepId>:resolve-conflict`. (c) verifies before ever trusting the
+result: HEAD in the lane worktree unmoved (`MERGE-RESOLVER-TREE-MOVED`), nothing outside the declared
+conflicted set changed, every conflicted path that still exists is an ordinary file
+(`MERGE-RESOLVER-INVALID-CONTENT`), and no conflict markers remain. Only a session passing every check is
+`'resolved'`; anything else is `'unresolved'`, the ordinary `conflict-unresolved{reason:'resolver-
+unresolved'}` outcome, never a thrown refusal and never a crash. `landLane`'s own `MergeConflict{reason:
+'resolved'}` payload gains `resolvedBy` (which conflict policy actually resolved it — computed from
+`landLane`'s own argument, since `@forge/vcs`'s `MergeResolution` has no such concept and is not itself
+changed). `06` §6.5 step 2's own `agent` bullet is rewritten to describe the real mechanism instead of
+the unbuilt "spawn a merge-resolver step" placeholder it has carried since M5.
+
+**One-round critic (fresh, context-free; wrote and ran real, throwaway tests against the real code — a
+hand-built `MergeConflictDescription`/hostile `PlatformAdapter`, a real tmp-dir git repo, and one real
+end-to-end proof through `@forge/vcs`'s own `processMergeCandidate`): six real findings, all fixed; two
+confirmed non-bugs, kept as pinned regression tests; one genuine limitation disclosed, not fixed.**
+
+1-3 (blocking). The out-of-claim check compared only the two-character git porcelain status code
+   before/after the session. That misses: (a) a resolver session overwriting the CONTENT of an
+   already-untracked file (its code stays `"??"` either way — an entirely plausible shape: a stray
+   `.env`, a build artifact, anything a step left behind and never committed/gitignored); (b) the same
+   for an already-staged, non-conflicting tracked file the session re-stages after tampering (its code
+   stays `"M "` either way — the shape a real mid-rebase cherry-pick of a multi-file commit leaves for
+   its own non-conflicting files). Worse than "left on disk, undetected": the critic's own real
+   end-to-end test proved the tampered content survived into the actual landing merge commit, via
+   `merge-queue.ts`'s own `git add -A` once this module reported `'resolved'` — a real, if narrow,
+   supply-chain-shaped bug (arbitrary content smuggled into the integration branch through a path the
+   resolver was never asked to touch). Fixed by comparing real byte content (sha256 of file bytes, or a
+   symlink's own target string) for every candidate path git status enumerates — fingerprinted before the
+   session starts, compared after, never the status code. A candidate over 8 MiB is never read into
+   memory to hash (the identical `MAX_ARTIFACT_BYTES` figure `facades.ts`'s own `readAtRevision` already
+   uses); it fingerprints `'oversized'` and is always conservatively treated as touched (safe-by-default,
+   never silently accepted).
+4 (blocking). A conflicted (declared, in-claim) path replaced by a symlink escaping the worktree
+   entirely was accepted as `'resolved'` — nothing checked that a conflicted path still resolves to an
+   ordinary file after the session. Fixed: any conflicted path that exists but is not a regular file
+   refuses the whole resolution (new code `MERGE-RESOLVER-INVALID-CONTENT`) rather than being silently
+   accepted, or reverted (there is no well-defined "correct" content to revert a conflicted path to — it
+   was always going to change, unlike an out-of-claim path).
+5 (real, minor). `node.kind` was never checked, only `node.agent !== undefined` — a hand-built or
+   compiler-bug `StepNode` of any other kind carrying an `agent` field anyway would still get a full
+   confined session run against it. Fixed: `node?.kind !== 'agent'` now also refuses
+   `MERGE-RESOLVER-NO-STEP`.
+6 (real, minor). An empty `conflictedFiles` (a malformed/empty `MergeConflictDescription`) was
+   vacuously reported `'resolved'` — nothing was ever checked, since the marker-scan loop iterates zero
+   times over an empty list. Fixed: refused as `'unresolved'` before any session or refusal check runs,
+   no budget spent.
+
+Confirmed NOT bugs (kept as pinned regression tests, so a future regression is caught): a
+synchronously-throwing `adapter.startSession` (violating the `PlatformAdapter` contract, which no type
+system enforces against a misbehaving real adapter) is handled as `'unresolved'`, never an unhandled
+crash. Remaining budget at exactly `0.00` after a prior spend is correctly refused
+(`remainingUsd <= 0`), never treated as "still fine" by an off-by-one.
+
+Disclosed, not fixed (recorded in the module's own doc comment, not silently assumed impossible):
+`description.worktreePath`/`.stepId` are trusted as a caller-paired fact with no cross-check against
+`ctx.laneRegistry` — true of every real caller in this codebase today (`processMergeCandidate`/`join.ts`
+both build the description from their own internal, correctly-paired `MergeCandidate`/`LaneHandle`, never
+independently), so not reachable through any real call path, but not structurally enforced by this module
+itself either. The out-of-claim check enumerates candidate paths via `git status` (this module's own
+established convention, unchanged), which does not list a `.gitignore`d path at all — a resolver session
+that tampers with an already-ignored file (never swept into the landing commit by `git add -A` the way an
+untracked one is, so a narrower threat than findings 1-3) would not be caught by it.
+
+**A separate, real consequence found and fixed during the piece's own build (not the critic round).**
+Wiring the shipped default resolver into `runEngine` means it now ALWAYS occupies the per-call
+`ExecuteStepContext.conflictResolver` slot, which `MergeQueueFacade.process`/`VcsFacade.mergeIntoLane`
+both prefer unconditionally over a merely constructor-bound resolver (`createMergeQueueFacade`'s/
+`createVcsFacade`'s own second constructor argument, `facades.ts`, unchanged) — a configuration shape
+real production (`cli/src/commands/run/context.ts`'s own `buildRunEngineContext`) never uses (it always
+passes `undefined` there), confirmed directly; only a test-fixture knob three pre-existing tests relied
+on. Fixed by updating those three tests to use the mechanism that actually reaches a resolver through
+`runEngine` now: two in `lane-integration.test.ts` (one switched to the per-call `conflictResolver`
+field to keep proving "a resolved conflict completes the run"; one rewritten to assert the new, correct
+outcome — the shipped default wins, the constructor-bound resolver is never called) and one in
+`stacked-lanes.test.ts` (a join-conflict case, now correctly refused `MERGE-RESOLVER-NO-STEP` instead of
+the old, less specific `VCS-MISSING-CONFLICT-RESOLVER`, with a new `conflictResolver` field added to that
+file's own `ContextOptions` so its "with a real resolver" half still reaches one). `facades.ts`'s own
+preference logic is itself unchanged and still correctly tested directly (`merge.test.ts`'s own
+facade-level tests, which never go through `runEngine` at all, still reach a constructor-bound resolver
+exactly as before).
+
+**Mutation evidence (real: mutate, run the affected test, confirm real failure, restore via
+`git checkout --` against a real, already-committed prior commit, re-confirm green with `git diff
+--stat` empty).** Resolver not set by `runEngine` (the `ctx.conflictResolver ??
+createAgentConflictResolver(stepGraphCtx)` line reverted to `ctx.conflictResolver` alone): two
+`lane-integration.test.ts` tests failed exactly as predicted (`state.runStatus` flipped `'completed'` →
+`'failed'`; a resolve-conflict session count flipped `1` → `0`). Out-of-claim check removed (the `throw
+outOfClaimFailure(...)` line disabled): the dedicated out-of-claim unit test resolved a promise instead
+of rejecting it. Marker check removed (the `hasConflictMarkers` call disabled): the "markers left" test
+reported `'resolved'` instead of `'unresolved'` — the real `<<<<<<<` markers would land uncaught. HEAD
+check removed (the `treeMovedFailure` throw disabled): the rogue-git-commit test no longer rejected
+`MERGE-RESOLVER-TREE-MOVED`. Refusals removed (`readOnlyFailure`/`budgetFailure` throws both disabled):
+the read-only and budget tests both failed, a session dispatched where none should have (`calls` no
+longer `0` in either). Checks bypassed (one test's own `postChecks: 'exit 1'` changed to `'exit 0'`): the
+post-check-revert test's `status`/`code` assertions both failed, proving that test is genuinely tied to a
+real revert happening, not a vacuous pass. Every mutation above was restored with `git checkout --`
+against the real, already-committed source (never against uncommitted work — this piece's own real edits
+were committed first, per the standing rule) and the affected suite re-confirmed green before moving on.
+
+**Shared working tree.** Exact-file `git add` throughout, three commits: `9f2e7c0` (feat, the piece
+itself), `798f1a6` (fix, the critic round's six real findings), `63aa4ad` (fix, lint cleanup —
+`@typescript-eslint/prefer-optional-chain` and `no-unnecessary-boolean-literal-compare` in the source
+itself, and hand-built test `SessionHandle` fixtures brought in line with `agent.test.ts`'s own already-
+established shape instead of tripping `require-await`/`no-empty-function`). `git status --porcelain` was
+re-checked clean of every other concurrently-running piece's own files before each commit (P22/P23/P37/
+P29/P3 all had real, unrelated files dirty in this same shared tree at one point or another during this
+piece's own build; none were touched, and each committed diff's own actual blob content was verified via
+`git show <sha>:<path>`, not merely its hunk count). The critic's own scratch test file
+(`packages/engine/test/dispatch/SCRATCH-critic-conflict-resolver.test.ts`) was triaged (every finding
+reproduced for real, confirmed, then reworked into permanent regression tests with corrected assertions
+where the scratch file's own expected values were themselves slightly off) and deleted, never committed.
+
+The combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`) against the full repo
+intermittently runs out of memory in this environment for a reason unrelated to this piece's own work: a
+stray, untracked `.claude/worktrees/agent-a370e325b2a275dcc/` directory holds a full nested checkout of
+the entire monorepo (confirmed: a clean, detached-HEAD worktree, no uncommitted changes of its own), and
+`eslint.config.js`'s own `ignores` list (`**/dist/**`, `**/coverage/**`, `**/node_modules/**`,
+`**/.turbo/**`, `fixtures/**`) does not exclude `.claude/worktrees/**` — so a bare `pnpm lint` walks and
+lints that entire second copy of the repo too, roughly doubling ESLint's own memory footprint. Run with
+`NODE_OPTIONS=--max-old-space-size=8192`, the full combined command completes and is clean for every file
+this piece touches; the two remaining bare-`pnpm-lint` prettier warnings
+(`cli/src/commands/upgrade/run-upgrade.ts`, `cli/src/init/write-tree.ts`) trace via `git log -1` to
+concurrent, unrelated P3/P29 work in this same shared tree, not this piece — left untouched, per the
+standing "never fix another agent's dirty file" rule.
+
+**Rule 14/15.** Verified twice in two distinctly-named scratch worktrees, each removed afterward:
+`wt-p38-verify-conflictresolver` (after the feat + critic-fix commits) and
+`wt-p38-final-verify-conflictresolver` (after the final lint commit, `63aa4ad`) — `pnpm install --offline
+--frozen-lockfile`, the full monorepo `pnpm typecheck` (21/21 packages, both times), the scoped test
+files (`conflict-resolver.test.ts`, `classify.test.ts`, `run-engine.test.ts`, all green both times), and,
+isolated to this piece's own files (to avoid the `.claude/worktrees` OOM), `prettier --check`/`eslint
+--max-warnings 0` — clean at the final commit.
+
+**Decision.** Ship as built: the critic round's six real findings fixed and independently re-verified,
+the shipped-default-vs-constructor-bound-resolver consequence found, fixed and disclosed, no round 2
+needed (every finding in round 1 was fixed outright, not merely disclosed-and-deferred, and re-running the
+full scoped suite plus a fresh mutation pass after the fixes found nothing further).
+
+**Discloses.** `human` policy still has no resolver anywhere in real production wiring and still fails
+`VCS-MISSING-CONFLICT-RESOLVER` unchanged (confirmed directly against `context.ts`). `forge merge`
+(`cli/src/commands/run/merge.ts`) never resolves a conflict at all — unchanged, out of this piece's own
+Surface (`PLAN-M14.md` P40's own job). One session per conflicting commit, at most 5 per candidate
+(`merge-queue.ts`'s own pre-existing `maxResolutions`, unchanged by this piece) — the cap is a `conflict`
+failure, never a further retry. A session with exec could in principle still wreck a mid-rebase tree if
+some future adapter capability ever granted exec despite the taint clamp; `MERGE-RESOLVER-TREE-MOVED`'s
+own abort-on-detection is the belt-and-braces recovery for exactly that case, beyond the grant itself. A
+human's own hand-made integration commit has no `Forge-Step` trailer, so the prompt names only the file
+and its porcelain status for such a path, with no "last touched by" note. `description.worktreePath`/
+`.stepId` pairing is trusted, not cross-checked (the critic round, above). The out-of-claim check does not
+see `.gitignore`d tampering (the critic round, above).
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P38`.
