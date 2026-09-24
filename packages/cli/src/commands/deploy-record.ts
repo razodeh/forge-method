@@ -210,8 +210,10 @@ async function resolveEnvironment(
 function proposedTree(file: string, text: string): CommittedTree {
   return {
     files: new Map([[file, { oid: '0'.repeat(40), size: Buffer.byteLength(text, 'utf8') }]]),
-    read: async (path: string) =>
-      path === file ? { ok: true, text } : { ok: false, detail: `${path} is not committed` },
+    read: (path: string) =>
+      Promise.resolve(
+        path === file ? { ok: true, text } : { ok: false, detail: `${path} is not committed` },
+      ),
   };
 }
 

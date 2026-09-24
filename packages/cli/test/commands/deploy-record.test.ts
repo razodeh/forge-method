@@ -127,12 +127,12 @@ function expectWritten(outcome: DeployRecordOutcome, file: string): void {
   expect(outcome).toMatchObject({ ok: true, written: file });
 }
 
-async function expectRefused(
+function expectRefused(
   outcome: DeployRecordOutcome,
   dir: string,
   file: string,
   messageContains: string,
-): Promise<void> {
+): void {
   expect(outcome.ok, JSON.stringify(outcome)).toBe(false);
   if (outcome.ok) return;
   expect(outcome.message).toContain(messageContains);
@@ -208,7 +208,7 @@ describe('recordDryRun', () => {
     ];
     for (const [label, run, expected] of cases) {
       const outcome = await run();
-      await expectRefused(outcome, fx.dir, file('ENV-002'), expected);
+      expectRefused(outcome, fx.dir, file('ENV-002'), expected);
       if (!outcome.ok) {
         expect(outcome.remedy, label).toContain('--env');
         expect(outcome.remedy, label).toContain('--sha');
@@ -224,7 +224,7 @@ describe('recordDryRun', () => {
       sha: fx.base,
       ranAt: '2050-01-01T00:00:00Z',
     });
-    await expectRefused(outcome, fx.dir, file('ENV-002'), 'not committed');
+    expectRefused(outcome, fx.dir, file('ENV-002'), 'not committed');
   });
 
   it('atomically replaces an existing record with the latest write', async () => {
@@ -394,7 +394,7 @@ describe('recordRollback', () => {
     const fx = await project([DEV, STAGING, PROD]);
     const overrides = delta(fx);
     const outcome = await recordRollback(fx.ctx, { ...validFields(fx), ...overrides });
-    await expectRefused(outcome, fx.dir, file(overrides.env ?? 'ENV-002'), expected);
+    expectRefused(outcome, fx.dir, file(overrides.env ?? 'ENV-002'), expected);
     if (!outcome.ok) {
       expect(outcome.remedy).toContain('--from-sha');
       expect(outcome.remedy).toContain('--to-sha');
@@ -466,13 +466,13 @@ describe('recordDeployment', () => {
   ])('refuses %s, with a real reason and no file written', async (_label, delta, expected) => {
     const fx = await project([DEV]);
     const outcome = await recordDeployment(fx.ctx, { ...validFields(fx), ...delta(fx) });
-    await expectRefused(outcome, fx.dir, file('ENV-001'), expected);
+    expectRefused(outcome, fx.dir, file('ENV-001'), expected);
   });
 
   it('a development environment on a local address cannot have received a recorded deployment', async () => {
     const fx = await project([{ ...DEV, url: 'http://localhost:3000' }]);
     const outcome = await recordDeployment(fx.ctx, validFields(fx));
-    await expectRefused(outcome, fx.dir, file('ENV-001'), 'local address');
+    expectRefused(outcome, fx.dir, file('ENV-001'), 'local address');
   });
 });
 
