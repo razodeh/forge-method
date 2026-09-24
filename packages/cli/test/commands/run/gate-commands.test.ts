@@ -197,6 +197,42 @@ openQuestionsPolicy: warn
     expect(report.passed).toBe(false);
   });
 
+  // `PLAN-M14.md` P20: a failing, attached `warn` check never fails the gate, but is still reported —
+  // end to end, from an attached `*.check.yaml` through `gateCheck`'s own real evaluation to both the
+  // `--json`-shaped return value and the human-readable `formatGateReport` text.
+  it('a failing attached warn check leaves the gate passing, reported in warnings and in formatGateReport', async () => {
+    const project = await createTestProject();
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, 'G-Warn.gate.yaml'),
+      `id: G-Warn
+checks:
+  deterministic:
+    - id: ok
+      run: "echo '{\\"ok\\":true}'"
+      failOn: "!ok"
+  advisory: []
+openQuestionsPolicy: warn
+`,
+    );
+    await mkdir(path.join(project.dir, '.forge/overrides/checks'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/overrides/checks/acme.check.yaml'),
+      `id: acme:warn-only
+run: "echo '{\\"violations\\":1}'"
+failOn: "violations > 0"
+remedy: "fix it"
+appliesTo: { gates: [G-Warn] }
+severity: warn
+`,
+    );
+    const report = await gateCheck(ctx(project), 'G-Warn');
+    expect(report.passed).toBe(true);
+    expect(report.checks.every((check) => check.checkId !== 'acme:warn-only')).toBe(true);
+    expect(report.warnings).toHaveLength(1);
+    expect(report.warnings[0]).toMatchObject({ checkId: 'acme:warn-only', passed: false });
+    expect(formatGateReport(report)).toContain('WARN acme:warn-only');
+  });
+
   it('throws RUN-050 for an unregistered gate id', async () => {
     const project = await createTestProject();
     await expect(gateCheck(ctx(project), 'G-No-Such-Gate')).rejects.toMatchObject({

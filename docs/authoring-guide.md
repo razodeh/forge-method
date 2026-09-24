@@ -186,6 +186,15 @@ appliesTo: { gates: [G-Verify, G-Deliver] }
 severity: error
 ```
 
+A `*.check.yaml` file placed under `.forge/checks/`, `.forge/overrides/checks/` or an installed
+module's own `.forge/modules/<id>/checks/` genuinely attaches to every gate `appliesTo.gates` names
+the moment it is loaded — `gate list/check/approve/waive --json` show it there, each with the
+attaching file's own path as its `source`. `severity: error` (the default a project should reach
+for) behaves exactly like one of the gate's own declared checks: it can fail the gate.
+`severity: warn` never can — a failing `warn` check still runs for real and is still reported
+(`forge gate check`'s own output, and its own `warnings` list under `--json`), but nothing it does
+can block approval: it adds visibility, not a new way to fail the gate.
+
 A check must positively show success (`specs/10` §10.3, "Check contract"). It exits `0` or `1` and
 prints one JSON object; that object must not say it failed (`ok` other than `true`,
 `success: false`, a top-level `error`), and every field `failOn` reads must be present with the
@@ -197,7 +206,10 @@ that finds nothing to check has not passed. An exit code of `1` beside a clean b
 the body is a `forge` envelope (`{"v":1,...}`). The gate report records each check's stdout, exit
 code and stderr (sanitised and capped), and `forge gate check <id>` prints the `reason` of every
 failing check. A gate file with an unknown key (a misspelled `checks:`) or no deterministic check is
-refused when it is loaded, and `forge workflow validate --all` lists the problem.
+refused when it is loaded, and `forge workflow validate --all` lists the problem — a `*.check.yaml`
+file is held to the identical standard: an unknown key, an invalid value, or an `appliesTo.gates`
+naming a gate the project does not have is refused the same way (one broken check file blocks gate
+loading for every gate, not only its own), and `forge workflow validate --all` lists that too.
 
 A failing check without a `remedy` is a dead end for whichever agent hits it — always write one
 (`specs/19` §19.6). Built-in check thresholds (coverage minimum, complexity maximum, flake rate,

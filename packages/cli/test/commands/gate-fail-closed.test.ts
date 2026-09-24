@@ -6,8 +6,11 @@
  * renamed field on any check passed the gate (`10` §10.3 rule 1: a failing deterministic check can only be
  * waived). It now fails closed. That is only safe if no shipped check depends on the old behaviour: a check whose
  * OWN output lacks the field its `failOn` reads would fail on every project and force a waiver. This test derives
- * every check from the shipped YAML (`templates/checks/*.gate.yaml`, each module's `checks/*.check.yaml`), runs each,
- * and requires:
+ * every gate check from the shipped `templates/checks/*.gate.yaml` through the REAL `loadGateRegistry`
+ * (`PLAN-M14.md` P20's own loader — exercising the identical parse/attach path a real project's `.forge/checks/`
+ * goes through, not a second, hand-rolled YAML reader that could silently drift from it) plus each module's own
+ * `checks/*.check.yaml` (still hand-derived: the shipped module files carry no `appliesTo`/`severity` of their own
+ * yet — P22 — so they are not real attachable checks for the loader to find), runs each, and requires:
  *  - the commands the CLI still rejects are exactly the pinned set, and each of them evaluates to FAIL;
  *  - every other command exits 0 or 1, prints a JSON object, carries every path its `failOn` reads, and the
  *    evaluator gives it a REAL verdict (no fail-closed reason), with exit 0 exactly when it passes;
@@ -23,12 +26,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
+import { ProjectPaths } from '@forge/core/fs';
 import { runShellCommand } from '@forge/engine/dispatch';
 import { evaluateGate, type CheckRunner, type DeterministicCheckResult } from '@forge/engine/gates';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { execa } from 'execa';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import * as YAML from 'yaml';
+
+import { loadGateRegistry } from '../../src/commands/run/gates.ts';
 
 const run = promisify(execFile);
 const LAUNCHER = fileURLToPath(new URL('../../bin/forge.mjs', import.meta.url));
@@ -50,16 +56,30 @@ interface ShippedCheck {
   readonly failOn: string;
 }
 
+/** `loadGateRegistry` is memoised (real, one-time cost per process — the shipped gate files themselves
+ * never change mid-run), rooted directly at `packages/templates/templates/checks/` so `checksRoot` is
+ * `.` and the real loader reads exactly this test's own `CHECKS_DIR`, nothing else: that directory has
+ * no `.forge/overrides/checks/` or `.forge/manifest.yaml` of its own, so this exercises the plain
+ * `*.gate.yaml`-only path (the module checks below carry no `appliesTo` yet, P22, so they cannot attach
+ * for real regardless of root). */
+let templatesRegistry: ReturnType<typeof loadGateRegistry> | undefined;
+function shippedGateRegistry(): ReturnType<typeof loadGateRegistry> {
+  templatesRegistry ??= loadGateRegistry(new ProjectPaths(CHECKS_DIR), '.');
+  return templatesRegistry;
+}
+
 async function shippedChecks(): Promise<readonly ShippedCheck[]> {
   const checks: ShippedCheck[] = [];
-  for (const file of (await readdir(CHECKS_DIR))
-    .filter((name) => name.endsWith('.gate.yaml'))
-    .sort()) {
-    const gate = YAML.parse(await readFile(path.join(CHECKS_DIR, file), 'utf8')) as {
-      readonly id: string;
-      readonly checks: { readonly deterministic?: readonly Omit<ShippedCheck, 'source'>[] };
-    };
-    for (const check of gate.checks.deterministic ?? []) checks.push({ source: gate.id, ...check });
+  for (const gate of (await shippedGateRegistry()).values()) {
+    for (const check of gate.checks.deterministic) {
+      checks.push({
+        source: gate.id,
+        id: check.id,
+        run: check.run,
+        ...(check.parser === undefined ? {} : { parser: check.parser }),
+        failOn: check.failOn,
+      });
+    }
   }
   for (const module of (await readdir(MODULES_DIR)).sort()) {
     const dir = path.join(MODULES_DIR, module, 'checks');

@@ -3,6 +3,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { loadGateRegistry } from '../../src/commands/run/gates.ts';
 import { presetApply, presetEject, presetList, presetShow } from '../../src/commands/preset.ts';
 import { cleanupAll, createTestProject } from './upgrade/helpers.ts';
 
@@ -31,6 +32,24 @@ describe('presetApply', () => {
     const project = await createTestProject();
     const applied = await presetApply({ paths: project.paths }, 'solo-fast');
     expect(applied.files.length).toBeGreaterThan(0);
+  });
+
+  // `PLAN-M14.md` P20: `*.check.yaml` files attach to gates through `appliesTo` — the `regulated` preset's
+  // own `regulated-compliance-matrix.check.yaml` (`extensions/src/presets/registry.ts`) already declares
+  // `appliesTo: { gates: ['G-Design'] }`, so it should genuinely attach the moment it is applied, with no
+  // change needed to the preset itself.
+  it("the regulated preset's own compliance-matrix check attaches to G-Design through appliesTo", async () => {
+    const project = await createTestProject();
+    await presetApply({ paths: project.paths }, 'regulated');
+    const registry = await loadGateRegistry(project.paths, '.forge/checks');
+    const design = registry.get('G-Design');
+    const attached = design?.checks.deterministic.find(
+      (check) => check.id === 'regulated:compliance-matrix',
+    );
+    expect(attached).toMatchObject({
+      id: 'regulated:compliance-matrix',
+      source: 'overrides/checks/regulated-compliance-matrix.check.yaml',
+    });
   });
 });
 

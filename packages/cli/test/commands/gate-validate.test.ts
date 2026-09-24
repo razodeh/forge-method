@@ -32,6 +32,9 @@ afterEach(cleanupAll);
 
 const LAUNCHER = fileURLToPath(new URL('../../bin/forge.mjs', import.meta.url));
 
+/** `expect.stringContaining` is typed `any`; the assertion is a string match, so say so. */
+const like = (text: string): string => expect.stringContaining(text) as string;
+
 type Project = Awaited<ReturnType<typeof createTestProject>>;
 
 function ctxFor(project: Project) {
@@ -466,6 +469,108 @@ describe('gateValidateAll', () => {
     const project = await createProject();
     await rm(project.paths.resolveWithin('.forge/checks'), { recursive: true, force: true });
     expect([...(await gateValidateAll(ctxFor(project))).entries()]).toEqual([]);
+  });
+});
+
+// `PLAN-M14.md` P20: the identical strict standalone `*.check.yaml` validator `loadGateRegistry`'s own
+// check-attachment step refuses a check file for (`GATE-506`), reported here for every check file at
+// once instead of stopping at the first — findings are keyed by the check file's own `.forge/`-stripped
+// stem (never a real gate id: a check file may name several gates, or none the project actually has).
+describe('standalone *.check.yaml findings (appliesTo attachment)', () => {
+  async function writeOverrideCheck(project: Project, content: string): Promise<void> {
+    await mkdir(project.paths.resolveWithin('.forge/overrides/checks'), { recursive: true });
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/overrides/checks/acme.check.yaml'),
+      content,
+    );
+  }
+
+  it('an unknown key ("gate" instead of "gates") is unknown-check-key, with a did-you-mean', async () => {
+    const project = await createProject();
+    await writeOverrideCheck(
+      project,
+      'id: acme:x\nrun: "echo hi"\nfailOn: "a"\nremedy: "r"\nappliesTo: { gate: [G-Design] }\nseverity: error\n',
+    );
+    const issues = (await gateValidateAll(ctxFor(project))).get('overrides/checks/acme') ?? [];
+    expect(issues.map((issue) => issue.code)).toEqual(['unknown-check-key', 'invalid-check-value']);
+    expect(issues.map((issue) => issue.message).join('\n')).toContain('did you mean "gates"');
+    expect(issues.map((issue) => issue.message).join('\n')).toContain('acme.check.yaml');
+  });
+
+  it('a missing remedy is invalid-check-value', async () => {
+    const project = await createProject();
+    await writeOverrideCheck(
+      project,
+      'id: acme:x\nrun: "echo hi"\nfailOn: "a"\nappliesTo: { gates: [G-Design] }\nseverity: error\n',
+    );
+    const issues = (await gateValidateAll(ctxFor(project))).get('overrides/checks/acme') ?? [];
+    expect(issues).toEqual([
+      { code: 'invalid-check-value', severity: 'error', message: like('remedy') },
+    ]);
+  });
+
+  it('appliesTo naming a gate this project does not have is unknown-gate-in-appliesTo', async () => {
+    const project = await createProject();
+    await writeOverrideCheck(
+      project,
+      'id: acme:x\nrun: "echo hi"\nfailOn: "a"\nremedy: "r"\nappliesTo: { gates: [G-No-Such] }\nseverity: error\n',
+    );
+    const issues = (await gateValidateAll(ctxFor(project))).get('overrides/checks/acme') ?? [];
+    expect(issues).toEqual([
+      { code: 'unknown-gate-in-appliesTo', severity: 'error', message: like('G-No-Such') },
+    ]);
+  });
+
+  it('a well-formed check naming a real gate reports nothing', async () => {
+    const project = await createProject();
+    await writeOverrideCheck(
+      project,
+      'id: acme:x\nrun: "echo hi"\nfailOn: "a"\nremedy: "r"\nappliesTo: { gates: [G-Design] }\nseverity: error\n',
+    );
+    const results = await gateValidateAll(ctxFor(project));
+    expect(results.get('overrides/checks/acme')).toBeUndefined();
+  });
+
+  it('a genuinely missing checksRoot still reports override-check findings (independent scans)', async () => {
+    const project = await createProject();
+    await rm(project.paths.resolveWithin('.forge/checks'), { recursive: true, force: true });
+    await writeOverrideCheck(
+      project,
+      'id: acme:x\nrun: "echo hi"\nfailOn: "a"\nremedy: "r"\nappliesTo: { gates: [G-Design] }\nseverity: error\n',
+    );
+    // With `.forge/checks/` removed there is no real `G-Design` gate at all, so the override check's own
+    // `appliesTo` names an unknown gate -- proving the check-file scan runs even though `checksDir`
+    // itself does not exist (before this piece's own ordering fix, the whole function returned early on
+    // a missing `checksDir`, before ever looking at `.forge/overrides/checks/`).
+    const issues = (await gateValidateAll(ctxFor(project))).get('overrides/checks/acme') ?? [];
+    expect(issues).toEqual([
+      { code: 'unknown-gate-in-appliesTo', severity: 'error', message: like('G-Design') },
+    ]);
+  });
+
+  // `SPEC-QUESTIONS.md` Q229 D3's stance, extended to check files by this piece's own Discloses note:
+  // a real, shipped module's own check files carry no `appliesTo`/`severity` at all until `PLAN-M14.md`
+  // P22 -- `loadGateRegistry` (`gates.test.ts`'s own equivalent case) refuses every gate outright the
+  // moment one is installed, but `gateValidateAll` is the escape hatch the Discloses note names
+  // ("workflow validate --all says which"): it must NOT throw on the identical input, and must report
+  // exactly what is wrong with the file instead, diagnosably, for every gate at once.
+  it('installing a real shipped module (fm-mobile) does not throw here -- it reports the missing appliesTo/severity diagnosably', async () => {
+    const project = await createProject();
+    await writeFileAtomic(
+      project.paths.resolveWithin('.forge/manifest.yaml'),
+      'version: 1\nmodules:\n  - id: fm-mobile\n    version: "1.0.0"\n    checksum: "x"\n',
+    );
+    await cp(
+      path.join(REAL_MODULES_DIR, 'fm-mobile/checks'),
+      project.paths.resolveWithin('.forge/modules/fm-mobile/checks'),
+      { recursive: true },
+    );
+    const results = await gateValidateAll(ctxFor(project));
+    const issues = results.get('modules/fm-mobile/checks/device-matrix') ?? [];
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues.every((issue) => issue.code === 'invalid-check-value')).toBe(true);
+    expect(issues.map((issue) => issue.message).join('\n')).toContain('appliesTo');
+    expect(issues.map((issue) => issue.message).join('\n')).toContain('severity');
   });
 });
 

@@ -32,6 +32,12 @@ export interface DeterministicCheck {
   readonly run: string;
   readonly parser?: string;
   readonly failOn: string;
+  /** Set only for a check attached from a standalone `*.check.yaml` through `appliesTo`
+   * (`loadGateRegistry`, `PLAN-M14.md` P20) — its own `.forge/`-stripped display path (`overrides/checks/
+   * acme.check.yaml`, `modules/fm-web/checks/a11y.check.yaml`), what `gate list/check/approve/waive
+   * --json` show for it. Absent for a check declared inline in the gate's own `*.gate.yaml`, which has no
+   * separate file of its own to name. */
+  readonly source?: string;
 }
 
 /** `10` §10.3's own worked example (`architect-review`, `agent: critic`) — an LLM-dispatched check, not a
@@ -61,6 +67,14 @@ export interface GateDefinition {
   readonly checks: {
     readonly deterministic: readonly DeterministicCheck[];
     readonly advisory: readonly AdvisoryCheck[];
+    /** `severity: warn` checks attached from a standalone `*.check.yaml` (`loadGateRegistry`,
+     * `PLAN-M14.md` P20) — never populated by `parseGateDocument`/`validateGateDocument` (a hand-authored
+     * `*.gate.yaml`'s own `checks:` block has no `warnings` key of its own; `10` §10.3 is unchanged).
+     * `evaluateGate` runs these exactly like `deterministic` checks but reports their outcome in
+     * `GateEvaluationResult.warnings`, never in `checks` and never in `passed`. Absent, not `[]`, when a
+     * gate has none attached — the same "absent means none, never a fabricated empty array" convention
+     * `evidence` below already uses. */
+    readonly warnings?: readonly DeterministicCheck[];
   };
   readonly openQuestionsPolicy: 'block' | 'warn';
   /** `10` §10.3's `approval:` block, when the gate document carries one (`document.ts` reads it). Absent on a
@@ -132,6 +146,12 @@ export interface DeterministicCheckResult {
    * runner reported none, and when the command wrote nothing to it. */
   readonly stderr?: string;
   readonly reason?: string;
+  /** Carried straight through from the {@link DeterministicCheck} this result evaluates — see that
+   * field's own doc comment. Absent for the gate's own inline checks, present for one attached through
+   * `appliesTo` (`PLAN-M14.md` P20), so `gate check/approve/waive --json` can show it without this
+   * package's own `buildGateReport` (`report.ts`) needing any change: `GateReport.checks` is this exact
+   * type, unmodified. */
+  readonly source?: string;
 }
 
 /** `passed` is derived from `checks` alone (every deterministic check passing) — `06` §6.2 rule 2's own
@@ -161,6 +181,13 @@ export interface GateEvaluationResult {
   readonly openQuestionsPolicy: 'block' | 'warn';
   readonly waiver: Waiver | undefined;
   readonly waiverAppliedAt: number | undefined;
+  /** Every `severity: warn` check attached to this gate (`GateDefinition.checks.warnings`), run through
+   * the identical pipeline `checks` is (real command, real `failOn` evaluation, the same conservative
+   * fail-closed reasons) — `PLAN-M14.md` P20: "`warn` is reported, never fails." `passed` above is
+   * derived from `checks` alone, exactly as it always was; nothing here is ever consulted for it. `[]`,
+   * never absent, for a gate with none — the same "always present, empty when none" convention `checks`
+   * itself already uses. */
+  readonly warnings: readonly DeterministicCheckResult[];
 }
 
 /** `10` §10.3's own rule 1: "waivers require a reason, an owner, and an expiry." All three plain strings —

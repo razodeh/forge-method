@@ -16,9 +16,15 @@ export {
   type GateApprover,
 } from './approve.ts';
 export {
+  parseCheckDocument,
   parseGateDocument,
   suggestKey,
+  validateCheckDocument,
   validateGateDocument,
+  type CheckDocument,
+  type CheckDocumentProblem,
+  type CheckDocumentProblemCode,
+  type CheckDocumentResult,
   type GateDocumentProblem,
   type GateDocumentProblemCode,
   type GateDocumentResult,

@@ -27,6 +27,7 @@ import {
   renderGateReportFile,
   validateWaiverPolicy,
   waiverExceedsCap,
+  type DeterministicCheckResult,
   type GateApprovalSummary,
   type GateApprover,
   type GateDefinition,
@@ -253,7 +254,12 @@ async function writeGateReportFile(
 export async function gateCheck(
   ctx: GateCommandContext,
   gateId: string,
-): Promise<GateReport & { readonly reportPath: string }> {
+): Promise<
+  GateReport & {
+    readonly reportPath: string;
+    readonly warnings: readonly DeterministicCheckResult[];
+  }
+> {
   const definition = await findGateOrThrow(ctx, gateId);
   const evaluated = await evaluateFresh(ctx, definition);
   // `10` §10.3 rule 1: a waiver "appears in every report until resolved". The report shows the newest waiver this
@@ -268,7 +274,12 @@ export async function gateCheck(
     waiver === undefined ? evaluated : applyWaiver(evaluated, waiver, now),
   );
   const reportPath = await writeGateReportFile(ctx, definition, report, nowIso);
-  return { ...report, reportPath };
+  // `PLAN-M14.md` P20: `warn`-severity attached checks never affect `passed`/`approved` above, but they
+  // are still reported — the report itself (`GateReport`, `report.ts`) stays unchanged (rule 4's audit
+  // trail is about the checks that actually gate the outcome), so this evaluation's own `warnings` ride
+  // alongside it here, the identical "the evaluation this call actually ran" data `reportPath` already
+  // does.
+  return { ...report, reportPath, warnings: evaluated.warnings };
 }
 
 /** The newest recorded waiver for `gateId` that has not lapsed and covers every check failing in `evaluated`.
@@ -335,11 +346,17 @@ export function formatGateApproval(
 
 /** Human-mode `forge gate check`/`waive` output: the verdict, then for EVERY failing check its id, its exit code and
  * why it failed, so a person is not sent to `--json` to learn what went wrong (the fail-closed `reason` of
- * `PLAN-M13.md` P35, and the stderr the audit trail now keeps, `P41`), then the real `GateReport` document this
- * evaluation just wrote (`PLAN-M14.md` P17) — `reportPath` optional so a caller that hand-builds a `GateReport`
- * without one (a test fixture) still formats. A check whose own `failOn` tripped has no `reason`: the finding is
- * in its output, so the first line of that is shown instead. */
-export function formatGateReport(report: GateReport & { readonly reportPath?: string }): string {
+ * `PLAN-M13.md` P35, and the stderr the audit trail now keeps, `P41`), then every attached `warn` check that
+ * failed (`PLAN-M14.md` P20: reported, never a reason to refuse), then the real `GateReport` document this
+ * evaluation just wrote (`PLAN-M14.md` P17) — `reportPath`/`warnings` optional so a caller that hand-builds a
+ * `GateReport` without either (a test fixture) still formats. A check whose own `failOn` tripped has no
+ * `reason`: the finding is in its output, so the first line of that is shown instead. */
+export function formatGateReport(
+  report: GateReport & {
+    readonly reportPath?: string;
+    readonly warnings?: readonly DeterministicCheckResult[];
+  },
+): string {
   const lines = [`${sanitizeForTerminal(report.gateId)}: passed=${String(report.passed)}`];
   // A check's output is untrusted text shown in a terminal or a CI log: whitespace collapsed (a pretty-printed JSON
   // body is one line, not `{`), secret shapes redacted, escapes and control bytes stripped, then capped.
@@ -369,6 +386,16 @@ export function formatGateReport(report: GateReport & { readonly reportPath?: st
       }`,
     );
     if (check.stderr !== undefined) lines.push(`       stderr: ${oneLine(check.stderr)}`);
+  }
+  for (const warn of report.warnings ?? []) {
+    if (warn.passed) continue;
+    lines.push(
+      `  WARN ${oneLine(warn.checkId)} (exit ${String(warn.exitCode)}): ${
+        warn.reason === undefined
+          ? `its failOn matched; output: ${oneLine(warn.stdout)}`
+          : oneLine(warn.reason)
+      }`,
+    );
   }
   if (report.waiver !== undefined) {
     lines.push(
@@ -598,7 +625,12 @@ export async function gateApprove(
   gateId: string,
   reason?: string,
   options: ApproveOptions = {},
-): Promise<GateApprovalSummary & { readonly reportPath: string }> {
+): Promise<
+  GateApprovalSummary & {
+    readonly reportPath: string;
+    readonly warnings: readonly DeterministicCheckResult[];
+  }
+> {
   const definition = await findGateOrThrow(ctx, gateId);
   const clock = ctx.clock ?? SYSTEM_CLOCK;
   // Who may approve is decided BEFORE any check command runs: an approver the gate does not name should not be able
@@ -693,7 +725,9 @@ export async function gateApprove(
     evaluation: summary,
     reportPath,
   });
-  return { ...summary, reportPath };
+  // `PLAN-M14.md` P20: reported alongside the approval summary, exactly as `gateCheck` does above --
+  // `warn`-severity attached checks never affect approval (`approveGate` reads `evaluated.checks` only).
+  return { ...summary, reportPath, warnings: evaluated.warnings };
 }
 
 /** `reject <id>`: records `GateRejected`. Rejecting needs no identity the spec holds accountable (`10`
@@ -734,7 +768,12 @@ export async function gateWaive(
   ctx: GateCommandContext,
   gateId: string,
   input: WaiveInput,
-): Promise<GateReport & { readonly reportPath: string }> {
+): Promise<
+  GateReport & {
+    readonly reportPath: string;
+    readonly warnings: readonly DeterministicCheckResult[];
+  }
+> {
   const definition = await findGateOrThrow(ctx, gateId);
   const clock = ctx.clock ?? SYSTEM_CLOCK;
   // A waiver is what lets a failing gate be approved, so it is held to the gate's `approval` block like the
@@ -795,5 +834,7 @@ export async function gateWaive(
     reportPath,
   });
 
-  return { ...report, reportPath };
+  // `PLAN-M14.md` P20: reported alongside the waiver's own report, the identical "the evaluation this
+  // call actually ran" data `gateCheck`/`gateApprove` both carry too.
+  return { ...report, reportPath, warnings: evaluated.warnings };
 }

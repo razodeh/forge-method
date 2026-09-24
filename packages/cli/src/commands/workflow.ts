@@ -22,7 +22,8 @@ import {
 import { listResolvableContentReferences, resolveContentReference } from '@forge/agents/prompt';
 import { readAgentDefinition } from '@forge/agents/schema';
 import { artifactTypeById } from '@forge/schemas';
-import { validateGateDocument } from '@forge/engine/gates';
+import { validateCheckDocument, validateGateDocument } from '@forge/engine/gates';
+import { discoverCheckFiles } from './run/gates.ts';
 import {
   parseWorkflow,
   validateStructure,
@@ -259,13 +260,23 @@ export interface GateValidationIssue {
     // `loadGateRegistry` refuses a gate for (`GATE-506`), reported here for every gate at once.
     | 'unknown-gate-key'
     | 'invalid-gate-value'
-    | 'no-deterministic-checks';
+    | 'no-deterministic-checks'
+    // The identical, strict standalone `*.check.yaml` validator's own findings (`validateCheckDocument`,
+    // `PLAN-M14.md` P20): the same ones `loadGateRegistry`'s check-attachment step refuses a check file
+    // for (`GATE-506`), reported here for every check file at once, never stopping at the first.
+    | 'unknown-check-key'
+    | 'invalid-check-value'
+    // A structurally-valid check file whose `appliesTo.gates` names an id no real `*.gate.yaml` declares
+    // — `loadGateRegistry` itself refuses this the identical way (`GATE-506`), but only at real
+    // attachment time; this reports it statically, for every check file, alongside every other problem.
+    | 'unknown-gate-in-appliesTo';
   readonly severity: 'error';
   readonly message: string;
   readonly checkId?: string | undefined;
 }
 
 const GATE_FILE_SUFFIX = '.gate.yaml';
+const CHECK_FILE_SUFFIX = '.check.yaml';
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -306,11 +317,18 @@ export async function gateValidateAll(
     else existing.push(issue);
   };
 
+  // `PLAN-M14.md` P20: a missing `checksRoot` (no `*.gate.yaml` of its own yet) no longer short-circuits
+  // the whole function — `.forge/overrides/checks/`/`.forge/modules/<id>/checks/` are independent real
+  // directories a project can have without `checksRoot` existing at all (an unusual but real shape, and
+  // this function's own test fixtures build one directly without a real `forge init`), and the
+  // check-file scan below reads them regardless. A genuinely ABSENT `checksRoot` simply means zero real
+  // gate files, so `gateFiles` is `[]` rather than the whole call returning early.
   const checksDir = ctx.paths.resolveWithin(ctx.checksRoot);
-  if (!(await pathExists(checksDir))) return results;
-  const gateFiles = (await listDirEntriesSorted(checksDir)).filter(
-    (entry) => !entry.isDirectory && entry.name.endsWith(GATE_FILE_SUFFIX),
-  );
+  const gateFiles = (await pathExists(checksDir))
+    ? (await listDirEntriesSorted(checksDir)).filter(
+        (entry) => !entry.isDirectory && entry.name.endsWith(GATE_FILE_SUFFIX),
+      )
+    : [];
   const agentIds = await listAgentIds(ctx);
   const gateFileById = new Map<string, string>();
 
@@ -462,6 +480,48 @@ export async function gateValidateAll(
       }
     }
   }
+
+  // `PLAN-M14.md` P20: every standalone `*.check.yaml` this project's three check roots hold
+  // (`discoverCheckFiles`, the identical set `loadGateRegistry` itself attaches from) validated the same
+  // way the gate files above are — every problem reported, never stopping at the first, since one broken
+  // check file must not hide another's. Findings are keyed by the check file's own stem (never a real
+  // gate id: a check file may name several gates, or none a project actually has), matching this
+  // function's own `invalid-gate-file` precedent above for a gate file whose real id cannot be read.
+  for (const found of await discoverCheckFiles(ctx.paths, ctx.checksRoot)) {
+    const checkStem = found.source.endsWith(CHECK_FILE_SUFFIX)
+      ? found.source.slice(0, -CHECK_FILE_SUFFIX.length)
+      : found.source;
+    let parsed: unknown;
+    try {
+      parsed = YAML.parse(await readTextFile(ctx.paths.resolveWithin(found.relPath)));
+    } catch {
+      report(checkStem, {
+        code: 'invalid-check-value',
+        severity: 'error',
+        message: `Check file "${found.source}" is not parseable YAML.`,
+      });
+      continue;
+    }
+    const { document, problems } = validateCheckDocument(parsed);
+    for (const problem of problems) {
+      report(checkStem, {
+        code: problem.code === 'unknown-key' ? 'unknown-check-key' : 'invalid-check-value',
+        severity: 'error',
+        message: `Check file "${found.source}" is invalid at "${problem.key}": ${problem.message}.`,
+      });
+    }
+    if (document === undefined) continue;
+    for (const gateId of document.appliesTo.gates) {
+      if (!gateFileById.has(gateId)) {
+        report(checkStem, {
+          code: 'unknown-gate-in-appliesTo',
+          severity: 'error',
+          message: `Check "${document.id}" (${found.source}) applies to unknown gate "${gateId}".`,
+        });
+      }
+    }
+  }
+
   return results;
 }
 

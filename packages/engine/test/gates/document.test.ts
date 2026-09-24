@@ -2,12 +2,22 @@
  * `validateGateDocument` / `parseGateDocument` — a gate document read strictly (`PLAN-M13.md` P41, the P35 finding: a
  * misspelled `checks:` used to become an empty gate, which passes vacuously).
  *
+ * `validateCheckDocument` / `parseCheckDocument` (`PLAN-M14.md` P20) — a standalone `*.check.yaml`
+ * document (`15` §15.7's own worked example) read exactly as strictly.
+ *
  * @see specs/10 §10.3
+ * @see specs/15 §15.7
  * @see specs/15 §15.10 (I4)
  */
 import { describe, expect, it } from 'vitest';
 
-import { parseGateDocument, suggestKey, validateGateDocument } from '../../src/gates/document.ts';
+import {
+  parseCheckDocument,
+  parseGateDocument,
+  suggestKey,
+  validateCheckDocument,
+  validateGateDocument,
+} from '../../src/gates/document.ts';
 import { evaluateGate } from '../../src/gates/evaluate.ts';
 
 const CHECK = { id: 'a', run: 'x', failOn: 'errors > 0' };
@@ -224,5 +234,125 @@ describe('suggestKey', () => {
     expect(suggestKey('chekcs', ['id', 'checks'])).toBe('checks');
     expect(suggestKey('zz', ['id', 'in'])).toBeUndefined();
     expect(suggestKey('zzzzzz', ['checks'])).toBeUndefined();
+  });
+});
+
+// `PLAN-M14.md` P20: a standalone `*.check.yaml` (`15` §15.7's own "Custom gate checks" subsection).
+describe('validateCheckDocument', () => {
+  const SPEC_EXAMPLE = {
+    id: 'acme:licence-policy',
+    run: 'acme-licence-check --json',
+    parser: 'json',
+    failOn: 'violations > 0',
+    remedy:
+      'Run `acme-licence-check --explain` and either replace the dependency or file an exception.',
+    appliesTo: { gates: ['G-Verify', 'G-Deliver'] },
+    severity: 'error',
+  };
+
+  it("accepts 15 §15.7's own worked example verbatim", () => {
+    const { document, problems } = validateCheckDocument(SPEC_EXAMPLE);
+    expect(problems).toEqual([]);
+    expect(document).toEqual(SPEC_EXAMPLE);
+  });
+
+  it('accepts optional name/description, and an explicit parser: forge-json', () => {
+    const { document, problems } = validateCheckDocument({
+      ...SPEC_EXAMPLE,
+      name: 'Licence policy',
+      description: 'Fails when a disallowed licence is introduced.',
+      parser: 'forge-json',
+    });
+    expect(problems).toEqual([]);
+    expect(document).toMatchObject({
+      name: 'Licence policy',
+      description: 'Fails when a disallowed licence is introduced.',
+      parser: 'forge-json',
+    });
+  });
+
+  it('a check with no name/description at all carries neither field (not blank strings)', () => {
+    const { document } = validateCheckDocument(SPEC_EXAMPLE);
+    expect(document).not.toHaveProperty('name');
+    expect(document).not.toHaveProperty('description');
+  });
+
+  it('refuses appliesTo: { gate: ... } with a did-you-mean, and an empty appliesTo.gates', () => {
+    const misspelled = validateCheckDocument({
+      ...SPEC_EXAMPLE,
+      appliesTo: { gate: ['G-Verify'] },
+    });
+    expect(misspelled.document).toBeUndefined();
+    const unknownKey = misspelled.problems.find((p) => p.code === 'unknown-key');
+    expect(unknownKey?.key).toBe('appliesTo.gate');
+    expect(unknownKey?.message).toContain('did you mean "gates"');
+
+    const empty = validateCheckDocument({ ...SPEC_EXAMPLE, appliesTo: { gates: [] } });
+    expect(empty.document).toBeUndefined();
+    expect(empty.problems.map((p) => p.key)).toContain('appliesTo.gates');
+  });
+
+  it('refuses severity: fatal (only error/warn)', () => {
+    const { document, problems } = validateCheckDocument({ ...SPEC_EXAMPLE, severity: 'fatal' });
+    expect(document).toBeUndefined();
+    expect(problems.map((p) => p.key)).toEqual(['severity']);
+  });
+
+  it('refuses a missing remedy', () => {
+    const withoutRemedy: Record<string, unknown> = { ...SPEC_EXAMPLE };
+    delete withoutRemedy['remedy'];
+    const { document, problems } = validateCheckDocument(withoutRemedy);
+    expect(document).toBeUndefined();
+    expect(problems.map((p) => p.key)).toEqual(['remedy']);
+  });
+
+  it('refuses an unparseable failOn', () => {
+    const { document, problems } = validateCheckDocument({
+      ...SPEC_EXAMPLE,
+      failOn: 'violations >',
+    });
+    expect(document).toBeUndefined();
+    expect(problems.map((p) => p.key)).toEqual(['failOn']);
+  });
+
+  it('refuses parser: yaml (an unsupported parser, the evaluator would fail every run of it)', () => {
+    const { document, problems } = validateCheckDocument({ ...SPEC_EXAMPLE, parser: 'yaml' });
+    expect(document).toBeUndefined();
+    expect(problems.map((p) => p.key)).toEqual(['parser']);
+  });
+
+  it('rejects wrong-typed values and does not throw for hostile input', () => {
+    for (const doc of [null, 7, 'x', [], { id: 3 }]) {
+      expect(validateCheckDocument(doc).problems.length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('parseCheckDocument', () => {
+  it('throws GATE-506 naming the file and the first offending key', () => {
+    try {
+      parseCheckDocument({ id: 'x', run: 'x', failOn: 'a' }, 'acme.check.yaml');
+      expect.unreachable();
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'GATE-506' });
+      const message = (error as Error).message;
+      expect(message).toContain('acme.check.yaml');
+      expect(message).toContain('remedy');
+    }
+  });
+
+  it('a check the loader accepts has a real appliesTo.gates list', () => {
+    const document = parseCheckDocument(
+      {
+        id: 'acme:licence-policy',
+        run: 'acme-licence-check --json',
+        failOn: 'violations > 0',
+        remedy: 'fix it',
+        appliesTo: { gates: ['G-Verify'] },
+        severity: 'error',
+      },
+      'acme.check.yaml',
+    );
+    expect(document.appliesTo.gates).toEqual(['G-Verify']);
   });
 });

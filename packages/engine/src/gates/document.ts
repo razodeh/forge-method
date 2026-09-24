@@ -84,6 +84,20 @@ const EVIDENCE_KEYS = ['artifact'] as const;
 const ON_REJECT_KEYS = ['action', 'target'] as const;
 const AUTONOMY_OVERRIDES = new Set(['alwaysHuman', 'supervised', 'guided', 'autonomous']);
 
+/** `15` §15.7's "Custom gate checks" shape (`19` §19.1's own `checks/*.check.yaml` module layout row). */
+const CHECK_TOP_KEYS = [
+  'id',
+  'name',
+  'description',
+  'run',
+  'parser',
+  'failOn',
+  'remedy',
+  'appliesTo',
+  'severity',
+] as const;
+const APPLIES_TO_KEYS = ['gates'] as const;
+
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -472,4 +486,171 @@ export function parseGateDocument(raw: unknown, file: string): GateDefinition {
     });
   }
   return definition;
+}
+
+export type CheckDocumentProblemCode = 'unknown-key' | 'invalid-value';
+
+/** One thing wrong with a `*.check.yaml` document. `key` is the dotted path to it (`appliesTo.gates`). */
+export interface CheckDocumentProblem {
+  readonly code: CheckDocumentProblemCode;
+  readonly key: string;
+  readonly message: string;
+}
+
+export interface CheckDocumentResult {
+  /** Present only when the document has no problem at all. */
+  readonly document?: CheckDocument;
+  readonly problems: readonly CheckDocumentProblem[];
+}
+
+/** `15` §15.7's "Custom gate checks" shape (`19` §19.1's own `checks/*.check.yaml` module layout row): a
+ * standalone check that names, via `appliesTo.gates`, every gate it attaches to — rather than being
+ * declared inline inside a `*.gate.yaml`'s own `checks:` block. `packages/cli/src/commands/run/gates.ts`'
+ * `loadGateRegistry` (`PLAN-M14.md` P20) is the one real reader that turns this into an attached
+ * `DeterministicCheck` of every gate it names — `severity: error` joins `checks.deterministic` (the same
+ * array `evaluateGate`'s pass rule already reads, unmodified), `severity: warn` joins `checks.warnings`
+ * (evaluated the identical way but landing in `GateEvaluationResult.warnings`, `evaluate.ts`, and never
+ * `passed`). This module only reads the document's own shape, exactly as `validateGateDocument` does for
+ * a `*.gate.yaml` — never a project, a registry, or which gates actually exist. */
+export interface CheckDocument {
+  readonly id: string;
+  readonly name?: string;
+  readonly description?: string;
+  readonly run: string;
+  readonly parser?: string;
+  readonly failOn: string;
+  readonly remedy: string;
+  readonly appliesTo: { readonly gates: readonly string[] };
+  readonly severity: 'error' | 'warn';
+}
+
+/** `Collector.problems` is typed for the wider {@link GateDocumentProblemCode} (`no-deterministic-checks`,
+ * `duplicate-check-id`, an `advisoryShape` flag — none of which a check document's own validation below
+ * ever adds) so both validators can share one collector implementation; this narrows the codes back down
+ * for `CheckDocumentResult`'s own, smaller union, and drops the always-absent `advisoryShape`. */
+function asCheckProblems(
+  problems: readonly GateDocumentProblem[],
+): readonly CheckDocumentProblem[] {
+  return problems.map(({ code, key, message }) => ({
+    code: code as CheckDocumentProblemCode,
+    key,
+    message,
+  }));
+}
+
+/** Reads a parsed `*.check.yaml` document (`YAML.parse`'s own result, untrusted) into a
+ * {@link CheckDocument}, or says everything wrong with it — the identical "strict, itemised, never
+ * throws" shape {@link validateGateDocument} already establishes for a `*.gate.yaml`: a typo'd
+ * `appliesTo`/`severity` names the exact key rather than silently failing to attach anywhere, or (worse)
+ * attaching with a fabricated default. `appliesTo.gates` is checked here only for being a non-empty list
+ * of non-blank strings — whether each one actually names a real gate ("known", `15` §15.7) is a registry
+ * question this pure, file-less function cannot answer; `loadGateRegistry`/`gateValidateAll` check that
+ * once they have one. */
+export function validateCheckDocument(raw: unknown): CheckDocumentResult {
+  const out = new Collector();
+  if (!isRecord(raw)) {
+    out.add(
+      'invalid-value',
+      '(document)',
+      `must be a mapping of check fields, found ${describe(raw)}`,
+    );
+    return { problems: asCheckProblems(out.problems) };
+  }
+  out.strictKeys(raw, CHECK_TOP_KEYS, '');
+
+  const id = raw['id'];
+  if (!isNonBlankString(id)) {
+    out.add('invalid-value', 'id', `must be a non-blank string, found ${describe(id)}`);
+  }
+  const run = raw['run'];
+  if (!isNonBlankString(run)) {
+    out.add('invalid-value', 'run', `must be a non-blank string, found ${describe(run)}`);
+  }
+  // `19` §19.6: "For each check: a remedy string. A failing check without a remedy is a dead end."
+  const remedy = raw['remedy'];
+  if (!isNonBlankString(remedy)) {
+    out.add('invalid-value', 'remedy', `must be a non-blank string, found ${describe(remedy)}`);
+  }
+
+  const failOn = raw['failOn'];
+  if (!isNonBlankString(failOn)) {
+    out.add('invalid-value', 'failOn', `must be a non-blank string, found ${describe(failOn)}`);
+  } else {
+    const parsedFailOn = parseExpression(failOn);
+    if (!parsedFailOn.success) {
+      out.add(
+        'invalid-value',
+        'failOn',
+        `is not a valid expression (${parsedFailOn.error.message}), so the check could never pass`,
+      );
+    }
+  }
+
+  const parser = raw['parser'];
+  if (parser !== undefined && !isNonBlankString(parser)) {
+    out.add('invalid-value', 'parser', `must be a non-blank string, found ${describe(parser)}`);
+  } else if (isNonBlankString(parser) && !SUPPORTED_PARSERS.has(parser)) {
+    out.add(
+      'invalid-value',
+      'parser',
+      `names an unsupported parser "${parser}"; the supported ones are ${[...SUPPORTED_PARSERS].map((name) => `"${name}"`).join(', ')}`,
+    );
+  }
+
+  for (const field of ['name', 'description'] as const) {
+    const value = raw[field];
+    if (value !== undefined && typeof value !== 'string') {
+      out.add('invalid-value', field, `must be a string, found ${describe(value)}`);
+    }
+  }
+
+  const severity = raw['severity'];
+  if (severity !== 'error' && severity !== 'warn') {
+    out.add('invalid-value', 'severity', 'must be "error" or "warn"');
+  }
+
+  const appliesToRaw = raw['appliesTo'];
+  let gates: readonly string[] = [];
+  if (!isRecord(appliesToRaw)) {
+    out.add('invalid-value', 'appliesTo', `must be a mapping, found ${describe(appliesToRaw)}`);
+  } else {
+    out.strictKeys(appliesToRaw, APPLIES_TO_KEYS, 'appliesTo');
+    const gatesRaw = appliesToRaw['gates'];
+    if (!Array.isArray(gatesRaw) || gatesRaw.length === 0 || !gatesRaw.every(isNonBlankString)) {
+      out.add('invalid-value', 'appliesTo.gates', 'must be a non-empty list of gate ids');
+    } else {
+      gates = gatesRaw;
+    }
+  }
+
+  if (out.problems.length > 0) return { problems: asCheckProblems(out.problems) };
+  const document: CheckDocument = {
+    id: id as string,
+    ...(typeof raw['name'] === 'string' ? { name: raw['name'] } : {}),
+    ...(typeof raw['description'] === 'string' ? { description: raw['description'] } : {}),
+    run: run as string,
+    ...(isNonBlankString(parser) ? { parser } : {}),
+    failOn: failOn as string,
+    remedy: remedy as string,
+    appliesTo: { gates },
+    severity: severity as 'error' | 'warn',
+  };
+  return { document, problems: [] };
+}
+
+/** `validateCheckDocument`, throwing `GATE-506` — the identical code a malformed `*.gate.yaml` itself
+ * throws, since both are "a gate-adjacent file this project ships is structurally broken" (naming `file`
+ * and the first offending key) — when the document has any problem. */
+export function parseCheckDocument(raw: unknown, file: string): CheckDocument {
+  const { document, problems } = validateCheckDocument(raw);
+  const first = problems[0];
+  if (document === undefined || first !== undefined) {
+    throw new ForgeError('GATE-506', {
+      file,
+      key: first?.key ?? '(document)',
+      detail: first?.message ?? 'the document could not be read',
+      more: Math.max(0, problems.length - 1),
+    });
+  }
+  return document;
 }

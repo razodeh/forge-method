@@ -57,6 +57,7 @@ function failed(
     stdout,
     exitCode,
     ...(stderr === undefined ? {} : { stderr }),
+    ...(check.source === undefined ? {} : { source: check.source }),
     reason,
   };
 }
@@ -315,6 +316,7 @@ async function evaluateDeterministicCheck(
       stdout,
       exitCode,
       ...(stderr === undefined ? {} : { stderr }),
+      ...(check.source === undefined ? {} : { source: check.source }),
     };
   }
   if (exitCode !== 0 && exitCode !== 1) {
@@ -344,6 +346,7 @@ async function evaluateDeterministicCheck(
     stdout,
     exitCode,
     ...(stderr === undefined ? {} : { stderr }),
+    ...(check.source === undefined ? {} : { source: check.source }),
   };
 }
 
@@ -354,15 +357,26 @@ async function evaluateDeterministicCheck(
  * `passed` (`AdvisoryCheck`'s own doc comment has the fuller reasoning for why this piece stops there).
  * `openQuestionsPolicy` is likewise carried straight through — this piece produces no open-question data
  * of its own for it to police (advisory checks are never actually run here), so there is nothing yet for
- * "block" vs "warn" to act on; propagated for whichever later piece does generate that data. */
+ * "block" vs "warn" to act on; propagated for whichever later piece does generate that data.
+ *
+ * `checks.warnings` (`PLAN-M14.md` P20, attached `severity: warn` checks) run through the identical
+ * pipeline, concurrently with `checks.deterministic` — the same real command, the same conservative
+ * fail-closed reasoning — but their results land only in `warnings` below. `passed` is computed from
+ * `checks` alone, the exact same expression this function has always used: nothing about `warnings`'
+ * own presence or content is even consulted, so a failing warn check can never fail the gate. */
 export async function evaluateGate(
   gate: GateDefinition,
   cwd: string,
   runner: CheckRunner,
 ): Promise<GateEvaluationResult> {
-  const checks = await Promise.all(
-    gate.checks.deterministic.map((check) => evaluateDeterministicCheck(check, cwd, runner)),
-  );
+  const [checks, warnings] = await Promise.all([
+    Promise.all(
+      gate.checks.deterministic.map((check) => evaluateDeterministicCheck(check, cwd, runner)),
+    ),
+    Promise.all(
+      (gate.checks.warnings ?? []).map((check) => evaluateDeterministicCheck(check, cwd, runner)),
+    ),
+  ]);
   return {
     gateId: gate.id,
     passed: checks.every((check) => check.passed),
@@ -371,5 +385,6 @@ export async function evaluateGate(
     openQuestionsPolicy: gate.openQuestionsPolicy,
     waiver: undefined,
     waiverAppliedAt: undefined,
+    warnings,
   };
 }

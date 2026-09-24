@@ -287,4 +287,64 @@ describe('evaluateGate', () => {
     const result = await evaluateGate(g, '/repo', stubRunner({}));
     expect(result.openQuestionsPolicy).toBe('warn');
   });
+
+  // `PLAN-M14.md` P20: `checks.warnings` (attached `severity: warn` checks) run for real but never affect
+  // `passed` — "warn is reported, never fails."
+  describe('checks.warnings', () => {
+    it('a gate with no warnings attached reports an empty warnings array, never undefined', async () => {
+      const g = gate({
+        id: 'G-Test',
+        checks: { deterministic: [check({ id: 'a' })], advisory: [] },
+      });
+      const result = await evaluateGate(
+        g,
+        '/repo',
+        stubRunner({ a: { stdout: '{"errors":0}', exitCode: 0 } }),
+      );
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('a failing warn check leaves passed: true, with the failure recorded (a reason) only in warnings', async () => {
+      const g = gate({
+        id: 'G-Test',
+        checks: {
+          deterministic: [check({ id: 'a' })],
+          advisory: [],
+          warnings: [check({ id: 'w', failOn: 'errors > 0' })],
+        },
+      });
+      const runner = stubRunner({
+        a: { stdout: '{"errors":0}', exitCode: 0 },
+        // The warn check's own output does not even have the field its failOn reads: fail-closed, with a
+        // real, stated reason (`10` §10.3's own check contract), not a tripped failOn.
+        w: { stdout: '{}', exitCode: 0 },
+      });
+      const result = await evaluateGate(g, '/repo', runner);
+      expect(result.passed).toBe(true);
+      expect(result.checks).toHaveLength(1);
+      expect(result.checks.every((c) => c.checkId !== 'w')).toBe(true);
+      expect(result.warnings).toHaveLength(1);
+      expect(result.warnings[0]).toMatchObject({ checkId: 'w', passed: false });
+      expect(result.warnings[0]?.reason).toContain('errors');
+    });
+
+    it('never lets every warn check failing flip passed, even alongside a passing deterministic check', async () => {
+      const g = gate({
+        id: 'G-Test',
+        checks: {
+          deterministic: [check({ id: 'a' })],
+          advisory: [],
+          warnings: [check({ id: 'w1' }), check({ id: 'w2' })],
+        },
+      });
+      const runner = stubRunner({
+        a: { stdout: '{"errors":0}', exitCode: 0 },
+        w1: { stdout: '{"errors":5}', exitCode: 0 },
+        w2: { stdout: '{"errors":9}', exitCode: 0 },
+      });
+      const result = await evaluateGate(g, '/repo', runner);
+      expect(result.passed).toBe(true);
+      expect(result.warnings.every((w) => !w.passed)).toBe(true);
+    });
+  });
 });

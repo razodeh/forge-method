@@ -4,13 +4,18 @@
  *
  * @see specs/10 §10.3
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { cp, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { loadGateRegistry } from '../../../src/commands/run/gates.ts';
 import { CHECKS_ROOT, FIXTURE_GATE_ID, cleanupAll, createTestProject } from './helpers.ts';
+
+/** The real, shipped `modules/` directory this checkout ships — used by the real-module-install case
+ * below (`PLAN-M14.md` P20's own disclosed consequence, `SPEC-QUESTIONS.md`). */
+const REAL_MODULES_DIR = fileURLToPath(new URL('../../../../../modules/', import.meta.url));
 
 const PASSING_CHECK = `  deterministic:
     - id: ok
@@ -233,5 +238,184 @@ openQuestionsPolicy: block
     const registry = await loadGateRegistry(project.paths, CHECKS_ROOT);
     expect(registry.has('G-Nested')).toBe(false);
     expect(registry.has(FIXTURE_GATE_ID)).toBe(true);
+  });
+});
+
+// `PLAN-M14.md` P20: `*.check.yaml` files attach to gates through `appliesTo` — `.forge/checks/`,
+// `.forge/overrides/checks/` and `.forge/modules/<id>/checks/` for every manifest-listed module id,
+// independent of whatever `checksRoot` the caller passes for the gate files themselves (this fixture's
+// own `CHECKS_ROOT`, `docs/forge/checks`, deliberately is not under `.forge/`, proving the two are
+// unrelated).
+describe('*.check.yaml attachment through appliesTo', () => {
+  const ONE_CHECK = (id: string, gates: string, extra = ''): string =>
+    `id: ${id}\nrun: "echo '{\\"violations\\":0}'"\nfailOn: "violations > 0"\nremedy: "fix it"\nappliesTo: { gates: [${gates}] }\n${extra}`;
+
+  it('an override check attaches, showing its own .forge/-stripped path as source', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge/overrides/checks'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/overrides/checks/acme.check.yaml'),
+      `${ONE_CHECK('acme:licence-policy', FIXTURE_GATE_ID)}severity: error\n`,
+    );
+    const registry = await loadGateRegistry(project.paths, CHECKS_ROOT);
+    const attached = registry
+      .get(FIXTURE_GATE_ID)
+      ?.checks.deterministic.find((check) => check.id === 'acme:licence-policy');
+    expect(attached).toMatchObject({
+      id: 'acme:licence-policy',
+      source: 'overrides/checks/acme.check.yaml',
+    });
+  });
+
+  it('appliesTo naming an unknown gate is GATE-506 naming the file', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge/overrides/checks'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/overrides/checks/bad.check.yaml'),
+      `${ONE_CHECK('acme:x', 'G-No-Such-Gate')}severity: error\n`,
+    );
+    const error = await loadGateRegistry(project.paths, CHECKS_ROOT).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'GATE-506' });
+    expect((error as Error).message).toContain('bad.check.yaml');
+    expect((error as Error).message).toContain('G-No-Such-Gate');
+  });
+
+  it("a duplicate id (colliding with the gate's own check) is GATE-506", async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge/overrides/checks'), { recursive: true });
+    // `FIXTURE_GATE_YAML` (`helpers.ts`) declares the gate's own deterministic check as `always-ok`.
+    await writeFile(
+      path.join(project.dir, '.forge/overrides/checks/dup.check.yaml'),
+      `${ONE_CHECK('always-ok', FIXTURE_GATE_ID)}severity: error\n`,
+    );
+    const error = await loadGateRegistry(project.paths, CHECKS_ROOT).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'GATE-506' });
+    expect((error as Error).message).toContain('dup.check.yaml');
+  });
+
+  it('two check files attaching the same id to the same gate is GATE-506 on the second', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge/overrides/checks'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/overrides/checks/a.check.yaml'),
+      `${ONE_CHECK('acme:x', FIXTURE_GATE_ID)}severity: error\n`,
+    );
+    await writeFile(
+      path.join(project.dir, '.forge/overrides/checks/b.check.yaml'),
+      `${ONE_CHECK('acme:x', FIXTURE_GATE_ID)}severity: warn\n`,
+    );
+    const error = await loadGateRegistry(project.paths, CHECKS_ROOT).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'GATE-506' });
+  });
+
+  it("a manifest-listed module's own check attaches", async () => {
+    const project = await createTestProject();
+    await writeFile(
+      path.join(project.dir, '.forge/manifest.yaml'),
+      'version: 1\nmodules:\n  - id: acme-mod\n    version: "1.0.0"\n    checksum: "x"\n',
+    );
+    await mkdir(path.join(project.dir, '.forge/modules/acme-mod/checks'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/modules/acme-mod/checks/x.check.yaml'),
+      `${ONE_CHECK('acme:module-check', FIXTURE_GATE_ID)}severity: error\n`,
+    );
+    const registry = await loadGateRegistry(project.paths, CHECKS_ROOT);
+    const attached = registry
+      .get(FIXTURE_GATE_ID)
+      ?.checks.deterministic.find((check) => check.id === 'acme:module-check');
+    expect(attached).toMatchObject({ source: 'modules/acme-mod/checks/x.check.yaml' });
+  });
+
+  it('a module listed in the manifest but with no real checks/ of its own attaches nothing (tolerant)', async () => {
+    const project = await createTestProject();
+    await writeFile(
+      path.join(project.dir, '.forge/manifest.yaml'),
+      'version: 1\nmodules:\n  - id: no-checks-mod\n    version: "1.0.0"\n    checksum: "x"\n',
+    );
+    const registry = await loadGateRegistry(project.paths, CHECKS_ROOT);
+    expect(registry.get(FIXTURE_GATE_ID)?.checks.deterministic).toHaveLength(1);
+  });
+
+  it('a project with no manifest at all attaches nothing from .forge/modules/ (tolerant)', async () => {
+    const project = await createTestProject();
+    const registry = await loadGateRegistry(project.paths, CHECKS_ROOT);
+    expect(registry.get(FIXTURE_GATE_ID)?.checks.deterministic).toHaveLength(1);
+  });
+
+  it('a warn check attaches under checks.warnings, never checks.deterministic, and never GATE-506s on a real gate', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge/overrides/checks'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/overrides/checks/w.check.yaml'),
+      `${ONE_CHECK('acme:warn-only', FIXTURE_GATE_ID)}severity: warn\n`,
+    );
+    const registry = await loadGateRegistry(project.paths, CHECKS_ROOT);
+    const gate = registry.get(FIXTURE_GATE_ID);
+    expect(gate?.checks.deterministic.some((check) => check.id === 'acme:warn-only')).toBe(false);
+    expect(gate?.checks.warnings?.map((check) => check.id)).toEqual(['acme:warn-only']);
+    expect(gate?.checks.warnings?.[0]).toMatchObject({ source: 'overrides/checks/w.check.yaml' });
+  });
+
+  it('a malformed check file (missing remedy) is GATE-506 naming the file', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge/overrides/checks'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/overrides/checks/broken.check.yaml'),
+      'id: acme:x\nrun: "echo hi"\nfailOn: "a"\nappliesTo: { gates: [G-Always] }\nseverity: error\n',
+    );
+    const error = await loadGateRegistry(project.paths, CHECKS_ROOT).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'GATE-506' });
+    expect((error as Error).message).toContain('broken.check.yaml');
+  });
+
+  it('a project with no overrides/module checks at all attaches nothing (fully tolerant)', async () => {
+    const project = await createTestProject();
+    const registry = await loadGateRegistry(project.paths, CHECKS_ROOT);
+    expect(registry.get(FIXTURE_GATE_ID)?.checks.deterministic).toHaveLength(1);
+    expect(registry.get(FIXTURE_GATE_ID)?.checks.warnings).toBeUndefined();
+  });
+
+  it('a genuinely missing checksRoot still runs the override-check scan (checksRoot and the check roots are independent)', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge/overrides/checks'), { recursive: true });
+    await writeFile(
+      path.join(project.dir, '.forge/overrides/checks/acme.check.yaml'),
+      `${ONE_CHECK('acme:x', FIXTURE_GATE_ID)}severity: error\n`,
+    );
+    // `checksRoot` genuinely does not exist under this fresh project (a made-up path, never
+    // `docs/forge/checks`) -- with no real gate registered at all, `acme:x`'s own `appliesTo` names an
+    // unknown gate, so it is refused as GATE-506. Before this piece's own ordering fix, a missing
+    // `checksRoot` returned an empty registry immediately, WITHOUT ever looking at
+    // `.forge/overrides/checks/` at all -- this proves the check-root scan genuinely still runs.
+    const error = await loadGateRegistry(project.paths, 'no/such/checks/root').catch(
+      (e: unknown) => e,
+    );
+    expect(error).toMatchObject({ code: 'GATE-506' });
+    expect((error as Error).message).toContain('acme.check.yaml');
+    expect((error as Error).message).toContain(FIXTURE_GATE_ID);
+  });
+
+  // `SPEC-QUESTIONS.md` Q229 D3's stance, extended by this piece to check files (this piece's own
+  // Discloses note): a real, shipped module's own check files carry no `appliesTo`/`severity` at all
+  // until `PLAN-M14.md` P22 gives them one -- installing one today (`forge module add`, which really
+  // does copy a module's own `checks/` into `.forge/modules/<id>/checks/` verbatim, `module.ts:453-470`)
+  // makes `loadGateRegistry` refuse every gate, not merely leave the new check unattached. This is a
+  // reproduced, real, PINNED instance of that disclosed consequence -- once P22 lands and gives
+  // `fm-mobile`'s own `device-matrix.check.yaml` a real `appliesTo`/`severity`, this test starts failing
+  // (no more GATE-506), which is the correct, expected signal that the gap it pins has closed.
+  it('installing a real shipped module (fm-mobile) makes loadGateRegistry refuse every gate, until P22 gives its check an appliesTo/severity', async () => {
+    const project = await createTestProject();
+    await writeFile(
+      path.join(project.dir, '.forge/manifest.yaml'),
+      'version: 1\nmodules:\n  - id: fm-mobile\n    version: "1.0.0"\n    checksum: "x"\n',
+    );
+    await cp(
+      path.join(REAL_MODULES_DIR, 'fm-mobile/checks'),
+      path.join(project.dir, '.forge/modules/fm-mobile/checks'),
+      { recursive: true },
+    );
+    const error = await loadGateRegistry(project.paths, CHECKS_ROOT).catch((e: unknown) => e);
+    expect(error).toMatchObject({ code: 'GATE-506' });
+    expect((error as Error).message).toContain('modules/fm-mobile/checks/device-matrix.check.yaml');
   });
 });

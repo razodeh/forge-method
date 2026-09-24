@@ -28,6 +28,7 @@ function result(
     openQuestionsPolicy: 'block',
     waiver: undefined,
     waiverAppliedAt: undefined,
+    warnings: [],
     ...overrides,
   };
 }
