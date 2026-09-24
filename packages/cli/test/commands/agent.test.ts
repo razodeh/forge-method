@@ -214,9 +214,9 @@ describe('agentValidateAll — fixture roster', () => {
     // needed to exercise the warning branch.
     await agentNew({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'outputter', 'Outputter');
     const unregisteredFindings = async (): Promise<readonly AgentValidationFinding[]> =>
-      (await agentValidateOne({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'outputter')).filter(
-        (finding) => finding.code === 'unregistered-output-type',
-      );
+      (
+        await agentValidateOne({ paths: project.paths, agentsRoot: AGENTS_ROOT }, 'outputter')
+      ).filter((finding) => finding.code === 'unregistered-output-type');
     const first = await unregisteredFindings();
     expect(first).toHaveLength(1);
     expect(first[0]?.severity).toBe('warning');
@@ -229,8 +229,8 @@ describe('agentValidateAll — fixture roster', () => {
     await writeFileAtomic(
       project.paths.resolveWithin(relPath),
       text.replace(
-        "outputs:\n  - type: Report\n    schema: report.schema.json\n    path: report.md\n",
-        "outputs:\n  - type: Task\n    schema: task.schema.json\n    path: docs/forge/specs/tasks/TASK-*.md\n    cardinality: many\n",
+        'outputs:\n  - type: Report\n    schema: report.schema.json\n    path: report.md\n',
+        'outputs:\n  - type: Task\n    schema: task.schema.json\n    path: docs/forge/specs/tasks/TASK-*.md\n    cardinality: many\n',
       ),
     );
     expect(await unregisteredFindings()).toEqual([]);
@@ -239,7 +239,7 @@ describe('agentValidateAll — fixture roster', () => {
     await writeFileAtomic(
       project.paths.resolveWithin(relPath),
       (await readTextFile(project.paths.resolveWithin(relPath))).replace(
-        "outputs:\n  - type: Task\n    schema: task.schema.json\n    path: docs/forge/specs/tasks/TASK-*.md\n    cardinality: many\n",
+        'outputs:\n  - type: Task\n    schema: task.schema.json\n    path: docs/forge/specs/tasks/TASK-*.md\n    cardinality: many\n',
         "outputs:\n  - type: Code\n    schema: code-change.schema.json\n    path: 'src/**'\n",
       ),
     );
@@ -258,7 +258,7 @@ describe('agentValidateAll — fixture roster', () => {
       project.paths.resolveWithin(ownerRelPath),
       ownerText.replace(
         'parallel_safety:\n  file_ownership: []\n  exclusive: false\n',
-        "parallel_safety:\n  file_ownership:\n    - docs/forge/kb/decisions/**\n  exclusive: true\n",
+        'parallel_safety:\n  file_ownership:\n    - docs/forge/kb/decisions/**\n  exclusive: true\n',
       ),
     );
 
@@ -267,13 +267,15 @@ describe('agentValidateAll — fixture roster', () => {
     await writeFileAtomic(
       project.paths.resolveWithin(producerRelPath),
       producerText.replace(
-        "outputs:\n  - type: Report\n    schema: report.schema.json\n    path: report.md\n",
-        "outputs:\n  - type: ADR\n    schema: adr.schema.json\n    path: docs/forge/kb/decisions/ADR-*.md\n    cardinality: many\n",
+        'outputs:\n  - type: Report\n    schema: report.schema.json\n    path: report.md\n',
+        'outputs:\n  - type: ADR\n    schema: adr.schema.json\n    path: docs/forge/kb/decisions/ADR-*.md\n    cardinality: many\n',
       ),
     );
 
     const findings = await agentValidateAll({ paths: project.paths, agentsRoot: AGENTS_ROOT });
-    const overlapFindings = findings.filter((finding) => finding.code === 'output-ownership-overlap');
+    const overlapFindings = findings.filter(
+      (finding) => finding.code === 'output-ownership-overlap',
+    );
     expect(overlapFindings.length).toBeGreaterThan(0);
     for (const finding of overlapFindings) expect(finding.severity).toBe('error');
     // Both real agents are implicated (`overlapFindings`'s own established reasoning), not just the one
@@ -285,7 +287,9 @@ describe('agentValidateAll — fixture roster', () => {
       { paths: project.paths, agentsRoot: AGENTS_ROOT },
       'producer',
     );
-    expect(scopedToProducer.some((finding) => finding.code === 'output-ownership-overlap')).toBe(true);
+    expect(scopedToProducer.some((finding) => finding.code === 'output-ownership-overlap')).toBe(
+      true,
+    );
     const scopedToOwner = await agentValidateOne(
       { paths: project.paths, agentsRoot: AGENTS_ROOT },
       'owner',
@@ -349,9 +353,7 @@ describe('agentValidateAll — real, complete A2/A3 roster', () => {
         ['techwriter', 'Readme'],
         ['techwriter', 'DocsSet'],
       ];
-      expect(
-        findings.map((finding) => `${finding.agentId}:${finding.message}`).sort(),
-      ).toEqual(
+      expect(findings.map((finding) => `${finding.agentId}:${finding.message}`).sort()).toEqual(
         expectedUnregisteredOutputs
           .map(
             ([agentId, type]) =>

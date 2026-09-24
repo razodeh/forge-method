@@ -27,7 +27,12 @@ import {
 import { listResolvableContentReferences } from '@forge/agents/prompt';
 import { loadAgentDefinition } from '@forge/agents/schema';
 import type { AgentDefinition, AgentIssue } from '@forge/agents/schema';
-import { outputGlob, outputPathCoveredBy, readProjectAgent, type DocRoots } from '@forge/engine/dispatch';
+import {
+  outputGlob,
+  outputPathCoveredBy,
+  readProjectAgent,
+  type DocRoots,
+} from '@forge/engine/dispatch';
 import { globsOverlap } from '@forge/engine/plan';
 import { artifactTypeById } from '@forge/schemas';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
@@ -257,7 +262,8 @@ function outputOwnershipOverlapFindings(
     for (const output of producer.outputs) {
       const definition = artifactTypeById(output.type);
       if (definition === undefined) continue;
-      if (!outputPathCoveredBy(definition.id, roots, owner.parallel_safety.file_ownership)) continue;
+      if (!outputPathCoveredBy(definition.id, roots, owner.parallel_safety.file_ownership))
+        continue;
       const sample = outputGlob(definition.id, roots);
       findings.push({
         agentId: producer.id,

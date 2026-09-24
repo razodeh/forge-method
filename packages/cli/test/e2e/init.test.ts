@@ -120,7 +120,9 @@ describe('E1 init', () => {
     // `output-ownership-overlap`, `kb-write-overlap`, `ceiling-exceeded` or `unknown-*`/`schema` finding.
     const agentFindings = await agentValidateAll({ paths, agentsRoot: '.forge/agents' });
     expect(agentFindings.every((finding) => finding.severity === 'warning')).toBe(true);
-    expect(agentFindings.every((finding) => finding.code === 'unregistered-output-type')).toBe(true);
+    expect(agentFindings.every((finding) => finding.code === 'unregistered-output-type')).toBe(
+      true,
+    );
     const expectedUnregisteredOutputs: readonly (readonly [agentId: string, type: string])[] = [
       ['compliance', 'ComplianceMatrix'],
       ['critic', 'ObjectionList'],
@@ -130,9 +132,7 @@ describe('E1 init', () => {
       ['techwriter', 'Readme'],
       ['techwriter', 'DocsSet'],
     ];
-    expect(
-      agentFindings.map((finding) => `${finding.agentId}:${finding.message}`).sort(),
-    ).toEqual(
+    expect(agentFindings.map((finding) => `${finding.agentId}:${finding.message}`).sort()).toEqual(
       expectedUnregisteredOutputs
         .map(
           ([agentId, type]) =>
