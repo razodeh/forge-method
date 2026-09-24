@@ -18641,3 +18641,93 @@ uncommitted during its own final verification pass — resolved once this piece'
 content lost on either side.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q273`.
+
+## M14 P31 — A tainted step writes ADRs only as `status: proposed`; `forge adr accept` by a person confirms (`engine/src/dispatch/{outputs,assemble}.ts`, `engine/src/interaction/session.ts`, `engine/src/security/taint-guard.ts`, `cli/src/commands/adr.ts`, `cli/src/bin.ts`, `core/src/errors/codes.ts`; new/edited tests in `engine/test/dispatch/{output-contract,artifact-fixtures}.ts`, `engine/test/security/{taint-grant,s6-taint-enforcement}.test.ts`, `engine/test/interaction/dispatch-agent-step.test.ts`, `cli/test/commands/adr.test.ts`, `core/test/errors.test.ts`; `session.test.ts` landed inside a concurrent piece's own commit, see Discloses)
+
+**Context.** `PLAN-M14.md` P31, depends on the already-landed P27 (`StepNode.taint`) and P4 (the
+`FORGE_RUN_ID`/`FORGE_STEP_ID`/`FORGE_AGENT_ID` session marker); `20` §20.5 point 3 / `15` §15.5.4: a
+tainted step "cannot ... write ADRs without human confirmation."
+
+**Built.** `OutputCheckInput.node` (`dispatch/outputs.ts`) is widened with `taint`; `validateFile`'s
+generic per-file branch refuses, as a `validation`-class failure, any produced ADR whose `status` is not
+`proposed` when the producing step is tainted (`taintedAdrStatusProblem`), naming the file, the rule and
+the `forge adr accept <id>` remedy — gated on `type === 'ADR'` directly, run only after
+`documentProblems` has already validated the schema. `assemble.ts`'s `forbiddenActionsFor` (block [6])
+states the rule up front (`TAINTED_ADR_STATUS_NOTE`), read off `node.taint` directly rather than the
+`readOnly` param its own caller already folds taint into for `git_commit`/`deploy`. The engine's own ADR
+write-back for a `kind: session` DECIDE (`interaction/session.ts`'s `writeAdrBack`) takes a new
+`tainted: boolean` and pins `status: 'proposed'`/`'accepted'` accordingly, read off the real
+`deciderNode` actually dispatched, never the outer session node (which can never itself carry `taint`) —
+no real caller passes `true` today (disclosed, matching this piece's own Discloses), the write-back logic
+is simply correct and ready for a future real signal. `forge adr accept|reject|supersede`
+(`cli/src/commands/adr.ts`) refuse under the real FORGE session marker via a new shared
+`refuseUnderMarker`, the literal first statement in all three, throwing a new `KB-017` before any read,
+allocation or write — including before `adrSupersede`'s own `findAdrPath`/`adrNew` calls, so no stray
+replacement ADR is ever written under a refused marker. Unlike `forge gate`'s own `resolveApprover`,
+`forge adr` takes no `--run`, so ANY marker at all refuses (presence alone is the test); `buildAdrContext`
+(`bin.ts`) reuses the existing `gateCommandMarker`/`realEnvSnapshot` P4 infrastructure directly.
+`security/taint-guard.ts`'s own top-of-file doc comment (named in this piece's own Surface) is corrected
+to distinguish `20` §20.10 S6's own three-guard scope from `15`/`20`'s own longer four/five-item lists
+and attribute the ADR-writing consequence to where it is actually enforced.
+
+**Tests first.** `output-contract.test.ts`: tainted + `accepted` fails naming file/rule/remedy; tainted +
+`proposed` passes; untainted + `accepted` passes (control); every other real status
+(`rejected`/`superseded`/`deprecated`) refused too; `cardinality: many` checks every produced ADR.
+`taint-grant.test.ts`: block [6] states the note only when tainted. `dispatch-agent-step.test.ts`: a real
+`taintedByPeerOutput` debate-decider writing `accepted` fails (plus a `proposed` control).
+`s6-taint-enforcement.test.ts`: a REAL compiled tainted `adopt:reverse-derive-specs` node
+(`parseWorkflow`+`compilePlan`) writing `accepted` is refused; the identical real compile writing
+`proposed` succeeds. `session.test.ts`: the real untainted DECIDE case is pinned `accepted`; a
+hand-tainted DECIDE node is pinned `proposed`. `adr.test.ts`: `accept`/`reject`/`supersede` each refuse
+under a real marker and write nothing; a bare run/step marker refuses too; `adrNew` unaffected; no
+marker works exactly as before. `errors.test.ts`: `KB-017`'s `SAMPLE_DETAILS` addition exercised by the
+existing exhaustive per-code render loop.
+
+**Mutation evidence.** Five mechanisms, each broken against the real committed state (`f2c8fa1`), tests
+run red, restored via `git checkout --`, re-verified green: the tainted-ADR gate removed from
+`validateFile` — the three status-variant/`cardinality: many` cases fail; `taint` dropped at `checkOne`'s
+call into `validateFile` (hardcoded `false`) — five tests fail across all three real consumer paths
+(direct output check, real debate-decider dispatch, real compiled-adopt step), proving the plumbing from
+a real compiled/dispatched tainted step matters, not only the check's own internal logic;
+`writeAdrBack`'s `status` made unconditionally `'accepted'` — exactly the one `session.test.ts` case
+built to catch it fails; `refuseUnderMarker`'s body replaced with dead code — exactly the four
+marker-refusal tests in `adr.test.ts` fail, the twelve others untouched; block [6]'s note push replaced
+with dead code — exactly the one `taint-grant.test.ts` case fails.
+
+**Critic round 1** (fresh, context-free). Traced every taint-carrying code path by hand, read `specs/15`
+§15.5.4 and `specs/20` §20.5 point 3 directly, ran every touched test file plus `pnpm typecheck` itself
+(all green). Confirmed correct: taint threading into `OutputCheckInput`; scoping (`ADR` only, tainted
+only, after schema validation); the DECIDE write-back reading `deciderNode.taint`, not `node.taint`; the
+CLI marker refusal firing before any side effect and not touching `new`/`list`/`show`; the `KB-017`
+error's shape and spec quote; no "must not change" constraint violated. Found one real gap: this piece's
+own brief listed `security/taint-guard.ts:5-30 (doc)` in its own Surface, but the first diff never
+touched that file, leaving its "three named privileged actions" framing stale against the specs it
+cites. Fixed (see Built, above). Also named, not a defect in this piece: a tainted step whose `produces`
+claims a path without a matching declared `outputs:` entry gets no output check at all for whatever it
+writes there — a pre-existing characteristic of the whole declared-outputs architecture (P7/P8/P10/P11),
+out of this piece's own scope.
+
+**Critic round 2** (fresh, context-free, reviewing the round-1 fix-up diff only). Independently re-read
+both spec sections and confirmed the corrected doc comment's counts match exactly, word for word;
+confirmed internal consistency with the rest of `taint-guard.ts`; spot-checked
+`taintedAdrStatusProblem`/`writeAdrBack` directly to confirm the new prose's claims about them are
+accurate; ran `pnpm typecheck` and `npx prettier --check` itself. Found nothing new.
+
+**Discloses.** Whether a `kind: session` DECIDE should itself be tainted (`Q203` D8) is not decided;
+today's behaviour (always untainted in production) is pinned. Only ADRs are gated; no in-run elicitation.
+`KB-017` uses `EXIT_CODES.usage` (matching `KB-015`), not `EXIT_CODES.gateFailed` (which the closest
+sibling `GATE-510`/`GATE-511` use) — defensible, not a bug, a minor cross-family inconsistency. Two
+shared-working-tree incidents on `interaction/session.ts`/`session.test.ts` (the one file both this piece
+and the concurrent M14 P39, `mergeDecideLane`, needed), both disclosed, neither destructive: (1) a P39
+commit (`4841353`) landed its own `session.test.ts` tests and, along with them, swept up this piece's own
+then-uncommitted `session.test.ts` additions into that same commit — detected before this piece's own
+feat/fix commit, not re-committed separately (would duplicate or require rewriting another agent's own
+real commit); (2) this piece's own `git commit -- <exact paths>` for `f2c8fa1` then captured P39's own
+in-flight mutation-testing state for `mergeDecideLane` (temporarily reverted to prove P39's own tests
+catch its removal) alongside this piece's real changes, since both sat in the same working-tree file at
+that instant — P39 detected and fixed this themselves (`a23bb6f`), restoring their own region and leaving
+this piece's `writeAdrBack`/`writeSessionArtifactBack` untouched. Full detail (exact commits, detection
+method, final re-verification) in `SPEC-QUESTIONS.md` `Q274`; the final state was re-run green (53/53,
+`tsc --noEmit` on `@forge/engine` directly) after both incidents resolved.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q274`.
