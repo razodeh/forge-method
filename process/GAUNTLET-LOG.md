@@ -18554,3 +18554,90 @@ permissions failure on the constructor's own root would surface the identical wa
 mid-function failure now does.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q272`.
+
+## M14 P40 — `forge merge` lands lanes through `landLane` with the checks the run would have applied, never none (`cli/src/bin.ts`, `cli/src/commands/run/{merge,resume}.ts`, `engine/src/dispatch/{integrate,index,merge-checks}.ts`; new/edited tests in `cli/test/commands/run/merge.test.ts`, `cli/test/bin.test.ts`)
+
+**Context.** `PLAN-M14.md` P40, depends on the already-landed P35 (`ExecuteStepContext.conflictResolver`,
+`LaneHandle.baseSha/stackedOn/joinedFrom`) and sequenced after P38 (the real `agent` conflict resolver);
+`SPEC-QUESTIONS.md` Q232 decision 19.
+
+**Built.** `forge merge --lane/--all` (`packages/cli/src/commands/run/merge.ts`) used to hand the real
+merge queue an empty `{}` check set (`facade.process(candidate, {})` direct) — a manual land applied no
+check at all, however the run that left the lane `'ready'` had configured its own. `mergeLane`/
+`mergeAllReady` now land through `landLane` (`@forge/engine/dispatch`) with the pre/post checks the run
+would itself have applied: the run's manifest (`workflowId` + `expressionContext`) is recompiled fresh
+every call, the identical recompilation `resumeWorkflow` already does (`resume.ts:70-112`), and when the
+lane's own origin step falls inside a `merge` step's `mergeLandingScope` of that fresh compile, that
+step's declared `policy.preChecks`/`postChecks` is used, exactly what `runMergeStep` itself would have;
+otherwise `execution.mergeChecks`, the identical fallback `integrateLane` already uses for a lane no
+`merge` step lands. No manifest at all falls back the same way with no warning; a workflow that no longer
+parses or compiles (edited or deleted since) falls back with one. `--pre-checks`/`--post-checks
+<fast|full|layer|command>` override either side by name. Checks resolving to zero real commands on both
+sides is a new, `forge merge`-level refusal (`MERGE-CHECKS-UNCONFIGURED`, naming both sides), distinct
+from `resolveMergeChecks`'s own pre-existing per-set refusal — decision 19: "a merge with no configured
+test layers stays refused." The outcome gains `checks: {pre, post, skippedLayers}` and an optional
+`warning`.
+
+`landLane`/`resolveLaneChecks` (`integrate.ts`) now take a new, exported `LandLaneDeps` — the nine real
+fields they read off `ExecuteStepContext` — instead of the full type; `ExecuteStepContext` satisfies it
+structurally, so `runMergeStep`/`integrateLane` need no change. `forge merge` builds one directly from the
+real facades (`createVcsFacade`/`createTelemetryFacade`/`createMergeQueueFacade`), never
+`buildRunEngineContext`, so the same real event log a live run's own merge step would write is what
+`forge status`/`forge resume` see. `resume.ts`'s `readManifest` is exported for the identical
+recompilation and now wraps its own JSON read so a manifest that exists but cannot be parsed is `RUN-054`
+with the parse failure as `cause` — the identical missing-vs-unreadable distinction `context.ts`'s own
+`integrationBranchOfRun` already draws for the same file. `bin.ts`'s `runMergeCommand` gains
+`--pre-checks`/`--post-checks` and a launcher shim so merge-check commands carry the FORGE run marker
+(`PLAN-M14.md` P4), matching `runGateCommand`'s own pattern.
+
+**Tests first.** `merge.test.ts` (13, real facades, a real tmp-dir git repository, real worktrees, real
+events read back via `readEvents`): the run's own declared merge-step preCheck reapplied by default and
+still failing, naming what ran; `06` §6.5's own worked example (`preChecks: fast, postChecks: full`)
+landing with real `skippedLayers` on both sides; an override landing despite the declared check still
+failing, named, with `MergeStarted`/`MergeCompleted` recorded under the lane's own step id, not the merge
+step's; a lane in no merge step's scope falling back to `execution.mergeChecks`, naming it, both refused
+(an unconfigured named set) and landed (once configured); `MERGE-CHECKS-UNCONFIGURED` when neither side
+names anything at all; no manifest falling back with no warning; an unreadable manifest throwing
+`RUN-054`; a non-compiling workflow (edited, then genuinely deleted) falling back with a warning;
+`RUN-051` for an unknown lane id. `bin.test.ts` gains one real-subprocess case: `--pre-checks` with no
+value is `USR-002`, exit 2.
+
+**Mutation evidence.** All four the brief named, run against the real committed state, each broken, tests
+run red, restored via `git checkout --`: the checks/refusal/`landLane` block replaced by the pre-P40
+`facade.process(candidate, {})` direct call — 10 of 13 tests fail; recompilation skipped
+(`declaredChecksFor` always returning the fallback) — 5 tests fail, including, correctly, the `RUN-054`
+test (a corrupt manifest is never read when recompilation never runs, so it never throws — real evidence
+the two are genuinely coupled); the new "both zero" refusal removed — exactly the one test asserting it
+fails, cleanly isolated. Every mutation restored and re-verified green before the next.
+
+**Critic round 1** (fresh, context-free). Found no real bugs, fail-open paths or spec contradictions —
+confirmed the `LandLaneDeps`/`ExecuteStepContext` structural-typing claim field by field, confirmed the
+new refusal fires only when both sides genuinely resolve to zero commands, confirmed `bin.ts`'s diff
+touches nothing beyond `MERGE_FLAGS`/`runMergeCommand` (the shared-file risk this milestone's own
+orchestrator flagged), confirmed the missing-vs-unreadable-manifest split. Found three real gaps, all
+fixed: no test exercised a named check SET (`fast`/`full`) with partially-configured layers, so
+`skippedLayers` — explicitly named in the plan's own Tests-first text — was implemented but never
+exercised; `merge.ts` had its own local copy of the exact "map a command to its label" mapping
+`integrate.ts`'s `describeChecks` already had (extracted once, `checkLabelsOf`, `merge-checks.ts`,
+exported from `dispatch/index.ts`); the "workflow no longer compiles" fallback's own doc comment named
+two triggers (edited invalid, deleted) but only the edited case had a test (added: a genuinely deleted
+workflow file, a distinct `ENOENT` path through the same `catch`).
+
+**Critic round 2** (fresh, context-free, reviewing the round-1 fix-up diff). Independently re-derived
+`CHECK_SETS.fast`/`.full`'s own layer lists to confirm the new `skippedLayers` test's expected value is
+the mathematically correct set difference; grepped the whole repo for the old inline label mapping to
+confirm `checkLabelsOf` is now the one copy; ran the affected suites itself (13/13, 46/46). Found nothing
+new.
+
+**Discloses.** `codes.ts`'s fixed `RUN-054` message ("it was never started by a real `forge run`
+invocation") reads backwards for the new "manifest exists but is corrupt" case this piece adds a second
+real caller of — pre-existing (`context.ts`'s `integrationBranchOfRun` already reuses `RUN-054` the
+identical way for the identical file), not new misbehaviour, and fixing the wording would mean editing
+the shared error registry beyond this piece's own scope. `forge merge` never resolves a conflict of its
+own (`conflictPolicy` stays `'abort'`, unchanged); a stacked lane merged by hand keeps the full rebase
+unless the log shows every predecessor `removed` (both already named in the plan's own Discloses, Q226
+(g) pinned, unchanged here). A concurrent piece (M14 P41) observed this piece's own `merge.ts` mid-flight
+uncommitted during its own final verification pass — resolved once this piece's own commits landed, no
+content lost on either side.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q273`.
