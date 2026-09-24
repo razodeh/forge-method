@@ -82,9 +82,7 @@ describe('forge config set <key> <value> --commit', () => {
     expect(parsed.committed?.sha).toMatch(/^[0-9a-f]{40}$/);
     const status = (await execa('git', ['status', '--porcelain'], { cwd: dir })).stdout;
     expect(status).toBe('');
-    const subject = (
-      await execa('git', ['log', '-1', '--format=%s'], { cwd: dir })
-    ).stdout.trim();
+    const subject = (await execa('git', ['log', '-1', '--format=%s'], { cwd: dir })).stdout.trim();
     expect(subject).toBe('forge(config): set project.level');
   });
 

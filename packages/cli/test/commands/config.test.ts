@@ -339,9 +339,8 @@ describe('configSet --commit (PLAN-M14.md P37)', () => {
     // `-uall` (`--untracked-files=all`, matching `getDirtyFiles`'s own real behaviour) so the new
     // `.forge/` directory is listed file by file, not collapsed to one entry — proof this really is
     // `.forge/config.yaml` specifically, not merely "something in .forge/ is untracked".
-    const status = (
-      await execa('git', ['status', '--porcelain', '-uall'], { cwd: project.dir })
-    ).stdout;
+    const status = (await execa('git', ['status', '--porcelain', '-uall'], { cwd: project.dir }))
+      .stdout;
     expect(status).toContain('.forge/config.yaml');
   });
 
