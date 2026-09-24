@@ -27,6 +27,9 @@ import { KNOWN_ADAPTER_MODULES, loadAdapterFactory } from '@forge/adapter-kit/re
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import * as YAML from 'yaml';
 
+import { withGeneratedHeader } from '../src/init/generated-header.ts';
+import { sha256 } from '../src/init/hash.ts';
+import { readPackageVersion } from '../src/init/package-root.ts';
 import { runInit } from '../src/init/run-init.ts';
 
 const REAL_ADAPTER_ENV = { ANTHROPIC_API_KEY: 'sk-ant-test-fixture-not-real' };
@@ -310,13 +313,34 @@ function lastJsonLine(stdout: string): unknown {
 
 describe('forge (real subprocess dispatch)', () => {
   // Every shipped agent's `prompt.system`/`prompt.briefs.*` resolves to real content (`PLAN-M13.md` P1
-  // added the check, P3a/P3b authored the prompts), so the real command is clean and exits 0.
-  it('runs `forge agent validate --all` for real, exiting 0 with no findings', async () => {
+  // added the check, P3a/P3b authored the prompts), and no ERROR-severity finding of any kind remains
+  // (`PLAN-M14.md` P42 reconciled architect/orchestrator/em's own `file_ownership`), so the real command
+  // exits 0. It is not finding-free: P42's own new `unregistered-output-type` check fires exactly Q224's
+  // own seven times (a deliberate content gap, `SPEC-QUESTIONS.md`, not a bug) -- read here through
+  // `--json` (`runAgentValidate`'s own `console.log(JSON.stringify({v:1, findings}))` branch,
+  // `bin.ts:296-306`) rather than the plain-text branch's `console.error` lines, since `run()`'s own
+  // helper only captures stdout on a status-0 exit (`stderr: ''` is hardcoded there for a successful
+  // run, by every other test in this file's own design) -- exit 0 despite seven real findings is the
+  // real, intended "warnings exit 0" contract this test proves either way.
+  it('runs `forge agent validate --all --json` for real, exiting 0 with only Q224\'s seven warnings (no error)', async () => {
     const dir = await realProject();
-    const result = run(['agent', 'validate', '--all', '-C', dir]);
+    const result = run(['agent', 'validate', '--all', '--json', '-C', dir]);
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe('');
-    expect(result.stdout).toContain('no real findings');
+    const envelope = JSON.parse(result.stdout) as {
+      readonly v: number;
+      readonly findings: readonly {
+        readonly agentId: string;
+        readonly severity: string;
+        readonly code: string;
+        readonly message: string;
+      }[];
+    };
+    expect(envelope.v).toBe(1);
+    expect(envelope.findings).toHaveLength(7);
+    for (const finding of envelope.findings) {
+      expect(finding.severity).toBe('warning');
+      expect(finding.code).toBe('unregistered-output-type');
+    }
   });
 
   it('runs `forge template validate --all` for real, exiting 0', async () => {
@@ -1419,6 +1443,66 @@ describe('forge upgrade (real subprocess dispatch, PLAN-M12.md P2)', () => {
     expect(parsed.report.dryRun).toBe(true);
     expect(parsed.report.backupPath).toBeUndefined();
     expect(existsSync(path.join(dir, '.forge/backups'))).toBe(false);
+  });
+
+  it('`--dry-run --json` carries a real, undrifted-but-outdated file as staleFiles, regenerated: true, at an equal version pair (PLAN-M14.md P43)', async () => {
+    const dir = await realProject();
+    const relPath = '.forge/agents/analyst.yaml';
+    const filePath = path.join(dir, relPath);
+    // A real, undrifted copy of an *older* shipped body, stamped with the real, currently-running
+    // version — matches its own recorded header (a human never touched it), but is not what a fresh
+    // write would produce today. Proves staleness comes from the real body/header hash comparison
+    // alone, never from a version-string bump (`installedVersion`/`targetVersion` stay equal below).
+    const olderBody = 'id: analyst\nname: An older, stale analyst body\n';
+    const version = readPackageVersion('@forge/agents');
+    const staleContent = withGeneratedHeader(olderBody, relPath, version, sha256(olderBody));
+    await writeFile(filePath, staleContent, 'utf8');
+
+    const result = run(['upgrade', '--dry-run', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: {
+        readonly installedVersion: string;
+        readonly targetVersion: string;
+        readonly staleFiles: readonly string[];
+        readonly editedFiles: readonly string[];
+        readonly regenerated: boolean;
+      };
+    };
+    expect(parsed.report.installedVersion).toBe(parsed.report.targetVersion);
+    expect(parsed.report.staleFiles).toContain(relPath);
+    expect(parsed.report.editedFiles).not.toContain(relPath);
+    expect(parsed.report.regenerated).toBe(true);
+    // A real dry run: the file on disk is untouched either way.
+    expect(await readFile(filePath, 'utf8')).toBe(staleContent);
+  });
+
+  it('a real, hand-edited regenerable file reports as editedFiles (not staleFiles) in `--dry-run --json`, and the human line names its count and path (PLAN-M14.md P43)', async () => {
+    const dir = await realProject();
+    const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');
+    const edited = `${await readFile(workflowPath, 'utf8')}\n# hand-edited\n`;
+    await writeFile(workflowPath, edited, 'utf8');
+
+    const jsonResult = run(['upgrade', '--dry-run', '--json', '-C', dir]);
+    expect(jsonResult.status).toBe(0);
+    const parsed = JSON.parse(jsonResult.stdout) as {
+      readonly report: {
+        readonly staleFiles: readonly string[];
+        readonly editedFiles: readonly string[];
+      };
+    };
+    expect(parsed.report.editedFiles).toContain('.forge/workflows/intake.workflow.yaml');
+    expect(parsed.report.staleFiles).not.toContain('.forge/workflows/intake.workflow.yaml');
+
+    const humanResult = run(['upgrade', '--dry-run', '-C', dir]);
+    expect(humanResult.status).toBe(0);
+    expect(humanResult.stdout).toContain(
+      `${String(parsed.report.staleFiles.length)} stale, ${String(parsed.report.editedFiles.length)} edited`,
+    );
+    expect(humanResult.stdout).toContain('edited: .forge/workflows/intake.workflow.yaml');
+    // Real dry run: the hand-edit is left completely untouched on disk either way.
+    expect(await readFile(workflowPath, 'utf8')).toBe(edited);
   });
 
   it('runs `forge upgrade --to <version> --dry-run --json` for real, actually pinning the real target version', async () => {

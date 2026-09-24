@@ -14,6 +14,7 @@ import * as YAML from 'yaml';
 import { runDoctor } from '../doctor/index.ts';
 import {
   buildManifest,
+  planRegenerableContent,
   readPackageVersion,
   writeRegenerableContent,
   type Manifest,
@@ -90,9 +91,21 @@ export async function runUpgrade(
   const migrations = deps.migrations ?? MIGRATIONS;
   const planned = await planArtifactMigrations(paths, deps.specsRoot, migrations);
   const migratedDocuments = planned.map((entry) => entry.summary);
+
+  // `PLAN-M14.md` P43: step 5's own real plan, computed here — before the dry-run/full-run branch
+  // either way — so a dry run reports it and a real run below writes exactly this same set (silently
+  // for `stale`/`missing`, through the conflict path for `edited`; `current` files are left alone).
+  const contentPlan = await planRegenerableContent(paths, deps.modulesDir);
+  const staleFiles = contentPlan.filter((file) => file.status === 'stale').map((file) => file.path);
+  const editedFiles = contentPlan
+    .filter((file) => file.status === 'edited')
+    .map((file) => file.path);
+  const hasMissingRegenerable = contentPlan.some((file) => file.status === 'missing');
   const regenerated =
     migratedDocuments.some((doc) => doc.stepCount > 0) ||
-    compareVersions(targetVersion, installedVersion) > 0;
+    compareVersions(targetVersion, installedVersion) > 0 ||
+    staleFiles.length > 0 ||
+    hasMissingRegenerable;
 
   if (options.dryRun === true) {
     return {
@@ -102,6 +115,8 @@ export async function runUpgrade(
       targetVersion,
       migratedDocuments,
       regenerated,
+      staleFiles,
+      editedFiles,
     };
   }
 
@@ -139,6 +154,8 @@ export async function runUpgrade(
     migratedDocuments,
     regenerated: true,
     regeneratedFiles,
+    staleFiles,
+    editedFiles,
     doctor,
   };
 }

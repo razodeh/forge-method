@@ -72,8 +72,22 @@ export interface UpgradeReport {
   /** Present only for a real (non-dry-run) upgrade that actually wrote a backup. */
   readonly backupPath?: string;
   readonly migratedDocuments: readonly DocumentMigrationPlan[];
-  /** Whether the regenerable directories were (real run) or would be (dry run, when any document or
-   * the module/template version itself has drifted) rewritten. */
+  /** `PLAN-M14.md` P43's own real, read-only plan (`init/write-tree.ts`'s `planRegenerableContent`),
+   * computed before the dry-run/full-run branch either way: every already-materialised regenerable
+   * file whose body still matches its own recorded header (a human never touched it) but whose shipped
+   * content has since changed. A real run overwrites these silently, no conflict resolution triggered
+   * (`writeGenerated` never treats an undrifted file as a conflict). Always present, empty when
+   * nothing is stale — including a project whose installed and target versions are identical: staleness
+   * is a real, per-file body/header comparison, never inferred from the version pair alone. */
+  readonly staleFiles: readonly string[];
+  /** The identical plan's own `'edited'` files: a real, detected local edit (the file's own body no
+   * longer matches its recorded header hash) that a real run resolves through `03` §3.3's own
+   * `keep-mine`/`take-theirs`/`merge`/`show-diff` conflict path, never a silent overwrite. Always
+   * present, empty when nothing has been hand-edited. */
+  readonly editedFiles: readonly string[];
+  /** Whether the regenerable directories were (real run) or would be (dry run, when any document
+   * needs migrating, the module/template version itself has drifted, or `staleFiles`/a real `missing`
+   * file exists in the plan above — `PLAN-M14.md` P43: real, whatever the version pair) rewritten. */
   readonly regenerated: boolean;
   /** Every regenerable file step 5 actually touched, `WrittenFile.conflict` naming the real
    * resolution mode wherever a hash drift was found. Present only for a real (non-dry-run) upgrade —

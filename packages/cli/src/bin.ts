@@ -270,6 +270,7 @@ import { refusalEnvelopeLine, refusalOf } from './commands/run/vcs-refusal.ts';
 import { runStatusJson } from './commands/run/status.ts';
 import {
   CONFLICT_RESOLUTION_MODES,
+  sanitizeForTerminal,
   sanitizeWrittenFilePaths,
   type ConflictResolutionMode,
 } from './generated-header.ts';
@@ -1673,6 +1674,12 @@ const UPGRADE_FLAGS = { '--to': true, '--on-conflict': true } as const;
 // four literals, a real "two places that can silently drift apart" gap.
 const VALID_CONFLICT_MODES = new Set<string>(CONFLICT_RESOLUTION_MODES);
 
+/** `PLAN-M14.md` P43: how many `staleFiles`/`editedFiles` paths the plain-text renderer prints per
+ * category before summarising the rest as a count — `--json` always carries the real, complete arrays
+ * (`UpgradeReport.staleFiles`/`editedFiles`), never truncated; this cap is a human-readability choice
+ * for the terminal line only, not a real limit on what `runUpgrade` itself plans or reports. */
+const UPGRADE_PLAN_PREVIEW_LIMIT = 5;
+
 /** `forge upgrade [--to <version>] [--on-conflict <mode>]` (`03` §3.4) — `--dry-run` is already a real
  * global flag (`parseGlobalFlags`' own `KNOWN_FLAGS`), so it never reaches `rest` here; this parses
  * `--to` and `--on-conflict`, the two flags `03` §3.4/§3.3 name that are not already global.
@@ -1751,11 +1758,23 @@ async function runUpgradeCommand(
     report.regeneratedFiles === undefined
       ? undefined
       : sanitizeWrittenFilePaths(report.regeneratedFiles);
+  // `PLAN-M14.md` P43: `UpgradeReport.staleFiles`/`editedFiles` are plain project-relative path
+  // strings (never `WrittenFile`s), so they go through `sanitizeForTerminal` directly rather than
+  // `sanitizeWrittenFilePaths` — the identical hostile-module-id concern `sanitizeWrittenFilePaths`'s
+  // own doc comment names (`.forge/agents/<id>.yaml`'s `id` segment), applied here to both renderers,
+  // `--json` included, the same belt-and-suspenders choice `sanitizedRegeneratedFiles` above already
+  // makes.
+  const sanitizedStaleFiles = report.staleFiles.map(sanitizeForTerminal);
+  const sanitizedEditedFiles = report.editedFiles.map(sanitizeForTerminal);
   if (json) {
-    const sanitizedReport =
-      sanitizedRegeneratedFiles === undefined
-        ? report
-        : { ...report, regeneratedFiles: sanitizedRegeneratedFiles };
+    const sanitizedReport = {
+      ...report,
+      ...(sanitizedRegeneratedFiles === undefined
+        ? {}
+        : { regeneratedFiles: sanitizedRegeneratedFiles }),
+      staleFiles: sanitizedStaleFiles,
+      editedFiles: sanitizedEditedFiles,
+    };
     console.log(JSON.stringify({ v: 1, report: sanitizedReport }));
   } else {
     console.log(
@@ -1771,8 +1790,32 @@ async function runUpgradeCommand(
       console.log(`  resolved ${String(conflicts.length)} conflict(s):`);
       for (const file of conflicts) console.log(`    ${file.path}: ${file.conflict ?? ''}`);
     }
+    // `PLAN-M14.md` P43: the count and first paths for both real, read-only classifications — the
+    // full arrays are always in `--json` above, never truncated there.
+    if (sanitizedStaleFiles.length > 0 || sanitizedEditedFiles.length > 0) {
+      console.log(
+        `  ${String(sanitizedStaleFiles.length)} stale, ${String(sanitizedEditedFiles.length)} ` +
+          'edited (of the materialised regenerable files):',
+      );
+      printUpgradePlanPreview('stale', sanitizedStaleFiles);
+      printUpgradePlanPreview('edited', sanitizedEditedFiles);
+    }
   }
   return report.doctor?.ok === false ? EXIT_CODES.prerequisiteMissing : EXIT_CODES.success;
+}
+
+/** `runUpgradeCommand`'s own plain-text helper for one of `staleFiles`/`editedFiles`: the first
+ * `UPGRADE_PLAN_PREVIEW_LIMIT` real paths, one per line, then a real count of however many more there
+ * are — never a silent, unbounded dump for a project with many changed regenerable files. */
+function printUpgradePlanPreview(label: 'stale' | 'edited', paths: readonly string[]): void {
+  for (const filePath of paths.slice(0, UPGRADE_PLAN_PREVIEW_LIMIT)) {
+    console.log(`    ${label}: ${filePath}`);
+  }
+  if (paths.length > UPGRADE_PLAN_PREVIEW_LIMIT) {
+    console.log(
+      `    ... and ${String(paths.length - UPGRADE_PLAN_PREVIEW_LIMIT)} more ${label} file(s).`,
+    );
+  }
 }
 
 /** `forge export <target>` (`03` §3.2.7) — `markdown-bundle`/`html` are real; `jira`/`linear`/

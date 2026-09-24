@@ -13,6 +13,7 @@ import * as YAML from 'yaml';
 
 import {
   type ConflictHandlingOptions,
+  extractGeneratedHeader,
   hasGeneratedFileDrifted,
   resolveGeneratedConflict,
 } from '../generated-header.ts';
@@ -137,6 +138,57 @@ async function writeConfigYaml(target: ProjectPaths, config: ForgeConfig): Promi
   return { path: '.forge/config.yaml', generated: false };
 }
 
+/** One real category of regenerable content, materialised under `destDir` — the writer's own real
+ * traversal order below, factored out so `writeRegenerableContent` (write) and `planRegenerableContent`
+ * (read-only classify, `PLAN-M14.md` P43) call the identical content readers in the identical order and
+ * can never independently drift on *which* files either one touches: one real list, not two
+ * hand-written copies of it. */
+interface RegenerableGroup {
+  readonly destDir: string;
+  readonly files: readonly ContentFile[];
+}
+
+async function collectRegenerableGroups(modulesDir: string): Promise<readonly RegenerableGroup[]> {
+  const [workflows, frameworks, checks, artifacts, skills, agents, briefs, prompts, techniques] =
+    await Promise.all([
+      readWorkflowFiles(),
+      readFrameworkFiles(),
+      readCheckFiles(),
+      readArtifactTemplateFiles(),
+      readSkillFiles(),
+      readResolvedAgents(modulesDir),
+      readBriefFiles(),
+      readPromptFiles(),
+      readTechniqueFiles(modulesDir),
+    ]);
+  return [
+    { destDir: '.forge/workflows', files: workflows },
+    { destDir: '.forge/frameworks', files: frameworks },
+    { destDir: '.forge/checks', files: checks },
+    { destDir: '.forge/templates', files: artifacts },
+    { destDir: '.forge/skills', files: skills },
+    {
+      destDir: '.forge/agents',
+      files: agents.map((agent) => ({ relPath: `${agent.id}.yaml`, content: agent.yaml })),
+    },
+    // `PLAN-M13.md` P1's own two new regenerable content kinds — real workflow/gate step brief text and
+    // real agent prompt text, indexed exactly like the five above (`BRIEF_INDEX`/`PROMPT_INDEX`,
+    // `@forge/templates`). Both are `[]` today (`SPEC-QUESTIONS.md` Q197: the two indexes are still
+    // empty, pending `PLAN-M13.md` P2/P3's own content-authoring pieces) — only the real, permanent
+    // mechanism every later brief/prompt file will flow through, `writeGeneratedDir`'s own
+    // hash-drift/conflict-resolution treatment (and `planRegenerableContent`'s own classification)
+    // included.
+    { destDir: '.forge/briefs', files: briefs },
+    { destDir: '.forge/prompts', files: prompts },
+    // `PLAN-M14.md` P29: `16` §16.4's technique library, materialised the identical regenerable-directory
+    // way every content kind above already is -- `.forge/techniques/<id>.technique.yaml`, one file per
+    // real technique, read back by `@forge/sessions`' own flat-directory loader
+    // (`loadTechniqueFromDir`/`listTechniquesInDir`), never the `modules/*/techniques` source tree a
+    // real project does not have.
+    { destDir: '.forge/techniques', files: techniques },
+  ];
+}
+
 /**
  * Exported for `@forge/cli/upgrade` (C7, `03` §3.4 step 5: "regenerate the regenerable directories,
  * reusing C2's own file-writing logic, not a duplicate") — idempotent, safe to call again on an
@@ -159,66 +211,86 @@ export async function writeRegenerableContent(
   modulesDir: string,
   conflictOptions?: ConflictHandlingOptions,
 ): Promise<readonly WrittenFile[]> {
-  const [workflows, frameworks, checks, artifacts, skills, agents, briefs, prompts, techniques] =
-    await Promise.all([
-      readWorkflowFiles(),
-      readFrameworkFiles(),
-      readCheckFiles(),
-      readArtifactTemplateFiles(),
-      readSkillFiles(),
-      readResolvedAgents(modulesDir),
-      readBriefFiles(),
-      readPromptFiles(),
-      readTechniqueFiles(modulesDir),
-    ]);
+  const groups = await collectRegenerableGroups(modulesDir);
   const version = readPackageVersion('@forge/agents');
 
   const written: WrittenFile[] = [];
-  written.push(
-    ...(await writeGeneratedDir(target, '.forge/workflows', workflows, version, conflictOptions)),
-  );
-  written.push(
-    ...(await writeGeneratedDir(target, '.forge/frameworks', frameworks, version, conflictOptions)),
-  );
-  written.push(
-    ...(await writeGeneratedDir(target, '.forge/checks', checks, version, conflictOptions)),
-  );
-  written.push(
-    ...(await writeGeneratedDir(target, '.forge/templates', artifacts, version, conflictOptions)),
-  );
-  written.push(
-    ...(await writeGeneratedDir(target, '.forge/skills', skills, version, conflictOptions)),
-  );
-  written.push(
-    ...(await writeGeneratedDir(
-      target,
-      '.forge/agents',
-      agents.map((agent) => ({ relPath: `${agent.id}.yaml`, content: agent.yaml })),
-      version,
-      conflictOptions,
-    )),
-  );
-  // `PLAN-M13.md` P1's own two new regenerable content kinds — real workflow/gate step brief text and
-  // real agent prompt text, indexed exactly like the five above (`BRIEF_INDEX`/`PROMPT_INDEX`,
-  // `@forge/templates`). Both write zero files today (`SPEC-QUESTIONS.md` Q197: the two indexes are
-  // still empty, pending `PLAN-M13.md` P2/P3's own content-authoring pieces), so this adds no new
-  // written files yet -- only the real, permanent mechanism every later brief/prompt file will flow
-  // through, `writeGeneratedDir`'s own hash-drift/conflict-resolution treatment included.
-  written.push(
-    ...(await writeGeneratedDir(target, '.forge/briefs', briefs, version, conflictOptions)),
-  );
-  written.push(
-    ...(await writeGeneratedDir(target, '.forge/prompts', prompts, version, conflictOptions)),
-  );
-  // `PLAN-M14.md` P29: `16` §16.4's technique library, materialised the identical regenerable-directory
-  // way every content kind above already is -- `.forge/techniques/<id>.technique.yaml`, one file per
-  // real technique, read back by `@forge/sessions`' own flat-directory loader
-  // (`loadTechniqueFromDir`/`listTechniquesInDir`), never the `modules/*\/techniques` source tree a
-  // real project does not have.
-  written.push(
-    ...(await writeGeneratedDir(target, '.forge/techniques', techniques, version, conflictOptions)),
-  );
+  for (const group of groups) {
+    written.push(
+      ...(await writeGeneratedDir(target, group.destDir, group.files, version, conflictOptions)),
+    );
+  }
   return written;
+}
+
+export type RegenerableFileStatus = 'current' | 'stale' | 'edited' | 'missing';
+
+export interface RegenerableFilePlanEntry {
+  readonly path: string;
+  readonly status: RegenerableFileStatus;
+}
+
+/**
+ * Classifies one real regenerable file (materialised or not, at `destRelPath`) against
+ * `shippedContent` — the identical body `writeGenerated` (above) would stamp a fresh header onto were
+ * it writing this file right now — into exactly the four states `03` §3.3/§3.4 distinguish:
+ *
+ * - `missing`: nothing real on disk at `destRelPath` yet.
+ * - `edited` (the conflict path): a real, detected local edit (`hasGeneratedFileDrifted`) — the on-disk
+ *   body's own hash no longer matches its own recorded header, so a real run goes through `03` §3.3's
+ *   own `keep-mine`/`take-theirs`/`merge`/`show-diff` resolution, never a silent overwrite.
+ * - `current`: not drifted, and the header's own recorded `hash=` already equals
+ *   `sha256(shippedContent)` — this exact copy is what a fresh write would produce again, byte for byte.
+ * - `stale`: not drifted (a human never touched it), but the shipped content has itself changed since
+ *   this copy was generated — `writeGenerated` never treats an undrifted file as a conflict, whatever
+ *   its header's own recorded hash is, so a real run overwrites it silently, exactly like `missing`.
+ */
+async function classifyRegenerableFile(
+  target: ProjectPaths,
+  destRelPath: string,
+  shippedContent: string,
+): Promise<RegenerableFilePlanEntry> {
+  const resolvedPath = target.resolveWithin(destRelPath);
+  if (!(await pathExists(resolvedPath))) {
+    return { path: destRelPath, status: 'missing' };
+  }
+  const diskContent = await readTextFile(resolvedPath);
+  if (hasGeneratedFileDrifted(diskContent)) {
+    return { path: destRelPath, status: 'edited' };
+  }
+  // `hasGeneratedFileDrifted` returning `false` guarantees a real header was found (its own
+  // `undefined` case above is itself treated as drifted) whose own recorded body hash already matches
+  // the disk content — `extractGeneratedHeader` here re-reads that same real header only for its
+  // `hash` field, to compare against the shipped content's own hash.
+  const header = extractGeneratedHeader(diskContent);
+  const status: RegenerableFileStatus =
+    header?.hash === sha256(shippedContent) ? 'current' : 'stale';
+  return { path: destRelPath, status };
+}
+
+/**
+ * Read-only: `03` §3.4 step 5's own real plan, computed *before* `writeRegenerableContent` (or a real
+ * `--dry-run`) ever touches the filesystem — every real file `writeRegenerableContent` would touch,
+ * classified `current`/`stale`/`edited`/`missing` (see `classifyRegenerableFile`), in the writer's own
+ * real order (`collectRegenerableGroups`, shared verbatim with the writer above). Writes nothing at
+ * all, ever: every real read here goes through the identical `pathExists`/`readTextFile` pair
+ * `writeGenerated` itself already uses before ever deciding whether to write.
+ *
+ * @see PLAN-M14.md P43
+ */
+export async function planRegenerableContent(
+  target: ProjectPaths,
+  modulesDir: string,
+): Promise<readonly RegenerableFilePlanEntry[]> {
+  const groups = await collectRegenerableGroups(modulesDir);
+  const plan: RegenerableFilePlanEntry[] = [];
+  for (const group of groups) {
+    for (const file of group.files) {
+      const destRelPath = path.posix.join(group.destDir, file.relPath);
+      plan.push(await classifyRegenerableFile(target, destRelPath, file.content));
+    }
+  }
+  return plan;
 }
 
 async function writeDocsSkeleton(

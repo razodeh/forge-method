@@ -11,6 +11,8 @@ import type { Migration, MigratableDocument } from '@forge/schemas/migrations';
 import * as YAML from 'yaml';
 
 import { specNew } from '../../../src/commands/spec.ts';
+import { withGeneratedHeader } from '../../../src/init/generated-header.ts';
+import { sha256 } from '../../../src/init/hash.ts';
 import { readPackageVersion } from '../../../src/init/package-root.ts';
 import { runUpgrade } from '../../../src/commands/upgrade/run-upgrade.ts';
 import type { UpgradeDeps } from '../../../src/commands/upgrade/types.ts';
@@ -235,6 +237,98 @@ describe('runUpgrade', () => {
 
     expect(report.regenerated).toBe(true);
     expect(report.migratedDocuments.some((doc) => doc.stepCount > 0)).toBe(true);
+  });
+
+  describe('`PLAN-M14.md` P43: staleFiles/editedFiles classification, decoupled from the version pair', () => {
+    const WORKFLOW_REL_PATH = '.forge/workflows/intake.workflow.yaml';
+
+    /** A real, undrifted copy of an *older* shipped body, stamped with the real, currently-running
+     * version — the header's own recorded hash matches this file's own on-disk body (a human never
+     * touched it), but that body is not what `content.ts` reads today: the real "shipped content
+     * changed since this was generated" shape, at the identical real version on both sides (an
+     * "equal version pair"), so any real staleness this proves comes from the real body/header hash
+     * comparison alone, never from a version-string bump. */
+    async function writeStaleWorkflow(project: Awaited<ReturnType<typeof createTestProject>>) {
+      const filePath = path.join(project.dir, WORKFLOW_REL_PATH);
+      const olderBody = 'id: intake\nsteps: []\n# an older shipped body\n';
+      const version = readPackageVersion('@forge/agents');
+      const staleContent = withGeneratedHeader(
+        olderBody,
+        WORKFLOW_REL_PATH,
+        version,
+        sha256(olderBody),
+      );
+      await writeFile(filePath, staleContent, 'utf8');
+    }
+
+    it('a current project (nothing edited, equal version pair) reports staleFiles/editedFiles empty and regenerated: false', async () => {
+      const project = await createTestProject();
+      const report = await runUpgrade(
+        project.paths,
+        project.dir,
+        { dryRun: true },
+        baseDeps(project),
+      );
+      expect(report.installedVersion).toBe(report.targetVersion);
+      expect(report.staleFiles).toEqual([]);
+      expect(report.editedFiles).toEqual([]);
+      expect(report.regenerated).toBe(false);
+    });
+
+    it('reports a real stale file and regenerated: true at an equal version pair (red: regenerated false before PLAN-M14.md P43)', async () => {
+      const project = await createTestProject();
+      await writeStaleWorkflow(project);
+
+      const report = await runUpgrade(
+        project.paths,
+        project.dir,
+        { dryRun: true },
+        baseDeps(project),
+      );
+      expect(report.installedVersion).toBe(report.targetVersion);
+      expect(report.staleFiles).toEqual([WORKFLOW_REL_PATH]);
+      expect(report.editedFiles).toEqual([]);
+      expect(report.regenerated).toBe(true);
+    });
+
+    it('classifies a hand-edited file as editedFiles, not staleFiles', async () => {
+      const project = await createTestProject();
+      const filePath = path.join(project.dir, WORKFLOW_REL_PATH);
+      await writeFile(filePath, `${await readFile(filePath, 'utf8')}\n# hand-edited\n`, 'utf8');
+
+      const report = await runUpgrade(
+        project.paths,
+        project.dir,
+        { dryRun: true },
+        baseDeps(project),
+      );
+      expect(report.editedFiles).toEqual([WORKFLOW_REL_PATH]);
+      expect(report.staleFiles).toEqual([]);
+    });
+
+    it('a real run regenerates the stale file silently, and a second dry run reports none', async () => {
+      const project = await createTestProject();
+      await writeStaleWorkflow(project);
+      const filePath = path.join(project.dir, WORKFLOW_REL_PATH);
+
+      const realReport = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+      expect(realReport.dryRun).toBe(false);
+      expect(realReport.staleFiles).toEqual([WORKFLOW_REL_PATH]);
+      const regenerated = realReport.regeneratedFiles?.find(
+        (file) => file.path === WORKFLOW_REL_PATH,
+      );
+      expect(regenerated?.conflict).toBeUndefined();
+      expect(await readFile(filePath, 'utf8')).not.toContain('older shipped body');
+
+      const secondDryRun = await runUpgrade(
+        project.paths,
+        project.dir,
+        { dryRun: true },
+        baseDeps(project),
+      );
+      expect(secondDryRun.staleFiles).toEqual([]);
+      expect(secondDryRun.regenerated).toBe(false);
+    });
   });
 
   describe('`03` §3.3/§3.4 conflict resolution on a hash-drifted regenerable file (PLAN-M12.md P3)', () => {

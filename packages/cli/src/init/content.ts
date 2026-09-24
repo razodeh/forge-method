@@ -1,7 +1,9 @@
 /**
  * Reads the real, already-shipped regenerable content `runInit` copies into a project:
  * `@forge/templates`' own workflows/frameworks/checks/artifact-templates/skills content, and
- * `@forge/agents`' own resolved (post-`extends`) roster.
+ * `@forge/agents`' own resolved (post-`extends`) roster. The same readers, unchanged, are also what
+ * `write-tree.ts`'s own `planRegenerableContent` (`PLAN-M14.md` P43) reads to classify each already
+ * materialised copy without writing anything.
  *
  * Every read goes through `@forge/core/fs`'s sanctioned `listDirEntriesSorted`/`readTextFile` — even
  * though these reads are from this *package's own* installed dependency, not a host project

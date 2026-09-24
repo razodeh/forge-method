@@ -21,6 +21,11 @@ export {
   type TierDerivation,
   type TierMapReport,
 } from './tier-map.ts';
-export { writeRegenerableContent } from './write-tree.ts';
+export {
+  planRegenerableContent,
+  writeRegenerableContent,
+  type RegenerableFilePlanEntry,
+  type RegenerableFileStatus,
+} from './write-tree.ts';
 export type { InitOptions, InitResult, RunInitDeps, WrittenFile } from './types.ts';
 export type { Manifest, ManifestModule } from './manifest.ts';
