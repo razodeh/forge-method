@@ -591,7 +591,9 @@ describe('standalone *.check.yaml findings (appliesTo attachment)', () => {
         'utf8',
       ),
     ) as Record<string, unknown>;
-    const { appliesTo: _appliesTo, severity: _severity, ...withoutEither } = real;
+    const withoutEither: Record<string, unknown> = { ...real };
+    delete withoutEither['appliesTo'];
+    delete withoutEither['severity'];
     await writeFileAtomic(
       project.paths.resolveWithin('.forge/modules/fm-mobile/checks/device-matrix.check.yaml'),
       YAML.stringify(withoutEither),

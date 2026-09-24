@@ -456,7 +456,8 @@ describe('*.check.yaml attachment through appliesTo', () => {
     // here is that the loader refuses a check document with no real `appliesTo` field, whatever the file's
     // own surrounding YAML comments say about it (comments are dropped by `YAML.parse`/`YAML.stringify`
     // regardless, so this mutation also proves the loader reads structure, not text).
-    const { appliesTo: _appliesTo, ...withoutAppliesTo } = real;
+    const withoutAppliesTo: Record<string, unknown> = { ...real };
+    delete withoutAppliesTo['appliesTo'];
     expect(withoutAppliesTo['id']).toBe('device-matrix:coverage');
     await writeFile(
       path.join(project.dir, '.forge/modules/fm-mobile/checks/device-matrix.check.yaml'),
