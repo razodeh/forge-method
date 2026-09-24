@@ -276,9 +276,18 @@ function addImplicit(implicit: Map<string, string[]>, id: string, values: readon
  * ...outcome.exitIds]` accumulation for `parallel`). An empty group (no children) falls back to its own
  * declared `id`, if it has one -- the identical "a group's own id is a real graph node" stance
  * `checkNoCycles` already takes, only reached here when there is genuinely nothing further to resolve
- * into. As a side effect, records every step's own id (leaf or group) into `implicit`, keyed by that id,
- * with exactly the `inherited` set it structurally received -- what `transitiveDependsOn` consults
- * alongside a step's own authored `dependsOn`. */
+ * into. A round-3 critic confirmed a genuinely empty group with NO id of its own (`{kind: 'sequence',
+ * steps: []}`, no `id`) is the one shape this still disagrees with `compilePlan` on -- but only ever
+ * reachable via a hand-built `Workflow` object, never real YAML (`parallelStepSchema`/
+ * `sequenceStepSchema` both require `steps.min(1)`), and self-masking even then: the identical id-less
+ * position is already `checkStepsHaveIds`'s own separate, blocking `missing-step-id` finding, and
+ * giving it any id at all (which an author must do regardless, to clear that error) makes this
+ * disagreement disappear too. Left as a disclosed, narrow limitation rather than special-cased, since
+ * the failure direction is the safe one (a spurious extra rejection, never a spurious acceptance) and
+ * no real workflow can ever reach it without already failing a different, mandatory check first. As a
+ * side effect, records every step's own id (leaf or group) into `implicit`, keyed by that id, with
+ * exactly the `inherited` set it structurally received -- what `transitiveDependsOn` consults alongside
+ * a step's own authored `dependsOn`. */
 function structuralExits(
   step: WorkflowStep,
   inherited: readonly string[],

@@ -10,7 +10,7 @@
  * answer as data from its environment and an answer that looks like shell code is never run.
  */
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -651,6 +651,35 @@ describe('`show`: an elicit question can show a register entry an earlier step p
     expect(asked).toEqual([]);
     const types = (await eventsOf(projectRoot, ctx.runId)).map((event) => event.type);
     expect(types).toContain('StepFailed');
+  });
+
+  it('a real filesystem failure reading the register file (a permission-denied reports/ directory) fails RUN-105 as data, never an uncaught RUN-034 (round-3 critic)', async () => {
+    const projectRoot = await createTempRepo('show-denied-read');
+    await writeHandoffs(projectRoot, [
+      { id: 'HO-0002', step: 'propose-level', delivered: ['subtype: level-proposal'] },
+    ]);
+    const reportsDir = path.join(projectRoot, 'docs/forge/reports');
+    // pathExists (called after resolveWithin has already succeeded) can still throw RUN-034 for a real
+    // filesystem failure -- a permission-denied directory most notably, its own doc comment names
+    // exactly that. A round-3 critic found this the third, still-uncaught instance of the identical
+    // bug class the CFG-003/CFG-004 tests above already cover.
+    await chmod(reportsDir, 0o000);
+    try {
+      const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+      const ctx = createTestContext({ projectRoot, ask: port });
+
+      const outcome = await executeStep(CONFIRM, ctx);
+
+      expect(outcome.status).toBe('failed');
+      expect(outcome.failure?.code).toBe('RUN-105');
+      expect(asked).toEqual([]);
+      const types = (await eventsOf(projectRoot, ctx.runId)).map((event) => event.type);
+      expect(types).toContain('StepFailed');
+    } finally {
+      // Restored before cleanup: a 000 directory would make this test's own temp-dir removal (and any
+      // later test reusing the same real path) fail the identical way, for an unrelated reason.
+      await chmod(reportsDir, 0o755);
+    }
   });
 
   it('an oversized field is clipped to a bounded line, not printed in full (critic round 1)', async () => {

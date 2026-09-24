@@ -1259,10 +1259,17 @@ export async function readRegisterEntries(
     if (isForgeError(cause) && (cause.code === 'CFG-003' || cause.code === 'CFG-004')) return [];
     throw cause;
   }
-  if (!(await pathExists(absolute))) return [];
-
   let frontMatter: Record<string, unknown>;
   try {
+    // `pathExists` is inside this same try, not a separate unguarded call before it: once
+    // `resolveWithin` has already succeeded, `pathExists` can still throw `RUN-034` for a real
+    // filesystem failure reading THIS ONE path (a permissions failure most notably -- its own doc
+    // comment names exactly that) -- a round-3 critic found this the third, still-uncaught instance
+    // of the identical bug class `resolveWithin`'s own CFG-003/CFG-004 already are caught for just
+    // above, reproduced concretely against a real `chmod 0000` directory. Whatever the real reason
+    // this one file cannot be read, it is "nothing found here" to this function's own contract, the
+    // identical stance already taken for a file that does not parse, just below.
+    if (!(await pathExists(absolute))) return [];
     frontMatter = frontMatterOf(ArtifactDocument.parse(await readTextFile(absolute), relative));
   } catch {
     return [];
