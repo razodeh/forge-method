@@ -24095,3 +24095,144 @@ pathspec-limited commit only ever touches the paths named, regardless of what el
 shared index at that instant. No other agent's staged work was ever lost or corrupted by this piece.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P23`.
+
+## Q267 — M14 P37: `forge config set <key> <value> --commit` commits exactly `.forge/config.yaml` via a new `commitPaths`, guarded by a new `CFG-055`; `intake:record-level` uses it — a two-round critic loop found two real bugs in round 1 (both fixed, empirically reproduced and independently re-verified in round 2), then one real, narrow bug the round-1 fix itself introduced (found and fixed in round 2), plus a self-caused shared-working-tree incident (disclosed, not destructive)
+
+`commitPaths(cwd, {paths, message, sign})` (new, `packages/vcs/src/commit.ts`) runs `git add -- <paths>`
+then `git commit -m <message> -- <paths>` — deliberately never `git add -A` the way `commitInLane`
+stages a whole lane worktree, since this function's own real caller can run directly against the
+checked-out project root, a real user's own working tree, which must never have unrelated dirty state
+swept into one commit. Both the `git add` and the `git commit` are independently pathspec-scoped, so
+even a file some OTHER process staged between the two calls is not swept in either (proven by a
+dedicated test, not merely asserted — see round 1 below). A real no-op (none of `paths` dirty) returns
+the current `HEAD` with `committed: false`, never a raw "nothing to commit" failure. `assertPathWithinRepo`
+refuses `VCS-COMMIT-PATH-ESCAPES-REPO` for an absolute path or one that resolves outside `cwd` via `..`,
+before any git call. `formatConfigCommitMessage` (same file) is `formatCommitMessage`'s own sibling for a
+commit the CLI makes directly rather than lane work an agent produced: the identical
+`forge(<scope>): <subject>` header and `Forge-Step`/`Forge-Run` trailers (through the identical
+`assertSingleLine` newline/CR guard) but no `Co-Authored-By` trailer, and the trailer paragraph itself
+optional, present only when a marker is.
+
+`configSet(ctx, key, rawValue, {commit})` (`packages/cli/src/commands/config.ts`) validates FIRST — the
+pre-existing `CFG-001`/`USR-002` refusals are entirely unchanged, checked before `--commit`'s own
+`CFG-055` precondition, so a bad value is always `CFG-001` even outside a git repository
+(`test/command-steps.test.ts`'s own order case, unaffected). Only once the value is schema-valid does
+`assertCommittable` run (`CFG-055`: not a git repository, `.forge/config.yaml` untracked, or it already
+differs from `HEAD`, checked with `getDirtyFiles` before any write), then the write, then `commitPaths`
+stages and commits EXACTLY `.forge/config.yaml`. Returns `{config, committed: {sha} | null}` — `null` for
+both "never asked to commit" and a real no-op. `ConfigCommandContext` gains optional `projectRoot`/
+`marker` so every existing `--commit`-unaware caller keeps working unchanged. `bin.ts`'s
+`runConfigCommand` gains `'--commit': false` on `config set`, reads the real FORGE run/step marker via
+the existing `gateCommandMarker(realEnvSnapshot())` only for `--commit`, and the `--json` line gains
+`committed: {sha} | null`. `intake.workflow.yaml`'s `record-level` step becomes
+`... forge config set project.level "$FORGE_ANSWER_levelConfirmed" --commit`, dropping the old echo
+telling the human to commit manually; the greenfield fixture is regenerated (header hash recomputed) to
+match.
+
+**Round 1 (fresh, context-free; real reproductions, not just reading): two real bugs found and fixed,
+one commit-message overclaim found and fixed with a real test.**
+1. `assertCommittable` wrapped `getDirtyFiles` in a bare `catch {}` and reported EVERY failure as
+   `CFG-055`'s "this project is not a git repository" — reproduced live with a real repo whose
+   `.git/index` had `chmod 000`'d permissions: a genuinely different, unrelated failure, mislabeled, with
+   a `git init` remedy that would not have helped at all. Fixed: `assertGitAvailable` (`@forge/vcs`,
+   which already distinguishes "git is not on PATH" from "not inside a repository") runs first, and only
+   ITS OWN failure becomes `CFG-055` (with an accurate reason for each of the two cases); any other
+   `getDirtyFiles` failure now propagates as its own real, distinctly-coded `VcsError`.
+2. A commit failure AFTER the write (`commitPaths`'s own `git add` succeeding but `git commit` itself
+   then failing — reproduced live with a real signing failure, `vcs.signCommits: true` and no signing key
+   configured) left `.forge/config.yaml` written and staged on disk despite `configSet` reporting
+   failure, breaking `CFG-055`'s own stated promise ("a refused `--commit` leaves the file byte-for-byte
+   as it found it") for exactly the case that promise most needs to hold. Fixed two ways: `commitPaths`
+   itself now un-stages `paths` (`git reset -- <paths>`, best-effort) on its own `git commit` failure;
+   `configSet` captures the file's own real pre-write bytes and restores them if `commitPaths` throws for
+   any reason.
+3. The first commit's own "mutation evidence" claim for the trailing `-- <paths>` pathspec on
+   `git commit` itself (distinct from `git add`'s) did not hold against the actual test suite at the
+   time: dropping only that pathspec left every existing test passing, since none of them staged
+   anything except what `commitPaths` itself staged. Fixed with a new, real test that stages a second
+   file with a plain `git add` BEFORE calling `commitPaths` (simulating a genuinely concurrent stager)
+   and confirms only the commit's own pathspec — not `git add`'s, which is additive and cannot unstage it
+   — keeps that file out of the resulting commit.
+
+Two lower-confidence, narrower items were disclosed rather than fixed in round 1:
+`commitPaths`'s "real no-op" branch can throw on a genuinely unborn `HEAD` with nothing dirty (not
+reachable through the shipped caller: `readConfig` throws `CFG-020` first if the file is absent, and the
+"untracked" `CFG-055` check intervenes if it exists but is not yet in the index); a narrow TOCTOU window
+between `assertCommittable`'s check and the write (single-process CLI usage, the same structural window
+several other pre-write checks in this codebase already accept).
+
+**Round 2 (fresh, context-free, in an isolated git worktree): all three round-1 fixes independently
+reproduced and confirmed PASS; one new, narrow, real bug found (the round-1 fix's own new code path) and
+fixed.** The critic re-derived and reproduced each round-1 claim itself rather than trusting the fix
+commit's own account: the `chmod 000 .git/index` scenario (confirmed `CFG-055` no longer fires; a real,
+distinct `VCS-GIT-OPERATION-FAILED` does), the signing-failure rollback (confirmed the file's exact
+original bytes and an empty `git status --porcelain` afterward), and the pathspec test (mutated the
+trailing `-- <paths>` off the `git commit` call itself, confirmed exactly that one new test fails,
+restored, confirmed green again). New finding: the round-1 rollback's own
+`await writeFileAtomic(configPath, originalText)` had no guard of its own — if that restore write ALSO
+fails (disk full, `.forge` removed concurrently between the write and the restore; narrow, but real),
+its own new error silently replaced `cause` (the original commit failure, the one a caller most needs to
+see) with no trace of the original left anywhere. `commitPaths`'s own analogous best-effort `git reset`
+already accepted this identical shape of failure deliberately (documented `.catch(() => undefined)`),
+but the restore write here had no equivalent treatment. Fixed: the restore write is now itself wrapped
+in a try/catch; if it also fails, both failures are named in one message and the original commit failure
+is preserved as the thrown error's real `cause`. A new, dedicated test
+(`config-commit-rollback-failure.test.ts`) reproduces the exact double-failure scenario via `vi.mock` on
+`@forge/core`'s `writeFileAtomic` (real for the first, genuine write; forced to fail only on the second,
+rollback call) and `@forge/vcs`'s `commitPaths` (forced to fail) — mutation-confirmed: removing the new
+try/catch makes the test fail exactly as the critic's own reproduction showed, restored and reconfirmed
+green. Everything else the round-2 critic tried to break held: a `chmod 000` on the WHOLE `.git`
+directory (not just the index) still correctly routes to `CFG-055` "not a git repository" (git itself
+reports the identical "not a git repository" fact under that condition — not a mislabeling); the bare
+`VcsError` now propagating unwrapped out of `assertCommittable` is consistent with the pre-existing,
+established `refusalFromVcsError` CLI-boundary handling every other `@forge/vcs` failure already gets;
+the two original `CFG-055` cases (not a git repository at all; the file untracked or differing from
+`HEAD`) are still genuinely, separately tested. No round 3: the round-2 finding was itself narrow and
+low-severity, fixed and re-verified with real reproduction rather than left for a third dispatch.
+
+**Mutation evidence (real: mutate, run scoped tests, confirm real failure, restore via `git checkout --`
+against a real, already-committed file each time, re-confirm green).** `git add -A` in `commitPaths`: the
+"stages and commits ONLY the named path" test fails (the second file lands staged instead of staying
+untracked). The escape-path guard (`assertPathWithinRepo`) removed: both the `..`-escape and the
+absolute-path tests fail closed to passing. The trailing `-- <paths>` dropped from `git commit` alone
+(round 1's own corrected claim): exactly the new "commit's OWN pathspec is real defense" test fails,
+nothing else. The round-2 rollback try/catch removed: the new double-failure test fails exactly as the
+critic's own reproduction showed (the original commit failure's message disappears from the thrown
+error). Every mutation restored and the affected suite re-confirmed green before moving on.
+
+**Shared-working-tree incident (honest account, not destructive).** Early in this piece, an isolated
+hunk of `bin.ts` (`runConfigCommand`'s own `--commit` wiring), hand-staged via `git apply --cached` to
+keep it separate from a concurrent agent's own unrelated `bin.ts` work in this same actively-shared file,
+was twice swept into that OTHER agent's own commits instead of landing under this piece's own commit
+message — once into a dangling, later-superseded amend (never reachable from `main`), once into a real,
+still-reachable commit (`0647a6f`, "fix(cli): forge gate check/approve/waive..."). Both times confirmed,
+via a direct read of the committed bytes (`git show HEAD:packages/cli/src/bin.ts`), to be byte-for-byte
+correct and complete — no content was ever lost or corrupted, only its commit attribution. Not rewritten
+further once other commits had already stacked on top — the identical judgment call `Q266`'s own entry
+made for an analogous incident in this same milestone. This piece's own subsequent commits (`vcs`/`cli`
+files, the two critic-round fixes) all used `git commit -- <exact pathspec>` against a freshly re-checked
+`git status --short -- <paths>`, never `--amend`, specifically because of this. Separately, during round
+1's own mutation-testing phase, the dispatched critic subagent (in the same shared working tree, no
+worktree isolation on that first dispatch) independently mutated and restored `packages/vcs/src/
+commit.ts` as part of its own reproduction of the "commits exactly the named path" property — caught
+mid-mutation once, confirmed restored, both this piece's own mutation evidence and the critic's own
+independent reproduction subsequently reconfirmed green. Round 2's critic was dispatched with
+`isolation: "worktree"` specifically to avoid a repeat.
+
+**Decision.** Ship as built, with both rounds' real findings fixed and re-verified; the two round-1
+disclosed items and the shared-tree incident recorded honestly rather than hidden.
+
+**Discloses.** The commit lands on the checked-out branch while `intake`'s other outputs sit on the
+integration branch — proven to merge cleanly (`git merge --no-edit <integration branch>` from the
+project root, in `test/intake-workflow.test.ts`'s own flipped test), since no lane or inline step ever
+touches `.forge/config.yaml`. `vcs.signCommits` governs the signing of the very commit that turns it on
+(reading the post-write value): plausibly intentional, undocumented before this entry. `assertPathWithinRepo`
+does lexical `path.resolve`/`path.relative` containment, not real-path/symlink resolution — not
+exploitable today since the only real caller passes the hardcoded `.forge/config.yaml` constant.
+`formatConfigCommitMessage` rejects a newline in `marker.runId`/`stepId` but not emptiness (very low
+likelihood: `gateCommandMarker` only ever sets it from a defined `FORGE_RUN_ID`). `signCommits` itself
+remains otherwise unexercised as a real, successful signed commit in CI (no signing key available there
+either) — only its failure path and its flag-reaches-git wiring are tested, the same limitation
+`commitInLane`'s own pre-existing `sign` test already accepted.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P37`.

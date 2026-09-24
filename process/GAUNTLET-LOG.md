@@ -17887,3 +17887,90 @@ verified against a fresh `git status` immediately beforehand, specifically so th
 cannot repeat.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q266`.
+
+## M14 P37 — `forge config set <key> <value> --commit` commits exactly `.forge/config.yaml` via a new `commitPaths`, guarded by a new `CFG-055`; `intake:record-level` uses it (`vcs/src/{commit,index}.ts`, `cli/src/commands/config.ts`, `core/src/errors/codes.ts`, `cli/src/bin.ts`, `templates/templates/workflows/intake.workflow.yaml`, `fixtures/greenfield-service/.forge/workflows/intake.workflow.yaml`; new/edited tests in `vcs/test/commit-paths.test.ts` (new), `cli/test/commands/config.test.ts`, `cli/test/bin-config-commit.test.ts` (new), `cli/test/commands/config-commit-rollback-failure.test.ts` (new), `test/intake-workflow.test.ts`)
+
+**Context.** `PLAN-M14.md` P37; depends on the already-landed P4 (`FORGE_RUN_ID`/`FORGE_STEP_ID`,
+`@forge/core/session-marker`). Before this piece, `record-level` recorded the confirmed scale level in
+`.forge/config.yaml` and printed an echo telling the human to commit that file manually before the next
+`forge run` — a real, disclosed gap (`PLAN-M13.md` P20's own Discloses text).
+
+**Built.** `commitPaths(cwd, {paths, message, sign})` (new, `packages/vcs/src/commit.ts`) runs
+`git add -- <paths>` then `git commit -m <message> -- <paths>` — deliberately never `git add -A` the way
+`commitInLane` stages a whole lane worktree: `commitPaths`'s own real caller can run directly against the
+checked-out project root, a real user's own working tree, which must never have unrelated dirty state
+swept into one commit. Both the `git add` and the `git commit` are independently pathspec-scoped. A real
+no-op (none of `paths` dirty) returns the current `HEAD` with `committed: false`. `assertPathWithinRepo`
+refuses `VCS-COMMIT-PATH-ESCAPES-REPO` for an absolute path or one escaping `cwd` via `..`, before any
+git call. `formatConfigCommitMessage` (same file) is `formatCommitMessage`'s own sibling for a commit the
+CLI makes directly, not lane work an agent produced: the identical `forge(<scope>): <subject>` header and
+`Forge-Step`/`Forge-Run` trailers, but no `Co-Authored-By`, and the trailer paragraph itself optional.
+
+`configSet(ctx, key, rawValue, {commit})` (`packages/cli/src/commands/config.ts`) validates FIRST — the
+pre-existing `CFG-001`/`USR-002` refusals are unchanged, checked before `--commit`'s own `CFG-055`
+precondition. Only once the value is schema-valid does `assertCommittable` run (`CFG-055`: not a git
+repository, `.forge/config.yaml` untracked, or it already differs from `HEAD`, via `getDirtyFiles`,
+before any write), then the write, then `commitPaths` stages and commits EXACTLY `.forge/config.yaml`.
+Returns `{config, committed: {sha} | null}`. `ConfigCommandContext` gains optional `projectRoot`/`marker`
+so every existing `--commit`-unaware caller keeps working unchanged. `bin.ts`'s `runConfigCommand` gains
+`'--commit': false`, reads the real FORGE run/step marker via the existing
+`gateCommandMarker(realEnvSnapshot())` only for `--commit`, and the `--json` line gains
+`committed: {sha} | null`. `intake.workflow.yaml`'s `record-level` step becomes `... forge config set
+project.level "$FORGE_ANSWER_levelConfirmed" --commit`, dropping the old echo; the greenfield fixture is
+regenerated to match.
+
+**Round 1 (fresh, context-free; real reproductions): two real bugs found and fixed, one commit-message
+overclaim found and fixed with a real test.** (1) `assertCommittable`'s bare `catch {}` around
+`getDirtyFiles` reported EVERY failure as `CFG-055` "not a git repository" — reproduced live with a real
+repo, `.git/index` `chmod 000`'d: a genuinely different failure, mislabeled with a `git init` remedy that
+would not have helped. Fixed: `assertGitAvailable` runs first, and only ITS failure becomes `CFG-055`;
+any other `getDirtyFiles` failure now propagates as its own real `VcsError`. (2) A commit failure AFTER
+the write (reproduced live: `vcs.signCommits: true`, no signing key configured) left `.forge/config.yaml`
+written and staged despite `configSet` reporting failure. Fixed two ways: `commitPaths` un-stages `paths`
+on its own `git commit` failure; `configSet` captures the pre-write bytes and restores them on any
+`commitPaths` failure. (3) The first commit's own mutation-evidence claim for the commit's OWN trailing
+`-- <paths>` pathspec (distinct from `git add`'s) did not hold against the actual suite at the time.
+Fixed with a new test that pre-stages a second file with a plain `git add` before calling `commitPaths`,
+proving only the commit's own pathspec (not `git add`'s, which cannot unstage it) keeps it out.
+
+**Round 2 (fresh, context-free, isolated worktree): all three round-1 fixes independently reproduced,
+PASS; one new, narrow, real bug found and fixed.** The round-1 rollback's own
+`await writeFileAtomic(configPath, originalText)` had no guard: if that restore ALSO fails (disk full,
+narrow but real), its own new error silently replaced `cause` — the original commit failure — with no
+trace left. Fixed: the restore write is now wrapped in its own try/catch; on a double failure both are
+named and the original is preserved as the real `cause`. A new test
+(`config-commit-rollback-failure.test.ts`) reproduces the exact scenario via `vi.mock` on
+`writeFileAtomic` (real for the genuine write, forced to fail only on the restore) and `commitPaths`
+(forced to fail). No round 3: the finding was narrow and low-severity, fixed and re-verified with real
+reproduction.
+
+**Mutation evidence.** `git add -A` in `commitPaths`: the "stages and commits ONLY the named path" test
+fails. The escape-path guard removed: both escape tests fail closed to passing. The trailing
+`-- <paths>` dropped from `git commit` alone: exactly the new "commit's OWN pathspec" test fails, nothing
+else. The round-2 rollback try/catch removed: the new double-failure test fails exactly as the critic's
+own reproduction showed. Every mutation restored via `git checkout --` against a real, already-committed
+file, and the affected suite re-confirmed green.
+
+**Shared-working-tree incident (honest account, not destructive).** An isolated `bin.ts` hunk
+(`runConfigCommand`'s `--commit` wiring), hand-staged via `git apply --cached` to keep it separate from a
+concurrent agent's own unrelated work in this actively-shared file, was twice swept into that other
+agent's own commits instead of this piece's own — confirmed both times, by a direct read of the
+committed bytes, to be byte-for-byte correct and complete; only the commit attribution was wrong, never
+rewritten further once other commits had stacked on top (the identical judgment call `Q266`'s own entry
+made). Every commit after used `git commit -- <exact pathspec>` against a freshly re-checked
+`git status`, never `--amend`. Separately, round 1's own critic subagent (dispatched without worktree
+isolation) mutated and restored `commit.ts` as part of its own reproduction of the pathspec property,
+caught mid-mutation once and confirmed restored; round 2's critic was dispatched with
+`isolation: "worktree"` to avoid a repeat. Full honest account in `SPEC-QUESTIONS.md` `Q267`.
+
+**Decision.** Ship as built, with both rounds' real findings fixed and re-verified.
+
+**Discloses.** The commit lands on the checked-out branch while `intake`'s other outputs sit on the
+integration branch — proven to merge cleanly (`git merge --no-edit <integration branch>`, in
+`test/intake-workflow.test.ts`'s own flipped test). `vcs.signCommits` governs the signing of the very
+commit that turns it on. `assertPathWithinRepo` does lexical containment, not symlink resolution — not
+exploitable today (the only real caller passes a hardcoded constant). `signCommits` itself remains
+otherwise unexercised as a real, successful signed commit in CI (no signing key available there), the
+same limitation `commitInLane`'s own pre-existing `sign` test already accepted.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q267`.
