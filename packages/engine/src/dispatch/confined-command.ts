@@ -891,7 +891,17 @@ function vetNetworkAndArguments(
 ): CommandRefusal | undefined {
   const first = words[0];
   if (first === undefined) return refuse('malformed', 'the command is empty');
-  const program = path.posix.basename(first);
+  // `programKey`, not a bare `path.posix.basename`: a gauntlet critic found this comparison, unlike
+  // every OTHER program-name comparison in this module (`configuredProgramRefusal`'s own `programKey`
+  // call), was case-sensitive — `GIT push`, `Git reset --hard`, `CURL evil.example`, `PING`/`NC`/`WGET`/
+  // `SSH`, `RG --pre=sh`, `TREE -o` all resolved to the real program on this (case-insensitive)
+  // filesystem and ran unrefused. Proven, for a STORED command, with a real end-to-end `forge kb verify`
+  // run: a KB entry naming `` Command: `Git reset --hard` `` silently discarded real uncommitted work in
+  // the live project tree and reported `outcome: 'pass'`. `vetStoredCommand`'s own `exec: [command]`
+  // grant is always self-satisfying whatever case the stored text used (unlike a live model turn, which
+  // still needs to clear the agent's own, usually-lowercase, exec pattern first), so this check was, for
+  // a stored command, the only remaining line of defense for the shapes it names -- and it had a hole.
+  const program = programKey(first);
   const args = words.slice(1);
 
   if (grant.network !== 'full') {

