@@ -137,18 +137,22 @@ function stepRecordPath(projectRoot: string, runId: string, stepId: string, file
   );
 }
 
-/** Wraps a real `FakePlatformAdapter` so `resumeSession` calls can be counted, intercepted, or captured
- * without touching `@forge/testkit` itself -- a thin, explicit delegate (not a `Proxy`) so every method
- * keeps its own real `this` binding. */
+/** Wraps a real `FakePlatformAdapter` (or another wrapper's own output, e.g. `withInjectedDuration`
+ * below) so `resumeSession` calls can be counted, intercepted, or captured without touching
+ * `@forge/testkit` itself -- a thin, explicit delegate (not a `Proxy`) so every method keeps its own
+ * real `this` binding. `adapter` is typed as the general `PlatformAdapter` interface, not the concrete
+ * `FakePlatformAdapter` class, so the two wrappers compose; `preflight` is called with a throwaway
+ * context since nothing in this file's own tests ever calls it, and `FakePlatformAdapter`'s own real
+ * implementation ignores its argument entirely. */
 function withResumeSession(
-  adapter: FakePlatformAdapter,
+  adapter: PlatformAdapter,
   resumeSession: PlatformAdapter['resumeSession'],
 ): PlatformAdapter {
   return {
     id: adapter.id,
     displayName: adapter.displayName,
     capabilities: () => adapter.capabilities(),
-    preflight: () => adapter.preflight(),
+    preflight: () => adapter.preflight({ projectRoot: '', env: {} }),
     listModels: () => adapter.listModels(),
     startSession: (req) => adapter.startSession(req),
     resumeSession,
@@ -156,6 +160,15 @@ function withResumeSession(
 }
 
 const STEP_ID = 'wf:context';
+
+/** A `SessionHandle.events`-shaped empty stream, for a hand-built handle that never emits any real
+ * `AdapterEvent` -- an object literal, not an async generator function, so there is no empty function
+ * body for `@typescript-eslint/no-empty-function` to flag. */
+const EMPTY_ASYNC_ITERABLE: AsyncIterable<never> = {
+  [Symbol.asyncIterator]: () => ({
+    next: () => Promise.resolve({ done: true as const, value: undefined }),
+  }),
+};
 
 describe('FORGE_REQUEST_CONTEXT expansion (PLAN-M14.md P44) -- via runAgentStep', () => {
   it('(a) an exact KB id request gets one resumeSession whose prompt holds the entry under ### <id>, and the step outcome is the resumed session', async () => {
@@ -760,6 +773,253 @@ describe('FORGE_REQUEST_CONTEXT expansion (PLAN-M14.md P44) -- via runAgentStep'
       // Leg 1 used exactly 1 turn and $0.5 -- the continuation's own budget is the remainder, not 10/$2 again.
       expect(capturedLimits?.maxTurns).toBe(9);
       expect(capturedLimits?.maxCostUsd).toBeCloseTo(1.5, 10);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('(critic round 1) an unexpected internal failure resolving a SECOND request never discards the first, already-completed continuation leg: its real cost, its real write and its real changedFiles all survive on the outcome', async () => {
+    const projectRoot = await createTempRepo('internal-failure');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      // Succeeds for the initial assembly's own openKb() call and for the first (KB-ARCH-0001)
+      // resolution, then rejects on every call after that -- simulating a KB backend that genuinely
+      // breaks partway through a session that already got one real, billable continuation.
+      let calls = 0;
+      const flakyOpenKb = (): Promise<KbAccess> => {
+        calls += 1;
+        return calls <= 2 ? Promise.resolve(kb) : Promise.reject(new Error('simulated KB failure'));
+      };
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      adapter.script((request) => request.prompt.includes('### KB-ARCH-0001'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0102'],
+        writeFiles: [{ relativePath: 'leg2.txt', content: 'real work\n' }],
+        costUsd: 5,
+      });
+      const ctx = createTestContext({
+        projectRoot,
+        adapter,
+        assembly: createFixtureAssembly(projectRoot, { openKb: flakyOpenKb }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+        produces: ['leg2.txt'],
+      });
+
+      const outcome = await executeStep(stepNode, ctx);
+
+      expect(outcome.status).toBe('succeeded');
+      if (outcome.detail.kind !== 'agent') throw new Error('unreachable');
+      // The second (KB-ARCH-0102) request's own resolution broke -- but the first leg's real write and
+      // real $5 cost are NOT discarded because of it.
+      expect(outcome.detail.session.changedFiles).toContain('leg2.txt');
+      expect(outcome.detail.session.usage.costUsd).toBeCloseTo(5, 10);
+
+      const events: ForgeEvent[] = [];
+      for await (const event of readEvents(projectRoot, ctx.runId)) events.push(event);
+      expect(events.filter((event) => event.type === 'UsageRecorded')).toHaveLength(2);
+      const internalError = events.find(
+        (event) =>
+          event.type === 'SessionEvent' &&
+          typeof event.payload === 'object' &&
+          event.payload !== null &&
+          (event.payload as Record<string, unknown>)['reason'] === 'internal-error',
+      );
+      expect(internalError?.payload).toMatchObject({
+        served: false,
+        reason: 'internal-error',
+        query: 'KB-ARCH-0102',
+      });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('(critic round 1) the continuation SessionEvent{sessionId} is durable before handle.result() resolves: it survives even when result() itself then rejects (a crash mid-turn), and no AdapterError is emitted for it', async () => {
+    const projectRoot = await createTempRepo('mid-turn-crash');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      const crashingAdapter = withResumeSession(adapter, () =>
+        Promise.resolve({
+          sessionId: 'crash-mid-turn-session-id',
+          events: EMPTY_ASYNC_ITERABLE,
+          stop: () => Promise.resolve(),
+          result: () => Promise.reject(new Error('crashed mid-turn, no result ever produced')),
+        }),
+      );
+      const ctx = createTestContext({
+        projectRoot,
+        adapter: crashingAdapter,
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+      });
+
+      const outcome = await executeStep(stepNode, ctx);
+      expect(outcome.status).toBe('succeeded');
+
+      const events: ForgeEvent[] = [];
+      for await (const event of readEvents(projectRoot, ctx.runId)) events.push(event);
+      expect(events.filter((event) => event.type === 'AdapterError')).toHaveLength(0);
+      const sessionIdEvent = events.find(
+        (event) =>
+          event.type === 'SessionEvent' &&
+          typeof event.payload === 'object' &&
+          event.payload !== null &&
+          (event.payload as Record<string, unknown>)['sessionId'] === 'crash-mid-turn-session-id',
+      );
+      expect(
+        sessionIdEvent,
+        'the continuation sessionId must be recorded even though result() crashed',
+      ).toBeDefined();
+      const resumeFailed = events.find(
+        (event) =>
+          event.type === 'SessionEvent' &&
+          typeof event.payload === 'object' &&
+          event.payload !== null &&
+          (event.payload as Record<string, unknown>)['reason'] === 'resume-failed',
+      );
+      expect(resumeFailed).toBeDefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('(critic round 1) a duplicate (already-served) query also counts against the 3-request bound -- it cannot loop past it', async () => {
+    const projectRoot = await createTempRepo('dup-bound');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      // Every duplicate continuation re-asks for the exact same, already-served id -- if duplicates were
+      // not bounded, this would run forever.
+      adapter.script((request) => request.prompt.includes('already received'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      adapter.script((request) => request.prompt.includes('### KB-ARCH-0001'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      let resumeCalls = 0;
+      const spyAdapter = withResumeSession(adapter, (sessionId, request) => {
+        resumeCalls += 1;
+        return adapter.resumeSession(sessionId, request);
+      });
+      const ctx = createTestContext({
+        projectRoot,
+        adapter: spyAdapter,
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+      });
+
+      await executeStep(stepNode, ctx);
+
+      // Exactly 3 continuations were ever attempted (the bound), never more -- the 4th (also a
+      // duplicate) was refused with reason:'limit' before any resumeSession call.
+      expect(resumeCalls).toBe(3);
+      const requests = JSON.parse(
+        await readFile(
+          stepRecordPath(projectRoot, ctx.runId, STEP_ID, 'context-requests.json'),
+          'utf8',
+        ),
+      ) as { requests: readonly { outcome: string }[] };
+      expect(requests.requests.map((entry) => entry.outcome)).toEqual([
+        'served',
+        'duplicate',
+        'duplicate',
+        'limit',
+      ]);
+
+      const events: ForgeEvent[] = [];
+      for await (const event of readEvents(projectRoot, ctx.runId)) events.push(event);
+      const duplicateEvents = events.filter(
+        (event) =>
+          event.type === 'SessionEvent' &&
+          typeof event.payload === 'object' &&
+          event.payload !== null &&
+          (event.payload as Record<string, unknown>)['duplicate'] === true,
+      );
+      expect(duplicateEvents).toHaveLength(2);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('(critic round 1) each continuation carries the REMAINDER of wallClockMs too, computed from real (non-zero) leg durations', async () => {
+    const projectRoot = await createTempRepo('wall-clock-remainder');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      adapter.script((request) => request.prompt.includes('### KB-ARCH-0001'), { text: ['ack'] });
+      // FakePlatformAdapter always reports durationMs: 0 -- wrapped here so this test can prove the
+      // wallClockMs remainder arithmetic for real, non-zero durations, not merely leave it untested
+      // (a broken computation would otherwise pass every other test in this file undetected).
+      const withInjectedDuration = (
+        inner: PlatformAdapter,
+        durationMs: number,
+      ): PlatformAdapter => ({
+        id: inner.id,
+        displayName: inner.displayName,
+        capabilities: () => inner.capabilities(),
+        preflight: () => inner.preflight({ projectRoot: '', env: {} }),
+        listModels: () => inner.listModels(),
+        startSession: async (req) => {
+          const handle = await inner.startSession(req);
+          return { ...handle, result: async () => ({ ...(await handle.result()), durationMs }) };
+        },
+        resumeSession: async (sessionId, req) => {
+          const handle = await inner.resumeSession(sessionId, req);
+          return { ...handle, result: async () => ({ ...(await handle.result()), durationMs }) };
+        },
+      });
+      let capturedLimits: SessionLimits | undefined;
+      const spyAdapter = withResumeSession(
+        withInjectedDuration(adapter, 40_000),
+        (sessionId, request) => {
+          capturedLimits = request.limits;
+          return withInjectedDuration(adapter, 40_000).resumeSession(sessionId, request);
+        },
+      );
+      const ctx = createTestContext({
+        projectRoot,
+        adapter: spyAdapter,
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+        limits: { maxTurns: 20, wallClockMs: 500_000, maxCostUsd: 5 },
+      });
+
+      await executeStep(stepNode, ctx);
+
+      // Leg 1's own injected duration (40 000 ms) is subtracted from the step's own wallClockMs budget.
+      expect(capturedLimits?.wallClockMs).toBe(460_000);
     } finally {
       cleanup();
     }

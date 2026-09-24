@@ -795,12 +795,14 @@ export async function runAgentWork(
     // A session with no such token (the overwhelmingly common case) returns unchanged after one cheap
     // scan; `session` below is then this loop's own aggregate outcome (`expandRequestedContext`'s own
     // doc comment), and `legs` every real adapter result it took to reach it, for `UsageRecorded` below.
-    // Its own inner failures (a rejecting `resumeSession`, an unsupported adapter) are already handled
-    // inside the loop itself without throwing; this try/catch is only for a genuinely unexpected failure
-    // (a KB read error, a disk write failure recording the request) -- one that must not discard the
-    // real, already-obtained `session` above and report it as an adapter crash it never was
-    // (`Discloses`: "a crash between request and continuation rerolls" describes a genuine engine
-    // crash-resume, not this narrower, already-recovered-from case).
+    // `expandRequestedContext` itself never throws (a rejecting `resumeSession`, an unsupported
+    // adapter, or any other unexpected failure inside its own loop is all caught internally and ends
+    // the loop with every leg that genuinely completed intact, `context-expansion.ts`'s own doc
+    // comment) -- this try/catch is a defensive backstop only, for a failure this module's own
+    // reasoning did not anticipate; even then, `session`/`legs` below are simply left at the pre-
+    // expansion state (the real, already-obtained initial `session`) rather than fabricated into an
+    // adapter crash (`Discloses`: "a crash between request and continuation rerolls" describes a
+    // genuine engine crash-resume, not this narrower case).
     try {
       const expanded = await expandRequestedContext(
         {

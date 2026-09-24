@@ -131,9 +131,11 @@ export async function runParticipantSession(
   // perspective) can ask for more KB context mid-turn too -- `05` §5.4 point 4 makes no exception for a
   // non-authoring session, and `resumeSession` carries this session's own grant forward unchanged (the
   // adapter's own resumed-session contract, `07` §7.2), so a continuation here is exactly as read-only as
-  // the turn it continues. An unexpected internal failure (never a rejecting `resumeSession`, which the
-  // loop itself already recovers from) leaves `session` at the last leg that completed, the same
-  // "proceed with what was already obtained" fallback `runAgentWork`'s own identical try/catch uses.
+  // the turn it continues. `expandRequestedContext` itself never throws (`context-expansion.ts`'s own
+  // doc comment: every internal failure, a rejecting `resumeSession` included, is caught inside its own
+  // loop and ends it with every leg that genuinely completed intact) -- this try/catch is a defensive
+  // backstop only, leaving `session` at the real, already-obtained pre-expansion result for a failure
+  // this module's own reasoning did not anticipate.
   try {
     const expanded = await expandRequestedContext(
       {
@@ -147,7 +149,7 @@ export async function runParticipantSession(
     );
     session = expanded.session;
   } catch {
-    // See the doc comment above: `session` is left as the last leg that completed.
+    // See the doc comment above: `session` is left at the pre-expansion result.
   }
   await ctx.telemetry.emit({
     type: 'SessionEnded',

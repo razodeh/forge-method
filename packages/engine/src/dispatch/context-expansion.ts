@@ -18,12 +18,15 @@
  * throughout (`runAgentWork`'s own doc comment for the fresh-vs-resumed split, `runParticipantSession`'s
  * own reuse by `session.ts`'s CONVERGE re-prompt).
  *
- * Bounded at 3 real requests per session (`05` §5.4 point 4); an already-served query is skipped (no
- * re-resolution, no cost against the bound) rather than re-sent; entered only when
- * `ctx.adapter.capabilities().sessionResume` is true AT CONTINUATION TIME (checked fresh on every
- * iteration -- Claude Code reports it `false` until `system/init`, `capabilities.ts`); a rejecting
- * `resumeSession` call stops the loop with the session's last good leg as the outcome, never as an
- * `AdapterError` (that event means the session itself crashed; a context request this session never
+ * Bounded at 3 continuations per session (`05` §5.4 point 4, `MAX_CONTEXT_REQUESTS_PER_SESSION`'s own
+ * doc comment) -- an already-served query is not re-resolved (its continuation packs nothing new) but
+ * still counts against the bound, so a model that keeps repeating an already-answered request cannot
+ * spend its whole remaining turn/cost budget on nothing but "you already have this" replies. Entered
+ * only when `ctx.adapter.capabilities().sessionResume` is true AT CONTINUATION TIME (checked fresh on
+ * every iteration -- Claude Code reports it `false` until `system/init`, `capabilities.ts`); a
+ * rejecting `resumeSession` call, or any other unexpected failure in this loop's own resolve/persist/
+ * emit pipeline, stops the loop with every leg that genuinely completed intact as the outcome, never as
+ * an `AdapterError` (that event means the session itself crashed; a context request this session never
  * asked to be resumed for failing is a narrower, recoverable event). Nothing here changes
  * `resolveContextRequest`, the nine compiled blocks, `prompt.md`'s own bytes, `assemble.ts`'s
  * determinism, the operating contract, `ResumeRequest`/`resumeSession` themselves, any tool grant, or
@@ -49,8 +52,13 @@ import { neutralizeBlockHeadings, renderContextEntries } from '@forge/agents/pro
 import type { StepNodeLimits } from '../plan/index.ts';
 import type { ExecuteStepContext } from './types.ts';
 
-/** `05` §5.4 point 4's own hard ceiling: at most this many real (non-duplicate) requests are resolved
- * and continued per session, regardless of how many `FORGE_REQUEST_CONTEXT:` lines the model emits. */
+/** `05` §5.4 point 4's own hard ceiling: at most this many continuations are ever sent per session,
+ * regardless of how many `FORGE_REQUEST_CONTEXT:` lines the model emits -- a repeat of an
+ * already-served query counts against this bound too (a gauntlet critic round found the first version
+ * let a repeated query bypass it entirely, since only `served.size`, which a duplicate never grows,
+ * was checked: a model that kept re-asking the same already-answered query could spend the step's
+ * entire remaining turn/cost budget on nothing but "you already have this" continuations, with no
+ * ceiling but `node.limits` itself). */
 export const MAX_CONTEXT_REQUESTS_PER_SESSION = 3;
 
 /** `SessionEvent`'s own `payload` shape for a context-expansion iteration -- rides on the pre-existing
@@ -62,11 +70,32 @@ export interface ContextRequestEventPayload {
   readonly kind: 'context-request';
   readonly query: string;
   readonly served: boolean;
-  readonly reason?: 'no-match' | 'limit' | 'adapter-cannot-resume' | 'resume-failed';
-  /** The continuation's own adapter session id, when a `resumeSession` call actually completed --
-   * absent for every stopped-before-attempting outcome (`adapter-cannot-resume`, `limit`) and for a
-   * `resume-failed` attempt (nothing was returned to report an id from). */
+  readonly reason?:
+    | 'no-match'
+    | 'limit'
+    | 'adapter-cannot-resume'
+    | 'resume-failed'
+    /** A gauntlet critic round (M14 P44) found an unexpected failure inside this loop's own
+     * resolve/persist/emit pipeline (a KB read error, a disk write failure, a non-`resumeSession`
+     * telemetry emit failing) previously had no distinct reason at all -- it simply propagated out of
+     * `expandRequestedContext` uncaught, discarding every already-completed leg. Now caught, recorded
+     * under this reason, and the loop stops gracefully with every leg that genuinely completed intact
+     * (`expandRequestedContext`'s own doc comment). */
+    | 'internal-error';
+  /** The continuation's own adapter session id -- emitted BEFORE `handle.result()` is awaited (`18`
+   * §18.10's write-before-effect discipline, the identical precedent `steps.ts`'s own crash-resume
+   * `resumeSession` call already sets for exactly this reason: a crash mid-turn must not leave the run
+   * with no record the adapter session ever started). Present only when a `resumeSession` call actually
+   * acquired a handle -- absent for every stopped-before-attempting outcome (`adapter-cannot-resume`,
+   * `limit`, `internal-error`) and for a `resume-failed` attempt (the call itself never returned a
+   * handle to report an id from). */
   readonly sessionId?: string;
+  /** True when this request repeated a query already served earlier in this session (`served: true`
+   * alongside it means "answered again, but with nothing new packed," never "served" in the sense a
+   * fresh, first-time request is -- a gauntlet critic round found the pre-existing single `served`
+   * boolean let a reader of `events.ndjson` alone not tell the two apart). Absent (never `false`) for
+   * every non-duplicate request. */
+  readonly duplicate?: true;
 }
 
 /** One entry of `context-requests.json`, beside `prompt.md` (`18` §18.2's own "manifest, not content"
@@ -246,9 +275,11 @@ function summedUsage(legs: readonly SessionResult[]): SessionResult['usage'] {
 
 /** The step's own outcome once every leg has run: the LAST leg's own `ok`/`finalText`/`sessionId`/
  * `error`/`structured`/`controlTokens` (`05` §5.4 point 4's own "the step's outcome is the resumed
- * session's"), but `usage` summed and `changedFiles` unioned across every leg (`PLAN-M14.md` P44's own
- * Tests (f)) -- a file a leg 1 write reverted by leg 2's own claim-unrelated crash must not vanish from
- * the reported outcome merely because the LAST leg's own `changedFiles` never mentions it again. */
+ * session's"), but `usage` summed, `changedFiles` unioned and `durationMs` summed across every leg
+ * (`PLAN-M14.md` P44's own Tests (f)) -- a file a leg 1 write reverted by leg 2's own claim-unrelated
+ * crash must not vanish from the reported outcome merely because the LAST leg's own `changedFiles`
+ * never mentions it again, and the reported duration must reflect every real adapter turn this attempt
+ * actually spent, not only its final leg's own. */
 function mergeLegs(legs: readonly SessionResult[]): SessionResult {
   // `legs` always has at least `initial` in it (the caller's own first argument to `expandRequestedContext`),
   // so this destructure's own fallback is unreachable in practice; kept typed rather than a non-null
@@ -314,6 +345,11 @@ export async function expandRequestedContext(
   const served = new Set<string>();
   const records: ContextRequestRecordEntry[] = [];
   let fileCounter = 0;
+  // Every iteration that reaches the bound check counts against `MAX_CONTEXT_REQUESTS_PER_SESSION`,
+  // duplicate or not (`MAX_CONTEXT_REQUESTS_PER_SESSION`'s own doc comment) -- `served.size` alone
+  // (a prior version's own bound) never grows for a repeat, which let a repeated query bypass the
+  // ceiling entirely.
+  let handledCount = 0;
   let current = initial;
 
   for (;;) {
@@ -321,107 +357,136 @@ export async function expandRequestedContext(
     const query = firstContextRequestQuery(current);
     if (query === undefined) break;
 
-    // Checked fresh on every iteration, never cached from before the loop started (Mandate: "AT
-    // CONTINUATION TIME" -- an adapter's own resumability can genuinely change mid-run, `capabilities.ts`).
-    const capabilities = await options.ctx.adapter.capabilities();
-    if (!capabilities.sessionResume) {
-      fileCounter += 1;
-      await persistExpansionRecord(
-        options,
-        records,
-        { n: fileCounter, query, outcome: 'adapter-cannot-resume', strippedCount: 0 },
-        undefined,
-      );
-      await emitContextRequestEvent(options, {
-        kind: 'context-request',
-        query,
-        served: false,
-        reason: 'adapter-cannot-resume',
-      });
-      break;
-    }
-
-    const isDuplicate = served.has(query);
-    if (!isDuplicate && served.size >= MAX_CONTEXT_REQUESTS_PER_SESSION) {
-      fileCounter += 1;
-      await persistExpansionRecord(
-        options,
-        records,
-        { n: fileCounter, query, outcome: 'limit', strippedCount: 0 },
-        undefined,
-      );
-      await emitContextRequestEvent(options, {
-        kind: 'context-request',
-        query,
-        served: false,
-        reason: 'limit',
-      });
-      break;
-    }
-
-    const resolution: Resolution = isDuplicate
-      ? { outcome: 'served', prompt: duplicateContinuation(query), strippedCount: 0 }
-      : await resolveForContinuation(options.ctx, query);
-    if (!isDuplicate) served.add(query);
-
-    fileCounter += 1;
-    const recordOutcome = isDuplicate ? 'duplicate' : resolution.outcome;
-    await persistExpansionRecord(
-      options,
-      records,
-      {
-        n: fileCounter,
-        query,
-        outcome: recordOutcome,
-        strippedCount: resolution.strippedCount,
-        continuationFile: `expansion-${String(fileCounter)}.md`,
-      },
-      resolution.prompt,
-    );
-
-    if (resolution.strippedCount > 0) {
-      await options.ctx.telemetry.emit({
-        type: 'InjectionAttemptBlocked',
-        stepId: options.telemetryStepId,
-        ...(options.agentId === undefined ? {} : { agentId: options.agentId }),
-        payload: {
-          phase: 'context-expansion',
-          kind: 'kb-entry',
-          strippedCount: resolution.strippedCount,
-        },
-      });
-    }
-
-    const abortController = new AbortController();
-    const request: ResumeRequest = {
-      prompt: resolution.prompt,
-      limits: remainingLimits(options.nodeLimits, legs),
-      abortSignal: abortController.signal,
-    };
-    let resumed: SessionResult;
+    // Everything from here through pushing a real new leg is wrapped in one try/catch: a gauntlet
+    // critic round found an earlier version let ANY unexpected failure here (a KB read error inside
+    // `resolveForContinuation`, a `writeFileAtomic` failure in `persistExpansionRecord`, a non-
+    // `resumeSession` `telemetry.emit` rejecting) propagate straight out of this function, uncaught --
+    // discarding every already-completed leg's real, already-spent usage and already-written
+    // `changedFiles` along with it, even though the caller's own doc comment (`steps.ts`,
+    // `dispatch-agent-step.ts`) claims otherwise. The one exception this function already handled
+    // correctly, a rejecting `resumeSession` itself, keeps its own inner catch (`resume-failed`) so
+    // that specific, disclosed, recoverable failure is told apart from a genuinely unexpected one.
     try {
-      const handle = await options.ctx.adapter.resumeSession(current.sessionId, request);
-      resumed = await handle.result();
-    } catch {
-      await emitContextRequestEvent(options, {
-        kind: 'context-request',
+      // Checked fresh on every iteration, never cached from before the loop started (Mandate: "AT
+      // CONTINUATION TIME" -- an adapter's own resumability can genuinely change mid-run,
+      // `capabilities.ts`).
+      const capabilities = await options.ctx.adapter.capabilities();
+      if (!capabilities.sessionResume) {
+        fileCounter += 1;
+        await persistExpansionRecord(
+          options,
+          records,
+          { n: fileCounter, query, outcome: 'adapter-cannot-resume', strippedCount: 0 },
+          undefined,
+        );
+        await emitContextRequestEvent(options, {
+          kind: 'context-request',
+          query,
+          served: false,
+          reason: 'adapter-cannot-resume',
+        });
+        break;
+      }
+
+      const isDuplicate = served.has(query);
+      if (handledCount >= MAX_CONTEXT_REQUESTS_PER_SESSION) {
+        fileCounter += 1;
+        await persistExpansionRecord(
+          options,
+          records,
+          { n: fileCounter, query, outcome: 'limit', strippedCount: 0 },
+          undefined,
+        );
+        await emitContextRequestEvent(options, {
+          kind: 'context-request',
+          query,
+          served: false,
+          reason: 'limit',
+        });
+        break;
+      }
+      handledCount += 1;
+
+      const resolution: Resolution = isDuplicate
+        ? { outcome: 'served', prompt: duplicateContinuation(query), strippedCount: 0 }
+        : await resolveForContinuation(options.ctx, query);
+      if (!isDuplicate) served.add(query);
+
+      fileCounter += 1;
+      const recordOutcome = isDuplicate ? 'duplicate' : resolution.outcome;
+      await persistExpansionRecord(
+        options,
+        records,
+        {
+          n: fileCounter,
+          query,
+          outcome: recordOutcome,
+          strippedCount: resolution.strippedCount,
+          continuationFile: `expansion-${String(fileCounter)}.md`,
+        },
+        resolution.prompt,
+      );
+
+      if (resolution.strippedCount > 0) {
+        await options.ctx.telemetry.emit({
+          type: 'InjectionAttemptBlocked',
+          stepId: options.telemetryStepId,
+          ...(options.agentId === undefined ? {} : { agentId: options.agentId }),
+          payload: {
+            phase: 'context-expansion',
+            kind: 'kb-entry',
+            strippedCount: resolution.strippedCount,
+          },
+        });
+      }
+
+      const abortController = new AbortController();
+      const request: ResumeRequest = {
+        prompt: resolution.prompt,
+        limits: remainingLimits(options.nodeLimits, legs),
+        abortSignal: abortController.signal,
+      };
+      const eventBase = {
+        kind: 'context-request' as const,
         query,
-        served: false,
-        reason: 'resume-failed',
-      });
+        served: resolution.outcome === 'served',
+        ...(resolution.outcome === 'no-match' ? { reason: 'no-match' as const } : {}),
+        ...(isDuplicate ? { duplicate: true as const } : {}),
+      };
+      let resumed: SessionResult;
+      try {
+        const handle = await options.ctx.adapter.resumeSession(current.sessionId, request);
+        // Durable before `handle.result()` is awaited -- see `ContextRequestEventPayload.sessionId`'s
+        // own doc comment.
+        await emitContextRequestEvent(options, { ...eventBase, sessionId: handle.sessionId });
+        resumed = await handle.result();
+      } catch {
+        await emitContextRequestEvent(options, {
+          kind: 'context-request',
+          query,
+          served: false,
+          reason: 'resume-failed',
+        });
+        break;
+      }
+
+      legs.push(resumed);
+      current = resumed;
+    } catch {
+      // See this `try`'s own opening comment: `legs` is left exactly as it was before this iteration
+      // started, never discarded, and this function still returns normally rather than throwing.
+      try {
+        await emitContextRequestEvent(options, {
+          kind: 'context-request',
+          query,
+          served: false,
+          reason: 'internal-error',
+        });
+      } catch {
+        // Even telemetry failed -- nothing left to record, but still never rethrown.
+      }
       break;
     }
-
-    await emitContextRequestEvent(options, {
-      kind: 'context-request',
-      query,
-      served: resolution.outcome === 'served',
-      ...(resolution.outcome === 'no-match' ? { reason: 'no-match' as const } : {}),
-      sessionId: resumed.sessionId,
-    });
-
-    legs.push(resumed);
-    current = resumed;
   }
 
   return { session: legs.length === 1 ? initial : mergeLegs(legs), legs };
