@@ -267,6 +267,55 @@ describe('an elicit question can `show` a register entry an earlier step produce
     expect(compilePlan(workflow, {}).success).toBe(true);
   });
 
+  it('a producer reached through plain `sequence` array-order chaining, with no explicit dependsOn of its own, is a real ancestor (critic round 1: validateStructure used to falsely refuse this)', () => {
+    const workflow = parse([
+      [
+        '  - id: chain',
+        '    kind: sequence',
+        '    steps:',
+        '      - id: propose',
+        '        kind: agent',
+        '        agent: analyst',
+        '        outputs:',
+        '          - type: HandoffRecord',
+        '            subtype: level-proposal',
+        '      - id: confirm',
+        '        kind: elicit',
+        '        questions:',
+        '          - name: level',
+        '            prompt: "Question?"',
+        '            show: { type: HandoffRecord, subtype: level-proposal }',
+      ].join('\n'),
+    ]);
+    expect(
+      validateStructure(workflow).filter((issue) => issue.code.startsWith('elicit-show')),
+    ).toEqual([]);
+    const compiled = compilePlan(workflow, {});
+    expect(compiled.success).toBe(true);
+  });
+
+  it('a `sequence` chain still needs a REAL producer somewhere before it: a step that merely comes first but never declares the matching output is not one', () => {
+    const workflow = parse([
+      [
+        '  - id: chain',
+        '    kind: sequence',
+        '    steps:',
+        '      - id: unrelated',
+        '        kind: command',
+        '        run: "true"',
+        '      - id: confirm',
+        '        kind: elicit',
+        '        questions:',
+        '          - name: level',
+        '            prompt: "Question?"',
+        '            show: { type: HandoffRecord, subtype: level-proposal }',
+      ].join('\n'),
+    ]);
+    expect(validateStructure(workflow).map((issue) => issue.code)).toContain(
+      'elicit-show-not-produced',
+    );
+  });
+
   it('compilePlan refuses it too, over the real compiled graph: forge run does not call validateStructure', () => {
     const workflow = parse([
       [

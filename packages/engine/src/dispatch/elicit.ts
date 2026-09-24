@@ -174,13 +174,34 @@ interface ShownEntry {
   readonly fields: Readonly<Record<string, unknown>>;
 }
 
+/** A single rendered line's own cap, in UTF-16 code units -- the identical `dispatch/outputs.ts`
+ * `MAX_PROBLEM_CHARS` convention ("a step that produced hundreds of invalid files must not produce a
+ * megabyte-long failure"), applied here for the identical reason: a register entry is agent-produced
+ * content, and a single oversized field must not be printed to a human's terminal in full. */
+const MAX_CONTEXT_LINE_CHARS = 700;
+
+/** How many rendered lines `renderEntryLines` returns at most (`outputs.ts`'s own `MAX_LISTED_FILES`
+ * convention, scaled up: an entry has more real fields than a file list has files) -- a register entry
+ * with a very long array field (`delivered`, `open_questions`, ...) must not turn one `show` into a
+ * page of terminal scroll-back. */
+const MAX_CONTEXT_LINES = 50;
+
+function clipContextLine(line: string): string {
+  return line.length > MAX_CONTEXT_LINE_CHARS
+    ? `${line.slice(0, MAX_CONTEXT_LINE_CHARS)}... (truncated)`
+    : line;
+}
+
 /** `entry.fields` (`PLAN-M14.md` P41) as terminal lines for a `show` question's own `AskRequest.context`:
  * one line per scalar field (`"key: value"`, `id` moved first so a person knows which entry this is
  * before reading the rest of it), one line per item of an array field (`"key: item"`), an absent, empty
  * or blank field contributing no line. Deterministic (the entry's own key order, `id` aside). Never
  * sanitised here: the entry is agent-produced, untrusted text, and the port that actually prints it
  * (`@forge/cli`'s own terminal `AskPort`) already sanitises every line before writing it -- the identical
- * raw-here/sanitised-at-the-port split `question.prompt`/`choices` already have. */
+ * raw-here/sanitised-at-the-port split `question.prompt`/`choices` already have. Bounded both per line
+ * (`MAX_CONTEXT_LINE_CHARS`) and in total (`MAX_CONTEXT_LINES`, with a final "and N more" marker,
+ * `outputs.ts`'s own `listFiles` convention) -- a register entry is agent-produced, and an oversized
+ * field or an unbounded array must not turn one `show` into a terminal flood. */
 function renderEntryLines(fields: Readonly<Record<string, unknown>>): readonly string[] {
   const lines: string[] = [];
   const keys = ['id', ...Object.keys(fields).filter((key) => key !== 'id')];
@@ -188,10 +209,16 @@ function renderEntryLines(fields: Readonly<Record<string, unknown>>): readonly s
     if (!Object.hasOwn(fields, key)) continue;
     for (const item of Array.isArray(fields[key]) ? fields[key] : [fields[key]]) {
       if (item === undefined || item === null || item === '') continue;
-      lines.push(`${key}: ${typeof item === 'string' ? item : JSON.stringify(item)}`);
+      lines.push(
+        clipContextLine(`${key}: ${typeof item === 'string' ? item : JSON.stringify(item)}`),
+      );
     }
   }
-  return lines;
+  if (lines.length <= MAX_CONTEXT_LINES) return lines;
+  return [
+    ...lines.slice(0, MAX_CONTEXT_LINES),
+    `... and ${String(lines.length - MAX_CONTEXT_LINES)} more field(s) (truncated)`,
+  ];
 }
 
 /** One elicit step at a time per port: two independent `elicit` steps admitted in one tick would otherwise write

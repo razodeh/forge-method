@@ -244,36 +244,87 @@ function stepDeclaresOutput(
   );
 }
 
+/** Every id a `sequence`'s own array-order chaining implicitly adds on top of whatever a child already
+ * authors in its own `dependsOn` (`06` §6.2 rule 1, `types.ts`'s own `SequenceStep` doc comment: "forces
+ * array-order execution among its own children") -- purely structural, unlike a `fanout`'s per-item
+ * expansion or a `merge`'s own folded `dependsOn` (`plan/compile.ts`'s `mergeDependsOn`), both of which
+ * need the real expression evaluator to resolve `over`/`item`, which this file has no access to (its own
+ * top-of-file "no external knowledge needed" scope). Only ever a child's own immediate previous sibling
+ * WITHIN THE SAME sequence, both always real, addressable ids (a `parallel`/`sequence` child is required
+ * to declare its own `id`, `checkStepsHaveIds`) -- does not attempt to resolve a nested group sibling's
+ * OWN further children the way the real compiler's `exitIds` propagation does (a `sequence` nested one
+ * level down as a sibling stands for itself via its own declared id, the identical "a group's own id is
+ * a real graph node" stance `checkNoCycles` already takes) -- narrower than `compilePlan`'s own real
+ * `checkPlanConsistency`, but sound (never invents an edge that provably is not there) and closes the
+ * gap a critic round found: a `show` question placed right after its real producer inside a plain
+ * `sequence`, with no explicit `dependsOn` of its own -- the natural way to write it -- used to be
+ * refused here as `elicit-show-not-produced` even though `compilePlan` correctly accepted it (`forge
+ * workflow validate` calls only `validateStructure`, never `compilePlan`, so this file's own accuracy
+ * here is not academic). A `fanout` is walked INTO (its own templated child may itself be a `sequence`
+ * needing this same rule) but never treated as if it had a real per-item exit of its own: an
+ * `elicit`/other step immediately after a `fanout` in an enclosing `sequence` still needs an authored
+ * `dependsOn` of its own, since only evaluating `over` could ever say how many instances actually exist. */
+function collectImplicitSequenceEdges(workflow: Workflow): ReadonlyMap<string, readonly string[]> {
+  const implicit = new Map<string, string[]>();
+  const walk = (steps: readonly WorkflowStep[], depth: number): void => {
+    if (depth > MAX_TRAVERSAL_DEPTH) return;
+    for (const step of steps) {
+      if (step.kind === 'fanout') {
+        walk([step.step], depth + 1);
+        continue;
+      }
+      if (step.kind !== 'parallel' && step.kind !== 'sequence') continue;
+      if (step.kind === 'sequence') {
+        for (let index = 1; index < step.steps.length; index += 1) {
+          const child = step.steps[index];
+          const previous = step.steps[index - 1];
+          if (child?.id === undefined || previous?.id === undefined) continue;
+          const known = implicit.get(child.id);
+          if (known === undefined) implicit.set(child.id, [previous.id]);
+          else if (!known.includes(previous.id)) known.push(previous.id);
+        }
+      }
+      walk(step.steps, depth + 1);
+    }
+  };
+  walk(workflow.steps, 0);
+  walk(workflow.onComplete ?? [], 0);
+  for (const escalation of workflow.onFailure?.escalations ?? []) walk([escalation.do], 0);
+  return implicit;
+}
+
 /** Every step id reachable from `startDependsOn`, directly or through others, over `dependsOn` exactly
- * as authored (unqualified ids; a value matching no known step's own id is simply not an edge —
- * `checkNoCycles`'s own "silently not an edge" convention, identical here). Takes the starting
- * `dependsOn` array directly rather than a step id to look up: a `fanout`'s own templated child (or an
- * `onComplete`/escalation `do` step) has no `id` of its own by design (`types.ts`'s own
- * `WorkflowStepBase` doc comment) and so could never be found via `byId`, but still authors a real
- * `dependsOn` of its own that this must still walk. Iterative (an explicit stack, no recursion) so a
- * real cycle in the graph cannot loop this forever: each id is visited once, `checkNoCycles`'s own
- * cycle-detection already reports a cycle as its own separate issue. */
+ * as authored PLUS `implicit`'s own structural sequence edges (unqualified ids; a value matching no
+ * known step's own id is simply not an edge — `checkNoCycles`'s own "silently not an edge" convention,
+ * identical here). Takes the starting `dependsOn` array directly rather than a step id to look up: a
+ * `fanout`'s own templated child (or an `onComplete`/escalation `do` step) has no `id` of its own by
+ * design (`types.ts`'s own `WorkflowStepBase` doc comment) and so could never be found via `byId`, but
+ * still authors a real `dependsOn` of its own that this must still walk. Iterative (an explicit stack,
+ * no recursion) so a real cycle in the graph cannot loop this forever: each id is visited once,
+ * `checkNoCycles`'s own cycle-detection already reports a cycle as its own separate issue. */
 function transitiveDependsOn(
   startDependsOn: readonly string[],
   byId: ReadonlyMap<string, WorkflowStep>,
+  implicit: ReadonlyMap<string, readonly string[]>,
 ): ReadonlySet<string> {
   const seen = new Set<string>();
   const pending = [...startDependsOn];
   for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
     if (seen.has(id)) continue;
     seen.add(id);
-    pending.push(...(byId.get(id)?.dependsOn ?? []));
+    pending.push(...(byId.get(id)?.dependsOn ?? []), ...(implicit.get(id) ?? []));
   }
   return seen;
 }
 
 /** `PLAN-M14.md` P41: an `elicit` question's `show` is fail-closed two ways -- `show.type` must be a
  * `18` §18.7 `collection: true` register (`elicit-show-not-a-register`; an unrecognised type is treated
- * the same way, since it cannot be one either), and the step must transitively depend (`dependsOn`, this
- * *unexpanded* graph -- `compilePlan`'s own `checkPlanConsistency` repeats this over the real, expanded
- * one, the identical two-file split `duplicate-elicit-question` already has, since `forge run` does not
- * call `validateStructure` first) on a step that declares producing that type (and, when given, that
- * exact subtype) among its own `outputs` (`elicit-show-not-produced`).
+ * the same way, since it cannot be one either), and the step must transitively depend (`dependsOn` plus
+ * `collectImplicitSequenceEdges`'s own structural sequence-chaining edges, this *unexpanded* graph --
+ * `compilePlan`'s own `checkPlanConsistency` repeats this over the real, expanded one, the identical
+ * two-file split `duplicate-elicit-question` already has, since `forge run` does not call
+ * `validateStructure` first) on a step that declares producing that type (and, when given, that exact
+ * subtype) among its own `outputs` (`elicit-show-not-produced`).
  *
  * `steps` (every reachable step, `allSteps`) is what is CHECKED, matching `checkUniqueElicitQuestions`'s
  * own choice, not `checkNoCycles`'s: an `elicit` step sitting directly as a `fanout`'s own templated
@@ -283,6 +334,7 @@ function transitiveDependsOn(
  * `dependsOn` values resolve AGAINST) is still built from `addressable` alone: only a real, addressable
  * id can ever be a valid `dependsOn` target. */
 function checkElicitShow(
+  workflow: Workflow,
   steps: readonly WorkflowStep[],
   addressable: readonly WorkflowStep[],
 ): readonly ValidationIssue[] {
@@ -290,6 +342,7 @@ function checkElicitShow(
   for (const step of addressable) {
     if (step.id !== undefined) byId.set(step.id, step);
   }
+  const implicit = collectImplicitSequenceEdges(workflow);
   const issues: ValidationIssue[] = [];
   for (const step of steps) {
     if (step.kind !== 'elicit') continue;
@@ -308,7 +361,11 @@ function checkElicitShow(
         });
         continue;
       }
-      const ancestors = transitiveDependsOn(step.dependsOn ?? [], byId);
+      const seed = [
+        ...(step.dependsOn ?? []),
+        ...(step.id === undefined ? [] : (implicit.get(step.id) ?? [])),
+      ];
+      const ancestors = transitiveDependsOn(seed, byId, implicit);
       const produced = [...ancestors].some((id) => {
         const ancestor = byId.get(id);
         return ancestor !== undefined && stepDeclaresOutput(ancestor, show.type, show.subtype);
@@ -502,7 +559,7 @@ export function validateStructure(workflow: Workflow): readonly ValidationIssue[
     ...checkNoCycles(addressable),
     ...checkProducesGlobs(allSteps),
     ...checkUniqueElicitQuestions(allSteps),
-    ...checkElicitShow(allSteps, addressable),
+    ...checkElicitShow(workflow, allSteps, addressable),
     ...checkTaintOnlyOnAgentSteps(allSteps),
     ...(addressableExceeded || allExceeded ? [excessiveDepthIssue('excessive-nesting-depth')] : []),
   ];

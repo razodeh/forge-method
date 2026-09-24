@@ -464,6 +464,34 @@ describe('`show`: an elicit question can show a register entry an earlier step p
     ]);
   });
 
+  it('with TWO entries that both match the subtype (a re-proposed level), the later one wins -- proves the "last" tie-break, not merely "the only match" (critic round 1)', async () => {
+    const projectRoot = await createTempRepo('show-two-matching');
+    await writeHandoffs(projectRoot, [
+      {
+        id: 'HO-0001',
+        step: 'propose-level',
+        delivered: ['subtype: level-proposal', 'L1: first pass'],
+      },
+      {
+        id: 'HO-0002',
+        step: 'propose-level',
+        delivered: ['subtype: level-proposal', 'L2: revised after new input'],
+      },
+    ]);
+    const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+    const ctx = createTestContext({ projectRoot, ask: port });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    const context = asked[0]?.context ?? [];
+    expect(context.some((line) => line.includes('HO-0002'))).toBe(true);
+    expect(context.some((line) => line.includes('revised after new input'))).toBe(true);
+    // The EARLIER matching entry (HO-0001, "first pass") is not shown at all.
+    expect(context.some((line) => line.includes('HO-0001'))).toBe(false);
+    expect(context.some((line) => line.includes('first pass'))).toBe(false);
+  });
+
   it('no matching entry fails the step RUN-105, before ElicitationRequested, and the port is never asked', async () => {
     const projectRoot = await createTempRepo('show-missing');
     await writeHandoffs(projectRoot, [
@@ -539,6 +567,97 @@ describe('`show`: an elicit question can show a register entry an earlier step p
     expect(outcome.status).toBe('failed');
     expect(outcome.failure?.code).toBe('RUN-105');
     expect(asked).toEqual([]);
+  });
+
+  it('a configured reports root holding a glob-special character is read as a literal path, not corrupted by outputGlob-style escaping', async () => {
+    const projectRoot = await createTempRepo('show-special-root');
+    // `(`, `)` and `!` are all real, legal directory-name characters and all glob metacharacters --
+    // outputGlob would escape them for minimatch; reading must not go through that escaping at all.
+    const reportsRoot = 'docs (v2)!/reports';
+    await mkdir(path.join(projectRoot, reportsRoot), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, reportsRoot, 'handoffs.md'),
+      handoffsRegister([
+        { id: 'HO-0002', step: 'propose-level', delivered: ['subtype: level-proposal'] },
+      ]),
+    );
+    const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+    const ctx = createTestContext({
+      projectRoot,
+      ask: port,
+      docRoots: {
+        kb: 'docs/kb',
+        specs: 'docs/specs',
+        plans: 'docs/plans',
+        sessions: 'docs/sessions',
+        reports: reportsRoot,
+      },
+    });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    expect(asked[0]?.context?.some((line) => line.includes('HO-0002'))).toBe(true);
+  });
+
+  it('a configured reports root outside the project tree fails RUN-105 as data, never an uncaught throw (CFG-003)', async () => {
+    const projectRoot = await createTempRepo('show-escaping-root');
+    const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+    const ctx = createTestContext({
+      projectRoot,
+      ask: port,
+      docRoots: {
+        kb: 'docs/kb',
+        specs: 'docs/specs',
+        plans: 'docs/plans',
+        sessions: 'docs/sessions',
+        // Climbs outside the project root entirely -- ProjectPaths.resolveWithin throws CFG-003 for this,
+        // and readRegisterEntries must treat that as "nothing found," not let it propagate uncaught.
+        reports: '../outside-the-project',
+      },
+    });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.failure?.code).toBe('RUN-105');
+    expect(asked).toEqual([]);
+    const types = (await eventsOf(projectRoot, ctx.runId)).map((event) => event.type);
+    expect(types).toContain('StepFailed');
+  });
+
+  it('an oversized field is clipped to a bounded line, not printed in full (critic round 1)', async () => {
+    const projectRoot = await createTempRepo('show-long-line');
+    const huge = `L2: ${'x'.repeat(1000)}`;
+    await writeHandoffs(projectRoot, [
+      { id: 'HO-0002', step: 'propose-level', delivered: ['subtype: level-proposal', huge] },
+    ]);
+    const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+    const ctx = createTestContext({ projectRoot, ask: port });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    const context = asked[0]?.context ?? [];
+    expect(context.every((line) => line.length <= 720)).toBe(true);
+    expect(context.some((line) => line.includes('... (truncated)'))).toBe(true);
+  });
+
+  it('a very long array field is capped in total lines, with a final "and N more" marker, not an unbounded flood (critic round 1)', async () => {
+    const projectRoot = await createTempRepo('show-many-lines');
+    const many = Array.from({ length: 80 }, (_, index) => `note ${String(index)}`);
+    await writeHandoffs(projectRoot, [
+      { id: 'HO-0002', step: 'propose-level', delivered: ['subtype: level-proposal', ...many] },
+    ]);
+    const { port, asked } = scriptedAsk({ levelConfirmed: 'L2' });
+    const ctx = createTestContext({ projectRoot, ask: port });
+
+    const outcome = await executeStep(CONFIRM, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    const context = asked[0]?.context ?? [];
+    expect(context.length).toBeLessThanOrEqual(51);
+    expect(context.at(-1)).toContain('more field(s) (truncated)');
   });
 
   it('a question with no `show` at all carries no context and records no `shown`', async () => {

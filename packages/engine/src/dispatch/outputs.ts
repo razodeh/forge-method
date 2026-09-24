@@ -69,8 +69,8 @@
 import { posix } from 'node:path';
 
 import { ArtifactDocument, parseFrontMatterYaml, validateArtifact } from '@forge/core/artifacts';
-import { ForgeError } from '@forge/core/errors';
-import { pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
+import { ForgeError, isForgeError } from '@forge/core/errors';
+import { pathExists, readTextFile, ProjectPaths, type AbsolutePath } from '@forge/core/fs';
 import {
   assumptionsFileSchema,
   baseFrontMatterShape,
@@ -1214,9 +1214,14 @@ export interface RegisterEntry {
 
 /**
  * Every entry of `type`'s register file (`18` §18.7, `collection: true`) found under `tree` -- a real
- * filesystem root, `ctx.integrationPath` for `runElicit`'s own call (`PLAN-M14.md` P41) -- located the
- * identical way the output check locates a produced one (`outputGlob`), in file order, narrowed to
- * entries that carry `subtype` as a hyphenated word when it is given (P7's own per-file rule,
+ * filesystem root, `ctx.integrationPath` for `runElicit`'s own call (`PLAN-M14.md` P41) -- located via
+ * `outputPathFor`, not `outputGlob`: this resolves a real file to *read*, not a *pattern* to match
+ * against a git diff listing, and `outputGlob`'s own root is glob-escaped for `minimatch` -- feeding that
+ * escaped string straight to `resolveWithin`/`fs` would corrupt a literal path for any configured root
+ * holding a glob-special character (`(`, `[`, `!`, ...), silently missing a real, produced file. Every
+ * `collection: true` type's own path template is a single fixed file (`handoffs.md`, not
+ * `{id}-{slug}.md`), so `outputPathFor`'s own unused `id` argument is always a safe no-op here. Narrowed
+ * to entries that carry `subtype` as a hyphenated word when it is given (P7's own per-file rule,
  * `subtypeText`/`carriesSubtype`, reused here per ENTRY rather than across a whole produced set --
  * `subtypeSatisfied` above judges a whole file's subtype satisfaction with the identical match; this is
  * the same rule, asked of one entry at a time).
@@ -1225,9 +1230,11 @@ export interface RegisterEntry {
  * `REGISTER_SCHEMAS` nor `ENTRY_ONLY_SCHEMAS` has it, which also covers a type that is not
  * `collection: true` at all -- `validateStructure`'s own `elicit-show-not-a-register` already refuses
  * this at author time, so a real caller only ever reaches an empty result here for a genuine run-time
- * miss), the register file does not exist under `tree`, or it does not parse. A caller (`runElicit`)
- * decides what an empty result means (`RUN-105`, before `ElicitationRequested`); this function only ever
- * describes what it found.
+ * miss), `tree` cannot reach the configured root at all (`CFG-003` -- a relocated `paths.*` pointing
+ * outside the project tree, `output-ids.ts`'s own `resolveWithinOrSkip` treats an unreachable root the
+ * identical way), the register file does not exist under `tree`, or it does not parse. A caller
+ * (`runElicit`) decides what an empty result means (`RUN-105`, before `ElicitationRequested`); this
+ * function only ever describes what it found.
  */
 export async function readRegisterEntries(
   tree: string,
@@ -1241,9 +1248,14 @@ export async function readRegisterEntries(
   const entrySchema = ENTRY_ONLY_SCHEMAS[definition.id];
   if (register === undefined && entrySchema === undefined) return [];
 
-  const relative = outputGlob(definition.id, roots);
-  const paths = new ProjectPaths(tree);
-  const absolute = paths.resolveWithin(relative);
+  const relative = outputPathFor(definition.id, roots, '');
+  let absolute: AbsolutePath;
+  try {
+    absolute = new ProjectPaths(tree).resolveWithin(relative);
+  } catch (cause) {
+    if (isForgeError(cause) && cause.code === 'CFG-003') return [];
+    throw cause;
+  }
   if (!(await pathExists(absolute))) return [];
 
   let frontMatter: Record<string, unknown>;
