@@ -24498,6 +24498,8 @@ Q226 (f)'s own remaining, disclosed gap, not a new failure mode this piece inven
 typed (`RUN-083`) rather than silently accepting an unconfirmed lane, but nothing here repairs a worktree
 broken beyond what `git reset --hard`/`git clean -fd` can fix.
 
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P36`.
+
 ## Q270 — M14 P42: `forge agent validate` gains `output-ownership-overlap` and `unregistered-output-type`; the roster's `file_ownership` reconciled — a one-round critic (real, independently re-derived and re-run checks, not just reading) found three real accuracy defects (a stale comment its own diff never touched, a spec bullet overclaiming an unimplemented exemption, a "seven" framing that overstated identity with `Q224`'s own set) plus one arithmetic slip, all fixed; the implementation itself and every test's non-vacuity checked out clean
 
 **Context.** `PLAN-M14.md` P42; depends on the already-landed P1 (spec text). `agentValidateAll`
@@ -24647,7 +24649,7 @@ nowhere but this validator) and P10's own reserved-id-range mechanism is the rea
 lanes from colliding on one ADR id regardless; `Story.interfaces` and `kb_write` stay unenforced by any
 check this piece adds.
 
-**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P36`.
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P42`.
 
 ## Q271 — M14 P43: `forge upgrade` classifies every materialised regenerable file (current/stale/
 edited/missing) — a one-round critic (fresh, context-free; read the full diff plus the real
