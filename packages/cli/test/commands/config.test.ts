@@ -1,7 +1,7 @@
 /**
  * `forge config <get|set|list|explain|edit>`.
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -356,6 +356,67 @@ describe('configSet --commit (PLAN-M14.md P37)', () => {
     const after = await readFile(configPath, 'utf8');
     expect(after).toBe(dirty);
   });
+
+  it('a genuine git failure that is NOT "not a repository" (a permission-denied .git/index) is never mislabeled CFG-055 "not a git repository"', async () => {
+    // A round-1 critic finding, reproduced live against the real CLI: the earlier version wrapped
+    // getDirtyFiles itself in a bare catch and reported EVERY failure — including this one, a real repo
+    // with a real, unrelated permission problem — as "not a git repository", with a `git init` remedy
+    // that would not help at all.
+    const project = await committedProject();
+    const indexPath = path.join(project.dir, '.git/index');
+    await chmod(indexPath, 0o000);
+    try {
+      const ctx = { paths: project.paths, projectRoot: project.dir };
+      const error: unknown = await configSet(ctx, 'project.level', 'L2', { commit: true }).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeDefined();
+      // Not the mislabeled CFG-055 the old code produced -- a real, distinct git failure instead.
+      expect((error as { code?: string }).code).not.toBe('CFG-055');
+    } finally {
+      // Restored before cleanup: `rm -rf` on a 000 file is fine, but leaving it would make every OTHER
+      // git call this test project's own cleanup (or a later test reusing the same real temp dir) makes
+      // fail the identical way, for an unrelated reason.
+      await chmod(indexPath, 0o644);
+    }
+  });
+
+  it(
+    'a commit failure AFTER the write (a signing failure) restores .forge/config.yaml to its exact ' +
+      'original bytes, rather than reporting failure while leaving it silently modified',
+    async () => {
+      // A round-1 critic finding, reproduced live: without the rollback below, this exact scenario left
+      // `.forge/config.yaml` written and staged on disk despite `configSet` reporting failure. Turning
+      // `vcs.signCommits` on is itself a plain write + a real but UNSIGNED commit (never through
+      // `--commit`, which would try to sign that very commit and fail here too, for an unrelated reason
+      // — this test environment, `test/setup.ts`, configures no signing key at all) — that first commit
+      // is what makes `.forge/config.yaml` the clean, committed baseline the SECOND call below starts
+      // from, now with signing switched on for every commit after it.
+      const project = await committedProject();
+      const ctx = { paths: project.paths, projectRoot: project.dir };
+      const configPath = path.join(project.dir, '.forge/config.yaml');
+      await configSet(ctx, 'vcs.signCommits', 'true');
+      await execa('git', ['add', '.forge/config.yaml'], { cwd: project.dir });
+      await execa(
+        'git',
+        ['-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'sign on'],
+        { cwd: project.dir },
+      );
+      const before = await readFile(configPath, 'utf8');
+      const beforeHead = (await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir })).stdout;
+
+      await expect(configSet(ctx, 'project.level', 'L2', { commit: true })).rejects.toBeInstanceOf(
+        Error,
+      );
+
+      const after = await readFile(configPath, 'utf8');
+      expect(after).toBe(before);
+      const status = (await execa('git', ['status', '--porcelain'], { cwd: project.dir })).stdout;
+      expect(status).toBe('');
+      const afterHead = (await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir })).stdout;
+      expect(afterHead).toBe(beforeHead);
+    },
+  );
 
   it('validates before checking git: an invalid value is still CFG-001, even in a non-git directory (order)', async () => {
     const project = await nonGitProject();

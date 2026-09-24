@@ -24,7 +24,13 @@ import {
   TEST_COMMAND_LAYERS,
   type TestCommandLayer,
 } from '@forge/engine/dispatch';
-import { commitPaths, formatConfigCommitMessage, getDirtyFiles } from '@forge/vcs';
+import {
+  assertGitAvailable,
+  commitPaths,
+  formatConfigCommitMessage,
+  getDirtyFiles,
+  VcsError,
+} from '@forge/vcs';
 import * as YAML from 'yaml';
 
 export interface ConfigCommandContext {
@@ -191,14 +197,27 @@ export interface ConfigSetResult {
  * differing from `HEAD` each mean the commit `commitPaths` is about to make would silently fold in
  * some OTHER, unrelated pending state on that one file, not only the value this call is setting.
  * Checked with `getDirtyFiles` (`@forge/vcs`) before `configSchema`'s own already-revalidated value is
- * ever written to disk, so a refused `--commit` leaves the file byte-for-byte as it found it. */
+ * ever written to disk, so a refused `--commit` leaves the file byte-for-byte as it found it.
+ *
+ * A round-1 critic finding: the earlier version wrapped `getDirtyFiles` itself in a bare `catch` and
+ * reported EVERY failure as "not a git repository" — reproduced live against a real repo with a
+ * permission-denied `.git/index` (a genuinely different, unrelated failure), which the message and its
+ * `git init` remedy then actively misdescribed. `assertGitAvailable` (`@forge/vcs`) is the one real
+ * function in this codebase that already distinguishes "git is not on PATH" from "this directory is not
+ * inside a repository" (`checkIsRepo`) — checked FIRST, so only those two genuinely-CFG-055-shaped
+ * cases are folded into it; any other `getDirtyFiles` failure (a corrupted index, a permission error)
+ * propagates as its own real `VcsError`, not a mislabeled CFG-055. */
 async function assertCommittable(projectRoot: string, key: string): Promise<void> {
-  let dirtyFiles: readonly string[];
   try {
-    dirtyFiles = await getDirtyFiles(projectRoot);
-  } catch {
-    throw new ForgeError('CFG-055', { key, reason: 'this project is not a git repository' });
+    await assertGitAvailable(projectRoot);
+  } catch (cause) {
+    const reason =
+      cause instanceof VcsError && cause.code === 'ENV-GIT-MISSING'
+        ? 'git was not found on PATH'
+        : 'this project is not a git repository';
+    throw new ForgeError('CFG-055', { key, reason }, { cause });
   }
+  const dirtyFiles = await getDirtyFiles(projectRoot);
   if (dirtyFiles.includes(CONFIG_REL_PATH)) {
     throw new ForgeError('CFG-055', {
       key,
@@ -257,18 +276,34 @@ export async function configSet(
       throw new Error('configSet: options.commit requires ctx.projectRoot');
     }
     await assertCommittable(projectRoot, key);
-    await writeFileAtomic(ctx.paths.resolveWithin(CONFIG_REL_PATH), YAML.stringify(result.data));
+    const configPath = ctx.paths.resolveWithin(CONFIG_REL_PATH);
+    // Captured AFTER assertCommittable confirms the file is clean at HEAD, so this is exactly what a
+    // rollback below needs to restore — the file's own real current bytes, not a re-serialisation.
+    const originalText = await readTextFile(configPath);
+    await writeFileAtomic(configPath, YAML.stringify(result.data));
     const message = formatConfigCommitMessage({
       scope: 'config',
       subject: `set ${key}`,
       ...(ctx.marker === undefined ? {} : { marker: ctx.marker }),
     });
-    const { sha, committed } = await commitPaths(projectRoot, {
-      paths: [CONFIG_REL_PATH],
-      message,
-      sign: result.data.vcs.signCommits,
-    });
-    return { config: result.data, committed: committed ? { sha } : null };
+    try {
+      const { sha, committed } = await commitPaths(projectRoot, {
+        paths: [CONFIG_REL_PATH],
+        message,
+        sign: result.data.vcs.signCommits,
+      });
+      return { config: result.data, committed: committed ? { sha } : null };
+    } catch (cause) {
+      // A round-1 critic finding, reproduced live (a real signing failure after a real write): without
+      // this, a --commit call that fails AFTER the write (commitPaths' own `git add` succeeded but
+      // `git commit` itself then failed — a missing signing key, a rejecting hook, a full disk) reported
+      // failure while silently leaving .forge/config.yaml modified on disk. Restoring the exact original
+      // bytes here keeps this function's own CFG-055 promise — "a refused --commit leaves the file
+      // byte-for-byte as it found it" — true for a downstream commit failure too, not only the pre-check
+      // refusal (`commitPaths` itself already un-stages its own half-staged index on this same failure).
+      await writeFileAtomic(configPath, originalText);
+      throw cause;
+    }
   }
 
   await writeFileAtomic(ctx.paths.resolveWithin(CONFIG_REL_PATH), YAML.stringify(result.data));

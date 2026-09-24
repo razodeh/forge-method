@@ -125,6 +125,36 @@ describe('commitPaths', () => {
     expect(showFiles.split('\n').filter(Boolean)).toEqual(['config.yaml']);
   });
 
+  it("the commit's OWN pathspec (not only git add's) is real defense: a file staged by another process before this call is never swept in", async () => {
+    // A round-1 critic finding: the earlier version of this suite's own "second dirty file" test above
+    // proved `git add -- <paths>` scopes what gets STAGED, but never proved the commit's own trailing
+    // `-- <paths>` does anything — dropping it there still passed every existing test, since nothing in
+    // them was EVER staged except what commitPaths itself staged. This test stages a second file BEFORE
+    // calling commitPaths (simulating a real concurrent stager), which `git add -- <paths>` cannot and
+    // must not touch (it is additive, never unstages anything already staged) — only the commit's own
+    // pathspec keeps that already-staged file out of the resulting commit.
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'config.yaml'), 'a: 1\n');
+    await writeFile(path.join(cwd, 'other.txt'), 'staged by someone else already\n');
+    await execa('git', ['add', 'other.txt'], { cwd });
+
+    const result = await commitPaths(cwd, {
+      paths: ['config.yaml'],
+      message: 'forge(config): set a',
+      sign: false,
+    });
+
+    expect(result.committed).toBe(true);
+    const { stdout: showFiles } = await execa(
+      'git',
+      ['show', '--name-only', '--format=', result.sha],
+      { cwd },
+    );
+    expect(showFiles.split('\n').filter(Boolean)).toEqual(['config.yaml']);
+    // other.txt is untouched: still staged, exactly as the other process left it, not committed.
+    expect(await status(cwd)).toEqual(['A  other.txt']);
+  });
+
   it('returns the current HEAD with committed: false when the named path is already clean (a real no-op)', async () => {
     const cwd = await createTempRepo();
     await writeFile(path.join(cwd, 'config.yaml'), 'a: 1\n');
@@ -192,7 +222,7 @@ describe('commitPaths', () => {
     expect(log.split('\n').filter(Boolean)).toHaveLength(1);
   });
 
-  it('honours sign — fails when no signing key is configured, rather than silently ignoring it', async () => {
+  it('honours sign — fails when no signing key is configured, and un-stages rather than leaving the index half-committed', async () => {
     // This test environment's own isolated git config (test/setup.ts) has no signing key configured, so
     // `sign: true` failing here — where the identical commit with `sign: false` succeeds — is itself the
     // proof the flag reaches the real git invocation rather than being dropped.
@@ -201,9 +231,11 @@ describe('commitPaths', () => {
     await expect(
       commitPaths(cwd, { paths: ['config.yaml'], message: 'x', sign: true }),
     ).rejects.toBeInstanceOf(VcsError);
-    // Staged (by the `git add` half, which succeeds) but not committed (`git commit -S` failed):
-    // proof the sign failure is real, not a silently-dropped flag.
-    expect(await status(cwd)).toEqual(['A  config.yaml']);
+    // A round-1 critic finding, reproduced live: `git add` (the first half) succeeded, so without a
+    // rollback here the index would be left with `config.yaml` staged despite this call reporting
+    // failure. `git reset -- config.yaml` un-stages it back to its own HEAD state (unborn here, so back
+    // to plain untracked) — never a silently half-staged index for a call that failed.
+    expect(await status(cwd)).toEqual(['?? config.yaml']);
   });
 
   it('the message round-trips through git, trailers intact', async () => {

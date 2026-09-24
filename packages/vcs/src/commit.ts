@@ -243,6 +243,13 @@ function assertPathWithinRepo(cwd: string, relativePath: string): void {
  * `HEAD`: once staging is already correct, the first real commit in a brand-new repository is not
  * something `git commit -- <paths>` needs help with.
  *
+ * If `git commit` itself fails after `git add` already succeeded (a missing signing key, a rejecting
+ * hook), `paths` are un-staged back to their own `HEAD` state before the failure propagates — this
+ * function's own index never stays half-staged just because it reported failure. The WORKING TREE
+ * content is this function's caller's own concern (it never wrote it, so it cannot restore it): a
+ * caller that also wrote new content to `paths` before calling this (`configSet --commit`) restores
+ * that content itself on the same failure.
+ *
  * @throws {VcsError} `VCS-COMMIT-PATH-ESCAPES-REPO` — see `assertPathWithinRepo`.
  */
 export async function commitPaths(
@@ -277,10 +284,22 @@ export async function commitPaths(
     '--',
     ...options.paths,
   ];
-  await wrapGitFailure(
-    () => execa('git', commitArgs, { cwd }),
-    `committing ${options.paths.join(', ')} at "${cwd}"`,
-  );
+  try {
+    await wrapGitFailure(
+      () => execa('git', commitArgs, { cwd }),
+      `committing ${options.paths.join(', ')} at "${cwd}"`,
+    );
+  } catch (cause) {
+    // A round-1 critic finding, reproduced live (a real signing failure): `git add` above already
+    // succeeded, so without this the index is left with `paths` staged but never committed even
+    // though this call reports failure. `git reset -- <paths>` un-stages them back to their own `HEAD`
+    // state (never touching the working tree content, which is this function's caller's own concern
+    // — `configSet --commit` separately restores the file's own pre-write bytes on this same failure)
+    // — best-effort: if the reset itself fails too, the original commit failure is still the one that
+    // reaches the caller, not a second, more confusing one about the reset.
+    await execa('git', ['reset', '--', ...options.paths], { cwd }).catch(() => undefined);
+    throw cause;
+  }
 
   const { stdout } = await wrapGitFailure(
     () => execa('git', ['rev-parse', 'HEAD'], { cwd }),
