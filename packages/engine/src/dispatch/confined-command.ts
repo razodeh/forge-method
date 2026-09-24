@@ -1078,11 +1078,11 @@ export async function vetProposedCommand(
  * `..` escape) `vetConfiguredCommand` alone does not. `undefined` means it may run; otherwise the first
  * refusal, from whichever stage found it.
  *
- * Neither stage is loosened for this caller: `test/shell-sinks-inventory.test.ts`'s own mutation
- * evidence is that skipping the first stage here — reusing only `vetProposedCommand` — would silently
- * let an `sh -c "..."`/`npx <package>` stored command through (`vetConfiguredCommand`'s own
- * `configuredProgramRefusal` is the only stage that refuses either shape; `vetProposedCommand`'s own
- * `model`-package-rule stage does not).
+ * Neither stage is loosened for this caller: `confined-command.test.ts`'s own "vetConfiguredCommand
+ * alone is load-bearing" test proves that skipping the first stage here — reusing only
+ * `vetProposedCommand` — would silently let an `sh -c "..."`/`npx <package>` stored command through
+ * (`vetConfiguredCommand`'s own `configuredProgramRefusal` is the only stage that refuses either shape;
+ * `vetProposedCommand`'s own `model`-package-rule stage does not).
  */
 export async function vetStoredCommand(
   command: string,
