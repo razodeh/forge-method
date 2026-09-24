@@ -23691,3 +23691,141 @@ ordering bug fixed. `PLAN-M14.md` P22 remains the piece that closes the temporar
 own author should expect the two new pinned tests named above to need updating once it lands.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P20`.
+
+## Q264 — M14 P35: the merge queue takes a per-call resolver that knows the lane's step, replays only a stacked lane's own commits, caps resolutions — a two-round critic loop found a real, self-caused shared-working-tree collision plus two real test-coverage gaps in round 1 (all fixed and independently re-verified), zero new findings in round 2, two disclosed low-value nitpicks left as-is
+
+`MergeConflictDescription` (`@forge/vcs`) gains `stepId`/`runId` (from the candidate, always present at
+landing time) and an optional `commit: {sha, subject, forgeStep?}` read from `REBASE_HEAD` while a
+rebase is genuinely stopped on a conflict (`--quiet`, absent rather than erroring when not mid-rebase --
+this same type's own in-lane-join use, `join.ts`, `PLAN-M14.md` P34, is untouched and never populates
+either, out of this piece's own Surface). `MergeCandidate` gains `replayFrom?`: when set,
+`processMergeCandidate` rebases with `git rebase --onto <integrationHead> <replayFrom>` instead of the
+ordinary `git rebase <integrationHead>`, replaying only the lane's own commits -- a stale, pre-resolution
+replay of a stacked predecessor's own (already superseded, rewritten-by-its-own-landing) commit could
+otherwise apply cleanly and silently reintroduce content a landing-time conflict resolution already
+rejected. Validated (`git merge-base --is-ancestor`) before any git state is touched:
+`VCS-GIT-OPERATION-FAILED` for a `replayFrom` outside the lane's own history, lane and integration left
+clean. `maxResolutions` (default 5, overridable): past it the rebase aborts with
+`{kind:'conflict-unresolved', reason:'resolution-cap'}` rather than calling the resolver again -- called
+at most the cap, never the cap plus one. `MergeOutcome.conflict-resolved` gains
+`resolutions: readonly {files, commit?}[]` (one per real resolution, not just a count);
+`conflict-unresolved` gains `files` (never empty) and an optional `detail` (today only `resolution-cap`
+populates it).
+
+`MergeQueueFacade.process(candidate, checks, options?)` takes a per-call `options.conflictResolver`,
+preferred by the real facade over the resolver it was constructed with. `landLane`
+(`@forge/engine/dispatch`) passes a new `ExecuteStepContext.conflictResolver`; `RunEngineContext.
+conflictPolicy` moves up to the same base interface (`ExecuteStepContext`) alongside it -- a location
+move only, `run-engine.ts`'s own `ctx.conflictPolicy ?? 'abort'` usage byte-for-byte unchanged. `landLane`
+now emits one `MergeConflict{reason:'resolved', files, commit?}` event per real resolution, before the
+single `MergeCompleted` a landing produces (previously silent: only an unresolved conflict ever got a
+`MergeConflict` event); the unresolved payload gains `files`/`detail` too.
+
+`LaneHandle` gains optional `baseSha`/`stackedOn`/`joinedFrom`, mirroring `LaneCreated.payload`;
+`createLaneForStep` stamps them onto the handle it returns (the same locals its own `LaneCreated` payload
+already used), and on resume `repopulateLaneRegistry` does the same from `RunState.laneOrigins`, which
+`reconstructRunState` now also reads `stackedOn`/`joinedFrom` into (leniently: malformed is simply
+absent, never fabricated). `runMergeStep` computes each landed lane's own `replayFrom` (a new
+`replayFromFor`): the lane's own `baseSha` when it has a `stackedOn`/`joinedFrom` predecessor AND that
+predecessor is not in this same call's own `notLanded` set -- sufficient, not merely necessary, since
+`resolveLaneBase`'s own `sharesMergeScope` gate already guarantees a stacked/joined predecessor is always
+in the SAME merge's own landing scope, so this is only ever reached once the broader, pre-existing
+`blockedBy` check (a superset) has already confirmed nothing upstream failed to land. `integrateLane`
+(the engine's own auto-integration of a lane no `merge` step lands) never supplies a `replayFrom`:
+`sharesMergeScope`'s own structural guarantee means such a lane can never itself be a joined one.
+
+**Round 1: one real, self-caused process incident plus two real test-coverage gaps, all fixed and
+independently re-verified; two nitpicks disclosed, not fixed.** The incident: while a fresh critic
+subagent was mutation-testing `replayFromFor`'s own `notLanded` guard in this same shared working tree
+(removing the check to confirm a test would catch it, per its own assigned task), a second, concurrent
+commit in this same session captured that mutated file instead of the real one -- `08dcb6e`'s own
+committed `steps.ts` genuinely shipped with the guard silently replaced by a comment, confirmed via
+`git log -1` and a direct read of the committed bytes, not merely inferred from a diff. Caught
+independently by an orchestrator-run `pnpm lint` (`'notLanded' is defined but never used`) before the
+critic's own report even arrived. Fixed in a follow-up commit (`90e9e0e`): the guard line restored
+byte-identical to what every earlier `pnpm typecheck`/test run in this piece's own build had actually
+exercised (the mutation never once passed a real test during this piece's own build -- it only entered
+the commit through the collision, after everything had already been verified against the real code).
+The critic's own report also named, correctly, why no functional test had caught it: the guard's real
+call site (`runMergeStep`'s loop) never reaches it for a predecessor genuinely still in `notLanded` --
+the broader `blockedBy` check (`upstreamOf`, a superset) already refuses such a lane first, so the guard
+is defensive and structurally unreachable through the real call site today, exactly as its own doc
+comment already said before this incident. Fixed by exporting `replayFromFor` and adding five direct
+unit tests (a landed predecessor: `baseSha`; a still-unlanded one, singly and as one of several joined
+predecessors: `undefined`; no predecessor at all: always `undefined`, regardless of `notLanded`) -- the
+identical "export it, feed it a real edge case" pattern `@forge/vcs`'s own `conflictStatuses`/
+`revertMerge` already established for the identical "defensive, not reachable through the real call
+site" situation. The second gap: no engine-level test proved that a single lane's landing resolving TWO
+independent conflicts emits two `MergeConflict{reason:'resolved'}` events, in order, each with its own
+`files`/`commit`, before the one `MergeCompleted` -- previously proven only one layer down, in
+`@forge/vcs`'s own `resolutions[]` array. Fixed with a new test (two real lane commits, each
+independently conflicting against integration, resolved in turn).
+
+**Round 2 (fresh, context-free): zero new findings, PASS.** Independently re-derived the round-1 fix by
+reading the committed `steps.ts` directly (not the diff alone), traced the `blockedBy`/`upstreamOf` call
+path by hand to confirm the guard's own unreachability claim, and independently reproduced the exact
+mutation (guard removed) against the real, current code: 2 of 33 tests in `merge.test.ts` failed --
+precisely the two new guard-specific unit tests, nothing else -- then restored by hand (never
+`git checkout --`, to avoid repeating this exact piece's own incident against a file that, at that
+moment, had no uncommitted content of its own to lose) and confirmed a byte-for-byte clean `git diff`
+afterward. Ran the full monorepo `pnpm typecheck` (21 packages, fresh, 0 cached) and the scoped test
+suite fresh: all green. Re-read the complete diff against the piece's own pre-work base
+(`213834f..HEAD`, 16 files, 1182 insertions/38 deletions) a second time in full; found nothing beyond
+round 1's own two gaps. Agreed both of round 1's disclosed nitpicks are genuinely low-value to leave:
+(a) `describeRebaseHeadCommit`'s `\x1f`-joined multiple-`Forge-Step`-trailers case (never produced by
+this codebase's own commit builder); (b) no test drives the COMBINED case of a `replayFrom`-using
+(stacked) lane that ALSO still conflicts against the new integration head -- traced the code to confirm
+every conflict-handling branch downstream of the initial `--onto` vs. plain `git rebase` choice is
+identical, shared code already exercised extensively by the many non-`replayFrom` conflict tests, so
+this is an untested *interaction* between two independently well-tested paths, not an untested code
+path.
+
+**Mutation evidence (real: mutate, run scoped tests, confirm real failure, restore via a targeted `Edit`
+or `git checkout --` against a real, already-committed file, re-confirm green).** Per-call resolver
+ignored (`facades.ts`): the dedicated per-call-resolver test failed exactly as predicted
+(`VCS-MISSING-CONFLICT-RESOLVER`-shaped failure, `status` flipped from `succeeded` to `failed`).
+`replayFrom` ignored, always plain rebase (`merge-queue.ts`'s `attemptRebase` call): the "lands with
+`--onto`" test flipped from `clean` to `conflict-unresolved`, and the engine-level "resolver called ZERO
+times" test's own resolver-calls array gained a second, unwanted entry. Resolved `MergeConflict` never
+emitted (`integrate.ts`): the event-ordering test's own expected `['MergeConflict','MergeCompleted']`
+collapsed to `['MergeCompleted']`. `stepId` dropped from the description (`merge-queue.ts`): the
+dedicated description test's `seen?.stepId` assertion failed (`undefined` vs. the expected step id). Cap
+check removed (`merge-queue.ts`): the cap test's outcome flipped from `conflict-unresolved`/
+`resolution-cap` to `conflict-resolved`, with all 3 conflicts resolved instead of being capped at 2 (a
+smaller, overridable cap used specifically so this test does not need 6 real conflicts).
+`assertReplayFromInLaneHistory`'s own validation call removed: the "outside the lane's own history" test
+found no `VcsError` thrown at all. `replayFromFor`'s own `notLanded` guard removed (the round-1 incident,
+reproduced deliberately in round 1's own fix and again independently in round 2): exactly the two
+guard-specific unit tests failed, nothing else in the same file. Every mutation above was restored and
+the affected suite re-confirmed green before moving on; each of the two `steps.ts` mutations (round 1's
+real incident, and the round-1/round-2 deliberate reproductions of it) was restored with a precise,
+targeted `Edit` rather than `git checkout --`, specifically because the file was known, at each of those
+moments, to hold real uncommitted work of its own that a blunt checkout would have discarded -- the
+exact failure mode this same round-1 incident is itself a live example of.
+
+**Shared working tree.** Exact-file `git add` throughout; two `feat` commits (`2bf3342` vcs,
+`08dcb6e` engine) then one `fix` commit (`90e9e0e`) before this docs commit. The one real incident (the
+shared-tree mutation-testing collision on `08dcb6e`, above) is this piece's own only shared-tree
+problem; `git status --porcelain` was re-checked clean of any other piece's own files before every
+commit, and the full combined `pnpm lint` (`eslint . --max-warnings 0 && prettier --check .`) passed
+clean (exit 0) in a freshly-installed clean worktree (`wt-p35-verify-2`) against the final `90e9e0e`
+commit, the same check that first caught the incident.
+
+**Discloses.** Nothing calls the new per-call-resolver seam with a real session until `PLAN-M14.md` P38
+(the shipped default still has no `ExecuteStepContext.conflictResolver` set anywhere in production
+wiring, confirmed directly against `cli/src/commands/run/context.ts`; a real `'agent'`/`'human'`
+`conflictPolicy` with no resolver still fails `VCS-MISSING-CONFLICT-RESOLVER`, unchanged). `forge merge`
+(`cli/src/commands/run/merge.ts:48`) keeps its own hardcoded `conflictPolicy: 'abort'` and calls
+`facade.process(candidate, {})` with no per-call resolver, unchanged, confirmed directly. `REBASE_HEAD`
+absence is simply an absent `commit` field, never a fabricated "unknown commit" placeholder of any kind
+-- nothing renders this into a human- or agent-facing prompt yet (P38's own scope). `asVcsLaneHandle`'s
+own unsafe cast (`facades.ts`) needs no change to keep carrying the new optional `LaneHandle` fields
+through: it is a type-level reinterpretation only, and no `@forge/vcs` function this package calls
+reconstructs a `LaneHandle` object from one passed in (every real caller only ever reads `.path`/
+`.branch`/`.laneId` off it for a git operation). `integrateLane`'s own lanes structurally can never be
+`stackedOn`/`joinedFrom` (per `sharesMergeScope`'s own gate), so this piece's `replayFrom` computation
+lives only in `runMergeStep`, never `integrateLane` -- not a gap, a structural non-applicability, traced
+and confirmed rather than assumed. The two round-1 nitpicks (multiple-`Forge-Step`-trailer
+concatenation; the untested `replayFrom` + still-conflicts combination) stand, re-affirmed in round 2.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P35`.
