@@ -74,7 +74,12 @@ import {
 import { parseWorkflow } from '../../src/workflow/index.ts';
 import type { GateDefinition } from '../../src/gates/index.ts';
 import { adrText, DEFAULT_SOURCE } from '../dispatch/artifact-fixtures.ts';
-import { createFixtureAssembly, createTestContext, fixtureAgent, node } from '../dispatch/helpers.ts';
+import {
+  createFixtureAssembly,
+  createTestContext,
+  fixtureAgent,
+  node,
+} from '../dispatch/helpers.ts';
 
 /** The real, shipped `adopt` workflow (`packages/templates/templates/workflows/`), read directly by
  * path rather than through `@forge/templates` -- `@forge/engine` has no dependency edge to that

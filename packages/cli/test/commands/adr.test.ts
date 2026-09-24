@@ -140,9 +140,9 @@ describe('adrAccept / adrReject / adrSupersede refuse under the real FORGE sessi
     const created = await adrNew(ctx(project), 'To be accepted');
     const id = created.get(['id']) as string;
 
-    await expect(
-      adrAccept({ ...ctx(project), marker: MARKER }, id),
-    ).rejects.toMatchObject({ code: 'KB-017' });
+    await expect(adrAccept({ ...ctx(project), marker: MARKER }, id)).rejects.toMatchObject({
+      code: 'KB-017',
+    });
 
     const shown = await adrShow(ctx(project), id);
     expect(shown.get(['status'])).toBe('proposed');
@@ -154,9 +154,9 @@ describe('adrAccept / adrReject / adrSupersede refuse under the real FORGE sessi
     const created = await adrNew(ctx(project), 'To be rejected');
     const id = created.get(['id']) as string;
 
-    await expect(
-      adrReject({ ...ctx(project), marker: MARKER }, id),
-    ).rejects.toMatchObject({ code: 'KB-017' });
+    await expect(adrReject({ ...ctx(project), marker: MARKER }, id)).rejects.toMatchObject({
+      code: 'KB-017',
+    });
 
     const shown = await adrShow(ctx(project), id);
     expect(shown.get(['status'])).toBe('proposed');
