@@ -18822,3 +18822,161 @@ left as a disclosed commit-message attribution gap rather than rewriting shared 
 other agents' own concurrent work.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q275`.
+
+## M14 P30 — Declared `mcp:`/`fetch:` inputs and KB entries with `external` provenance taint a step at compile (`engine/plan/{compile,input-refs(new),run-plan,stage-plan,index,types}.ts`, `engine/dispatch/{assemble,types}.ts`, `engine/run/run-engine.ts`, `agents/context/pack-for-step.ts`, `agents/prompt/compile-prompt.ts`, `cli/commands/run/{external-kb-ids(new),context,expression-context,resume,run-plan,run}.ts`, `schemas/artifacts/source.ts`; new/edited tests in `engine/test/plan/{compile,run-plan,stage-plan}.test.ts`, `engine/test/run/run-engine.test.ts`, `engine/test/dispatch/helpers.ts`, `engine/test/security/taint-grant.test.ts`, `agents/test/prompt/external-inputs-block.test.ts` (new), `kb/test/{schema/kb-entry,lint/lint}.test.ts`, `schemas/test/artifacts/source.test.ts`, `cli/test/commands/run/{external-kb-ids(new),run,resume}.test.ts`) — a three-round critic loop (the maximum), each round finding real, previously-invisible issues: round 1 (1 blocking, 2 major, 3 minor/informational) and round 2 (1 major, 1 minor) both fixed with real tests; round 3 (1 major, 3 minor, all doc staleness) fixed here too, closing the loop with no blocking or major finding left open
+
+**Built.** `compilePlan` (`plan/compile.ts`) gains an optional third argument, `{taint: {externalKbIds}}`:
+an agent step's resolved `inputs:` are scanned for an `mcp:<server>[/<tool>]` or `fetch:<https-url>`
+reference (taints unconditionally — no option needed) or a `kb:`/`artifact:` id present in the caller's
+own `externalKbIds` set (taints only when supplied). A `fetch:http://...` (or any other non-`https:`
+scheme) is refused outright at compile time (`insecure-fetch-input-scheme`), never silently accepted.
+`compileRunPlan`/`compileStageRunPlan` thread the identical option through their own `compilePlan` calls.
+Every real compile site that dispatches or displays a step now passes it: `runEngine`
+(`RunEngineContext.externalKbIds`, moved down to `ExecuteStepContext` in round 1's own fix so
+`dispatch/assemble.ts` can read the identical set), `dryRunWorkflow` (a new optional third parameter),
+`assertPlannable`/`buildRunExpressionContext` and its own nested `planStageForRun` call, and
+`resumeWorkflow` (from a new `RunManifest.externalKbIds` snapshot, never a fresh KB read — `runWorkflow`
+computes the set once via a new `collectExternalKbIds` helper and writes it into the manifest, so a
+resumed run recompiles the identical tainted plan the crashed/paused run started with, and `--dry-run`
+and a real run of the same workflow agree, both proved directly rather than only asserted). `merge.ts`'s
+own `compileRunPlan` call and `forge plan run-plan`'s own `planRunPlan` stay unthreaded — disclosed,
+not silent (neither ever reads `node.taint`).
+
+Provenance: `'external'` added to the shared `ARTIFACT_SOURCE_KINDS` enum (`schemas/artifacts/source.ts`,
+used by `kbEntrySchema` and the six KB-located registry schemas) — a KB entry/ADR/Runbook's `sources` may
+now record that its content came from an MCP server or a fetched page. `collectExternalKbIds`
+(`@forge/cli`) scans the real KB tree once for entries carrying it.
+
+`dispatch/assemble.ts`'s `resolveDeclaredInputs` classifies each declared input using the same
+`exactKbIdOf`/`isExternalSchemeInputReference` definitions `compilePlan` itself uses (shared via a new
+`@forge/engine/plan/input-refs.ts`, replacing `assemble.ts`'s own former private duplicate) — an
+`mcp:`/`fetch:` reference is never mistaken for an unresolved KB id, and never reaches `packForStep`'s
+`declaredInputIds` (which would risk `KB-013` for an id that was never a real lookup). `StepContext`
+gains an `externalInputs?` field, rendered into block [4] by `compile-prompt.ts`, naming the
+untrusted-content posture (`20` §20.5 point 1) — proved end to end through the real dispatch path in
+`taint-grant.test.ts`.
+
+**Round 1** (fresh, context-free; against the original feature commit): 1 blocking, 2 major, 3 minor/
+informational.
+- **Blocking, fixed.** `plan/input-refs.ts`'s `mcp:`/`fetch:` scheme regexes were case-sensitive, so
+  `Fetch:HTTP://...`/`MCP:jira/search_issues` bypassed both the insecure-fetch refusal and taint
+  detection entirely — directly contradicting the commit's own "never silently accepted" claim. Fixed:
+  case-insensitive matching (the `i` flag), per RFC 3986 §3.1 ("a scheme name is case-insensitive");
+  `kb:`/`artifact:`/`taint:` stay deliberately case-sensitive elsewhere (a mismatch there is a visible,
+  non-security-relevant miss, never a silent grant change).
+- **Major, fixed.** A glob-shaped `kb:` input (`10` §10.1's own worked `kb:architecture/**`) could never
+  taint from KB provenance: `exactKbIdOf` refuses to resolve a glob to one exact id to look up. Fixed:
+  `collectExternalKbIds` puts each qualifying entry's own KB-relative PATH into the same `externalKbIds`
+  set alongside its id (a bare id can never structurally overlap a `/`-containing pattern, so mixing them
+  is safe); `derivedTaint` falls back to `plan/dependencies.ts`'s own hardened `globsOverlap` when
+  `exactKbIdOf` cannot resolve one exact id.
+- **Major, fixed.** `20` §20.5 point 1 ("delimit and label") was satisfied only for the `mcp:`/`fetch:`
+  half of this piece's own taint sources: a step tainted because its `kb:<id>` input's own id carried
+  external provenance still had that id's full text packed as an ORDINARY, unlabelled "Declared inputs"
+  entry. Fixed: `ExecuteStepContext` gains `externalKbIds` (assembly needs the identical set `compilePlan`
+  used); such an id is now BOTH still packed AND added to `StepContext.externalInputs` AND its own
+  "Declared inputs" line gets an "EXTERNALLY SOURCED" annotation.
+- **Minor, disclosed not fixed.** A malformed `mcp:` reference fails open into the ordinary "unresolved"
+  bucket with no dedicated refusal, asymmetric with `fetch:`'s insecure-scheme refusal — judged
+  non-security-relevant (inert either way: taints nothing, packs nothing).
+- **Minor, disclosed not fixed.** Two spied tests (`run-engine.test.ts`, `resume.test.ts`) assert the
+  literal shape of `compileRunPlan`'s third argument, coupling them to today's option shape rather than
+  only to the resulting taint — self-documented as the one thing an end-to-end proof cannot isolate.
+- **Informational.** The commit's own "every real compile site now passes it" reads broader than its own
+  Discloses paragraph (`merge.ts`, `forge plan run-plan`) — both omissions already named there, harmless.
+
+**Round 2** (fresh, context-free; against round 1's own fix commit): 1 major, 1 minor — both new,
+neither reachable by a round-1 reviewer since the code paths did not exist until round 1's own fixes
+created them.
+- **Major, fixed.** `dispatch/assemble.ts`'s `classifyDeclaredInput` only ever called `exactKbIdOf`,
+  never the new `kbInputPattern`/`globsOverlap` fallback `plan/compile.ts`'s own `derivedTaint` already
+  used — so a step tainted via round 1's own glob-overlap fix (`kb:architecture/**`) had its grant
+  correctly restricted but its own "Declared inputs" line stayed the plain, unlabelled text, and it never
+  reached `StepContext.externalInputs` either: `20` §20.5 point 1 unmet for exactly the scenario the
+  round-1 major fix exists to handle. Fixed: the `'unresolved'` branch now also checks
+  `kbInputPattern`/`globsOverlap` against `externalKbIds` and, on overlap, labels the reference distinctly
+  from the exact-id case (a glob is still never packed as one entry, `Q203`'s own standing limit).
+  `kbInputPattern` also needed exporting from `plan/index.ts` (a round-1 oversight: used internally,
+  never re-exported).
+- **Minor, disclosed not fixed.** The identical structural blind spot exists for `artifact:Type(<pattern>)`
+  wildcards. Judged real but currently dormant: no shipped workflow or spec-10 §10.1 worked example ever
+  declares an `artifact:ADR(...)`/`artifact:Runbook(...)` step input.
+
+**Round 3** (fresh, context-free; the loop's own 3-round cap; against round 2's own fix commit): 1 major,
+3 minor — all fixed, closing the loop with nothing left open.
+- **Major, fixed.** `compile-prompt.ts`'s `renderExternalInputsNote` rendered ONE fixed, unconditional
+  paragraph for every `externalInputs` entry ("read from outside the project ... never from the project
+  KB"), written when that field held only `mcp:`/`fetch:` references. Neither round 1 nor round 2 ever
+  touched this file while widening what feeds the same array, so for the exact-id case the real compiled
+  prompt said, a few lines apart: "full text in the project context pack as KB-ARCH-0001" (block [3]) and
+  "never from the project KB" (block [4], about that identical reference) — a self-contradictory label,
+  which satisfies `20` §20.5 point 1 no better than a missing one. Fixed: the note's wording is now
+  generic and true for both cases (originates from outside the project; some may already be packed above
+  under their own id; none was ever read live by this step) and never claims content is or is not in the
+  KB. New tests in `external-inputs-block.test.ts` and both of `taint-grant.test.ts`'s own real-dispatch
+  KB-provenance cases assert the exact absence of "never from the project KB" in the real compiled text.
+- **Minor × 3, fixed (doc comments only, same root cause each time).** `pack-for-step.ts`'s
+  `externalInputs` doc said "never resolved into `declaredInputIds`" (false for the exact-id case since
+  round 1); `assemble.ts`'s `DeclaredInputs.external` doc claimed "never folded into `unresolved`" (false
+  since round 2's own glob-external branch folds into both); `plan/types.ts`'s `StepNode.taint` doc and
+  `dispatch/types.ts`'s `ExecuteStepContext.externalKbIds` doc both described only exact-id matching,
+  silently omitting round 2's own glob fallback. All four rewritten to state the current, accurate rule.
+
+**Mutation evidence.** Every fix's own claim proved by breaking it for real (never narrated), the test(s)
+shown failing with the real diagnostic, restored (`git checkout --` where the file had a real prior
+commit to restore to; a manual `Edit` back to the pre-mutation text where the fix itself was still
+uncommitted at mutation time — the file's real prior commit predates the fix), re-verified green:
+`externalKbIds` ignored in `compilePlan` (4 `compile.test.ts` cases fail); `ctx.externalKbIds` not passed
+at `run-engine.ts`'s own `compileRunPlan` call (the spied `run-engine.test.ts` case fails); the manifest
+not recording the real set in `run.ts` (the manifest-recording `run.test.ts` case fails); `resume.ts` not
+reading `manifest.externalKbIds` (the spied `resume.test.ts` case fails); the `/i` case-insensitivity
+flags removed (the new case-insensitivity `compile.test.ts` case fails, as a compile refusal since only
+one of the two regexes was mutated — still a real, caught regression); the `globsOverlap` glob fallback
+removed from `compile.ts`'s `derivedTaint` (the glob-taint `compile.test.ts` case fails); the
+`externallySourced` label check removed from `assemble.ts` (the "EXTERNALLY SOURCED" `taint-grant.test.ts`
+case fails, both the exact-id one from round 1 and the glob one from round 2); `renderExternalInputsNote`
+reverted to its original wording (4 tests fail across `external-inputs-block.test.ts` and
+`taint-grant.test.ts`).
+
+**Rule 14/15 (clean `git worktree`, once per commit — `d55e8a5`'s own real-run verification not repeated
+here for brevity, all three fix commits' own verifications are).** `37ba430`: `pnpm install --offline
+--frozen-lockfile`, `pnpm typecheck` (21/21 clean), `pnpm run boundaries` (clean), 38 test files / 1464
+tests green. `b02d39f`: identical toolchain clean, 38 files / 1465 tests green. `516dc15` (final): identical
+toolchain clean, 38 files / 1466 tests green. **Combined `pnpm lint`** (the exact `eslint . --max-warnings
+0 && prettier --check .` command) clean at every one of the four commits, both mid-flight and in each
+clean worktree.
+
+**Shared working tree.** `PLAN-M14.md` P44 ("`FORGE_REQUEST_CONTEXT` resolved end to end") ran
+concurrently for this piece's entire duration and touched two of the same files in different regions:
+`engine/dispatch/assemble.ts` (P44's own eventual hunk landed cleanly afterward, confirmed via
+`git diff` before and after) and `agents/prompt/compile-prompt.ts` (P44 added `renderContextEntries`/
+`CONTEXT_REQUEST_PROTOCOL_LINE` to block [3]'s own renderer while this piece was mid-edit on block [4]'s
+`renderStepBriefBlock`/`renderExternalInputsNote`, a different function in the same file). The first
+commit (`d55e8a5`) needed real hunk isolation: P44's own uncommitted block-[3] changes were live in the
+same working-tree file at commit time, so this piece's own isolated content was built by starting from
+the last real commit of that file, re-applying only this piece's own two known edits by hand, briefly
+overwriting the live file with that isolated version, committing by exact pathspec, then immediately
+restoring the live (mixed) file back — verified via `diff` before and after that the restore was
+byte-identical to what was there before, and that the resulting commit's own diff, read back with
+`git show`, contained only this piece's own two edits. P44 committed its own block-[3] work cleanly on
+top a short time later (confirmed by `git show --stat` on their commit touching only `renderContextEntries`/
+`CONTEXT_REQUEST_PROTOCOL_LINE`/`renderContextPackBlock`, none of this piece's own `renderStepBriefBlock`/
+`renderExternalInputsNote`). No `git add -A`, no `git stash`, no revert of anything not owned by this
+piece, at any point across all four commits — every commit used an exact pathspec
+(`git commit -F <msgfile> -- <paths>`), confirmed via `git status --short`/`git diff --stat` on each
+named path immediately before and after. Two additional transient, unrelated typecheck failures were
+observed mid-session in `packages/engine/test/dispatch/context-expansion.test.ts` (P44's own in-progress
+WIP file, confirmed via `git log` showing no prior commit and via reading the failing assertions
+themselves, which referenced P44's own fixtures) — both resolved on their own once P44 committed further
+progress, never touched by this piece.
+
+**Discloses.** A step tainted by its own `mcp:`/`fetch:` input loses exec and network so cannot read the
+input (`Q222` D3 unchanged; no shipped step declares one); nothing writes `kind: external` yet (`08` §8.3
+content decision deferred, matching `PLAN-M14.md` P27's identical disclosure for `taint: external`
+itself); `markExternalContent` still has no caller; an agent's `mcp:` grant alone does not taint; a
+malformed `mcp:` reference is inert, not refused (round 1); the identical glob blind spot this piece
+fixed for `kb:` inputs (rounds 1/2) still exists, dormant, for `artifact:Type(<pattern>)` wildcards
+(round 2); `merge.ts`'s own `compileRunPlan` call and `forge plan run-plan`'s own `planRunPlan` are not
+threaded with `externalKbIds` (round 1, both harmless: neither reads `node.taint`).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q276`.
