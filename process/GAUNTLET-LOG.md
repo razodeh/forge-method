@@ -18980,3 +18980,129 @@ fixed for `kb:` inputs (rounds 1/2) still exists, dormant, for `artifact:Type(<p
 threaded with `externalKbIds` (round 1, both harmless: neither reads `node.taint`).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q276`.
+
+## M14 P44 — `FORGE_REQUEST_CONTEXT` resolved end to end (new `engine/dispatch/context-expansion.ts`; edited `engine/dispatch/{steps,types}.ts`, `engine/interaction/dispatch-agent-step.ts`, `agents/prompt/{compile-prompt,index}.ts`; new/edited tests in `engine/test/dispatch/context-expansion.test.ts` (new, 24 tests) and `agents/test/prompt/compile-prompt.test.ts`) — a three-round critic loop (the maximum), every round finding real, previously-invisible issues: round 1 (1 blocking, 2 major, 3 minor, all fixed with real tests), round 2 (2 major, 1 minor, all fixed with real tests), round 3 (1 blocking, 2 major, all fixed with real tests, no further critic round dispatched — the hard cap of 3 was already reached, so this round's fixes were verified by the builder's own live mutation-evidence reproductions instead of a fourth review)
+
+**Built.** An agent session whose text ends with `FORGE_REQUEST_CONTEXT: <kb-id|query>` (`05` §5.4 point
+4) used to have that control token discarded into an empty `controlTokens` constant at every real engine
+call site — twelve shipped briefs instruct agents to emit it, and nothing ever read it (M13 P8's own
+disclosed gap). `expandRequestedContext` (new module) is the one place that now does, shared by
+`runAgentWork`'s own primary-author session (`steps.ts`) and `runParticipantSession`'s own read-only
+participant turn (`dispatch-agent-step.ts`) alike. The loop: resolves the query via
+`resolveContextRequest` (exact KB id first, free-text retrieval fallback), renders it the identical way
+block [3] renders a context-pack entry (a new `renderContextEntries`, extracted byte-identically from
+`compile-prompt.ts`'s own inline rendering and exported), heading-defangs it, strips any live `FORGE_*`
+control-token line a KB entry's own body happens to contain (`20` §20.5 point 2,
+`InjectionAttemptBlocked{phase:'context-expansion'}`), and continues the session through
+`ctx.adapter.resumeSession`. Bounded at 3 continuations per session; entered only when
+`ctx.adapter.capabilities().sessionResume` is true, checked fresh on every iteration. Each
+continuation's `ResumeRequest.limits` carries the REMAINDER of the step's own `maxTurns`/`maxCostUsd`/
+`wallClockMs` after every prior leg, never the same full budget repeated. The request, its resolution
+and the exact continuation text are recorded beside `prompt.md` (`context-requests.json`,
+`expansion-<n>.md`, byte-equal to the real `ResumeRequest.prompt`). The request/resolution/outcome rides
+in the pre-existing `SessionEvent`'s own payload as `{kind:'context-request', ...}` — no new `EventType`.
+`steps.ts`: `UsageRecorded` is now emitted once per real adapter-result leg (still positioned after
+`SessionEnded`, matching every pre-existing test's own event order for the common single-leg case),
+summing usage/unioning `changedFiles` on the merged outcome. `compile-prompt.ts`: block [3] now ends with
+one fixed protocol line telling the agent the `FORGE_REQUEST_CONTEXT` affordance exists — the only
+prompt-text change this piece makes, block [1]/[6] invariance untouched.
+
+**Round 1** (fresh, context-free; against the original feature commit): 1 blocking, 2 major, 3 minor.
+- **Blocking, fixed.** Only the `resumeSession`/`handle.result()` call was wrapped in a try/catch; any
+  other unexpected failure mid-loop (a KB read error, a `writeFileAtomic` failure, a non-`resumeSession`
+  `telemetry.emit` rejecting) propagated straight out of the function uncaught, discarding every
+  already-completed leg's real, already-spent usage and already-written `changedFiles` — reproduced live:
+  a leg-2 write and its $5 cost vanished entirely when leg 3's own resolution broke. Fixed: the whole
+  per-iteration body is now one try/catch that records `reason:'internal-error'` and stops the loop
+  gracefully with every leg that genuinely completed intact.
+- **Major, fixed.** The continuation's own `SessionEvent{sessionId}` was recorded only after
+  `handle.result()` resolved, not durably before it (`18` §18.10 write-before-effect) — a crash during a
+  continuation's own turn left no record it ever started. Fixed: emitted immediately after the handle is
+  acquired, before `result()` is awaited.
+- **Major, fixed.** The bound check only inspected `served.size`, which a repeat of an already-served
+  query never grows — a duplicate request bypassed the 3-request ceiling entirely, each repeat still
+  driving a real `resumeSession` leg. Fixed: every iteration that reaches the bound check counts against
+  it (a new `handledCount`), duplicate or not.
+- **Minor, fixed.** The `SessionEvent` payload's single `served` boolean did not distinguish a genuinely
+  fresh serve from a repeated "nothing new packed" duplicate. Fixed: a `duplicate: true` field.
+- **Minor, fixed.** `mergeLegs`'s own doc comment omitted that `durationMs` is also summed across every
+  leg, not only `usage`/`changedFiles`.
+- **Minor, fixed.** `remainingLimits`' `wallClockMs` reduction was untested (`FakePlatformAdapter` always
+  reports `durationMs: 0`) — a broken computation would have passed every other test undetected. Added a
+  test with an injected non-zero duration.
+
+**Round 2** (fresh, context-free; against round 1's own fix commit): 2 major, 1 minor.
+- **Major, fixed.** Round 1's own "durable sessionId" fix nested that emit inside the SAME try as
+  `resumeSession`/`handle.result()` — a failure of the emit ALONE (a real telemetry write breaking,
+  unrelated to whether the session started) was mislabelled `reason:'resume-failed'` even though
+  `resumeSession` genuinely succeeded, and the real, already-acquired handle was then abandoned entirely
+  (`result()` never awaited), reintroducing under a narrower trigger the exact gap round 1's fix existed
+  to close. Fixed: acquiring the handle, emitting the durability event, and awaiting the result are now
+  three separate try/catch scopes; a failure emitting the durability event is swallowed, best-effort, and
+  `handle.result()` is still awaited regardless.
+- **Major, fixed.** A KB entry resolved via `FORGE_REQUEST_CONTEXT` was never checked against
+  `ctx.externalKbIds` (the P30 taint-source set, landing concurrently in this same milestone) and so
+  never labelled `EXTERNALLY SOURCED` even when it should have been — this protocol can pull ANY KB entry
+  an agent names at runtime, including one no compile-time analysis of `node.inputs` ever saw. Fixed: an
+  entry whose id is a member of `ctx.externalKbIds` is now labelled the identical way a declared external
+  KB input already is. A real, disclosed residual gap this label does NOT close (explicitly permitted by
+  this piece's own Mandate, "Must not change... any grant," so not counted as a further defect, but
+  recorded here and in the module's own doc comment): `resumeSession` carries the session's own tool
+  grant forward UNCHANGED — no adapter this codebase can construct supports narrowing a grant
+  mid-session, so a step that started untainted keeps its original, unrestricted grant even after
+  pulling externally-sourced content this way. Closing that needs either adapter-level support for a
+  mid-session grant change (none exists) or refusing to serve external content through this protocol
+  outright — both left to a dedicated follow-up piece.
+- **Minor, fixed.** `MAX_CONTEXT_REQUESTS_PER_SESSION`'s own doc comment misattributed the "3 per
+  session" figure to `05` §5.4 point 4, which names no numeric bound at all — the figure is
+  `PLAN-M14.md` P44's own Mandate text alone.
+
+**Round 3** (fresh, context-free; against round 2's own fix commit, the third and final allowed round):
+1 blocking, 2 major — all three genuinely new, adjacent to code the first two rounds specifically
+focused on (numeric-usage handling, record/event accuracy, duplicate-request handling) but not
+themselves reachable until this round looked. All three fixed here, by the builder's own rigorous
+self-testing (live mutation-evidence reproductions for each, matching every prior round's own
+discipline) rather than a fourth critic round, since the hard cap of 3 was already reached.
+- **Blocking, fixed.** `remainingLimits`/`summedUsage` folded every leg's own `usage.turns`/
+  `usage.costUsd`/`durationMs` into arithmetic with no validation at all, unlike this codebase's own
+  established `sanitizeUsageNumber` (`steps.ts`), written for the identical "a real platform's own
+  malformed or hostile figure must never flow through raw" threat. Reproduced live: a single leg
+  reporting `costUsd: -1000` made the NEXT continuation's own `ResumeRequest.limits.maxCostUsd` come out
+  as $1002 against a configured $2 ceiling — a 500x budget-governance bypass reachable with nothing more
+  exotic than two ordinary requests in one session. Fixed: a local `sanitizeUsageNumber` (identical logic
+  to `steps.ts`'s own; not imported, since `steps.ts` imports this module and importing back would be
+  circular) is now applied to every leg's own reported number before it enters either function's
+  arithmetic.
+- **Major, fixed.** `persistExpansionRecord` writes `context-requests.json` claiming `outcome:'served'`/
+  `'duplicate'` BEFORE `resumeSession` is even attempted (deliberate write-before-effect) — but when the
+  resume then genuinely failed, nothing ever corrected that record. Reproduced live: after a rejecting
+  `resumeSession`, the on-disk manifest still read `"outcome":"served"` for a request the agent never
+  actually received a reply to, the failure visible only in `events.ndjson`, never in the manifest whose
+  own stated purpose is being this step's own audit record beside `prompt.md`. Fixed: a new
+  `markLastRecordResumeFailed` rewrites the most recently persisted entry's own `outcome` to
+  `'resume-failed'` (never `expansion-<n>.md` itself, which stays exactly what was actually sent)
+  whenever either of the loop's two `resumeSession` failure paths fires.
+- **Major, fixed.** A query that resolved to `'no-match'` was nonetheless added to `served`, so a literal
+  repeat of it was answered with the hardcoded duplicate-continuation text ("you already received the
+  context for X... nothing new is packed for it") — false, since X was never found in the first place,
+  and a misleading answer that also risked steering the agent away from the accurate first response's own
+  FORGE_ASK/FORGE_ASSUME pointer. Fixed: only a genuinely `'served'` resolution now marks a query served;
+  a repeated no-match query is resolved fresh again (a cheap, deterministic KB lookup, unlike a real
+  adapter turn) and still gets the real, truthful no-match continuation every time, all the way to the
+  real 3-request bound.
+
+**Discloses.** No mid-turn interject (unsupported by both adapters); glob/type requests fall to free
+text; only KB entries served; bound 3 and `kb.packBudgetTokens` not cumulative with the initial pack; CLI
+transport cannot enforce `maxTurns`; `forge debug` and other session phases not covered; a genuine engine
+crash-resume between request and continuation rerolls (distinct from the narrower, already-recovered-from
+failures this piece's own per-iteration try/catch handles); whether Claude Code stops after the token
+line is unverified until a live run; the MCP route has no constructor in cli/engine; each continuation
+re-sends the transcript; a step's tool grant cannot be narrowed mid-session even after pulling
+externally-sourced content via this protocol (round 2, labelling is the one mitigation inside this
+protocol's own scope); the `served` Set dedupes by exact literal query text, not by resolved KB id, so
+two differently-worded requests resolving to the same entry each spend their own slot of the 3-request
+bound; `adopt/inference.ts`/`adopt/cartography.ts`'s own pre-existing `runParticipantSession` callers
+still emit no `UsageRecorded` at all, now for up to 3 more real, billable legs per call than before this
+piece (pre-existing gap, amplified not created by this piece, left to those callers' own scope).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q277`.

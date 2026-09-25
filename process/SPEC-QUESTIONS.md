@@ -25404,3 +25404,62 @@ exists, dormant, for `artifact:Type(<pattern>)` wildcards; `merge.ts`'s own `com
 `node.taint`).
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P30`.
+
+## Q277 — M14 P44: `FORGE_REQUEST_CONTEXT` resolved end to end — real decisions where the Mandate's own
+text was silent or ambiguous, and one plan-citation inaccuracy
+
+**Context.** `05` §5.4 point 4 and twelve shipped briefs instruct an agent to emit
+`FORGE_REQUEST_CONTEXT: <kb-id|query>` mid-session; before this piece, every real engine call site
+discarded the parsed control token into an empty constant (M13 P8's own disclosed gap). `PLAN-M14.md`
+P44's own Mandate gives the shape ("Bounded (3 per session), served ids skipped... a rejecting
+`resumeSession`... stops the loop") but leaves several real implementation questions unanswered; each is
+recorded here with the decision this piece made and proceeded with.
+
+**Decision 1 — "served ids skipped" does not mean "skipped requests are free."** The Mandate's own
+"bounded (3 per session), served ids skipped" reads, taken literally, as two independent rules: a hard
+cap of 3, and repeats of an already-served id cost nothing. A first implementation took this literally
+(a duplicate request never counted against the bound at all) and a round-1 gauntlet critic proved live
+that this lets a model spend an entire session's remaining turn/cost budget on nothing but repeating the
+same already-answered request, unbounded by anything but `node.limits` itself. Decided: "skipped" means
+the query is not re-resolved against the KB (no wasted lookup, the literal savings the Mandate names),
+but every continuation — duplicate or not — still counts as one of the 3. This is the stricter, safer
+reading and is what shipped; see `GAUNTLET-LOG.md`'s own round-1 entry for the live proof.
+
+**Decision 2 — the exact wording and placement of block [3]'s new protocol line.** The Mandate says "One
+protocol line is appended to block [3]" but specifies neither its exact text nor where within the block.
+Decided: appended as the very last line of the block (after "Declared inputs"/"Retrieved," so it reads as
+a closing affordance, not buried before the pack's own content), naming the exact syntax
+(`` `FORGE_REQUEST_CONTEXT: <kb-id-or-query>` ``), the bound (3), and that a real KB id works best while a
+free-text query falls back to retrieval — proceeding with this exact text
+(`CONTEXT_REQUEST_PROTOCOL_LINE`, `compile-prompt.ts`), tested to be present and to end the block
+regardless of pack content (`compile-prompt.test.ts`).
+
+**Decision 3 — a step's tool grant is not narrowed when it pulls externally-sourced content via this
+protocol (disclosed, not fixed).** `PLAN-M14.md` P30, landing concurrently in this same milestone, taints
+a step at COMPILE TIME when its declared `inputs:` name a KB entry with recorded external provenance
+(`ctx.externalKbIds`). `FORGE_REQUEST_CONTEXT` can pull ANY KB entry an agent names at RUNTIME, including
+one no compile-time analysis of `node.inputs` ever saw — a round-2 gauntlet critic finding. Decided (and
+this is the real, open question, not fully resolved): label such a resolved entry `EXTERNALLY SOURCED`
+the identical way a declared external input already is (`20` §20.5 point 1, "delimit and label" — the
+achievable half), but do NOT attempt to retroactively narrow the live session's own tool grant (the
+"capability restriction is the control" half, `20` §20.5 point 4) — because `resumeSession` carries a
+session's own grant forward unchanged by design (`07` §7.2's own resumed-session contract; `ResumeRequest`
+carries no `tools` field at all), and no adapter this codebase can construct supports a mid-session grant
+change. A step that started untainted therefore keeps its original, unrestricted write/exec/network grant
+even after pulling externally-sourced content this way. Recommended follow-up (not this piece's own
+scope, `PLAN-M14.md` P44's own "Must not change... any grant" forbids it here): either (a) adapter-level
+support for narrowing a grant mid-session, or (b) refusing to serve externally-sourced content through
+`FORGE_REQUEST_CONTEXT` at all, forcing such a step to declare the input up front (where P30's own
+compile-time taint already covers it) instead. Proceeding with the label-only mitigation, disclosed both
+in `context-expansion.ts`'s own doc comment and in `GAUNTLET-LOG.md`'s round-2 entry.
+
+**Observation, not a decision — `PLAN-M14.md` P44's own Mandate cites `test/determinism.test.ts` as one
+of two files recording this piece's block-[3] "contract change."** A round-3 gauntlet critic checked: that
+file (root-level) contains only TZ/locale/git-byte determinism assertions, none about `compilePrompt` or
+block [3] at all, and none of this piece's three commits touch it. The coverage this citation likely
+intended (block [3] ends with the protocol line, present regardless of pack content, and the pre-existing
+block-[1] operating-contract-exactness test stays unaffected) was added to `compile-prompt.test.ts`
+instead, the OTHER file the same Mandate sentence names, which is correctly updated. Recorded here as a
+plan-citation inaccuracy rather than a piece the builder skipped.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M14 P44`.
