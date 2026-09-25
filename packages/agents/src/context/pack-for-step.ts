@@ -36,13 +36,20 @@ export interface StepContext {
    * check will look in (`outputGlob`, under the project's configured docs roots). When non-empty, block [5] of the
    * compiled prompt lists exactly these, at that path, and not the role's whole `outputs[]`. */
   readonly outputs?: readonly StepOutputContext[] | undefined;
-  /** `PLAN-M14.md` P30 (`20` §20.5 point 3, `15` §15.5.4): this step's own declared `inputs:` that name an
-   * external scheme (`mcp:<server>[/<tool>]` or `fetch:<https-url>`) rather than a KB id -- never resolved
-   * into `declaredInputIds` (there is no KB entry to look up), and rendered separately into block [4]
-   * (`compile-prompt.ts`'s own `renderStepBriefBlock`) so the agent sees them named apart from the KB
-   * entries actually packed. `packForStep` itself never reads this field (the same "carried through,
-   * consumed only by `compile-prompt.ts`'s own block renderer" shape `outputs` above already has); present
-   * only when non-empty. */
+  /** `PLAN-M14.md` P30 (`20` §20.5 point 1/3, `15` §15.5.4): this step's own declared `inputs:` that are
+   * external, in one of TWO structurally different ways (a round-3 gauntlet critic finding: the doc
+   * comment here, and `compile-prompt.ts`'s own rendered note, used to describe only the first, which
+   * made the note actively false for the second): (1) an `mcp:<server>[/<tool>]`/`fetch:<https-url>`
+   * scheme reference, never resolved into `declaredInputIds` at all (there is no KB entry to look up, and
+   * no network to read one live with); (2) an exact `kb:<id>`/`artifact:Type(<id>)` reference, or a
+   * glob-shaped `kb:<pattern>` one, whose id (or, for a glob, an overlapping path) carries external KB
+   * provenance (`08` §8.3) -- an exact id IS ALSO in `declaredInputIds` (its full text is packed, same as
+   * any other declared KB input; this field only adds the label), while a glob is not (`SPEC-QUESTIONS.md`
+   * Q203's own standing "only an exact id is packed" limit, unrelated to and unchanged by this field).
+   * Rendered separately into block [4] (`compile-prompt.ts`'s own `renderStepBriefBlock`) so the agent
+   * sees every one of these named, distinct from an ordinary declared KB input. `packForStep` itself
+   * never reads this field (the same "carried through, consumed only by `compile-prompt.ts`'s own block
+   * renderer" shape `outputs` above already has); present only when non-empty. */
   readonly externalInputs?: readonly string[] | undefined;
 }
 

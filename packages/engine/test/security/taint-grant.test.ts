@@ -614,6 +614,10 @@ describe('a step tainted by a declared kb: input whose id carries external prove
     expect(request.systemPrompt.text).toContain('External inputs for this step');
     expect(request.systemPrompt.text).toContain('kb:KB-ARCH-0001');
     expect(request.systemPrompt.text).toContain('EXTERNALLY SOURCED');
+    // Round-3 gauntlet critic finding: block [4]'s own "External inputs" note used to say unconditionally
+    // "never from the project KB", directly contradicting the "Declared inputs" line naming this exact
+    // reference's packed content a few lines above it in the same prompt -- fixed to never claim that.
+    expect(request.systemPrompt.text).not.toContain('never from the project KB');
   });
 
   it('a step declaring the identical kb: input, when its id is NOT in externalKbIds, is untainted and carries no external label at all (control)', async () => {
@@ -684,5 +688,8 @@ describe('a step tainted by a declared kb: input whose id carries external prove
     // Q203's own standing limit (a glob is never resolved to one exact id) is unrelated to and unchanged
     // by this fix: the glob still names no single packed entry, so the body text itself never appears.
     expect(request.systemPrompt.text).not.toContain('The incident root cause was a stale cache.');
+    // Round-3 gauntlet critic finding: the identical self-contradiction risk applies here too -- fixed
+    // to never claim content is absent from the project KB, only that it is untrusted wherever it is.
+    expect(request.systemPrompt.text).not.toContain('never from the project KB');
   });
 });

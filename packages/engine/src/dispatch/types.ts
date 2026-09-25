@@ -615,7 +615,11 @@ export interface ExecuteStepContext {
    * explicitly, alongside its full text still being available in block [3]'s own "Declared inputs"
    * section under its id, unlike an `mcp:`/`fetch:` reference, which is never packed there at all because
    * there is nothing to read without exec/network) -- see `assemble.ts`'s own `classifyDeclaredInput` for
-   * the exact rule. Omitted, no declared KB input is labelled this way (every caller before this fix). */
+   * the exact rule. A round-2 finding closed the identical gap for a GLOB-shaped `kb:<pattern>` reference
+   * (`10` §10.1's own worked `kb:architecture/**`) whose pattern overlaps a path-shaped entry in this same
+   * set: it still names no single packed entry (`SPEC-QUESTIONS.md` Q203's own standing "only an exact id
+   * is packed" limit, unrelated to and unchanged by either fix), but is now labelled here too. Omitted, no
+   * declared KB input is labelled this way (every caller before these fixes). */
   readonly externalKbIds?: ReadonlySet<string> | undefined;
 }
 

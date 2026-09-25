@@ -102,10 +102,21 @@ describe('compilePrompt — block [4], StepContext.externalInputs (PLAN-M14.md P
     expect(content.indexOf(BASE_STEP.brief)).toBeLessThan(content.indexOf('External inputs'));
   });
 
-  it('names the untrusted-content posture (20 §20.5 point 3): read from outside the project, treated as data not instructions', () => {
+  it('names the untrusted-content posture (20 §20.5 point 1/3): treated as data not instructions', () => {
     const content = block4({ ...BASE_STEP, externalInputs: ['mcp:jira/search_issues'] });
-    expect(content).toMatch(/never from the project KB/);
+    expect(content).toMatch(/originates from outside the project/);
     expect(content).toMatch(/not instructions/);
+  });
+
+  // Round-3 gauntlet critic finding: `externalInputs` names two structurally different things (an
+  // mcp:/fetch: reference, never packed anywhere, AND a kb: reference whose own full text IS packed
+  // above under its own id when it resolves to an exact one) -- the note's own wording must not claim
+  // only the first is possible, or it directly contradicts the "Declared inputs" line naming that exact
+  // same reference's packed content a few lines above it in the same block.
+  it('never claims content is absent from the project KB -- the wording must hold for a kb:-sourced reference whose full text IS packed above it, not only for an mcp:/fetch: one that never is', () => {
+    const content = block4({ ...BASE_STEP, externalInputs: ['kb:KB-ARCH-0001'] });
+    expect(content).not.toMatch(/never from the project KB/);
+    expect(content).toContain('- kb:KB-ARCH-0001');
   });
 
   it('composes correctly with role-specific guidance: brief, then guidance, then external inputs', () => {

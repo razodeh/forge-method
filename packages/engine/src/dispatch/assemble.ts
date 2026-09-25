@@ -182,13 +182,17 @@ interface DeclaredInputs {
   readonly unresolved: readonly string[];
   /** `PLAN-M14.md` P30: this step's own declared `inputs:` that are external -- an `mcp:<server>
    * [/<tool>]`/`fetch:<https-url>` scheme reference (never matched against `known`: there is no KB entry
-   * to find, and its own text is never packed, since there is nothing to read without exec/network), OR
-   * an exact `kb:<id>`/`artifact:Type(<id>)` reference whose id is ALSO a member of `externalKbIds` (a
-   * round-1 gauntlet critic finding: such an id's full text IS still packed as an ordinary "Declared
-   * inputs" entry -- `20` §20.5 point 1's "delimit and label" needs it named here too, not only
-   * `node.taint`'s own grant restriction, point 3/4). The one difference: a `kb:`-sourced entry here is
-   * ALSO in `resolvedIds` (still packed, still readable, just labelled); an `mcp:`/`fetch:` one never is.
-   * Never folded into `unresolved`, so the two stay disjoint. Becomes `StepContext.externalInputs`. */
+   * to find, and its own text is never packed, since there is nothing to read without exec/network), an
+   * exact `kb:<id>`/`artifact:Type(<id>)` reference whose id is ALSO a member of `externalKbIds` (round 1:
+   * such an id's full text IS still packed as an ordinary "Declared inputs" entry -- `20` §20.5 point 1's
+   * "delimit and label" needs it named here too, not only `node.taint`'s own grant restriction, point
+   * 3/4), OR a glob-shaped `kb:<pattern>` reference whose pattern overlaps a known-external path (round
+   * 2, the identical `kbInputPattern`/`globsOverlap` fallback `plan/compile.ts`'s own `derivedTaint`
+   * uses). Two of these three ALSO land in `resolvedIds` (an exact `kb:`-sourced entry: still packed,
+   * still readable, just labelled) or `unresolved` (a glob: still never packed at all, `Q203`'s own
+   * standing limit, just now ALSO labelled) -- **`external` is not disjoint from either of those two
+   * (a round-3 gauntlet critic finding correcting this comment's own former claim that it was); it is
+   * disjoint only from a reference that is neither.** Becomes `StepContext.externalInputs`. */
   readonly external: readonly string[];
   readonly section: string;
 }

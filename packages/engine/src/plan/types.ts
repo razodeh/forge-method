@@ -213,13 +213,18 @@ export interface StepNode {
    * **This was only *one* of the two taint sources `20` §20.5 point 3 describes; `PLAN-M14.md` P30
    * (depended on this piece, now landed) added the second.** `compilePlan` also taints an `'agent'`
    * step whose own (template-resolved) `inputs:` names an `mcp:<server>[/<tool>]` reference, a
-   * `fetch:<https-url>` reference, or a `kb:`/`artifact:` id present in the caller's own
-   * `CompilePlanOptions.taint.externalKbIds` set (`@forge/cli`'s `collectExternalKbIds`, run once per
-   * `forge run`/`resume`/`--dry-run` against the project's real KB tree, threading through
-   * `RunEngineContext.externalKbIds`, a `RunManifest.externalKbIds` snapshot for `forge resume`, and
-   * `compileRunPlan`/`compileStageRunPlan`'s own identical `taint` option) — a fact `compilePlan` could
-   * not read off `AgentStep.taint` alone, since a declared-external-provenance KB id is project state,
-   * not something the workflow author wrote on the step itself. A `fetch:http://...` (or any other
+   * `fetch:<https-url>` reference, an exact `kb:`/`artifact:` id present in the caller's own
+   * `CompilePlanOptions.taint.externalKbIds` set, OR (round 2 of this same piece's own gauntlet loop) a
+   * GLOB-shaped `kb:<pattern>` reference (`10` §10.1's own worked `kb:architecture/**`) whose pattern
+   * `globsOverlap`s one of `externalKbIds`' own path-shaped entries -- an exact id alone would silently
+   * miss every glob, since a glob never resolves to one exact id to look up (`plan/input-refs.ts`'s own
+   * `kbInputPattern`/`exactKbIdOf` split). `externalKbIds` itself comes from `@forge/cli`'s
+   * `collectExternalKbIds`, run once per `forge run`/`resume`/`--dry-run` against the project's real KB
+   * tree, threading through `RunEngineContext.externalKbIds`, a `RunManifest.externalKbIds` snapshot for
+   * `forge resume`, and `compileRunPlan`/`compileStageRunPlan`'s own identical `taint` option — a fact
+   * `compilePlan` could not read off `AgentStep.taint` alone, since a declared-external-provenance KB id
+   * (or path) is project state, not something the workflow author wrote on the step itself. A
+   * `fetch:http://...` (or any other
    * non-`https:` `fetch:` scheme) is refused outright at compile time (`insecure-fetch-input-scheme`),
    * never silently accepted or silently treated as non-external. `markExternalContent` itself still has
    * zero production callers (confirmed by grep, unchanged by P30 too): every real tainted `StepNode` in
