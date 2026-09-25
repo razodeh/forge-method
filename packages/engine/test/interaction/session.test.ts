@@ -1763,8 +1763,36 @@ describe('runSessionStep — PLAN-M10.md P12: real write-back per artifact type'
   // (the lane, for the content write itself) -- `KbWriter`'s own doc comment on `idPaths` has the fuller
   // reasoning. `estimation` here specifically, matching the two real session types the live run itself
   // exercised, not `brainstorm` (this file's own other `writeKbDecisionBack` tests' default).
+  //
+  // A second, independent critic round (two critics, both via direct reversion-and-repro) found this
+  // test's own FIRST version reached a different failure mode pre-fix than its own comment claimed:
+  // `createTempRepo` (unlike a real `forge init` project, whose own shipped `.gitignore` -- `write-
+  // tree.ts`'s `GITIGNORE_ENTRIES` -- excludes `.forge/state/`) starts with no `.gitignore` at all, so
+  // the internal bookkeeping files this bug also touches (`.forge/state/kb-ids.json`, `kb-events.jsonl`)
+  // were genuinely tracked in the test fixture, and a real `MERGE-CONFLICT-UNRESOLVED` on THOSE tripped
+  // before the id-comparison assertion below ever ran -- a real regression symptom, but the WRONG one
+  // (already independently covered by the `writeRiskBack` concurrent test above), never actually
+  // reaching the silent, git-invisible duplicate-id defect this test exists to catch. A real
+  // `.gitignore` matching production (below) closes that gap: with `.forge/state/` genuinely ignored,
+  // both writes land cleanly (no bookkeeping-file conflict, matching every real project), and the test
+  // reaches its own real point -- confirmed by both critics reverting `session.ts`/`writer.ts` to this
+  // fix's own parent commit with this exact `.gitignore` in place: both calls then succeed and silently
+  // allocate the IDENTICAL id, precisely the defect being tested for.
   it('two estimation session steps writing back KB decisions concurrently (Promise.all) each get a distinct real id, not just a distinct file', async () => {
     const projectRoot = await createTempRepo('kb-decision-writeback-race');
+    // Matches a real `forge init` project's own shipped `.gitignore` (`write-tree.ts`'s
+    // `GITIGNORE_ENTRIES`) for the one entry this test's own scenario needs: without it, the internal
+    // `.forge/state/*` bookkeeping files this bug also touches are tracked in this bare test fixture
+    // (unlike production) and a real git conflict on THEM masks the actual, silent id-collision defect
+    // this test exists to catch -- see this test's own header comment.
+    await writeFileAtomic(
+      new ProjectPaths(projectRoot).resolveWithin('.gitignore'),
+      '.forge/state/\n',
+    );
+    await execa('git', ['add', '.gitignore'], { cwd: projectRoot });
+    await execa('git', ['commit', '--quiet', '-m', 'gitignore .forge/state/'], {
+      cwd: projectRoot,
+    });
     await withRealAgentRoster(projectRoot);
     const adapter = new FakePlatformAdapter();
     const ctx = createTestContext({ projectRoot, adapter });
