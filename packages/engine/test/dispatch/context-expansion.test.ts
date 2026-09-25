@@ -23,7 +23,8 @@ import { describe, expect, it } from 'vitest';
 
 import { promptRecordDirName } from '../../src/dispatch/assemble.ts';
 import { executeStep } from '../../src/dispatch/execute.ts';
-import type { KbAccess } from '../../src/dispatch/types.ts';
+import { createTelemetryFacade } from '../../src/dispatch/facades.ts';
+import type { KbAccess, NewDispatchEvent, TelemetryFacade } from '../../src/dispatch/types.ts';
 import { runParticipantSession } from '../../src/interaction/dispatch-agent-step.ts';
 import { toAgentId } from '../../src/plan/index.ts';
 import { reconstructRunState } from '../../src/resume/reconstruct.ts';
@@ -1020,6 +1021,141 @@ describe('FORGE_REQUEST_CONTEXT expansion (PLAN-M14.md P44) -- via runAgentStep'
 
       // Leg 1's own injected duration (40 000 ms) is subtracted from the step's own wallClockMs budget.
       expect(capturedLimits?.wallClockMs).toBe(460_000);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('(critic round 2) a real KB entry resolved via FORGE_REQUEST_CONTEXT is labelled EXTERNALLY SOURCED when its id is a member of ctx.externalKbIds', async () => {
+    const projectRoot = await createTempRepo('external-kb');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      adapter.script((request) => request.prompt.includes('### KB-ARCH-0001'), { text: ['noted'] });
+      const ctx = createTestContext({
+        projectRoot,
+        adapter,
+        externalKbIds: new Set(['KB-ARCH-0001']),
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+      });
+
+      await executeStep(stepNode, ctx);
+
+      const expansion = await readFile(
+        stepRecordPath(projectRoot, ctx.runId, STEP_ID, 'expansion-1.md'),
+        'utf8',
+      );
+      expect(expansion).toContain('EXTERNALLY SOURCED');
+      expect(expansion).toContain('### KB-ARCH-0001');
+      expect(expansion).toContain('Invoices never total negative for billing.');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('(critic round 2) a real KB entry NOT in ctx.externalKbIds is never labelled EXTERNALLY SOURCED', async () => {
+    const projectRoot = await createTempRepo('not-external-kb');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      adapter.script((request) => request.prompt.includes('### KB-ARCH-0001'), { text: ['noted'] });
+      const ctx = createTestContext({
+        projectRoot,
+        adapter,
+        externalKbIds: new Set(['KB-ARCH-0002']),
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+      });
+
+      await executeStep(stepNode, ctx);
+
+      const expansion = await readFile(
+        stepRecordPath(projectRoot, ctx.runId, STEP_ID, 'expansion-1.md'),
+        'utf8',
+      );
+      expect(expansion).not.toContain('EXTERNALLY SOURCED');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('(critic round 2) a telemetry failure recording ONLY the durability sessionId event never mislabels a genuinely successful resumeSession as resume-failed, and handle.result() is still awaited and used', async () => {
+    const projectRoot = await createTempRepo('telemetry-durability-failure');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      adapter.script((request) => request.prompt.includes('### KB-ARCH-0001'), {
+        text: ['real continuation text, genuinely produced'],
+      });
+      const real = createTelemetryFacade(projectRoot, 'run-test', () => 0);
+      const isDurabilityEmit = (event: Omit<NewDispatchEvent, 'runId' | 'ts'>): boolean =>
+        event.type === 'SessionEvent' &&
+        typeof event.payload === 'object' &&
+        event.payload !== null &&
+        (event.payload as Record<string, unknown>)['kind'] === 'context-request' &&
+        'sessionId' in (event.payload as Record<string, unknown>);
+      const flakyTelemetry: TelemetryFacade = {
+        emit: (event) =>
+          isDurabilityEmit(event)
+            ? Promise.reject(new Error('simulated telemetry write failure'))
+            : real.emit(event),
+      };
+      const ctx = createTestContext({
+        projectRoot,
+        adapter,
+        telemetry: flakyTelemetry,
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+      });
+
+      const outcome = await executeStep(stepNode, ctx);
+
+      // The resumeSession call itself genuinely succeeded -- its real result is still on the outcome,
+      // proving `handle.result()` was awaited despite the durability emit failing.
+      expect(outcome.status).toBe('succeeded');
+      if (outcome.detail.kind !== 'agent') throw new Error('unreachable');
+      expect(outcome.detail.session.finalText).toContain(
+        'real continuation text, genuinely produced',
+      );
+
+      const events: ForgeEvent[] = [];
+      for await (const event of readEvents(projectRoot, ctx.runId)) events.push(event);
+      const resumeFailed = events.find(
+        (event) =>
+          event.type === 'SessionEvent' &&
+          typeof event.payload === 'object' &&
+          event.payload !== null &&
+          (event.payload as Record<string, unknown>)['reason'] === 'resume-failed',
+      );
+      expect(
+        resumeFailed,
+        'a telemetry failure recording the durability event must not be mislabelled resume-failed',
+      ).toBeUndefined();
     } finally {
       cleanup();
     }
