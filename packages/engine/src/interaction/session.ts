@@ -977,11 +977,21 @@ async function landWriteBackLane(
  * carries -- see its own doc comment for why not), re-looked-up here from `ctx.laneRegistry` by the
  * same real key (`lane.stepId`) `landWriteBackLane` uses right after this returns; the lane is still
  * registered at this point on every real call path (the decider's own `dispatchAgentStep` created it,
- * and nothing removes it before this write-back's own commit runs). A no-op, never thrown, on the one
- * path where it would not be (a hand-built test fixture that names a `stepId` its own `laneRegistry`
- * never populated) -- the caller's own subsequent `landWriteBackLane` call reports that honestly instead
- * (`mergeDecideLane`'s own `if (lane === undefined) return undefined` is silent by design: a lane
- * genuinely absent, not merely momentarily unregistered, has nothing left to land). */
+ * and nothing removes it before this write-back's own commit runs).
+ *
+ * A REAL, non-silent, but non-throwing signal on the one path where the lookup misses -- a fresh critic
+ * round found the first version of this function returned here with no signal at all: the real content
+ * write (`writeFileAtomic`, this function's own caller) does not depend on this lookup succeeding, so a
+ * miss would otherwise mean the content is written to a real worktree path, never committed, never
+ * merged (`landWriteBackLane`'s own subsequent `mergeDecideLane` call also finds nothing, silently, the
+ * identical class of defect this whole piece exists to close, just relocated one layer down and gated
+ * only by a doc-comment promise instead of anything enforced). `console.error` rather than throwing:
+ * this runs inside `enqueueForProject`'s own queued turn, and an uncaught throw here would reject that
+ * turn and everything queued behind it, in a run that otherwise describes every failure as typed data
+ * (this module's own "describe a failure as data, never fabricate" doc comment) -- a louder failure
+ * mode than the original bug, not a smaller one. Not reachable on any real call path today (every real
+ * caller looks the lane up immediately before constructing the `DecideLaneRef` it passes in) -- a
+ * defensive signal against a future change reintroducing the gap, not a currently-live branch. */
 async function commitWriteBack(
   ctx: ExecuteStepContext,
   node: StepNode,
@@ -989,7 +999,15 @@ async function commitWriteBack(
   subject: string,
 ): Promise<void> {
   const laneHandle = ctx.laneRegistry.get(lane.stepId);
-  if (laneHandle === undefined) return;
+  if (laneHandle === undefined) {
+    // eslint-disable-next-line no-console -- mirrors KbIdAllocator's own unexpected-but-survivable signal.
+    console.error(
+      `commitWriteBack: lane "${lane.stepId}" is no longer in ctx.laneRegistry -- the write-back to ` +
+        `${lane.path} was never committed and will not reach the integration branch. This should be ` +
+        'unreachable on every real call path; report it as a bug.',
+    );
+    return;
+  }
   await ctx.vcs.commit(laneHandle, writeBackCommitMessage(ctx, node, subject), ctx.signCommits);
 }
 
@@ -1021,61 +1039,70 @@ async function writeKbDecisionBack(
   ownerRole: string,
   decisionText: string,
   clock: Clock,
-  /** `writeAdrBack`'s own `lane` (see its doc comment). This function's own target path is
+  /** `writeAdrBack`'s own `lane` (see its doc comment). This function's own CONTENT target path is
    * deterministic in `node.id` alone (unlike `writeAdrBack`'s allocated ADR id or `writeRiskBack`'s one
-   * shared `kb/risks.md`), so two DIFFERENT session steps' own calls can never collide on it -- no
-   * `enqueueForProject` wrapping here, unchanged from before this piece; `landWriteBackLane` still runs
-   * (unqueued) so this write lands the same way the other two do. */
+   * shared `kb/risks.md`), so two DIFFERENT session steps' own calls can never collide on THAT -- but
+   * the real, GLOBAL `KB-<SECTION>-####` counter `KbWriter` allocates FOR them still could (a second
+   * fresh critic round found this, live: two concurrent calls each correctly avoiding a file-path
+   * collision, still silently landing the identical allocated id), so this function is wrapped in
+   * `enqueueForProject` below the identical way `writeAdrBack`/`writeRiskBack` already are -- allocate,
+   * write, AND land all inside the one turn, for the identical "the next queued call's own scan must see
+   * this one's real, already-landed content" reason `landWriteBackLane`'s own doc comment gives. */
   lane: DecideLaneRef | undefined,
 ): Promise<WriteBackResult> {
-  const relativePath = `${section}/session-${node.id.replace(/[^a-zA-Z0-9]+/g, '-')}.md`;
-  // `writeAdrBack`'s own "scan the real, ever-current `ctx.projectRoot`" doc comment -- this function's
-  // own idempotency check specifically (a resumed/retried run of the SAME session step, whose own
-  // earlier write already landed) needs the real, current state for the identical reason, even though
-  // this function's own target path can never collide across DIFFERENT session steps the way
-  // `writeAdrBack`'s allocated id or `writeRiskBack`'s shared file can.
-  const scanPaths = new ProjectPaths(ctx.projectRoot);
-  const scanTarget = scanPaths.resolveWithin(`${DEFAULT_KB_ROOT}/${relativePath}`);
-  if (await pathExists(scanTarget)) {
-    const existingId = extractKbEntryId(await readTextFile(scanTarget));
-    if (existingId !== undefined) {
-      return { artifactRef: existingId, mergeFailure: await landWriteBackLane(ctx, node, lane) };
+  return enqueueForProject(ctx.projectRoot, async () => {
+    const relativePath = `${section}/session-${node.id.replace(/[^a-zA-Z0-9]+/g, '-')}.md`;
+    // `writeAdrBack`'s own "scan the real, ever-current `ctx.projectRoot`" doc comment -- this
+    // function's own idempotency check specifically (a resumed/retried run of the SAME session step,
+    // whose own earlier write already landed) needs the real, current state for the identical reason.
+    const scanPaths = new ProjectPaths(ctx.projectRoot);
+    const scanTarget = scanPaths.resolveWithin(`${DEFAULT_KB_ROOT}/${relativePath}`);
+    if (await pathExists(scanTarget)) {
+      const existingId = extractKbEntryId(await readTextFile(scanTarget));
+      if (existingId !== undefined) {
+        return { artifactRef: existingId, mergeFailure: await landWriteBackLane(ctx, node, lane) };
+      }
+      // The file exists but this module's own id line is unreadable (hand-edited or corrupted) --
+      // falls through to a real `KbWriter.write` below, which will itself refuse with `KB-009` rather
+      // than silently overwriting whatever is actually there; a real, disclosed edge case, not a
+      // silent loss.
     }
-    // The file exists but this module's own id line is unreadable (hand-edited or corrupted) -- falls
-    // through to a real `KbWriter.write` below, which will itself refuse with `KB-009` rather than
-    // silently overwriting whatever is actually there; a real, disclosed edge case, not a silent loss.
-  }
-  // The real write target: `writeAdrBack`'s own doc comment on the identical split.
-  const paths = new ProjectPaths(lane?.path ?? ctx.projectRoot);
-  const writer = new KbWriter({ paths, clock });
-  // `08` §8.3 names no fixed review cadence for a session write-back -- 30 days is this piece's own
-  // reasonable default, not a spec quote.
-  const reviewBy = new Date(new Date(clock.now()).getTime() + 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .slice(0, 10);
-  const input: KbEntryInput = {
-    type: 'knowledge',
-    section,
-    title: `Session decision -- ${node.id}`,
-    status: 'active',
-    confidence: 'low',
-    owner: ownerRole,
-    sources: [{ kind: 'decision', ref: `session:${node.id}` }],
-    review_by: reviewBy,
-    supersedes: [],
-    superseded_by: null,
-    related: [],
-    diagrams: [],
-    tags: [],
-    applies_to: [],
-    body: `## Summary\n\n${decisionText}\n`,
-    path: relativePath,
-  };
-  const entry = await writer.write(input);
-  if (lane !== undefined) {
-    await commitWriteBack(ctx, node, lane, 'record session decision');
-  }
-  return { artifactRef: entry.id, mergeFailure: await landWriteBackLane(ctx, node, lane) };
+    // The real write target: `writeAdrBack`'s own doc comment on the identical split. `idPaths:
+    // scanPaths` is the other half of it, one layer down: `KbWriter`'s own real `KbIdAllocator`
+    // scan/cache (this same global counter) must ALSO read the true, ever-current `ctx.projectRoot`,
+    // never a lane's own frozen snapshot -- `KbWriter`'s own `idPaths` doc comment has the fuller
+    // reasoning, including why its own event log needs the identical split.
+    const paths = new ProjectPaths(lane?.path ?? ctx.projectRoot);
+    const writer = new KbWriter({ paths, clock, idPaths: scanPaths });
+    // `08` §8.3 names no fixed review cadence for a session write-back -- 30 days is this piece's own
+    // reasonable default, not a spec quote.
+    const reviewBy = new Date(new Date(clock.now()).getTime() + 30 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    const input: KbEntryInput = {
+      type: 'knowledge',
+      section,
+      title: `Session decision -- ${node.id}`,
+      status: 'active',
+      confidence: 'low',
+      owner: ownerRole,
+      sources: [{ kind: 'decision', ref: `session:${node.id}` }],
+      review_by: reviewBy,
+      supersedes: [],
+      superseded_by: null,
+      related: [],
+      diagrams: [],
+      tags: [],
+      applies_to: [],
+      body: `## Summary\n\n${decisionText}\n`,
+      path: relativePath,
+    };
+    const entry = await writer.write(input);
+    if (lane !== undefined) {
+      await commitWriteBack(ctx, node, lane, 'record session decision');
+    }
+    return { artifactRef: entry.id, mergeFailure: await landWriteBackLane(ctx, node, lane) };
+  });
 }
 
 /** `[a-z0-9]`, hyphen-joined, never empty -- the identical slug shape `forge adr new`'s own `slugify`

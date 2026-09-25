@@ -162,6 +162,22 @@ export interface KbWriterDeps {
   readonly paths: ProjectPaths;
   readonly clock: Clock;
   readonly kbRoot?: string;
+  /** Where `KbIdAllocator`'s own id-allocation scan/cache (`.forge/state/kb-ids.json`, and the real
+   * `kb/**\/*.md` scan `KbIdAllocator`'s own doc comment says is the true source, never the cache alone)
+   * runs, and where this writer's own `enqueueForProject` queue key is drawn from -- defaults to `paths`
+   * (every existing caller's own, unchanged behaviour) when the two coincide, which is the overwhelming
+   * common case (`paths` already names the real, single project root). Only a caller writing the actual
+   * entry CONTENT somewhere other than the real project root -- a git worktree lane isolated from it, a
+   * fresh critic round found `PLAN-M14.md` P46's own real live run genuinely needs -- passes a distinct
+   * `idPaths` (the real project root) here: the entry itself still lands wherever `paths` says, but the
+   * id this writer allocates for it, and the FIFO queue serialising that allocation against every other
+   * concurrent `KbWriter` call, both read the ONE true, ever-current state instead of a lane's own
+   * frozen, still-unmerged snapshot -- which two genuinely concurrent callers each writing to a distinct
+   * isolated `paths` would otherwise scan identically and silently allocate the identical id for two
+   * different real entries, a real `08` §8.6 "ids never reused" violation no git merge would ever
+   * surface (the two entries live at two different file paths, so nothing about them textually
+   * conflicts -- only their own front-matter `id` field would silently collide). */
+  readonly idPaths?: ProjectPaths;
 }
 
 export class KbWriter {
@@ -170,17 +186,30 @@ export class KbWriter {
   private readonly kbRoot: string;
   private readonly idAllocator: KbIdAllocator;
   private readonly projectRoot: string;
+  /** Where `appendKbEvent`'s own `.forge/state/kb-events.jsonl` read-modify-write happens -- the
+   * IDENTICAL `idPaths` (see `KbWriterDeps.idPaths`'s own doc comment) the id-allocator above already
+   * uses, and for the identical reason: a fresh critic round's own SECOND pass found the first fix only
+   * moved the id-allocator's own scan, leaving this file still targeting `this.paths` (the lane, when
+   * one exists) -- so two genuinely concurrent write-backs, now correctly allocating distinct ids, still
+   * each independently read-modify-wrote their OWN lane's own frozen copy of this one shared,
+   * append-only log, diverging from their common base and landing a real git conflict on THIS file
+   * instead, moving the exact same symptom rather than closing it. This log is `KbWriter`'s own
+   * best-effort provenance trail (its own doc comment: "no general, run-wide event-log implementation
+   * exists yet"), never read back as a source of truth anywhere in this codebase -- safe to always
+   * target the real, ever-current project root, the same as the id-allocator's own cache. */
+  private readonly idPaths: ProjectPaths;
 
   constructor(deps: KbWriterDeps) {
     this.paths = deps.paths;
     this.clock = deps.clock;
     this.kbRoot = deps.kbRoot ?? DEFAULT_KB_ROOT;
+    this.idPaths = deps.idPaths ?? deps.paths;
     this.idAllocator = new KbIdAllocator({
-      paths: deps.paths,
+      paths: this.idPaths,
       clock: deps.clock,
       kbRoot: this.kbRoot,
     });
-    this.projectRoot = deps.paths.resolveWithin('.');
+    this.projectRoot = this.idPaths.resolveWithin('.');
   }
 
   /**
@@ -292,7 +321,7 @@ export class KbWriter {
     // output together rather than each in isolation.
     const text = `---\n${YAML.stringify(frontMatter)}---\n\n${withTrailingNewline(body)}`;
     await writeFileAtomic(target, text);
-    await appendKbEvent(this.paths, {
+    await appendKbEvent(this.idPaths, {
       at: now,
       kind: 'write',
       entryId: entry.id,
@@ -339,7 +368,7 @@ export class KbWriter {
     const now = this.clock.now();
 
     if (currentValue !== proposal.baseValue.trim()) {
-      await appendKbEvent(this.paths, {
+      await appendKbEvent(this.idPaths, {
         at: now,
         kind: 'propose-conflict',
         entryId: proposal.targetId,
@@ -354,7 +383,7 @@ export class KbWriter {
     const finalText = `${split.prefix}${split.frontMatterText}${split.infix}${withTrailingNewline(newBody)}`;
     await writeFileAtomic(absolute, finalText);
 
-    await appendKbEvent(this.paths, {
+    await appendKbEvent(this.idPaths, {
       at: now,
       kind: 'propose-applied',
       entryId: proposal.targetId,

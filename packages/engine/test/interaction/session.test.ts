@@ -1681,8 +1681,25 @@ describe('runSessionStep — PLAN-M10.md P12: real write-back per artifact type'
     // The losing lane is retained, not silently discarded -- `mergeDecideLane`'s own conflict contract
     // (`a genuine merge conflict on the decider's own lane is reported as a real step failure, not
     // fabricated success`, above), proven here for the write-back path specifically: the real risk text
-    // the losing session wrote is still recoverable, never simply gone.
-    expect([...ctx.laneRegistry.keys()].some((id) => id.includes(':decide'))).toBe(true);
+    // the losing session wrote is still recoverable, never simply gone. A fresh critic round found the
+    // first version of this assertion only checked the lane's own registry KEY survives, which proves
+    // nothing about whether the lane's own worktree still actually holds the losing risk entry (a
+    // future regression in `landLane`'s own abort-rebase data-preservation guarantee could leave the
+    // key present but the real content gone, and this test would not catch it) -- read the losing
+    // lane's own worktree directly instead.
+    const losingSessionId =
+      landedSessionId === 'wf:premortem-risk-race-one'
+        ? 'wf:premortem-risk-race-two'
+        : 'wf:premortem-risk-race-one';
+    const losingLaneId = `${losingSessionId}:decide`;
+    const losingLane = ctx.laneRegistry.get(losingLaneId);
+    expect(losingLane).toBeDefined();
+    if (losingLane !== undefined) {
+      const losingText = await readTextFile(
+        new ProjectPaths(losingLane.path).resolveWithin('kb/risks.md'),
+      );
+      expect(losingText).toContain(`session:${losingSessionId}`);
+    }
   });
 
   // A fresh critic round found the identical unserialised-`IdAllocator` defect for `writeAdrBack`
@@ -1726,6 +1743,76 @@ describe('runSessionStep — PLAN-M10.md P12: real write-back per artifact type'
       }),
     );
     expect(new Set(ids).size).toBe(2);
+  });
+
+  // `PLAN-M14.md` P46 / `SPEC-QUESTIONS.md` Q278's own write-back-lane-isolation fix: a fresh critic
+  // round adversarially reviewing that fix found the ADR/Risk half of the scan-vs-write split
+  // (`writeAdrBack`/`writeRiskBack` scanning `ctx.projectRoot`, writing onto the lane) was NOT applied
+  // one layer down, inside `writeKbDecisionBack`'s own delegation to `KbWriter` -- `KbWriter`'s real
+  // `KbIdAllocator` was constructed with the SAME `paths` used for the content write (the lane, when one
+  // exists), so its own id-allocation scan (`08` §8.6's real, global `KB-<SECTION>-####` counter,
+  // grounded in a real scan of the kb tree, never the cache alone) read the lane's own frozen, still-
+  // unmerged snapshot too. Two DIFFERENT session steps' own content files never collide (this function's
+  // own target path is deterministic per `node.id`), so this never shows up as a git conflict the way
+  // `writeRiskBack`'s shared `kb/risks.md` now honestly does -- it is a SILENT one instead: two
+  // genuinely concurrent `estimation`/`story-refinement` (or any other `writeKbDecisionBack`-routed
+  // session type) DECIDE dispatches could each independently allocate the identical `KB-DELIVERY-####`
+  // id for their own, otherwise-unrelated real entries, an `08` §8.6 "ids ... never reused" violation no
+  // merge would ever catch (two different files, so nothing textually conflicts). Fixed by threading a
+  // separate `idPaths` (always the real `ctx.projectRoot`) through to `KbWriter`, distinct from `paths`
+  // (the lane, for the content write itself) -- `KbWriter`'s own doc comment on `idPaths` has the fuller
+  // reasoning. `estimation` here specifically, matching the two real session types the live run itself
+  // exercised, not `brainstorm` (this file's own other `writeKbDecisionBack` tests' default).
+  it('two estimation session steps writing back KB decisions concurrently (Promise.all) each get a distinct real id, not just a distinct file', async () => {
+    const projectRoot = await createTempRepo('kb-decision-writeback-race');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    const ctx = createTestContext({ projectRoot, adapter });
+
+    const [first, second] = await Promise.all([
+      runSessionStep(
+        node({
+          id: 'wf:estimation-race-one',
+          kind: 'session',
+          sessionType: 'estimation',
+          brief: 'How large is the payments migration story',
+        }),
+        ctx,
+      ),
+      runSessionStep(
+        node({
+          id: 'wf:estimation-race-two',
+          kind: 'session',
+          sessionType: 'estimation',
+          brief: 'How large is the invoicing rollout story',
+        }),
+        ctx,
+      ),
+    ]);
+
+    // Distinct content files never collide on their own (this function's own path is deterministic per
+    // node.id) -- both dispatches succeed cleanly, no forced merge-conflict trade-off the way
+    // writeRiskBack's own shared kb/risks.md genuinely needs.
+    expect(first.outcome.status).toBe('succeeded');
+    expect(second.outcome.status).toBe('succeeded');
+
+    // `writeKbDecisionBack`'s own target is DEFAULT_KB_ROOT-prefixed (`docs/forge/kb/...`), unlike
+    // `writeRiskBack`'s bare `kb/risks.md` -- a real, pre-existing inconsistency between the two
+    // functions this test does not touch, just needs to match.
+    const paths = new ProjectPaths(projectRoot);
+    const oneText = await readTextFile(
+      paths.resolveWithin('docs/forge/kb/delivery/session-wf-estimation-race-one.md'),
+    );
+    const twoText = await readTextFile(
+      paths.resolveWithin('docs/forge/kb/delivery/session-wf-estimation-race-two.md'),
+    );
+    const oneId = /^id:\s*(\S+)/m.exec(oneText)?.[1];
+    const twoId = /^id:\s*(\S+)/m.exec(twoText)?.[1];
+    expect(oneId).toBeDefined();
+    expect(twoId).toBeDefined();
+    // The real bug this test exists to catch: not a missing file (both files are always present,
+    // deterministic paths), but two DIFFERENT files silently sharing the identical allocated id.
+    expect(oneId).not.toBe(twoId);
   });
 });
 
