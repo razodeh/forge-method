@@ -282,8 +282,21 @@ async function resolveForContinuation(ctx: ExecuteStepContext, query: string): P
   }
 }
 
+/** A round-3 gauntlet critic finding, proved live: `remainingLimits`/`summedUsage` folded every leg's
+ * own `usage.turns`/`usage.costUsd`/`durationMs` into arithmetic with no validation at all -- a single
+ * malformed or hostile figure from one leg (`costUsd: -1000`, or `NaN`) silently defeated the step's own
+ * configured ceiling entirely (a demonstrated 500x overshoot of a $2 cap on the very next continuation's
+ * own `ResumeRequest.limits.maxCostUsd`). Identical in spirit and in exact implementation to `steps.ts`'s
+ * own `sanitizeUsageNumber` (not imported: `steps.ts` imports THIS module, so importing back would be a
+ * circular dependency) -- that function's own doc comment has the fuller "a real platform's own
+ * malformed or hostile figure must never flow through raw" reasoning, which applies here identically. */
+function sanitizeUsageNumber(value: number): number {
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
 /** `ResumeRequest.limits`: the REMAINDER of `nodeLimits` after every leg run so far, never the same
- * full budget repeated per continuation (`ContextExpansionOptions.nodeLimits`'s own doc comment). */
+ * full budget repeated per continuation (`ContextExpansionOptions.nodeLimits`'s own doc comment). Every
+ * leg's own reported number is sanitized first (`sanitizeUsageNumber`'s own doc comment). */
 function remainingLimits(
   nodeLimits: StepNodeLimits,
   legs: readonly SessionResult[],
@@ -292,9 +305,9 @@ function remainingLimits(
   let costUsed = 0;
   let wallUsed = 0;
   for (const leg of legs) {
-    turnsUsed += leg.usage.turns;
-    costUsed += leg.usage.costUsd ?? 0;
-    wallUsed += leg.durationMs;
+    turnsUsed += sanitizeUsageNumber(leg.usage.turns);
+    costUsed += sanitizeUsageNumber(leg.usage.costUsd ?? 0);
+    wallUsed += sanitizeUsageNumber(leg.durationMs);
   }
   return {
     maxTurns: Math.max(0, nodeLimits.maxTurns - turnsUsed),
@@ -306,17 +319,22 @@ function remainingLimits(
 /** Every real, distinct leg's own usage, summed into one `SessionUsage` (`inputTokens`/`outputTokens`/
  * `turns` always summed; `costUsd` summed across the legs that reported one, omitted entirely when NONE
  * did -- a real adapter's own "cost reporting is optional" shape, `session-result.ts`'s identical
- * `costUsd === undefined ? {} : {...}` convention). */
+ * `costUsd === undefined ? {} : {...}` convention). Every leg's own reported number is sanitized first
+ * (`sanitizeUsageNumber`'s own doc comment) -- this is what `detail.session.usage` on the step's own
+ * outcome reports, so an unsanitized figure here would reach the same downstream readers
+ * `sanitizeUsageNumber`'s own precedent in `steps.ts` was written to protect. */
 function summedUsage(legs: readonly SessionResult[]): SessionResult['usage'] {
   let inputTokens = 0;
   let outputTokens = 0;
   let turns = 0;
   let costUsd: number | undefined;
   for (const leg of legs) {
-    inputTokens += leg.usage.inputTokens;
-    outputTokens += leg.usage.outputTokens;
-    turns += leg.usage.turns;
-    if (leg.usage.costUsd !== undefined) costUsd = (costUsd ?? 0) + leg.usage.costUsd;
+    inputTokens += sanitizeUsageNumber(leg.usage.inputTokens);
+    outputTokens += sanitizeUsageNumber(leg.usage.outputTokens);
+    turns += sanitizeUsageNumber(leg.usage.turns);
+    if (leg.usage.costUsd !== undefined) {
+      costUsd = (costUsd ?? 0) + sanitizeUsageNumber(leg.usage.costUsd);
+    }
   }
   return { inputTokens, outputTokens, turns, ...(costUsd === undefined ? {} : { costUsd }) };
 }
@@ -362,6 +380,37 @@ async function persistExpansionRecord(
     options.ctx.assembly.paths.resolveState(`${base}/context-requests.json`),
     `${JSON.stringify({ stepId: options.telemetryStepId, requests: cumulative }, null, 2)}\n`,
   );
+}
+
+/** A round-3 gauntlet critic finding, proved live: `persistExpansionRecord` writes `context-requests.json`
+ * BEFORE `resumeSession` is even attempted (write-before-effect, `18` §18.10) -- so when the resume then
+ * genuinely fails, the manifest was left claiming `outcome: 'served'`/`'duplicate'` (with a
+ * `continuationFile` pointing to real, resolved content) for a request the agent never actually
+ * received a reply to. `events.ndjson` recorded the failure; the manifest, whose own stated purpose is
+ * living "beside `prompt.md`" as this step's own audit record (`18` §18.2), did not. Rewrites the most
+ * recently persisted entry's own `outcome` to `'resume-failed'` and re-writes the manifest -- never
+ * `expansion-<n>.md` itself, which stays exactly what was actually sent, evidence of the attempt.
+ * Best-effort: a failure rewriting the manifest here is swallowed, never thrown -- correcting an audit
+ * record is not worth risking the graceful-degradation guarantee the rest of this loop already provides. */
+async function markLastRecordResumeFailed(
+  options: ContextExpansionOptions,
+  cumulative: ContextRequestRecordEntry[],
+  n: number,
+): Promise<void> {
+  const index = cumulative.findIndex((entry) => entry.n === n);
+  if (index === -1) return;
+  const corrected = cumulative[index];
+  if (corrected === undefined) return;
+  cumulative[index] = { ...corrected, outcome: 'resume-failed' };
+  try {
+    const base = `runs/${options.ctx.runId}/steps/${options.dirName}`;
+    await writeFileAtomic(
+      options.ctx.assembly.paths.resolveState(`${base}/context-requests.json`),
+      `${JSON.stringify({ stepId: options.telemetryStepId, requests: cumulative }, null, 2)}\n`,
+    );
+  } catch {
+    // Best-effort; see this function's own doc comment.
+  }
 }
 
 async function emitContextRequestEvent(
@@ -458,7 +507,14 @@ export async function expandRequestedContext(
       const resolution: Resolution = isDuplicate
         ? { outcome: 'served', prompt: duplicateContinuation(query), strippedCount: 0 }
         : await resolveForContinuation(options.ctx, query);
-      if (!isDuplicate) served.add(query);
+      // A round-3 gauntlet critic finding, proved live: a query that resolved 'no-match' used to be
+      // added to `served` anyway, so a literal repeat of it was answered with the hardcoded "you
+      // already received the context for X" text -- false, since X was never found in the first place,
+      // and a misleading answer to spend one of only 3 request slots on. Only a genuinely SERVED
+      // resolution marks a query served; a repeated no-match query is resolved fresh again (a cheap,
+      // deterministic KB lookup, unlike a real adapter turn -- there is no cost saved by treating it as
+      // a duplicate) and still gets the real, accurate no-match continuation.
+      if (!isDuplicate && resolution.outcome === 'served') served.add(query);
 
       fileCounter += 1;
       const recordOutcome = isDuplicate ? 'duplicate' : resolution.outcome;
@@ -505,6 +561,7 @@ export async function expandRequestedContext(
       try {
         handle = await options.ctx.adapter.resumeSession(current.sessionId, request);
       } catch {
+        await markLastRecordResumeFailed(options, records, fileCounter);
         await emitContextRequestEvent(options, {
           kind: 'context-request',
           query,
@@ -533,6 +590,7 @@ export async function expandRequestedContext(
       try {
         resumed = await handle.result();
       } catch {
+        await markLastRecordResumeFailed(options, records, fileCounter);
         await emitContextRequestEvent(options, {
           kind: 'context-request',
           query,

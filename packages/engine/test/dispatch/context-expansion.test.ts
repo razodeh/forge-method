@@ -1160,6 +1160,149 @@ describe('FORGE_REQUEST_CONTEXT expansion (PLAN-M14.md P44) -- via runAgentStep'
       cleanup();
     }
   });
+
+  it("(critic round 3) a malformed/hostile leg.usage.costUsd (negative) never lets the next continuation exceed the step's own configured budget", async () => {
+    const projectRoot = await createTempRepo('hostile-cost');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+        // A hostile or malformed adapter-reported figure -- negative, not NaN, so it survives JSON
+        // round-tripping through the fake adapter's own script matching untouched.
+        costUsd: -1000,
+      });
+      adapter.script((request) => request.prompt.includes('### KB-ARCH-0001'), { text: ['ack'] });
+      let capturedLimits: SessionLimits | undefined;
+      const spyAdapter = withResumeSession(adapter, (sessionId, request) => {
+        capturedLimits = request.limits;
+        return adapter.resumeSession(sessionId, request);
+      });
+      const ctx = createTestContext({
+        projectRoot,
+        adapter: spyAdapter,
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+        limits: { maxTurns: 10, wallClockMs: 100_000, maxCostUsd: 2 },
+      });
+
+      await executeStep(stepNode, ctx);
+
+      // A negative leg-1 cost must never let leg 2's own budget exceed (or even reach) the step's own
+      // configured $2 ceiling -- sanitized to 0, not -1000, so the remainder stays exactly $2.
+      expect(capturedLimits?.maxCostUsd).toBeCloseTo(2, 10);
+      expect(capturedLimits?.maxCostUsd).toBeLessThanOrEqual(2);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('(critic round 3) a resumeSession that rejects has the manifest entry it already (optimistically) wrote corrected to outcome:"resume-failed", never left claiming "served"', async () => {
+    const projectRoot = await createTempRepo('manifest-correction');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0001'],
+      });
+      const failingAdapter = withResumeSession(adapter, () =>
+        Promise.reject(new Error('simulated transport failure')),
+      );
+      const ctx = createTestContext({
+        projectRoot,
+        adapter: failingAdapter,
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+      });
+
+      await executeStep(stepNode, ctx);
+
+      const requests = JSON.parse(
+        await readFile(
+          stepRecordPath(projectRoot, ctx.runId, STEP_ID, 'context-requests.json'),
+          'utf8',
+        ),
+      ) as { requests: readonly { n: number; outcome: string }[] };
+      expect(requests.requests).toHaveLength(1);
+      expect(requests.requests[0]?.outcome).toBe('resume-failed');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('(critic round 3) a repeated query that resolved to no-match the first time is resolved fresh again, never falsely told "you already received the context"', async () => {
+    const projectRoot = await createTempRepo('no-match-repeat');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: totally-bogus-query-xyz'],
+      });
+      adapter.script((request) => request.prompt.includes('No context was found'), {
+        text: ['FORGE_REQUEST_CONTEXT: totally-bogus-query-xyz'],
+      });
+      const ctx = createTestContext({
+        projectRoot,
+        adapter,
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+      });
+
+      await executeStep(stepNode, ctx);
+
+      const firstExpansion = await readFile(
+        stepRecordPath(projectRoot, ctx.runId, STEP_ID, 'expansion-1.md'),
+        'utf8',
+      );
+      const secondExpansion = await readFile(
+        stepRecordPath(projectRoot, ctx.runId, STEP_ID, 'expansion-2.md'),
+        'utf8',
+      );
+      const thirdExpansion = await readFile(
+        stepRecordPath(projectRoot, ctx.runId, STEP_ID, 'expansion-3.md'),
+        'utf8',
+      );
+      expect(firstExpansion).toContain('No context was found');
+      // The false "already received" duplicate reply must never fire for a query that was never
+      // actually served -- every repeat gets the same truthful no-match text again, not "duplicate."
+      expect(secondExpansion).toContain('No context was found');
+      expect(secondExpansion).not.toContain('already received');
+      expect(thirdExpansion).toContain('No context was found');
+      expect(thirdExpansion).not.toContain('already received');
+
+      const requests = JSON.parse(
+        await readFile(
+          stepRecordPath(projectRoot, ctx.runId, STEP_ID, 'context-requests.json'),
+          'utf8',
+        ),
+      ) as { requests: readonly { outcome: string }[] };
+      // Never treated as a duplicate (never in `served`, since it was never genuinely served): the
+      // identical query keeps resolving fresh every time, all the way to the real 3-request bound.
+      expect(requests.requests.map((entry) => entry.outcome)).toEqual([
+        'no-match',
+        'no-match',
+        'no-match',
+        'limit',
+      ]);
+    } finally {
+      cleanup();
+    }
+  });
 });
 
 describe('FORGE_REQUEST_CONTEXT expansion (PLAN-M14.md P44) -- via runParticipantSession', () => {
