@@ -477,6 +477,81 @@ describe('runSessionStep — critic muted in DIVERGE, unmuted in CONVERGE', () =
     expect(worktrees.stdout).not.toContain(':decide');
   });
 
+  // `PLAN-M14.md` P46 / `SPEC-QUESTIONS.md` Q278: a real live run of `plan-stage` found that
+  // `writeSessionArtifactBack`'s own engine-authored write-back (an `estimation`/`story-refinement`
+  // DECIDE dispatch, `writeKbDecisionBack`'s path) wrote straight to `ctx.projectRoot` instead of onto
+  // the real DECIDE lane `mergeDecideLane` merges right after -- so the merge always found that lane
+  // unchanged (nothing to land) and cleanly removed it, while the real decision text sat as untracked,
+  // uncommitted debris in the project's own working directory, never reaching the integration branch,
+  // discarded the moment the throwaway checkout was cleaned up. Neither of this file's own two existing
+  // "the lane is gone"/"the lane lands through Merge*" tests would have caught this: the first (just
+  // above) treats "nothing to merge" as an equally valid pass (its own comment says so outright), and
+  // the second (`with no execution.mergeChecks configured...`, below) proves the sequence only for
+  // content the DECIDER AGENT ITSELF writes via a scripted tool call (`dispatchAgentStep`'s own,
+  // separate commit path) -- never for `writeSessionArtifactBack`'s own write, which is what the live
+  // run's own decider (following its brief exactly: "state your decision in one clear paragraph," no
+  // file write asked for or made) actually exercised. This test drives that exact path: the decider
+  // writes nothing of its own (`FakePlatformAdapter`'s default, unscripted response, matching the real
+  // live run precisely), so the ONLY thing that could ever land is `writeSessionArtifactBack`'s own
+  // write -- and it is verified having ACTUALLY reached the real git history of the integration branch
+  // (`git show`, not merely a working-tree file read, which the original bug's own direct-to-
+  // `ctx.projectRoot` write would satisfy too, proving nothing), with zero leftover untracked debris.
+  it('PLAN-M14.md P46: an estimation DECIDE write-back with no file change from the decider itself still lands its own KB decision entry on the real integration branch, not as untracked debris', async () => {
+    const projectRoot = await createTempRepo('decide-writeback-lands-on-integration');
+    await withRealAgentRoster(projectRoot);
+    const adapter = new FakePlatformAdapter();
+    const clock = createTestClock();
+    const { telemetry, events } = recordingTelemetry(projectRoot, 'run-test', clock);
+    const ctx = createTestContext({ projectRoot, adapter, now: clock, telemetry });
+    const stepNode = node({
+      id: 'wf:plan-stage-estimation',
+      kind: 'session',
+      sessionType: 'estimation',
+      brief: 'How large is each story really',
+    });
+
+    const result = await runSessionStep(stepNode, ctx);
+
+    expect(result.outcome.status).toBe('succeeded');
+
+    // The lane is gone -- necessary, but (per the first test above) not sufficient on its own.
+    expect([...ctx.laneRegistry.keys()].some((id) => id.includes(':decide'))).toBe(false);
+
+    // Sufficient: a real MergeQueued/MergeStarted/MergeCompleted sequence for THIS write, keyed by the
+    // outer session step's own id (`mergeDecideLane`'s own contract) -- absent under the original bug,
+    // since a write that never touched the lane leaves nothing for `landLane` to queue at all.
+    const mergeEventTypes = events
+      .filter((event) => event.stepId === stepNode.id)
+      .map((event) => event.type);
+    expect(mergeEventTypes).toContain('MergeQueued');
+    expect(mergeEventTypes).toContain('MergeStarted');
+    expect(mergeEventTypes).toContain('MergeCompleted');
+
+    // The real KB decision entry is on `main`'s own real git history -- `git show`, reading straight
+    // from the object database, never the working tree (which the original bug's own direct write would
+    // also have satisfied, proving nothing about whether a real merge ever happened).
+    const relativePath = `kb/delivery/session-${stepNode.id.replace(/[^a-zA-Z0-9]+/g, '-')}.md`;
+    const shown = await execa('git', ['show', `main:docs/forge/${relativePath}`], {
+      cwd: projectRoot,
+    });
+    expect(shown.stdout).toContain(`session:${stepNode.id}`);
+
+    // No untracked debris left behind at the write-back's own path specifically -- the exact, real
+    // symptom the live run found: this file sitting in the project's own working directory, uncommitted,
+    // never reaching any branch (`git status --porcelain` overall is not asserted empty: other parts of
+    // this test's own setup and `runSessionStep`'s own session-transcript write -- `docs/forge/sessions/`,
+    // a genuinely separate mechanism this piece does not touch -- legitimately leave their own untracked
+    // state, unrelated to this bug).
+    const status = await execa('git', ['status', '--porcelain'], { cwd: projectRoot });
+    expect(status.stdout).not.toContain(relativePath);
+    expect(status.stdout).not.toContain('kb/delivery');
+
+    // The DECIDE lane's own branch is gone too (a real merge, not a hand-wave) -- `mergeDecideLane`'s
+    // own lane-branch naming, `run-test-<stepId-sanitised>-decide-<hash>`.
+    const branches = await execa('git', ['branch', '--list'], { cwd: projectRoot });
+    expect(branches.stdout).not.toContain(':decide');
+  });
+
   it('a genuine merge conflict on the decider’s own lane is reported as a real step failure, not fabricated success', async () => {
     // A stubbed mergeQueue reproduces `@forge/vcs`'s own real "abort-policy conflict" outcome
     // directly, rather than needing to engineer precise git-timing to force a real rebase conflict --
@@ -1540,12 +1615,25 @@ describe('runSessionStep — PLAN-M10.md P12: real write-back per artifact type'
   // project (`ExecuteStepContext.projectRoot`) could each read the same pre-write `kb/risks.md`, each
   // append their own real risk to that same snapshot, and whichever `writeFileAtomic` landed second
   // silently discard the other's entry -- a real, silent data-loss race, since `writeRiskBack`
-  // originally built a fresh `IdAllocator` with no serialisation at all. Fixed by routing the whole
-  // read-modify-write through this file's own real, already-established per-project FIFO queue
-  // (`enqueueForProject`, shared with `persistSessionRecord`'s own session-id allocation). Driven via a
-  // real `Promise.all`, not two sequential `await`s, so this test actually exercises the race rather
-  // than merely re-proving the append test above under artificial serialization.
-  it('two premortem session steps writing to kb/risks.md concurrently (Promise.all, not sequential) both survive -- no lost update', async () => {
+  // originally built a fresh `IdAllocator` with no serialisation at all. `enqueueForProject` (shared
+  // with `persistSessionRecord`'s own session-id allocation) closed the IN-PROCESS half of that race.
+  //
+  // `PLAN-M14.md` P46 / `SPEC-QUESTIONS.md` Q278's own write-back-lane-isolation fix changes what "the
+  // other write" landing second actually means: each write now lands on its OWN isolated DECIDE lane,
+  // git-committed and merged for real (not straight onto `ctx.projectRoot`, this piece's own real fix)
+  // -- so two writes that are GENUINELY concurrent (both DECIDE dispatches reach `writeRiskBack` before
+  // either's own lane has merged) each build their own real `kb/risks.md` candidate against the same
+  // stale base, and the second one to land now hits an honest, real git `MERGE-CONFLICT-UNRESOLVED`
+  // (`landLane`'s own `abort`-policy default) instead of silently overwriting the first's entry on disk
+  // -- exactly the class of failure `mergeDecideLane`'s own dedicated conflict test already proves stays
+  // typed, not fabricated, with the losing lane RETAINED (not discarded) for a person to reconcile. This
+  // is the fix working as intended, not a regression: the old "both silently succeed" outcome was only
+  // ever reachable because writes bypassed lane isolation entirely (never reaching real git conflict
+  // detection at all) -- the same architectural gap this whole piece exists to close. One of the two
+  // concurrent calls still succeeds and its own risk really lands on the integration branch; which one
+  // is a real race (`Promise.all`, not two sequential `await`s), so this test checks by outcome, not by
+  // call order.
+  it('two premortem session steps writing to kb/risks.md concurrently (Promise.all, not sequential): one lands for real, a genuine collision on the other fails honestly rather than silently overwriting it', async () => {
     const projectRoot = await createTempRepo('risk-writeback-race');
     await withRealAgentRoster(projectRoot);
     const adapter = new FakePlatformAdapter();
@@ -1572,12 +1660,29 @@ describe('runSessionStep — PLAN-M10.md P12: real write-back per artifact type'
       ),
     ]);
 
-    expect(first.outcome.status).toBe('succeeded');
-    expect(second.outcome.status).toBe('succeeded');
+    const outcomes = [first, second].map((result) => result.outcome);
+    const succeeded = outcomes.filter((outcome) => outcome.status === 'succeeded');
+    const failed = outcomes.filter((outcome) => outcome.status === 'failed');
+    // Real concurrency, so which one wins is not deterministic -- exactly one of each, never both
+    // succeeding (the old, buggy "both silently succeed" outcome) and never both failing (the merge
+    // queue's own real serialisation still lets ONE genuinely land).
+    expect(succeeded).toHaveLength(1);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]?.failure?.source).toBe('merge');
+    expect(failed[0]?.failure?.code).toBe('MERGE-CONFLICT-UNRESOLVED');
 
+    // The one that succeeded really landed on the integration branch -- read back from disk, not
+    // merely asserted from the in-memory outcome.
     const text = await readTextFile(new ProjectPaths(projectRoot).resolveWithin('kb/risks.md'));
-    expect(text).toContain('session:wf:premortem-risk-race-one');
-    expect(text).toContain('session:wf:premortem-risk-race-two');
+    const landedSessionId =
+      succeeded[0] === first.outcome ? 'wf:premortem-risk-race-one' : 'wf:premortem-risk-race-two';
+    expect(text).toContain(`session:${landedSessionId}`);
+
+    // The losing lane is retained, not silently discarded -- `mergeDecideLane`'s own conflict contract
+    // (`a genuine merge conflict on the decider's own lane is reported as a real step failure, not
+    // fabricated success`, above), proven here for the write-back path specifically: the real risk text
+    // the losing session wrote is still recoverable, never simply gone.
+    expect([...ctx.laneRegistry.keys()].some((id) => id.includes(':decide'))).toBe(true);
   });
 
   // A fresh critic round found the identical unserialised-`IdAllocator` defect for `writeAdrBack`

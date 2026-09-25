@@ -905,6 +905,94 @@ function resolveDecisionOwner(
   return { owner: firstCandidate };
 }
 
+/** The commit message for the DECIDE lane's own second, engine-authored commit (`writeAdrBack`/
+ * `writeRiskBack`/`writeKbDecisionBack`'s own write-back, landed on `lane` AFTER whatever the decider's
+ * own dispatched turn already committed there, `dispatch/steps.ts`'s own `buildCommitMessage` doc
+ * comment's identical "a claim-enforcement revert is no less real a commit for being policy-triggered
+ * rather than work-triggered" reasoning applied to an engine-triggered write instead) -- the same
+ * `forge(<scope>): <subject>` / `Forge-Step` / `Forge-Run` shape that function already gives every other
+ * lane commit, re-derived here rather than imported (`steps.ts`'s own `buildCommitMessage` is a private,
+ * unexported helper, and this module already re-derives `artifactSlug`/`sessionProvenance` locally
+ * rather than reaching across a package-internal module boundary for a four-line format). */
+function writeBackCommitMessage(ctx: ExecuteStepContext, node: StepNode, subject: string): string {
+  const scope = node.id.split(':')[0] ?? node.id;
+  return [
+    `forge(${scope}): ${subject}`,
+    '',
+    `Forge-Step: ${node.id}`,
+    `Forge-Run: ${ctx.runId}`,
+  ].join('\n');
+}
+
+/** `writeAdrBack`/`writeRiskBack`/`writeKbDecisionBack`'s own shared return shape once each also lands
+ * its own lane (see `landWriteBackLane`'s own doc comment for why the merge belongs inside the same
+ * `enqueueForProject` turn as the write): the real artifact id/ref, and whatever `mergeDecideLane`
+ * itself returned -- `undefined` for a clean land, same as `mergeDecideLane`'s own return type, and
+ * always `undefined` when there was no `lane` to merge (the human-input fallback). */
+interface WriteBackResult {
+  readonly artifactRef: string;
+  readonly mergeFailure: StepOutcome['failure'];
+}
+
+/** What a write-back function needs to land its own write on the real DECIDE lane: `stepId` is the
+ * lane's own `ctx.laneRegistry` KEY (`ExecuteStepContext.laneRegistry`'s own doc comment, keyed by the
+ * compiled `StepNode.id` every `createLaneForStep` call registers it under, `deciderNode.id` at this
+ * piece's own real call site) -- deliberately NOT `LaneHandle.laneId` (a distinct, git-branch-safe
+ * mangled string `createLaneForStep` derives FROM that same step id but which `ctx.laneRegistry.get`
+ * can never look up: a fresh critic round found this piece's own earlier draft passed `lane.laneId` to
+ * `mergeDecideLane`, which silently found no lane there every time -- the write landed on the real
+ * worktree, `mergeDecideLane` still ran, but its own lookup missed, so nothing ever merged and the lane
+ * leaked, the identical symptom this whole piece exists to close, just moved one step later). `path` is
+ * the lane's own real worktree (`LaneHandle.path`) to write into. */
+interface DecideLaneRef {
+  readonly stepId: string;
+  readonly path: string;
+}
+
+/** Lands the DECIDE lane `lane` names (`mergeDecideLane`, `PLAN-M14.md` P39) from INSIDE the same
+ * `enqueueForProject` turn `writeAdrBack`/`writeRiskBack`/`writeKbDecisionBack` already scan and write
+ * within -- not a stylistic choice: a fresh critic round found that landing it OUTSIDE that turn (the
+ * original shape this piece shipped with, mirroring how `session.ts`'s own caller used to call
+ * `mergeDecideLane` itself, after `writeSessionArtifactBack` returned) reopens the identical
+ * concurrent-id-collision race `enqueueForProject` exists to close: two `design-review`/`tradeoff` (or
+ * `premortem`/`war-room`) DECIDE dispatches running genuinely concurrently in the same run each scan
+ * their OWN, still-unmerged lane for the "next free id" -- correct only once the FIRST one's real
+ * content has actually reached the integration branch, which `enqueueForProject`'s own serialisation
+ * cannot guarantee unless the merge is part of the very turn it serialises. Folding it in here means the
+ * SECOND call's own scan (inside its own, later turn) only ever runs after the first call's write has
+ * both committed AND landed, restoring the original guarantee under real lane isolation instead of
+ * losing it to it. A genuine collision that still occurs (two DIFFERENT runs, or a lane created before
+ * this piece's own fix landed) now surfaces as an honest `MERGE-CONFLICT-UNRESOLVED`-shaped
+ * `mergeFailure`, the lane retained for later reclaim (`mergeDecideLane`'s own doc comment) -- never a
+ * silently dropped write, which is the whole defect this piece exists to close. */
+async function landWriteBackLane(
+  ctx: ExecuteStepContext,
+  node: StepNode,
+  lane: DecideLaneRef | undefined,
+): Promise<StepOutcome['failure']> {
+  return lane === undefined ? undefined : mergeDecideLane(ctx, node, lane.stepId);
+}
+
+/** `ctx.vcs.commit` needs the real `LaneHandle` (`.branch`/`.laneId`, neither of which `DecideLaneRef`
+ * carries -- see its own doc comment for why not), re-looked-up here from `ctx.laneRegistry` by the
+ * same real key (`lane.stepId`) `landWriteBackLane` uses right after this returns; the lane is still
+ * registered at this point on every real call path (the decider's own `dispatchAgentStep` created it,
+ * and nothing removes it before this write-back's own commit runs). A no-op, never thrown, on the one
+ * path where it would not be (a hand-built test fixture that names a `stepId` its own `laneRegistry`
+ * never populated) -- the caller's own subsequent `landWriteBackLane` call reports that honestly instead
+ * (`mergeDecideLane`'s own `if (lane === undefined) return undefined` is silent by design: a lane
+ * genuinely absent, not merely momentarily unregistered, has nothing left to land). */
+async function commitWriteBack(
+  ctx: ExecuteStepContext,
+  node: StepNode,
+  lane: DecideLaneRef,
+  subject: string,
+): Promise<void> {
+  const laneHandle = ctx.laneRegistry.get(lane.stepId);
+  if (laneHandle === undefined) return;
+  await ctx.vcs.commit(laneHandle, writeBackCommitMessage(ctx, node, subject), ctx.signCommits);
+}
+
 /** `id: (\S+)` on the first matching line of a KB entry's own YAML front matter -- deliberately a
  * plain regex, not a full `kbEntrySchema.parse`, since the only thing `writeDecisionBack`'s own retry
  * path needs from an already-written file is the id it was given the first time, and this file was
@@ -933,17 +1021,32 @@ async function writeKbDecisionBack(
   ownerRole: string,
   decisionText: string,
   clock: Clock,
-): Promise<string> {
+  /** `writeAdrBack`'s own `lane` (see its doc comment). This function's own target path is
+   * deterministic in `node.id` alone (unlike `writeAdrBack`'s allocated ADR id or `writeRiskBack`'s one
+   * shared `kb/risks.md`), so two DIFFERENT session steps' own calls can never collide on it -- no
+   * `enqueueForProject` wrapping here, unchanged from before this piece; `landWriteBackLane` still runs
+   * (unqueued) so this write lands the same way the other two do. */
+  lane: DecideLaneRef | undefined,
+): Promise<WriteBackResult> {
   const relativePath = `${section}/session-${node.id.replace(/[^a-zA-Z0-9]+/g, '-')}.md`;
-  const paths = new ProjectPaths(ctx.projectRoot);
-  const target = paths.resolveWithin(`${DEFAULT_KB_ROOT}/${relativePath}`);
-  if (await pathExists(target)) {
-    const existingId = extractKbEntryId(await readTextFile(target));
-    if (existingId !== undefined) return existingId;
+  // `writeAdrBack`'s own "scan the real, ever-current `ctx.projectRoot`" doc comment -- this function's
+  // own idempotency check specifically (a resumed/retried run of the SAME session step, whose own
+  // earlier write already landed) needs the real, current state for the identical reason, even though
+  // this function's own target path can never collide across DIFFERENT session steps the way
+  // `writeAdrBack`'s allocated id or `writeRiskBack`'s shared file can.
+  const scanPaths = new ProjectPaths(ctx.projectRoot);
+  const scanTarget = scanPaths.resolveWithin(`${DEFAULT_KB_ROOT}/${relativePath}`);
+  if (await pathExists(scanTarget)) {
+    const existingId = extractKbEntryId(await readTextFile(scanTarget));
+    if (existingId !== undefined) {
+      return { artifactRef: existingId, mergeFailure: await landWriteBackLane(ctx, node, lane) };
+    }
     // The file exists but this module's own id line is unreadable (hand-edited or corrupted) -- falls
     // through to a real `KbWriter.write` below, which will itself refuse with `KB-009` rather than
     // silently overwriting whatever is actually there; a real, disclosed edge case, not a silent loss.
   }
+  // The real write target: `writeAdrBack`'s own doc comment on the identical split.
+  const paths = new ProjectPaths(lane?.path ?? ctx.projectRoot);
   const writer = new KbWriter({ paths, clock });
   // `08` §8.3 names no fixed review cadence for a session write-back -- 30 days is this piece's own
   // reasonable default, not a spec quote.
@@ -969,7 +1072,10 @@ async function writeKbDecisionBack(
     path: relativePath,
   };
   const entry = await writer.write(input);
-  return entry.id;
+  if (lane !== undefined) {
+    await commitWriteBack(ctx, node, lane, 'record session decision');
+  }
+  return { artifactRef: entry.id, mergeFailure: await landWriteBackLane(ctx, node, lane) };
 }
 
 /** `[a-z0-9]`, hyphen-joined, never empty -- the identical slug shape `forge adr new`'s own `slugify`
@@ -1078,14 +1184,34 @@ async function writeAdrBack(
    * forward-looking shape regardless, matching `dispatch/outputs.ts`'s own identical rule for an
    * agent-authored ADR. */
   tainted: boolean,
-): Promise<string> {
+  /** The real DECIDE lane (`ctx.laneRegistry.get(deciderNode.id)`, `session.ts`'s own real
+   * DECIDE-dispatch call site) -- when present, this write lands (and is committed) on the lane's own
+   * isolated worktree and the SAME lane is landed (`landWriteBackLane`) before this call returns, so the
+   * next queued write-back call (see `enqueueForProject`, below) only ever scans a project state that
+   * already reflects it. `undefined` only for the human-input fallback (no agent session, so no lane
+   * ever exists to write onto), which still writes straight to `ctx.projectRoot`, uncommitted, exactly
+   * as before this piece (a real, separately-scoped gap that path already had and still has -- see
+   * `SPEC-QUESTIONS.md`). */
+  lane: DecideLaneRef | undefined,
+): Promise<WriteBackResult> {
   return enqueueForProject(ctx.projectRoot, async () => {
-    const paths = new ProjectPaths(ctx.projectRoot);
-    const existingFiles = await listMarkdownFiles(paths, 'kb/decisions');
-    const existing = await findExistingSessionArtifact(paths, existingFiles, node.id);
-    if (existing !== undefined) return existing;
+    // Scanned against `ctx.projectRoot` -- the run's own real, ever-current integration state, kept
+    // fresh by every earlier queued call's own `landWriteBackLane` before this one's turn ever starts
+    // (`landWriteBackLane`'s own doc comment) -- NEVER `lane.path`: a fresh critic round found an
+    // earlier version of this piece scanned the lane's own isolated, still-unmerged worktree instead,
+    // which stays frozen at whatever `ctx.projectRoot` looked like when the lane was first created --
+    // long before a genuinely concurrent sibling call's own, already-landed write would ever show up in
+    // it, reopening the identical id-collision race `enqueueForProject` exists to close (confirmed live
+    // by a genuine test regression, two concurrent design-review DECIDE dispatches both computing the
+    // identical "next free" ADR id). Only the real file WRITE below targets the lane.
+    const scanPaths = new ProjectPaths(ctx.projectRoot);
+    const existingFiles = await listMarkdownFiles(scanPaths, 'kb/decisions');
+    const existing = await findExistingSessionArtifact(scanPaths, existingFiles, node.id);
+    if (existing !== undefined) {
+      return { artifactRef: existing, mergeFailure: await landWriteBackLane(ctx, node, lane) };
+    }
 
-    const allocator = new IdAllocator({ paths, clock });
+    const allocator = new IdAllocator({ paths: scanPaths, clock });
     const id = await allocator.allocate('ADR');
     const pathResult = renderArtifactPath('ADR', { id, slug: artifactSlug(node.id) });
     if (!pathResult.success) {
@@ -1137,10 +1263,17 @@ async function writeAdrBack(
         `adrSchema rejected a session write-back candidate: ${parsed.error.message}`,
       );
     }
-    const target = paths.resolveWithin(pathResult.path);
+    // The real write target: the lane's own isolated worktree when there is one (so the commit right
+    // below lands on it, never `ctx.projectRoot` directly -- this piece's own real fix, `SPEC-QUESTIONS.md`
+    // Q278), `ctx.projectRoot` itself only for the human-input fallback (no lane).
+    const writePaths = new ProjectPaths(lane?.path ?? ctx.projectRoot);
+    const target = writePaths.resolveWithin(pathResult.path);
     const body = `## Context\n\n${decisionText}\n`;
     await writeFileAtomic(target, `---\n${YAML.stringify(parsed.data)}---\n\n${body}`);
-    return id;
+    if (lane !== undefined) {
+      await commitWriteBack(ctx, node, lane, 'record session decision');
+    }
+    return { artifactRef: id, mergeFailure: await landWriteBackLane(ctx, node, lane) };
   });
 }
 
@@ -1167,18 +1300,30 @@ async function writeRiskBack(
   ownerRole: string,
   decisionText: string,
   clock: Clock,
-): Promise<string> {
+  /** `writeAdrBack`'s own `lane` (see its doc comment): present for a real agent DECIDE dispatch,
+   * `undefined` only for the human-input fallback. */
+  lane: DecideLaneRef | undefined,
+): Promise<WriteBackResult> {
   return enqueueForProject(ctx.projectRoot, async () => {
-    const paths = new ProjectPaths(ctx.projectRoot);
+    // `writeAdrBack`'s own "scan the real, ever-current `ctx.projectRoot`, write onto the lane" split
+    // (its own doc comment on the identical pattern) -- doubly true here, since `kb/risks.md` is the
+    // ONE shared file every `premortem`/`war-room` DECIDE write-back reads-modifies-writes: scanning a
+    // stale lane snapshot would not just risk a duplicate id, it would silently drop whatever a real,
+    // already-landed sibling call appended, reopening the exact "whichever writeFileAtomic call lands
+    // second silently overwrites the first" race this function's own module doc comment already
+    // disclosed and `enqueueForProject` was built to close.
+    const scanPaths = new ProjectPaths(ctx.projectRoot);
     const relativePath = 'kb/risks.md';
-    const existing = await findExistingSessionArtifact(paths, [relativePath], node.id);
-    if (existing !== undefined) return existing;
+    const existing = await findExistingSessionArtifact(scanPaths, [relativePath], node.id);
+    if (existing !== undefined) {
+      return { artifactRef: existing, mergeFailure: await landWriteBackLane(ctx, node, lane) };
+    }
 
-    const target = paths.resolveWithin(relativePath);
+    const scanTarget = scanPaths.resolveWithin(relativePath);
     const today = clock.now().slice(0, 10);
     let existingFrontMatter: Record<string, unknown> | undefined;
-    if (await pathExists(target)) {
-      const text = await readTextFile(target);
+    if (await pathExists(scanTarget)) {
+      const text = await readTextFile(scanTarget);
       const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
       if (match?.[1] !== undefined) {
         const parsedYaml: unknown = YAML.parse(match[1]);
@@ -1187,7 +1332,7 @@ async function writeRiskBack(
         }
       }
     }
-    const allocator = new IdAllocator({ paths, clock });
+    const allocator = new IdAllocator({ paths: scanPaths, clock });
     const id = await allocator.allocate('Risk');
     const priorRisksRaw = existingFrontMatter?.['risks'];
     const priorRisks: readonly unknown[] = Array.isArray(priorRisksRaw) ? priorRisksRaw : [];
@@ -1225,8 +1370,14 @@ async function writeRiskBack(
         `risksFileSchema rejected a session write-back candidate: ${parsed.error.message}`,
       );
     }
-    await writeFileAtomic(target, `---\n${YAML.stringify(parsed.data)}---\n`);
-    return id;
+    // The real write target: `writeAdrBack`'s own doc comment on the identical split.
+    const writePaths = new ProjectPaths(lane?.path ?? ctx.projectRoot);
+    const writeTarget = writePaths.resolveWithin(relativePath);
+    await writeFileAtomic(writeTarget, `---\n${YAML.stringify(parsed.data)}---\n`);
+    if (lane !== undefined) {
+      await commitWriteBack(ctx, node, lane, 'record session decision');
+    }
+    return { artifactRef: id, mergeFailure: await landWriteBackLane(ctx, node, lane) };
   });
 }
 
@@ -1251,14 +1402,20 @@ async function writeSessionArtifactBack(
    * write-back branch below ignores it, the identical "not this rule's concern" stance `writeRiskBack`/
    * `writeKbDecisionBack` already take for every OTHER type P31 does not name. */
   tainted: boolean,
-): Promise<string> {
+  /** `writeAdrBack`'s own `lane` -- threaded through unchanged to whichever of the three real
+   * write-back functions `sessionType` dispatches to below; all three share the identical "write onto
+   * the lane, then commit it there, when one is given; fall back to `ctx.projectRoot`, uncommitted, for
+   * the human-input caller, which has none" contract, and all three return the same `WriteBackResult`
+   * shape (the real artifact ref, and whatever landing the lane returned). */
+  lane: DecideLaneRef | undefined,
+): Promise<WriteBackResult> {
   if (sessionType === 'design-review' || sessionType === 'tradeoff') {
-    return writeAdrBack(ctx, node, ownerRole, decisionText, clock, tainted);
+    return writeAdrBack(ctx, node, ownerRole, decisionText, clock, tainted, lane);
   }
   if (sessionType === 'premortem' || sessionType === 'war-room') {
-    return writeRiskBack(ctx, node, ownerRole, decisionText, clock);
+    return writeRiskBack(ctx, node, ownerRole, decisionText, clock, lane);
   }
-  return writeKbDecisionBack(ctx, section, node, ownerRole, decisionText, clock);
+  return writeKbDecisionBack(ctx, section, node, ownerRole, decisionText, clock, lane);
 }
 
 /** The honest "no real agent session ran" placeholder for the human-input fallback path -- `ok: true`
@@ -1894,7 +2051,10 @@ export async function runSessionStep(
     // reaches this (`HumanSessionInput`'s own doc comment: no caller populates it yet), so this is
     // recorded here rather than reworked -- reworking `writeDecisionBack`'s own shared idempotency
     // contract would also change the already-tested agent-decision retry path. See `SPEC-QUESTIONS.md`.
-    const artifactRef = await writeSessionArtifactBack(
+    // No agent session ran, so there is no DECIDE lane to write onto or land (`mergeFailure` below is
+    // always `undefined`) -- `writeSessionArtifactBack`'s own `lane` doc comment names this exact case;
+    // unchanged from this call site's own pre-existing behaviour (`ctx.projectRoot`, uncommitted).
+    const { artifactRef } = await writeSessionArtifactBack(
       ctx,
       sessionType,
       SESSION_TYPE_DEFAULTS[sessionType].kbSection,
@@ -1906,6 +2066,7 @@ export async function runSessionStep(
       // no agent session was ever dispatched for it, tainted or not, so `PLAN-M14.md` P31's rule -- a
       // TAINTED STEP'S OWN SESSION may write an ADR only as `proposed` -- has nothing to say about it.
       false,
+      undefined,
     );
     decideInput = {
       humanDecision: {
@@ -1971,8 +2132,30 @@ export async function runSessionStep(
           `DECIDE-phase dispatch to ${owner.id} failed (${decideFailure.message}); no real decision ` +
           'was made, and none was fabricated from the failed session output.',
       };
+      // No write-back ran (there is no decision to record), but the decider's own real lane (unlike
+      // DIVERGE/CONVERGE's discarded reconciliation lanes) may still hold real work from its own
+      // dispatched turn -- merged into `ctx.integrationBase`, never simply discarded, whether the
+      // dispatch above succeeded or failed partway through (`mergeDecideLane`'s own doc comment). A real
+      // merge failure here (a genuine conflict, a failed check) is folded into `decideFailure` the
+      // identical way a dispatch failure already is -- `??=` so the already-recorded dispatch failure
+      // stays the one reported reason, never silently overwritten by a second, later one.
+      const mergeFailure = await mergeDecideLane(ctx, node, deciderNode.id);
+      decideFailure ??= mergeFailure;
     } else {
-      const artifactRef = await writeSessionArtifactBack(
+      // The DECIDE lane itself (`ctx.laneRegistry.get(deciderNode.id)`, real -- `dispatchAgentStep`
+      // above created it) -- a fresh critic round found the earlier version of this piece wrote the
+      // decision straight to `ctx.projectRoot` instead, so the merge that used to run here, separately,
+      // always found this lane unchanged and landed nothing, silently orphaning every real DECIDE
+      // write-back as untracked debris in the run's own shared working directory (confirmed live,
+      // `PLAN-M14.md` P46 / `SPEC-QUESTIONS.md` Q278). Passing the real lane here is the fix: the write
+      // now lands (and is committed) on it. `writeSessionArtifactBack` lands the lane itself, inside the
+      // SAME serialised turn as the write (`landWriteBackLane`'s own doc comment) -- not split into a
+      // second, separate call the way `mergeDecideLane` used to be invoked here, since a genuinely
+      // concurrent sibling DECIDE dispatch's own id-allocation must see this one's real, landed content
+      // before it scans, not merely after this call returns. `DecideLaneRef.stepId` is `deciderNode.id`
+      // itself (the real `ctx.laneRegistry` key), never `laneHandle.laneId` (its own doc comment).
+      const laneHandle = ctx.laneRegistry.get(deciderNode.id);
+      const { artifactRef, mergeFailure } = await writeSessionArtifactBack(
         ctx,
         sessionType,
         SESSION_TYPE_DEFAULTS[sessionType].kbSection,
@@ -1988,19 +2171,13 @@ export async function runSessionStep(
         // `taintedByPeerOutput`) -- pinned correctly regardless, so a future signal that DOES taint this
         // node is honoured without another change here (`SPEC-QUESTIONS.md` Q203 D8's own disclosure).
         deciderNode.taint === 'external',
+        laneHandle === undefined ? undefined : { stepId: deciderNode.id, path: laneHandle.path },
       );
       decideInput = {
         decisions: [{ decision: decideSession.finalText, owner: owner.id, artifactRef }],
       };
+      decideFailure ??= mergeFailure;
     }
-    // The decider's own real lane (unlike DIVERGE/CONVERGE's discarded reconciliation lanes) holds
-    // real, meaningful work -- merged into `ctx.integrationBase`, never simply discarded, whether the
-    // dispatch above succeeded or failed partway through (`mergeDecideLane`'s own doc comment). A real
-    // merge failure here (a genuine conflict, a failed check) is folded into `decideFailure` the
-    // identical way a dispatch failure already is -- `??=` so an already-recorded dispatch failure
-    // stays the one reported reason, never silently overwritten by a second, later one.
-    const mergeFailure = await mergeDecideLane(ctx, node, deciderNode.id);
-    decideFailure ??= mergeFailure;
   }
   const decideResult = machine.decide(state, decideInput);
   state = decideResult.state;
