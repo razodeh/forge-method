@@ -21,6 +21,7 @@ export {
   isFetchInputReference,
   isMcpInputReference,
   isSecureFetchInputReference,
+  kbInputPattern,
 } from './input-refs.ts';
 export { claimFixedPrefix, claimsMayOverlap, prefixesNest } from './claim-overlap.ts';
 export { computeCriticalPath, safeCost } from './critical-path.ts';

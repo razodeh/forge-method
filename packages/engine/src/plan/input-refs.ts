@@ -40,7 +40,18 @@ export function exactKbIdOf(reference: string): string | undefined {
  * reference at all. `plan/compile.ts`'s own derived-taint check uses this as its fallback when
  * `exactKbIdOf` cannot resolve one exact id, to glob-match against a KB-relative *path* instead
  * (`PLAN-M14.md` P30, a round-1 gauntlet critic finding: a glob-shaped `kb:` input previously never
- * tainted from KB provenance at all, since there was no exact id for it to look up). */
+ * tainted from KB provenance at all, since there was no exact id for it to look up); `dispatch/
+ * assemble.ts`'s own `classifyDeclaredInput` uses the identical fallback to LABEL such a reference too
+ * (a round-2 finding, closing the gap the round-1 fix's own new glob-taint path left in `20` §20.5
+ * point 1's "delimit and label").
+ *
+ * Deliberately `kb:` only, not `artifact:Type(<pattern>)` (a round-2 gauntlet critic finding, disclosed
+ * rather than fixed): `artifact:` wildcards have the identical structural blind spot -- `exactKbIdOf`
+ * refuses a non-exact `artifact:` reference exactly as it refuses a `kb:` glob, and there is no fallback
+ * for it here -- but no shipped workflow or spec worked example (`10` §10.1's own `artifact:` wildcards
+ * -- `Epic(*)`, `Story(*)`, `InterfaceContract(*)`, `HandoffRecord` -- are never KB-tracked types) ever
+ * declares an `artifact:ADR(...)`/`artifact:Runbook(...)` step input, so this stays a real but currently
+ * dormant gap, not one this piece closes. */
 export function kbInputPattern(reference: string): string | undefined {
   return KB_REFERENCE.exec(reference)?.[1];
 }

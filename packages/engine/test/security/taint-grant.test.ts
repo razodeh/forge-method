@@ -640,4 +640,49 @@ describe('a step tainted by a declared kb: input whose id carries external prove
     expect(request.systemPrompt.text).not.toContain('EXTERNALLY SOURCED');
     expect(request.systemPrompt.text).not.toContain('External inputs for this step');
   });
+
+  // Round-2 gauntlet critic finding: the GLOB half of round-1's own glob-taint fix (kb:architecture/**,
+  // 10 §10.1's own worked example) tainted the step correctly (grant restricted) but this describe
+  // block's own two tests above only ever exercise an EXACT kb:<id> reference, so the glob case's own
+  // block [4]/[3] labelling was never proved -- and, independently checked here, was not actually wired.
+  it("taints a step declaring a GLOB kb: input (kb:architecture/**, 10 §10.1's own worked example) whose pattern overlaps an external-provenance path, and names it in block [4] even though (Q203's own standing limit) the glob is never packed as a single declared-input entry", async () => {
+    const GLOB_INPUT_WORKFLOW = [
+      'id: extwf',
+      'name: Glob KB input workflow',
+      'version: 1.0.0',
+      'description: d',
+      'steps:',
+      '  - id: freeze',
+      '    kind: agent',
+      '    agent: po',
+      "    brief: 'freeze the contracts'",
+      "    inputs: [ 'kb:architecture/**' ]",
+      '',
+    ].join('\n');
+    const projectRoot = await repo('kb-provenance-glob');
+    const requests: SessionRequest[] = [];
+    const ctx = createTestContext({
+      projectRoot,
+      adapter: recorder(requests),
+      assembly: createFixtureAssembly(projectRoot, {
+        loadAgent: () => Promise.resolve(CAPABLE),
+        openKb: () => Promise.resolve(kbAccessWithExternalEntry()),
+      }),
+      externalKbIds: new Set(['KB-ARCH-0001', 'architecture/KB-ARCH-0001.md']),
+    });
+    const stepNode = compiledStep(GLOB_INPUT_WORKFLOW, 'extwf:freeze', ctx.externalKbIds);
+    expect(stepNode.taint).toBe('external');
+
+    await executeStep(stepNode, ctx);
+
+    const request = requests.find((candidate) => candidate.stepId === 'extwf:freeze');
+    if (request === undefined) throw new Error('no session dispatched for extwf:freeze');
+    expect(request.tools).toEqual({ read: true, write: false, exec: false, network: 'none' });
+    expect(request.systemPrompt.text).toContain('kb:architecture/**');
+    expect(request.systemPrompt.text).toContain('EXTERNALLY SOURCED');
+    expect(request.systemPrompt.text).toContain('External inputs for this step');
+    // Q203's own standing limit (a glob is never resolved to one exact id) is unrelated to and unchanged
+    // by this fix: the glob still names no single packed entry, so the body text itself never appears.
+    expect(request.systemPrompt.text).not.toContain('The incident root cause was a stale cache.');
+  });
 });
