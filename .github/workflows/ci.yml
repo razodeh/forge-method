@@ -51,6 +51,18 @@ jobs:
             tz: Asia/Kathmandu
     env:
       TZ: ${{ matrix.tz }}
+      # Real root cause of the macOS legs' own failure, confirmed from the actual job log (not
+      # guessed): `pnpm lint`'s `eslint .` -- one process, type-aware parsing, the whole monorepo at
+      # once -- aborts with `node::OOMErrorHandler` (exit code 134, `Abort trap: 6`) on every
+      # macos-latest run, every Node version, consistently -- while install/build/typecheck (turbo-
+      # orchestrated, one bounded process per package) all succeed. A fresh clone of the exact same
+      # failing commit lints cleanly on real, unconstrained macOS hardware, which is what pointed at
+      # memory rather than a platform-specific code or config bug: GitHub's hosted macOS runners carry
+      # markedly less RAM than Linux/Windows runners or a real developer machine, and V8's own
+      # auto-sized default heap isn't enough for one non-turbo-chunked, type-aware `eslint .` pass over
+      # every package in this repo. Raising the ceiling is the standard, minimal fix for exactly this
+      # failure signature; it costs nothing on runners that were never memory-constrained.
+      NODE_OPTIONS: --max-old-space-size=6144
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
