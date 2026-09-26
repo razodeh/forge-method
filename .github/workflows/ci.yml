@@ -24,7 +24,19 @@ jobs:
   floor:
     name: floor (node ${{ matrix.node }}, ${{ matrix.os }}, TZ=${{ matrix.tz }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Was 20. Real evidence this repo's own CI history no longer fits it: on every run since the
+    # first commit, the ubuntu-latest/windows-latest legs pass install/build/typecheck/lint in a
+    # couple of minutes, then `pnpm test` (a full-coverage run of the whole monorepo, twice — once
+    # per vitest config) is still genuinely in progress, not hung, when the job hits this ceiling and
+    # every remaining step is cancelled outright (confirmed via the Actions API's own per-step
+    # started_at/completed_at: `pnpm test` had already run 15-17 real minutes with no sign of being
+    # stuck before cancellation). 45 gives roughly 2.5x the longest observed in-progress duration.
+    # This masks nothing: a leg that was actually hanging still fails, just at 45 minutes instead of
+    # 20; a leg that only needed more time now gets a real pass/fail instead of an inconclusive
+    # cancellation. The turbo cache step below independently shaves the typecheck step's own ~60-90s
+    # cold cost, but does not touch `pnpm test` — `test` is not a turbo-orchestrated task at all
+    # (`turbo.json` only declares `build`/`typecheck`), so it cannot benefit from turbo's cache.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -46,6 +58,24 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: pnpm
+      # `pnpm install --frozen-lockfile` already gets a warm pnpm content-addressable store from
+      # `cache: pnpm` above; this is the separate, previously-missing cache for turbo's own task
+      # cache (`.turbo/`), keyed so a given (os, node, lockfile) combination reuses a prior run's
+      # already-verified `build`/`typecheck` results instead of recomputing them cold on every push.
+      # Keyed on the lockfile hash, not on source file content, because turbo's own cache already
+      # keys each individual task on its real inputs (specs/02's own `inputs:` list in turbo.json) --
+      # this restores the right *bucket* to check; a source change since the last successful run on
+      # this exact (os, node) pair still reruns that one task for real, cache hit or not.
+      - uses: actions/cache@v4
+        with:
+          path: .turbo
+          # Fresh-context critic finding: the matrix's own `include` entry re-runs (ubuntu-latest,
+          # node 22) a second time under Asia/Kathmandu, so `matrix.tz` must be part of the key --
+          # without it, that leg and the base UTC leg for the same (os, node) pair compute the
+          # identical key and race to save under it, silently dropping the cache for whichever loses.
+          key: turbo-${{ runner.os }}-node${{ matrix.node }}-tz${{ matrix.tz }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            turbo-${{ runner.os }}-node${{ matrix.node }}-tz${{ matrix.tz }}-
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm typecheck
@@ -55,7 +85,9 @@ jobs:
   seed:
     name: scheduler seed variation
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # See the floor job's own comment -- this job runs the full suite twice (two shuffled seeds),
+    # so it needs at least as much real headroom as one floor leg's single `pnpm test`, and likely more.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
