@@ -41,6 +41,7 @@ const preflight = require(PREFLIGHT_PATH) as {
   readonly parseNodeVersion: (raw: string) => { readonly major: number; readonly minor: number };
   readonly isTooOld: (version: { readonly major: number; readonly minor: number }) => boolean;
   readonly friendlyMessage: (rawVersion: string) => string;
+  readonly distEntryUrl: (binDir: string) => string;
 };
 
 describe('bin/preflight.cjs — parseNodeVersion', () => {
@@ -81,6 +82,37 @@ describe('bin/preflight.cjs — friendlyMessage', () => {
     expect(message).toContain('forge-method requires Node.js >= 20.19');
     expect(message).toContain('v18.19.0');
     expect(message).toContain('https://nodejs.org');
+  });
+});
+
+describe('bin/preflight.cjs — distEntryUrl (Windows dynamic-import() fix)', () => {
+  // Real, empirically-confirmed root cause (verified live in this build, not assumed): Node's
+  // dynamic `import()` resolves its argument as a URL specifier. `new URL('C:\\Users\\...')` parses
+  // successfully but with `protocol: 'c:'` -- the drive letter is read as a URL *scheme*, not a
+  // filesystem root -- which is exactly what makes real Node.js throw `ERR_UNSUPPORTED_ESM_URL_SCHEME`
+  // ("On Windows, absolute paths must be valid file:// URLs") when a bare `path.join(...)` result is
+  // handed to `import()` on a real Windows machine. A bare POSIX absolute path has no such scheme
+  // prefix (confirmed separately: Node accepts it, reporting only `ERR_MODULE_NOT_FOUND` when the
+  // file is missing) -- which is exactly why this bug shipped unnoticed: every platform this file was
+  // ever run or tested on (this repo's own darwin dev machine, every macOS/Linux CI leg) is immune to
+  // it by construction, and no CI leg on Windows has ever run this file to its real entry point.
+  it('a bare Windows-style drive-letter path is parsed with the drive letter as a URL scheme, not a file path', () => {
+    const url = new URL('C:\\Users\\dev\\forge-method\\dist\\forge.mjs');
+    expect(url.protocol).toBe('c:');
+    expect(url.protocol).not.toBe('file:');
+  });
+
+  it('distEntryUrl always returns a real file:// URL for the current platform, never a bare path', () => {
+    const binDir = path.dirname(PREFLIGHT_PATH);
+    const url = preflight.distEntryUrl(binDir);
+    expect(url.startsWith('file://')).toBe(true);
+    expect(fileURLToPath(url)).toBe(path.join(binDir, '..', 'dist', 'forge.mjs'));
+  });
+
+  it('distEntryUrl differs from the pre-fix bare path.join() result -- that bare value is exactly what the old code passed straight to import()', () => {
+    const binDir = path.dirname(PREFLIGHT_PATH);
+    const barePath = path.join(binDir, '..', 'dist', 'forge.mjs');
+    expect(preflight.distEntryUrl(binDir)).not.toBe(barePath);
   });
 });
 

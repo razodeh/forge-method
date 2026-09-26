@@ -55,12 +55,30 @@ function friendlyMessage(rawVersion) {
   );
 }
 
+// Real, Windows-only bug fixed here: dynamic `import()` parses its argument with the WHATWG URL
+// parser, and on Windows a plain OS path like `C:\Users\x\dist\forge.mjs` has its drive letter
+// ("C:") read as a URL *scheme*, throwing `ERR_UNSUPPORTED_ESM_URL_SCHEME` -- Node's own
+// documented behavior ("On Windows, absolute paths must be valid file:// URLs"). POSIX absolute
+// paths happen to work unconverted, which is exactly why this was never caught on macOS/Linux: the
+// darwin dev machine this repo is built on, and every macOS/Linux CI leg that has ever reached this
+// code path, never exercised the one platform where a bare path breaks. `pathToFileURL` is the
+// correct, already-established fix in this exact codebase -- `scripts/run-tests.mjs` already builds
+// its own `--import` guard URL this same way; this file just never matched it. Exported (not
+// inlined) so `test/preflight.test.ts` can assert the real property this bug violated -- the import
+// target is always a `file://` URL, never a bare filesystem path -- without needing an actual
+// Windows machine to prove it.
+function distEntryUrl(binDir) {
+  var distPath = require('node:path').join(binDir, '..', 'dist', 'forge.mjs');
+  return require('node:url').pathToFileURL(distPath).href;
+}
+
 module.exports = {
   REQUIRED_MAJOR: REQUIRED_MAJOR,
   REQUIRED_MINOR: REQUIRED_MINOR,
   parseNodeVersion: parseNodeVersion,
   isTooOld: isTooOld,
   friendlyMessage: friendlyMessage,
+  distEntryUrl: distEntryUrl,
 };
 
 if (require.main === module) {
@@ -75,7 +93,7 @@ if (require.main === module) {
   // `process.exitCode` itself (never calls `process.exit` directly, so buffered stdio always flushes
   // first) and its own top-level `await main()` means this returned promise does not resolve until
   // that work is fully done — Node's normal event-loop-drain exit then uses the real, already-set code.
-  import(require('node:path').join(__dirname, '..', 'dist', 'forge.mjs')).catch(function (error) {
+  import(distEntryUrl(__dirname)).catch(function (error) {
     console.error(error && error.stack ? error.stack : String(error));
     process.exitCode = 1;
   });
