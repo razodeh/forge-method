@@ -7,6 +7,17 @@ contribution should be made, reviewed, and recorded — you don't have to replic
 small fix, but the spirit (spec-grounded, tested, honestly disclosed when something is a real
 trade-off) is what every PR is judged against.
 
+## Repository layout
+
+```
+packages/     the FORGE monorepo — cli, engine, core, adapters, kb, methods, schemas, templates, …
+specs/        the normative specification pack (01–23)
+modules/      shipped method modules (fm-core, fm-web, fm-service, …)
+docs/         the user-facing documentation set (see the README)
+process/      the build history — the gauntlet loop process, milestone plans, and every real
+              spec-vs-implementation decision made while building this codebase
+```
+
 ## Before you start
 
 1. **Read the relevant spec section(s) first.** If your change touches behavior, find the
