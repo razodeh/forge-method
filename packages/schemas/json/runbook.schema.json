@@ -87,7 +87,8 @@
             "enum": [
               "decision",
               "human",
-              "code"
+              "code",
+              "external"
             ],
             "type": "string"
           },

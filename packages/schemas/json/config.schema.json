@@ -235,6 +235,13 @@
             ]
           },
           "type": "object"
+        },
+        "testRoots": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -246,6 +253,19 @@
         "conflictPolicy",
         "sharedMutablePaths",
         "testCommands"
+      ],
+      "type": "object"
+    },
+    "gates": {
+      "additionalProperties": false,
+      "properties": {
+        "waiverMaxDays": {
+          "exclusiveMinimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "waiverMaxDays"
       ],
       "type": "object"
     },
@@ -430,6 +450,13 @@
         "plans": {
           "minLength": 1,
           "type": "string"
+        },
+        "release": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
         },
         "reports": {
           "minLength": 1,
