@@ -636,6 +636,12 @@ const EXEMPT: readonly {
     why: 'an acceptance criterion on the designed pipeline ("every stage writes results"), stating what the ADR must say; the ADR does not write reports',
   },
   {
+    step: 'deliver-stage:design-pipeline',
+    path: 'docs/forge/reports/deployments/x',
+    sentence: /commit\s+the\s+record\s+under\s+`docs\/forge\/reports\/deployments\/`/,
+    why: "the same pattern as scaffold-ci's own deployments/x.json exemption above: what the deployed pipeline writes at run time via `forge deploy record` (the brief says a hand-authored file is never the way through); the sre agent authoring this ADR never writes it",
+  },
+  {
     step: 'initialize-project:scaffold-ci',
     path: 'docs/forge/reports/deployments/x.json',
     sentence: /A\s+record\s+of\s+that\s+deployment/,
