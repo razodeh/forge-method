@@ -1,6 +1,6 @@
 {
   "name": "forge-method",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": false,
   "type": "module",
   "description": "FORGE (Framework for Orchestrated, Rigorous, Governed Engineering) — a spec-driven, agent-orchestrating development method and CLI.",
