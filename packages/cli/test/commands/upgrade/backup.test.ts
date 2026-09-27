@@ -83,24 +83,36 @@ describe('createBackup', () => {
     expect(entries).toContain('manifest.yaml');
   });
 
-  it('retains only the real last 5 backups, oldest pruned first', async () => {
-    const project = await createTestProject();
-    const timestamps = [
-      '2026-01-01T00:00:00.000Z',
-      '2026-01-02T00:00:00.000Z',
-      '2026-01-03T00:00:00.000Z',
-      '2026-01-04T00:00:00.000Z',
-      '2026-01-05T00:00:00.000Z',
-      '2026-01-06T00:00:00.000Z',
-    ];
-    for (const timestamp of timestamps) {
-      await createBackup(project.paths, project.dir, fakeClock(timestamp), SPECS_ROOT);
-    }
+  // Six real, sequential backup operations against a real project fixture: comfortably inside the
+  // suite's 60s default alone, but confirmed (full, unscoped `pnpm test` locally, no elevated
+  // NODE_OPTIONS) to time out under the resource contention of the complete monorepo suite running
+  // concurrently -- a load-sensitivity issue, not a logic bug (passes cleanly, repeatedly, in
+  // isolation). The explicit 120s timeout below is doubled rather than raised globally, so the
+  // suite's real 60s hang-detection floor stays tight everywhere else.
+  const SLOW_TEST_TIMEOUT_MS = 120_000;
 
-    const backupsDir = path.join(project.dir, '.forge/backups');
-    const entries = (await readdir(backupsDir)).sort();
-    expect(entries).toHaveLength(5);
-    expect(entries).not.toContain('2026-01-01T00-00-00-000Z');
-    expect(entries).toContain('2026-01-06T00-00-00-000Z');
-  });
+  it(
+    'retains only the real last 5 backups, oldest pruned first',
+    async () => {
+      const project = await createTestProject();
+      const timestamps = [
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-02T00:00:00.000Z',
+        '2026-01-03T00:00:00.000Z',
+        '2026-01-04T00:00:00.000Z',
+        '2026-01-05T00:00:00.000Z',
+        '2026-01-06T00:00:00.000Z',
+      ];
+      for (const timestamp of timestamps) {
+        await createBackup(project.paths, project.dir, fakeClock(timestamp), SPECS_ROOT);
+      }
+
+      const backupsDir = path.join(project.dir, '.forge/backups');
+      const entries = (await readdir(backupsDir)).sort();
+      expect(entries).toHaveLength(5);
+      expect(entries).not.toContain('2026-01-01T00-00-00-000Z');
+      expect(entries).toContain('2026-01-06T00-00-00-000Z');
+    },
+    SLOW_TEST_TIMEOUT_MS,
+  );
 });

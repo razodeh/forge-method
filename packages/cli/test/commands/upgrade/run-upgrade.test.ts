@@ -112,21 +112,33 @@ describe('runUpgrade', () => {
     expect(newManifest.version).toBe(1);
   });
 
-  it('is idempotent: running it twice in a row against an already-current project succeeds both times with an identical version pair', async () => {
-    // Doesn't assert `doctor.ok` here: a freshly `runInit`-produced fixture project can genuinely
-    // fail unrelated real checks (e.g. `kb-lint` against this fixture's own preset-applied KB
-    // content, or `git-identity` on a host with no global identity) that have nothing to do with
-    // whether the upgrade itself was a clean, idempotent no-op — `run-doctor.test.ts` already covers
-    // `runDoctor`'s own real pass/fail semantics directly.
-    const project = await createTestProject();
-    const first = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
-    const second = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
-    expect(second.dryRun).toBe(false);
-    expect(second.doctor).toBeDefined();
-    expect(second.installedVersion).toBe(first.installedVersion);
-    expect(second.targetVersion).toBe(first.targetVersion);
-    expect(second.migratedDocuments.every((doc) => doc.stepCount === 0)).toBe(true);
-  });
+  // A real project fixture plus two full runUpgrade passes: comfortably inside the suite's 60s
+  // default alone, but confirmed (full, unscoped `pnpm test` locally, no elevated NODE_OPTIONS) to
+  // time out under the resource contention of the complete monorepo suite running concurrently -- a
+  // load-sensitivity issue, not a logic bug (passes cleanly, repeatedly, in isolation). The explicit
+  // 120s timeout below is doubled rather than raised globally, so the suite's real 60s
+  // hang-detection floor stays tight elsewhere.
+  const SLOW_TEST_TIMEOUT_MS = 120_000;
+
+  it(
+    'is idempotent: running it twice in a row against an already-current project succeeds both times with an identical version pair',
+    async () => {
+      // Doesn't assert `doctor.ok` here: a freshly `runInit`-produced fixture project can genuinely
+      // fail unrelated real checks (e.g. `kb-lint` against this fixture's own preset-applied KB
+      // content, or `git-identity` on a host with no global identity) that have nothing to do with
+      // whether the upgrade itself was a clean, idempotent no-op — `run-doctor.test.ts` already covers
+      // `runDoctor`'s own real pass/fail semantics directly.
+      const project = await createTestProject();
+      const first = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+      const second = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+      expect(second.dryRun).toBe(false);
+      expect(second.doctor).toBeDefined();
+      expect(second.installedVersion).toBe(first.installedVersion);
+      expect(second.targetVersion).toBe(first.targetVersion);
+      expect(second.migratedDocuments.every((doc) => doc.stepCount === 0)).toBe(true);
+    },
+    SLOW_TEST_TIMEOUT_MS,
+  );
 
   it('degrades honestly (CFG-019) rather than backing up/regenerating over a document with a real chain gap', async () => {
     const project = await createTestProject();
