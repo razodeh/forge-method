@@ -97,6 +97,17 @@ interface NineStep {
   readonly step: string;
   /** `project`: `**` less the protected set. `story`: the story's `files_expected`. */
   readonly scope: 'project' | 'story';
+  /** `resolveStepClaim`: `node.taint === 'external' ? 'strict' : defaultPolicy` -- a tainted step is
+   * held to its claim (and, since `PLAN-M14.md` P3, fails the step over a protected write) at every
+   * autonomy level, `guided`'s own `warn` default included. `migrate:{expand,contract}` are the only
+   * two of the nine marked `taint: external` in the real shipped workflow (their own inputs are the
+   * scanned codebase, not yet provenance-tracked KB content -- `20` §20.5 point 6, `SPEC-QUESTIONS.md`
+   * Q232 decision 15) -- confirmed against every other workflow file in this table, none of which
+   * declare `taint` on these steps. Omitted (not `false`) for the other seven: they are exactly what
+   * `guided`'s own default governs, and a step here that later gained taint should fail this test's
+   * own `are all found` sweep loudly, not silently inherit a default that happened to still be right.
+   */
+  readonly taintExternal?: true;
 }
 
 const NINE: readonly NineStep[] = [
@@ -114,8 +125,20 @@ const NINE: readonly NineStep[] = [
     step: 'refactor',
     scope: 'story',
   },
-  { key: 'migrate:expand', workflow: 'migrate', step: 'expand', scope: 'project' },
-  { key: 'migrate:contract', workflow: 'migrate', step: 'contract', scope: 'project' },
+  {
+    key: 'migrate:expand',
+    workflow: 'migrate',
+    step: 'expand',
+    scope: 'project',
+    taintExternal: true,
+  },
+  {
+    key: 'migrate:contract',
+    workflow: 'migrate',
+    step: 'contract',
+    scope: 'project',
+    taintExternal: true,
+  },
   {
     key: 'quick-fix:write-failing-test',
     workflow: 'quick-fix',
@@ -304,7 +327,7 @@ describe.each(['supervised', 'guided'] as const)(
           }
         });
 
-        it(`${entry.key}: a protected write is reverted and traced (PolicyViolation); under strict it also fails the step (PLAN-M14.md P3)`, async () => {
+        it(`${entry.key}: a protected write is reverted and traced (PolicyViolation); under strict${entry.taintExternal ? ', and under guided too since this step is taint: external' : ''} it also fails the step (PLAN-M14.md P3)`, async () => {
           const node = nodes.get(id);
           if (node === undefined) throw new Error(id);
           const protectedNode: StepNode = { ...node, id: `${id}:protected-${autonomy}` };
@@ -325,7 +348,10 @@ describe.each(['supervised', 'guided'] as const)(
           expect((await violationsOf(context(), protectedNode.id)).sort()).toEqual(
             [...PROTECTED].sort(),
           );
-          if (strict) {
+          // `resolveStepClaim`: `node.taint === 'external' ? 'strict' : defaultPolicy` -- a tainted
+          // step (migrate:expand/contract, the only two of the nine marked `taint: external` in the
+          // real shipped workflow) is held to `strict` at every autonomy level, `guided` included.
+          if (strict || entry.taintExternal) {
             expect(outcome.status).toBe('failed');
             expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
           } else {
