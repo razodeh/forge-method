@@ -428,6 +428,105 @@ FORGE_LIVE=1 pnpm test -- --grep "live"     # requires a real adapter credential
 
 ---
 
+## M15 — Evidence over ceremony: gates that prove, not gates that check
+
+Post-v1.0. FORGE was built by a stricter discipline than the one it ships. Its own construction had an
+oracle — a spec written before the code by a different party than the implementer, tests derived from
+that spec first, a fresh context-free critic, a bounded round loop that stopped and disclosed, and
+**mutation evidence**: revert the fix, confirm the exact failure reproduces, restore, confirm green.
+`GAUNTLET-LOG.md` carries hundreds of these. What a user's project gets is structural: `G-Verify` asks
+whether tests ran, whether coverage cleared a threshold, whether lint is clean. Not one shipped check
+can tell a suite that binds to real behaviour from one that passes whatever the implementation does. A
+green gate certifies diligence and is read as correctness, which is worse than certifying nothing
+because it is trusted. Shopify's Helix (`shopify.engineering/helix`) shows the alternative in
+production — but its oracle is a reference implementation, which greenfield work does not have.
+FORGE's own history holds the oracle that generalises and needs no reference: a test that does not
+fail when you break what it claims to test is not a test. See `process/plans/PLAN-M15.md`.
+
+**Build:** `MutationEvidence` and `EvidenceBundle` as registered artifact types; a binding engine that
+reverts a story's implementation hunks in an isolated worktree, runs its named tests, and requires at
+least one to fail; `forge test binding --json` as a stateless verb; `test:binding` as a deterministic
+`G-Verify` check that fails the gate; exemptions that carry reason, owner and expiry and that fail the
+check when stale — the discipline `brief-write-paths-in-claim.test.ts` already applies to its own
+`EXEMPT` list; evidence bundles committed per story; gate approval refused when declared evidence does
+not resolve; the bounded critic loop (default 3 rounds, then stop and disclose) shipped into
+`implement-story`; a project disclosure ledger as the user-project analogue of `SPEC-QUESTIONS.md`;
+telemetry for binding rate, critic rounds, gate-failures-before-pass, exemption churn, cost per
+delivered story and KB-reads-before-decision; `forge report` with a committed baseline; a live run
+proving a non-binding test is caught end to end.
+
+**Do not build:** per-hunk or operator mutation (v1 is coarse and says so); any parity oracle needing
+a reference implementation (M16); external validation (M17); new orchestration surface — every
+capability is a stateless `forge <noun> <verb> --json` invoked the way gate checks already are, which
+keeps the milestone neutral on the open question of whether FORGE keeps its own runtime; evidence
+retention and pruning policy.
+
+**Exit tests**
+```
+pnpm test
+pnpm test -- --grep "M15"
+forge test binding --json                   # shipped fixture project: bound, zero non-binding
+FORGE_LIVE=1 pnpm test -- --grep "live"
+```
+
+---
+
+## M16 — Parity oracles where a reference exists
+
+Post-v1.0, after M15. M15's oracle is universal but coarse: it proves a suite binds to a change, not
+that behaviour was preserved. Three shipped workflows do have a reference implementation and therefore
+admit a far stronger oracle — `refactor` (where behaviour-preservation is not merely desirable but
+definitional, making parity both necessary and sufficient), `migrate:expand`/`migrate:contract`, and
+`adopt`. This is the transferable half of Helix's design, expressed generically: capture an observable
+surface from the reference, replay it against the new implementation, and refuse the gate on
+divergence. It is also where per-test mutation precision, deferred from M15 P3, is earned.
+
+**Build:** a behaviour-parity harness over observable surfaces FORGE can capture without owning the
+app (process stdout/exit codes, HTTP request/response pairs, library call/return, file outputs);
+`forge parity capture` and `forge parity check --json`; a `behavior:parity` deterministic check wired
+into the gates those three workflows reach; parity evidence as an `EvidenceBundle` kind; per-hunk
+mutation raising M15's binding evidence from change-level to hunk-level attribution; an evidence
+retention policy, deferred from M15 P7.
+
+**Do not build:** visual/screenshot parity — FORGE is not UI-framework-specific and a pixel oracle
+needs a rendering target it does not own; a parity claim for greenfield work, which has no reference
+by definition and must keep relying on M15's binding oracle.
+
+**Exit tests**
+```
+pnpm test -- --grep "M16"
+forge parity check --json                   # against a fixture refactor with a deliberate behaviour change: refused
+```
+
+---
+
+## M17 — Falsification: prove it somewhere FORGE did not build
+
+Post-v1.0, after M15 (which emits the metrics) and preferably after M16. Every belief about FORGE's
+value is currently self-reported by the system that built itself — a closed loop, and the single
+largest gap against any externally-validated tool. FORGE cannot presently be wrong: there is no
+measurement, no baseline, and no stated claim that could come back negative. This milestone exists to
+make one claim falsifiable and then genuinely test it, accepting a negative result as the real
+outcome rather than a setback to be re-run until favourable.
+
+**Build:** a pre-registered hypothesis with a success criterion and a measurement window, committed
+*before* the trial; one real external project — not this repository, not a throwaway — run through
+FORGE with M15's metrics collected against a recorded baseline; the longitudinal check that tests the
+Knowledge Body's central claim directly (are week-1 decisions still read and respected in week-12
+work, measured by KB-reads-before-decision and by contradiction rate, not by assertion); a published
+result in the `GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` tradition **whether or not it favours FORGE**; and
+whatever adoption-cost reduction the trial proves necessary, which is expected to be substantial.
+
+**Do not build:** a second trial to replace a disappointing first one; any metric chosen after seeing
+the data; marketing claims not carried by the published result.
+
+**Exit tests**
+```
+forge report --json --since <trial start>   # against the external project, compared to the committed baseline
+```
+
+---
+
 ## 22.1 Cross-cutting rules for the whole build
 
 1. **No milestone is complete with a failing exit test, a skipped test, or a `TODO` in production
@@ -452,8 +551,8 @@ With more than one implementer or lane, the dependency graph permits:
 
 ```
 M1 ──┬── M2 ──┬── M3 ──┐
-     │        │        ├── M5 ── M6 ── M7 ── M8 ──┬── M10 ── M11 ── M12 ── M13 ── M14
-     └── M4 ──┘        ┘                          └── M9 ──────────┘
+     │        │        ├── M5 ── M6 ── M7 ── M8 ──┬── M10 ── M11 ── M12 ── M13 ── M14 ── M15 ──┬── M16 ──┐
+     └── M4 ──┘        ┘                          └── M9 ──────────┘                           └─────────┴── M17
 ```
 
 M3 and M4 are independent of each other. M9 (TUI) can begin once M6 stabilises the engine's read
@@ -463,3 +562,9 @@ unstable engine gets rewritten. M13 is drawn serial after M12 because it was dis
 shipped, not because anything in M1–M12 structurally requires it first. M14 is drawn serial after M13
 because every one of its pieces implements a decision that M13's live runs surfaced, not because
 anything in M13 structurally requires it first.
+
+M15 is serial after M14 because its evidence model binds to the `ReviewReport` verdicts, `GateReport`
+artifacts and claim semantics M14 made real. M16 depends on M15 for the evidence artifacts a parity
+result is recorded as. M17 depends on M15 for the metrics it measures with, and is drawn able to start
+once M15 lands rather than waiting for M16: an external trial against M15's evidence model is worth
+more early than a better-instrumented trial run late, and a negative result found sooner is cheaper.
