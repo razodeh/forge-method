@@ -75,6 +75,7 @@
  * @see PLAN-M12.md P2
  * @see PLAN-M12.md P4
  */
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -216,7 +217,10 @@ import { runUpgrade } from './commands/upgrade/index.ts';
 import { gateValidateAll, workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
 import { test as runTestRefusal } from './commands/loop/test.ts';
+import { runBindingCheck } from './commands/loop/test/binding.ts';
+import { assembleAndWriteMutationEvidence } from './commands/loop/test/binding-evidence.ts';
 import { testCoverage } from './commands/loop/test/coverage.ts';
+import { detectEcosystem } from './commands/loop/test/ecosystem.ts';
 import { testFlaky } from './commands/loop/test/flaky.ts';
 import { createSystemTempPath } from './commands/loop/test/system-temp.ts';
 import { testRun } from './commands/loop/test/run.ts';
@@ -288,9 +292,11 @@ import {
   type ValidateRuleId,
 } from './commands/spec/validate-rules.ts';
 import { isStoryPhase, renderStoryVerify, storyVerify, STORY_PHASES } from './commands/story.ts';
+import { listSpecArtifacts } from './commands/shared.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
-import { ARTIFACT_TYPES } from '@forge/schemas';
+import { ARTIFACT_TYPES, storySchema } from '@forge/schemas';
 import type { ArtifactTypeId } from '@forge/schemas';
+import { assertCleanWorkingTree } from '@forge/vcs';
 import type { CompileOptions, CompileSources } from '@forge/extensions/compile';
 import { readWorkflowSource } from './commands/run/run.ts';
 import type { DryRunResult, RealRunResult } from './commands/run/run.ts';
@@ -1410,6 +1416,161 @@ async function runTestRunCommand(
     );
   }
   return result.failed > 0 || result.errors > 0 ? 1 : 0;
+}
+
+/** The real, installed test tool's own version, best-effort — a diagnostic `MutationEvidence` field
+ * (`specs/18` §18.7), never load-bearing for a binding verdict: a failure resolving it is swallowed,
+ * not surfaced as a refusal. `'js'` resolves `vitest`'s own real `package.json` (`node:module`'s
+ * `createRequire`, the identical real-version-lookup pattern `binding.test.ts`'s own
+ * `resolveRealVitestEntry` already establishes for the same package, reused here as real production
+ * code rather than test-only). `'python'` is left empty: `mutationEvidenceSchema`'s own `toolVersions`
+ * has no minimum-size constraint, and a real pytest version lookup needs a subprocess call this
+ * diagnostic-only field does not justify the added latency for. */
+function detectToolVersions(ecosystem: 'js' | 'python'): Readonly<Record<string, string>> {
+  if (ecosystem !== 'js') return {};
+  try {
+    const require = createRequire(import.meta.url);
+    const packageJson = require('vitest/package.json') as { readonly version?: unknown };
+    return typeof packageJson.version === 'string' ? { vitest: packageJson.version } : {};
+  } catch {
+    return {};
+  }
+}
+
+interface TestOutcomeEntry {
+  readonly name: string;
+  readonly binding: boolean;
+}
+
+/** `forge test binding --story <id> [--json]` (`specs/22` M15 P4) — the stateless verb wrapping
+ * `runBindingCheck` (M15 P3): resolves `--story` to a real Story, refuses a dirty tree before any git
+ * work, runs the check, and — only on a genuinely completed run — assembles and writes the real
+ * `MutationEvidence` record (`binding-evidence.ts`, M15 P4) a later gate (`PLAN-M15.md` P5) will read.
+ *
+ * `baseRevision` (what the implementation is reverted BACK TO) is `HEAD~1` — a real, disclosed v1
+ * simplification (`PLAN-M15.md` P3's own research found no existing convention for "the commit before
+ * this story's implementation landed," and this Mandate's own CLI signature takes no flag to override
+ * it): correct for the common case of one story landing as one commit, not for a story whose
+ * implementation spans several. `integrationBase` is always `'HEAD'` — the current state, implementation
+ * included, is the only state a bare CLI invocation can reasonably mean by "this story's own work." */
+async function runTestBindingCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  storyId: string | undefined,
+  json: boolean,
+): Promise<number> {
+  await assertCleanWorkingTree(projectRoot);
+
+  if (storyId === undefined) {
+    throw new ForgeError('RUN-110', { storyId: undefined, reason: 'missing-flag' });
+  }
+  const specDocs = await listSpecArtifacts(paths, SPECS_ROOT);
+  const storyDoc = specDocs.find(
+    (doc) => (doc.frontMatter as { readonly id?: unknown }).id === storyId,
+  );
+  if (storyDoc === undefined) {
+    throw new ForgeError('RUN-110', { storyId, reason: 'not-found' });
+  }
+  const parsedStory = storySchema.safeParse(storyDoc.frontMatter);
+  if (!parsedStory.success) {
+    throw new ForgeError('RUN-110', { storyId, reason: 'invalid' });
+  }
+  const story = parsedStory.data;
+
+  const config = await readConfig(paths);
+  const detectedEcosystem = await detectEcosystem(paths);
+  if (detectedEcosystem === 'unknown') {
+    throw new ForgeError('RUN-111', { storyId, reason: 'unknown-ecosystem' });
+  }
+  const ecosystem = detectedEcosystem;
+  const testCommand = config.execution.testCommands.unit;
+  if (testCommand === undefined) {
+    throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
+  }
+
+  const clock = SYSTEM_CLOCK;
+  const runId = `test-binding-${clock.now().replace(/[^0-9]/g, '')}`;
+  const result = await runBindingCheck({
+    projectRoot,
+    runId,
+    storyId,
+    filesExpected: story.files_expected,
+    testCommand,
+    ecosystem,
+    integrationBase: 'HEAD',
+    baseRevision: 'HEAD~1',
+    clock,
+    createTempPath: () => createSystemTempPath('forge-test-binding'),
+  });
+
+  if (result.outcome === 'no-test-paths') {
+    throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
+  }
+  if (result.outcome !== 'completed') {
+    // `baseline-not-green`/`*-tool-error`: a genuine engine problem, never a binding verdict (never
+    // conflated with "every test is non-binding" — no `MutationEvidence` is written for any of these,
+    // matching `runBindingCheck`'s own doc comment: no evidence for a check that never completed).
+    const problem =
+      result.outcome === 'baseline-not-green'
+        ? `${String(result.failing.length)} test(s) already failing before any mutation: ${result.failing.join(', ')}.`
+        : result.message;
+    if (json) {
+      console.log(JSON.stringify({ v: 1, ok: false, problem }));
+    } else {
+      console.error(`forge test binding: ${problem}`);
+    }
+    return EXIT_CODES.failure;
+  }
+
+  const nonBinding = result.namedTests.filter((name) => !result.failedUnderMutation.includes(name));
+  const tests: readonly TestOutcomeEntry[] = result.namedTests.map((name) => ({
+    name,
+    binding: result.failedUnderMutation.includes(name),
+  }));
+  // `ok` folds two distinct failure causes into one boolean: a real non-binding test (`nonBinding.length
+  // > 0`) and a restore-verification failure (`restoreVerified === false` -- the lane's revert-then-
+  // restore round-trip, `specs/22` M15 P3, did not actually land the worktree back where it started).
+  // v1 deliberately does not give the second cause its own exit code or `ok`-adjacent field: a caller
+  // that cares must read `restoreVerified` directly out of the envelope below, which is always present
+  // for a `completed` result regardless of `ok`.
+  const ok = nonBinding.length === 0 && result.restoreVerified;
+
+  const written = await assembleAndWriteMutationEvidence({
+    paths,
+    reportsRoot: config.paths.reports,
+    storyId,
+    runId,
+    toolVersions: detectToolVersions(ecosystem),
+    result,
+    clock,
+  });
+
+  if (json) {
+    console.log(
+      JSON.stringify({
+        v: 1,
+        ok,
+        bound: result.failedUnderMutation,
+        nonBinding,
+        // Always `false` in v1: `PLAN-M15.md` splits the real exemption mechanism (F-TEST-8) into its
+        // own later piece (P6), which this piece does not implement. The field is emitted now, already
+        // `false`, so P6 only has to start setting it `true` under real conditions -- never add it as a
+        // new field callers must learn to check for.
+        exempt: false,
+        evidenceId: written.id,
+        restoreVerified: result.restoreVerified,
+        tests,
+      }),
+    );
+  } else {
+    console.log(
+      `forge test binding --story ${storyId}: bound=${String(result.failedUnderMutation.length)} ` +
+        `nonBinding=${String(nonBinding.length)} restoreVerified=${String(result.restoreVerified)} ` +
+        `evidence=${written.id}.`,
+    );
+    for (const name of nonBinding) console.error(`non-binding: ${name}`);
+  }
+  return ok ? EXIT_CODES.success : EXIT_CODES.failure;
 }
 
 const TEST_COVERAGE_RULE_IDS = ['acceptance-criteria', 'ratchet'] as const;
@@ -3927,6 +4088,11 @@ async function main(): Promise<number> {
       return 2;
     }
     return runTestFlakyCommand(paths, flags.json);
+  }
+  if (command === 'test' && sub === 'binding') {
+    const { values, positionals } = parseCommandFlags(rest, { '--story': true });
+    assertNoArgs(positionals);
+    return runTestBindingCommand(paths, projectRoot, values.get('--story'), flags.json);
   }
   // `test plan`/`test generate`/`test report` (`03` §3.2.5) — real, disclosed `USR-003` refusals
   // (`loop/test.ts`'s own doc comment: no real test-strategy-planning/generation/reporting mechanism

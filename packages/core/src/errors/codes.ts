@@ -555,7 +555,8 @@ export const ERROR_CODES = {
   // `writeFileAtomic`'s own unconditional `rename` would — distinct from `KB-009` (the identical
   // refusal for `kb/`-rooted entries specifically, which also offers "propose a change instead," a
   // path these append-only, non-KB types have no equivalent of). `PLAN-M15.md`'s own "takes
-  // `RUN-110`..`RUN-114`" budget (its only unassigned code at the time this piece claimed it).
+  // `RUN-110`..`RUN-114`" budget (confirmed by grepping this file directly, not merely assumed: no
+  // other code in that range existed anywhere yet when this piece claimed it).
   'RUN-114': {
     severity: 'error',
     exitCode: EXIT_CODES.usage,
@@ -563,6 +564,59 @@ export const ERROR_CODES = {
       `${show(d.path)} already exists: this artifact type is append-only and is never overwritten.`,
     remedy:
       'Write to a new, distinct path instead (a new id or timestamp) — never to an existing one.',
+  },
+  // `specs/22` M15 P4 (`PLAN-M15.md`'s own "takes `RUN-110`..`RUN-114`" budget): `forge test binding
+  // --story <id>` cannot resolve `<id>` to a real, valid Story under `docs/forge/specs/stories/` — one
+  // of three genuinely distinct real causes `reason` disambiguates: `'missing-flag'` (the flag was
+  // never given at all); `'not-found'` (no story document on disk names this id); `'invalid'` (a story
+  // document naming this id exists but fails `storySchema` for some unrelated field). A round-1
+  // gauntlet critic (M15 P4) found an earlier version of this code collapsed `'not-found'` and
+  // `'invalid'` into one identical message/remedy — factually wrong for `'invalid'` (the story *does*
+  // exist and *does* name itself correctly; the remedy "pass a real id" is useless when the id was
+  // already real) and silent about which field actually failed.
+  'RUN-110': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: {
+      storyId: string | undefined;
+      reason: 'missing-flag' | 'not-found' | 'invalid';
+    }) =>
+      d.reason === 'missing-flag'
+        ? 'forge test binding requires --story <id>.'
+        : d.reason === 'invalid'
+          ? `${show(d.storyId)} exists under docs/forge/specs/stories/ but its document does not validate as a Story.`
+          : `${show(d.storyId)} does not name a real story under docs/forge/specs/stories/.`,
+    remedy:
+      'Pass --story <id> naming a real Story under docs/forge/specs/stories/ whose document validates ' +
+      'against the Story schema (see `forge spec list`); if the story exists but was just flagged ' +
+      'invalid, fix the field(s) the schema rejects.',
+  },
+  // `specs/22` M15 P4: `forge test binding` has no real tests to run for the named story — one of
+  // three, genuinely distinct real causes `reason` disambiguates: `'no-test-paths'` (the story's own
+  // `files_expected` names no test-shaped path at all, `splitImplementationAndTestPaths`, `specs/22`
+  // M15 P3 — the identical refusal P3's own `runBindingCheck` already returns as a typed outcome,
+  // surfaced here as a real CLI refusal rather than silently reported as a passing, zero-test run);
+  // `'unknown-ecosystem'` (`detectEcosystem`, `packages/cli/src/commands/loop/test/ecosystem.ts`,
+  // found none of `package.json`/`pyproject.toml`/`pytest.ini`/`setup.cfg`); `'no-test-command'`
+  // (`execution.testCommands.unit` is unset in the project's own `.forge/config.yaml`). A round-1
+  // gauntlet critic (M15 P4) found an earlier version of this code shared one hardcoded "no
+  // test-shaped path" message across all three real causes, misreporting the other two.
+  'RUN-111': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: {
+      storyId: string;
+      reason: 'no-test-paths' | 'unknown-ecosystem' | 'no-test-command';
+    }) =>
+      d.reason === 'unknown-ecosystem'
+        ? `${show(d.storyId)}: could not detect a js/python test ecosystem (no package.json/pyproject.toml/pytest.ini/setup.cfg).`
+        : d.reason === 'no-test-command'
+          ? `${show(d.storyId)}: no execution.testCommands.unit is configured in .forge/config.yaml.`
+          : `${show(d.storyId)}'s own files_expected names no test-shaped path to check binding against.`,
+    remedy:
+      "Add at least one real test path to the story's own files_expected, or configure " +
+      'execution.testCommands.unit (forge config set execution.testCommands.unit "<command>") for a ' +
+      'project forge can detect as js or python, before running `forge test binding`.',
   },
   // `06` §6.2's own rule 5 (`PLAN-M5.md` P11's own `detectCycles`, operating on a compiled `StepNode[]`).
   // A lower-level utility, unlike `@forge/engine/plan`'s own `compilePlan`/`expandFanout` (which never
