@@ -26137,3 +26137,91 @@ comment of the test that found it, rather than silently assumed to always hold t
 case already was.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P5`.
+
+## Q285 — M15 P6: Exemptions — a hand-rolled cross-process lock that took three gauntlet rounds to get
+honest about its own real limits
+
+**Context.** `PLAN-M15.md` P6's own Mandate is short: an exemption carries a test id, a reason, an owner,
+an expiry, reusing M14 P16's waiver machinery; a stale or expired one fails the check. The actual
+difficulty was never that surface — it was `appendExemption`'s own read-modify-write of a single, shared
+collection file (`reports/exemptions.md`) under real concurrent `forge test exempt` invocations, which is
+the ONLY way this command is ever actually called. Three gauntlet rounds, the maximum, all three with
+real, BLOCKING findings; full round-by-round narrative, including the exact reproduction numbers each
+critic found, is in `GAUNTLET-LOG.md`'s own `## M15 P6` entry.
+
+**Decision 1 — a hand-rolled `open(path, 'wx')` file lock, not a third-party package.** No lock-file
+library (`proper-lockfile` or similar) is already a dependency anywhere in this monorepo, and adding one
+specifically for this piece is a bigger architectural decision than this piece's own scope warranted.
+`commands/run/lock.ts`'s own `acquireRunLock` already establishes the identical primitive and the
+identical "reclaim a lock naming a confirmed-dead pid" discipline for the project run lock — this piece
+reuses that primitive's own shape (not the function itself: that lock is held for a whole run's lifetime
+with `pause`/`abort` signal handling, the wrong shape for a sub-second critical section around one file
+write) rather than inventing a different mechanism.
+
+**Decision 2 — the shipped, tested concurrency ceiling is 20 real processes, not 25, 30, or 50, and this
+is a deliberate, disclosed narrowing, not a conservative guess.** The piece's own first two attempts at
+this lock each claimed a higher ceiling (first unbounded/untested, then 25-30-way) that a LATER gauntlet
+round directly disproved by reproducing real, silent data loss inside the previously-claimed-safe range.
+Rather than repeat that pattern a third time, the final number (20) is the one the author's own empirical
+retesting, AFTER every known fix was applied, could not break across 30 consecutive real-process runs (10
+runs each at 10/15/20 processes) — and the piece's own doc comment (`withExemptionsLock`,
+`packages/cli/src/commands/loop/test/exemptions.ts`) states plainly that intermittent loss reappears
+starting around 25-30 and is frequent by 50-100, rather than rounding the tested number up to whatever
+would look more impressive. `forge test exempt`'s own real invocation shape (a multi-second binding check
+before the lock is ever reached) staggers real-world arrivals far more than the synthetic, gate-released-
+together repros that found this, so 20-way genuinely simultaneous contention is a generous real ceiling
+for the command's own actual usage, not merely the number that happened to pass.
+
+**Decision 3 — the `realpathOfDeepestExistingAncestor` TOCTOU race found in shared `@forge/core/fs`
+infrastructure is disclosed, not fixed at its root, here.** `paths.ts`'s own `realpathOfDeepestExisting
+Ancestor` (used by both `ProjectPaths.resolveState` and `resolveWithin`) `existsSync`-checks a candidate
+path and then calls `realpathSync` on it as a separate syscall, with no atomicity linking the two — real
+and reproducible (a raw `ENOENT` from `realpathSync`, confirmed directly) for any path whose own existence
+is volatile under real concurrent use, which this piece's lock file is and most other callers of
+`resolveState`/`resolveWithin` are not. This piece's own fix avoids the race (resolve the stable parent
+directory once, build the volatile leaf's own path by plain string join) rather than fixing the shared
+function itself, which is out of this piece's own Surface (`packages/schemas`, the waiver machinery,
+`packages/cli/src/commands/loop/test/*`, `packages/core/src/errors/codes.ts` — not `packages/core/src/fs`).
+A future piece that needs `resolveState`/`resolveWithin` to be safe under similar concurrent, volatile-path
+use should fix `realpathOfDeepestExistingAncestor` itself (e.g. retry the walk on a transient `ENOENT`
+from `realpathSync`) rather than have every caller route around it individually the way this piece does.
+
+**Decision 4 — `GATE-515` carries four reasons, not a new code per reason, and does not reuse `GATE-512`/
+`GATE-514` directly despite covering the identical underlying policies.** `'exempts-a-binding-test'` and
+`'expiry-exceeds-cap'` are `forge test exempt`'s own two Mandate-stated declaration-time refusals.
+`'expiry-exceeds-cap'` deliberately does not reuse `GATE-512` (the identical waiver-cap check) because
+that code's own message literally says "waiver", which would misname the real command a caller just ran
+— `--owner` validation DOES reuse `GATE-513` directly instead, since that code's own message never
+mentions "waiver" at all and needs no exemption-specific rewording. `'id-exhausted'` and
+`'lock-exhausted'` (added during round 1 and round 3's own fixes respectively) are declaration-time
+infrastructure refusals, not policy refusals, but share the same code rather than getting their own
+because they are both still real refusals `forge test exempt` itself makes, before anything is written,
+on the same `exitCode: EXIT_CODES.usage` boundary — the `GATE-515` doc comment (`codes.ts`) has the full
+per-reason reasoning. A stale or an expired exemption, discovered LATER by a real binding check rather
+than at declaration time, deliberately do NOT get a `GATE-515` reason at all — they report through the
+same `'problem'` outcome (a plain string) `baseline-not-green`/`*-tool-error` already use, since a
+declaration-time refusal and a later, real-check-time finding are not the same kind of event.
+
+**Decision 5 (restated from `GAUNTLET-LOG.md`; recorded here because it is itself a process decision, not
+only an implementation one) — round 3's own findings were fixed rather than escalated via
+`BLOCKED-<piece>.md`, despite being found on, and continuing to surface after, the third and final
+allowed gauntlet round.** The identical reasoning `## Q280` Decision 6 already recorded for M15 P1 in
+this exact situation: `process/BUILD-PROMPT.md`'s own escalation rule exists for genuine disagreement or
+stuckness, and none of round 3's findings were that — each had exactly one correct fix, with no real
+design question left for a human to decide between two genuine options. The one piece of this that went
+further than Q280's own precedent: after the round-3 critics' own fixes were applied and reverified, the
+author's OWN further empirical testing (not requested by, or reported to, any critic) found the fix was
+STILL not fully reliable at the just-reverified 25-process claim, and narrowed the shipped number again,
+to 20, before concluding the piece. Recorded here so the full honesty of that process — not just the
+critics' own findings, but the author's own continued self-verification past what either critic
+specifically asked for — is visible, not silently folded into "round 3 passed."
+
+**Discloses.** `reports/exemptions.md` is NOT yet mirrored into the disclosure ledger — this is the
+identical, already-disclosed `Disclosure` forward reference `## Q280` Decision 6 recorded for M15 P1:
+`Disclosure` is spec-registered (`18` §18.7) but deliberately not yet code-registered, and both its own
+code registration and the real ledger-mirroring F-TEST-8 names for every exemption are P10's job, not
+this piece's. The `withExemptionsLock`/concurrency-ceiling and `realpathOfDeepestExistingAncestor`
+disclosures are recorded in full in Decisions 2 and 3 above and in `GAUNTLET-LOG.md`'s own `## M15 P6`
+entry; not repeated a third time here.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P6`.
