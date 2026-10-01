@@ -220,3 +220,96 @@ describe('pinned amended/added sentences (PLAN-M14.md P11)', () => {
     );
   });
 });
+
+/**
+ * `M15 P1` (`SPEC-QUESTIONS.md` Q280, `PLAN-M15.md` P1): behavioural binding, evidence resolution,
+ * and the two new `MutationEvidence`/`EvidenceBundle` registry rows — one pinned `it` per sentence
+ * this spec-only piece added or changed, the identical "delete an `it` individually once a later
+ * piece legitimately rewords its sentence again" contract the M14 P1 block above establishes. Added
+ * in response to a round-1 gauntlet critic finding (two independent critics): this piece originally
+ * shipped with no test anchoring any of its own new normative text at all, meaning a later piece
+ * could silently revert or reword any of it and `pnpm test` would stay green — precisely the
+ * "certifies diligence, not correctness" failure `PLAN-M15.md`'s own opening section exists to close,
+ * reproduced inside the milestone's own first piece. See `SPEC-QUESTIONS.md` Q280's round-1 record.
+ *
+ * @see specs/09 §9.5
+ * @see specs/10 §10.3
+ * @see specs/13 F-TEST-5
+ * @see specs/18 §18.7
+ * @see PLAN-M15.md P1
+ * @see SPEC-QUESTIONS.md Q280
+ */
+describe('pinned sentences (SPEC-QUESTIONS.md Q280, PLAN-M15.md P1) — delete an `it` individually once a later piece legitimately rewords its sentence again', () => {
+  it('09 §9.5: the binding rule is named nominal, distinct from behavioural binding', () => {
+    const spec09 = readSpec('09-spec-driven-development.md');
+    expect(spec09).toContain(
+      'This binding is **nominal**: it maps a result back to the AC id that names it',
+    );
+    expect(spec09).toContain('names that gap **behavioural binding** and closes it with a');
+  });
+
+  it('13 F-TEST-5: AC-binding is named nominal, not behavioural, and the two mutation strategies are named complementary, not duplicative', () => {
+    const spec13 = readSpec('13-frameworks-testing-and-debugging.md');
+    expect(spec13).toContain('is nominal, not behavioural, and this framework names the gap');
+    expect(spec13).toContain(
+      'The two are complementary, not duplicative: behavioural binding is coarse,',
+    );
+  });
+
+  it('10 §10.3: Gate rule 7 refuses evidence absence with no waiver path at all, distinct from rule 1', () => {
+    const spec10 = readSpec('10-workflow-engine-and-lifecycle.md');
+    expect(spec10).toContain(
+      'excuses a check that ran and genuinely failed, not proof that was never produced',
+    );
+  });
+
+  it('10 §10.3: the Evidence resolution rule states its own bar is existence, not an ongoing freshness guarantee', () => {
+    expect(readSpec('10-workflow-engine-and-lifecycle.md')).toContain(
+      'not an ongoing freshness guarantee against a later',
+    );
+  });
+
+  it('10 §10.3: the G-Verify catalogue row names non-behaviourally-bound tests as a failure mode', () => {
+    expect(readSpec('10-workflow-engine-and-lifecycle.md')).toContain(
+      'non-behaviourally-bound tests',
+    );
+  });
+
+  it('18 §18.7: MutationEvidence and EvidenceBundle are both registered', () => {
+    const spec18 = readSpec('18-persistence-config-and-schemas.md');
+    expect(spec18).toContain('id: MutationEvidence, idPrefix: MUT');
+    expect(spec18).toContain('id: EvidenceBundle, idPrefix: EVID');
+  });
+
+  it('18 §18.7: both new types are genuinely append-only (never edited, only superseded)', () => {
+    expect(readSpec('18-persistence-config-and-schemas.md')).toContain(
+      'Both are genuinely **append-only — never edited, only superseded**',
+    );
+  });
+
+  it('18 §18.7: "superseded" is correctly attributed to 08 §8.3/§8.4\'s real status:superseded convention, not 18 §18.8', () => {
+    expect(readSpec('18-persistence-config-and-schemas.md')).toContain(
+      "§8.3/§8.4's `status: superseded` convention",
+    );
+  });
+
+  it("18 §18.7: MutationEvidence's fields are decided here (per PLAN-M15.md P2's own complete Mandate), not deferred", () => {
+    expect(readSpec('18-persistence-config-and-schemas.md')).toContain(
+      "`MutationEvidence`'s own fields are decided here, not deferred, because `PLAN-M15.md`'s P2 Mandate",
+    );
+  });
+
+  it("13: F-TEST-8 establishes the exemption mechanism (round-3 critic finding: P1's own Mandate items (c)/(d) had been silently skipped)", () => {
+    const spec13 = readSpec('13-frameworks-testing-and-debugging.md');
+    expect(spec13).toContain('F-TEST-8 · Exempting a test from behavioural binding');
+    expect(spec13).toContain('**A stale exemption fails the check.**');
+    expect(spec13).toContain('**An expired exemption fails the check**');
+    expect(spec13).toContain('**Exempting a test that currently binds is refused.**');
+  });
+
+  it('18 §18.7: Disclosure is registered as the user-project analogue of SPEC-QUESTIONS.md (round-3 critic finding)', () => {
+    const spec18 = readSpec('18-persistence-config-and-schemas.md');
+    expect(spec18).toContain('id: Disclosure, idPrefix: DISC');
+    expect(spec18).toContain("is the user-project analogue of this very repository's own");
+  });
+});

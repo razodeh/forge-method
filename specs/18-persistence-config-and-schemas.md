@@ -287,10 +287,60 @@ types:
   - { id: GateReport, idPrefix: GATE, path: "reports/gates/{gate}-{ts}.md" }
   - { id: HandoffRecord, idPrefix: HO, path: "reports/handoffs.md",                 collection: true }
   - { id: ReviewReport, idPrefix: REVIEW, path: "sessions/reviews/{id}.md" }
+  - { id: MutationEvidence, idPrefix: MUT, path: "reports/mutation/{story}-{ts}.md", parent: Story }
+  - { id: EvidenceBundle, idPrefix: EVID, path: "reports/evidence/{id}-{story}.md", parent: Story }
+  - { id: Disclosure, idPrefix: DISC, path: "kb/disclosures.md", collection: true }
 ```
 
 Adding a type requires: registry entry, JSON Schema, template, graph edge declarations, and a
 migration if it changes an existing type. Modules may add types (`18` §19 covers packaging).
+
+`MutationEvidence` and `EvidenceBundle` were added post-v1.0 (`specs/22` M15), the same way
+`ReviewReport` was: a real capability (`13` F-TEST-5's behavioural binding, `10` §10.3's evidence
+resolution) that needed a committed, typed artifact and did not have one yet.
+
+Both are genuinely **append-only — never edited, only superseded** (`PLAN-M15.md` P2's own binding
+Mandate, mirroring the deprecate-not-delete discipline this registry already uses: an id, once
+allocated, is never reused or silently overwritten — `18` §18.8). Concretely, each is a NEW,
+distinctly-id'd file every time one is produced, never a rewrite of a prior one: `MutationEvidence`'s
+path (`reports/mutation/{story}-{ts}.md`, mirroring `GateReport`'s own `{gate}-{ts}` naming) makes
+every `forge test binding` run its own file; `EvidenceBundle`'s path
+(`reports/evidence/{id}-{story}.md`) carries its own real `EVID-####` id, so two assemblies for the
+same story — or two concurrent stories, `PLAN-M15.md` P7's own "Tests first" requirement — are two
+distinct files, never one file edited twice. "Superseded" means exactly what it means for an ADR
+(`08` §8.3/§8.4's `status: superseded` convention): an older instance stays on disk, readable, and a
+newer one exists; nothing here claims a bundle is a single revised document the way a Story is (an
+earlier draft of this entry wrongly claimed that — see `SPEC-QUESTIONS.md` Q280's round-2 record —
+and separately miscited `18` §18.8 as defining "superseded," which it does not; the real definition is
+`08`'s). The writer refuses an attempt to write to an already-existing path of either type
+(`PLAN-M15.md` P2's own "a bundle that edits an existing evidence record is refused" test) rather than
+relying on the naming scheme alone to make collision merely unlikely.
+
+`MutationEvidence`'s own fields are decided here, not deferred, because `PLAN-M15.md`'s P2 Mandate
+already decides them in full: the story/piece id, the mutation kind (`revert-implementation` in v1),
+the exact commit range or hunk set reverted, the named tests, which failed under mutation, the restore
+verification, tool versions, and a timestamp. `EvidenceBundle`'s own fields are genuinely deferred to
+`PLAN-M15.md` P7, which is where its real, detailed shape is decided (binding evidence, test results,
+coverage delta, every `ReviewReport` verdict, gate outcomes, exemptions in force, and real cost —
+Helix's "committed checkpoint with supporting evidence," `shopify.engineering/helix`, in FORGE's own
+vocabulary) — P2's own Mandate for `EvidenceBundle` is genuinely a placeholder ("references a set of
+evidence artifacts plus the gate they support"), unlike its complete `MutationEvidence` field list, so
+there is nothing to defer FROM for the one and nothing decided yet TO defer for the other; this
+asymmetry is in the Plan's own text, not invented here.
+
+`Disclosure` (`PLAN-M15.md` P10) is the user-project analogue of this very repository's own
+`SPEC-QUESTIONS.md`: every disclosed trade-off, known gap, exemption in force (`13` F-TEST-8), and
+unresolved finding from a bounded review loop that exhausted its rounds (`specs/22` M15 `PLAN-M15.md`
+P9 — that loop's own round-bounding is P9's to specify normatively when it is built, not asserted in
+advance here), with provenance and an owner, so a disclosure cannot quietly evaporate the way an
+undisclosed one already can today. Collection-shaped (`kb/disclosures.md`, `collection: true`) like `Risk`/`Assumption`/
+`OpenQuestion` before it — the identical "one growing file, entries appended, an id never reused"
+shape, not the per-instance file `MutationEvidence`/`EvidenceBundle` use above, because a disclosure is
+a running list a human reads start to finish (`forge kb`), not a thing a later step resolves by its own
+id alone. A disclosure is never deleted, only resolved with a reason (`PLAN-M15.md` P10's own Mandate)
+— the same deprecate-not-delete discipline `18` §18.8 already states for every id in this registry,
+applied here to resolution rather than deletion specifically because nothing in this registry's prior
+21 types needed a REASON recorded at the moment an entry stops being open, which `Disclosure` does.
 
 `ReviewReport` was added post-v1.0 (a real, previously-shipped gap, not part of the original 21):
 `10` §10.6's own canonical `implement-story` inner loop and `05` §5.2's `reviewer` agent persona both

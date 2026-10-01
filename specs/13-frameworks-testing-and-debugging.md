@@ -104,6 +104,22 @@ agents optimising for it.
   finding an agent can act on directly.
 - **AC coverage is the binding metric**, not line coverage: every AC of every `done` story has ≥1
   passing bound test (`09` §9.5). A story at 95% line coverage with an unbound AC still fails.
+- **AC-binding (`09` §9.5) is nominal, not behavioural, and this framework names the gap rather than
+  letting it pass unremarked.** A test satisfies §9.5 by being named and annotated with an AC id and
+  reported against it — nothing in that rule asks whether the test would fail if the behaviour it
+  names were removed. `test('AC-014-2 returns 422 for an empty invoice', () => expect(true).toBe(true))`
+  is AC-bound today. Closing this is **behavioural binding** (post-v1.0, `specs/22` M15): for a
+  completed unit of work, revert the implementation change and require its named tests to fail,
+  then restore and require them to pass again — the simplest possible mutation operator (the whole
+  change, reverted, rather than one operator applied to one line) chosen specifically because it is
+  cheap enough to run per story, at commit time, as a **gate-blocking** check (`test:binding`),
+  which this section's own nightly Stryker-class mutation testing is deliberately not (per-commit
+  mutation testing on every package would not fit inside `13.1`'s fast-feedback requirement,
+  F-TEST-7 point 6). The two are complementary, not duplicative: behavioural binding is coarse,
+  universal, and blocks a merge; nightly operator-level mutation testing on core domain packages is
+  precise, informational, and does not. Neither replaces AC-binding (`09` §9.5), which remains the
+  mechanism that maps a result back to a specific acceptance criterion at all; behavioural binding
+  only adds the question §9.5 never asks.
 
 ### F-TEST-6 · Flake control
 
@@ -136,6 +152,33 @@ The specific design requirements that let agents own testing:
    without a 10-minute cycle.
 6. **Fast feedback tier**: a `test:affected` command using the build system's dependency graph, so
    the inner loop stays under ~60 s.
+
+### F-TEST-8 · Exempting a test from behavioural binding (post-v1.0, `specs/22` M15)
+
+Not every test can be mutation-bound: a pure type-level assertion, an external-snapshot fixture a
+human already reviewed, and a timing or resource-exhaustion guard each have no implementation hunk
+whose revert would make them fail for the right reason. Behavioural binding (F-TEST-5) needs an escape
+hatch for these, shaped like F-TEST-6's own quarantine mechanism rather than invented fresh — an
+exemption is governance, not a free pass, and the framework says so the same way quarantine does:
+
+- An exemption names the test id, a reason in prose, an owner identifier, and an expiry — the
+  identical shape `10` §10.3 rule 1's waiver already carries (reason, owner, expiry), reused rather
+  than given a second one.
+- **A stale exemption fails the check.** An exemption that matches no currently non-binding test — the
+  test it names now passes behavioural binding on its own, or no longer exists — is itself a failure,
+  naming the stale exemption. Not a new invariant: FORGE's own build process already applies this exact
+  discipline to a structurally identical exemption list
+  (`test/brief-write-paths-in-claim.test.ts`'s own `EXEMPT` table, "known false positives... fail the
+  test when stale, so they cannot outlive their evidence"); behavioural binding's own exemptions follow
+  the same rule, not a new one invented for them.
+- **An expired exemption fails the check**, naming its own expiry and owner, the same way an expired
+  waiver already does.
+- **Exempting a test that currently binds is refused.** An exemption excuses a real gap; pre-emptively
+  exempting something that works is not disclosure, it is insurance against a future regression never
+  being caught, which this framework does not permit.
+- Every exemption is recorded in the project's disclosure ledger (`18` §18.7's `Disclosure` type)
+  automatically, so "we exempted it" is never invisible the way F-TEST-6's own quarantine is never
+  invisible ("quarantine is visible in every gate report").
 
 ---
 

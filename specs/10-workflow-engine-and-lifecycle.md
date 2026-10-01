@@ -266,6 +266,11 @@ onReject:
    stays the person's own word regardless), and evidence from a different run is never consulted.
    `forge gate check` shows the newest waiver on record. A gate document with an unknown key, or with no deterministic
    check, is a load error, never an empty gate that passes.
+7. (Post-v1.0, `specs/22` M15.) A gate whose declared `evidence:` does not resolve to a real,
+   committed artifact (the Evidence resolution paragraph below) cannot be approved, and — UNLIKE rule
+   1's failing deterministic check, which a valid waiver excuses — cannot be waived either: a waiver
+   excuses a check that ran and genuinely failed, not proof that was never produced. Both `forge gate
+   approve` and `forge gate waive` refuse with `RUN-112` when evidence does not resolve.
 
 **Check contract (normative; what a deterministic check must do to pass).** A check passes only if it shows
 success; anything the evaluator cannot read as success is a failure with a stated `reason`, and a failing check
@@ -285,6 +290,20 @@ can only be waived (rule 1):
 Every check's result records its stdout, its exit code and its stderr (stderr sanitised of secrets and control bytes,
 and capped) as the audit trail (rule 4); an approval or waiver event carries their digests.
 
+**Evidence resolution (normative, post-v1.0, `specs/22` M15).** A gate's `evidence:` list names
+artifact types an approval is supposed to rest on. Before M15 nothing checked that a listed type
+actually resolves to a real, committed artifact at approval time — a gate could declare
+`evidence: [{artifact: ArchitectureSpec}]` and approve against nothing, which is a verdict with no
+proof behind it, not a lighter-weight verdict. Both `forge gate approve` and `forge gate waive` now
+resolve every declared evidence reference to a real, committed artifact and refuse (`RUN-112`) when
+one is missing, with no waiver able to excuse the absence (Gate rule 7); the approval or waiver event
+records which artifacts it resolved against. Advisory checks stay evidence-free by design (rule 2):
+only deterministic checks and the approval/waiver they gate are bound. v1's bar is existence of a real
+artifact at the moment of approval or waiver, not an ongoing freshness guarantee against a later
+revision — whether an approval already made should be treated as invalidated once the evidence it
+rested on is later revised is a real, open question this rule does not answer, left to whichever
+future piece needs to.
+
 ### Gate catalogue
 
 | Gate | Fails on (deterministic examples) |
@@ -294,7 +313,7 @@ and capped) as the audit trail (rule 4); an approval or waiver event carries the
 | `G-Design` | Missing ADR coverage; undefined interface refs; KB contradiction; unmodelled NFR; missing or drifted required diagrams (C4 context/container, ER, sequence per cross-boundary flow) |
 | `G-Foundation` | Clean clone doesn't build; no reproducible install; CI skeleton absent; no test command; walking skeleton not deployed to a development environment |
 | `G-Ready` | DoR violations; story overlap in file claims; unbound ACs; oversized stories |
-| `G-Verify` | Failing tests; AC coverage < 100% for done stories; coverage below threshold; lint/typecheck |
+| `G-Verify` | Failing tests; AC coverage < 100% for done stories; coverage below threshold; lint/typecheck; non-behaviourally-bound tests (post-v1.0, `specs/22` M15, `13` F-TEST-5) |
 | `G-Stable` | Open Sev1/Sev2 defects; flaky tests above threshold; unresolved RCA |
 | `G-Integration` (L4) | Cross-service contract tests failing; version skew; migration order violations |
 | `G-Deliver` | Deploy dry-run fails; rollback untested; secrets unresolved; smoke tests fail in target env; deployment topology and pipeline diagrams missing or stale |

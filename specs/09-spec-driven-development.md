@@ -217,6 +217,12 @@ Acceptance criteria are written in a **structured Given/When/Then** with an expl
 This mapping is what makes "done" mean something. A story cannot reach `verified` while any of its
 ACs is `missing` or `failing`.
 
+This binding is **nominal**: it maps a result back to the AC id that names it, and no more. It does
+not establish that the test would fail if the behaviour the AC describes were removed — a test named
+`AC-014-2 …` and annotated `forge-ac: AC-014-2` satisfies every rule in this section while asserting
+nothing the AC requires. `13` F-TEST-5 names that gap **behavioural binding** and closes it with a
+real, gate-blocking check (post-v1.0, `specs/22` M15); this section is unchanged by it.
+
 ## 9.6 Specs for the system itself (technical specs)
 
 Not everything is a user story. FORGE has three technical spec artifacts:
