@@ -25995,3 +25995,54 @@ is a ceiling, not a requirement to always use every round, and manufacturing a t
 piece two independent, adversarial critics already found clean would not itself uncover anything real.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P3`.
+
+## Q283 — M15 P4: `forge test binding`, the stateless verb — wiring a pure computation into a real CLI
+refusal, exit code, and evidence record
+
+**Context.** `PLAN-M15.md` P4's own Mandate: `forge test binding --story <id> [--json]`, the CLI verb
+that wraps P3's `runBindingCheck`. P3 deliberately returns a structured result and writes nothing
+(`## Q282`'s own Decision 3); P4 is the first piece that turns that result into a real refusal, exit
+code, and `MutationEvidence` artifact a human or CI consumer actually sees. Three gauntlet rounds, the
+maximum — round 2 and round 3 both returned `MINOR_ISSUES`, never `CLEAN`, so the cap was reached rather
+than chosen; full narrative in `GAUNTLET-LOG.md`'s own `## M15 P4` entry.
+
+**Decision 1 — `RUN-110` gets the identical `reason`-discriminator shape `RUN-111` already uses, rather
+than a single collapsed message.** A round-1 critic reproduced live that collapsing "no story with this
+id exists" and "a story document naming this id exists but fails `storySchema`" into one message is not
+merely imprecise but actively wrong for the second case (the id genuinely was real; the remedy "pass a
+real id" is useless). Decided: every multi-cause refusal this piece introduces gets a real `reason`
+field with a distinct message per cause, the same discipline `RUN-111`'s own pre-critic self-fix already
+established — not a one-off fix local to `RUN-110`, but the pattern this piece now applies consistently
+across both its own codes.
+
+**Decision 2 — the dirty-working-tree refusal needed no new error code at all.** `runTestBindingCommand`
+calls the existing `assertCleanWorkingTree` (`@forge/vcs`) as its literal first statement; a thrown
+`VcsError` propagates untouched through `bin.ts`'s own top-level catch (`refusalOf`/
+`refusalFromVcsError`, `packages/cli/src/commands/run/vcs-refusal.ts`), which already maps
+`VCS-DIRTY-TREE` to the registered `VCS-010` code and exit 5. This is the same "any command gets this
+refusal for free by simply throwing" guarantee `PLAN-M13.md` P12/P21 already built; P4 needed zero new
+code to get a correct, consistent dirty-tree refusal, only to call the existing primitive before any
+other work.
+
+**Decision 3 — a `MutationEvidence` record is written for every `'completed'` check, success or
+non-binding alike; never for a check that did not complete.** A non-binding verdict is itself a real,
+useful record (the whole point of `F-TEST-8`'s eventual exemption workflow, `PLAN-M15.md` P6, is
+deciding what to do about a logged non-binding test) — it is written regardless of the final `ok`
+boolean. A check that never reached `'completed'` (`'no-test-paths'`, `'baseline-not-green'`, any
+`*-tool-error`) has nothing real to record and gets no evidence at all, consistent with `binding-
+evidence.ts`'s own doc comment and `runBindingCheck`'s (`## Q282`'s own scope boundary, one level up).
+
+**Decision 4 — `exempt: false` is a disclosed, always-false v1 placeholder, not a forgotten computation.**
+`PLAN-M15.md` splits the real exemption mechanism (`F-TEST-8`) into its own later piece, P6, which this
+piece does not implement. The field ships now, already `false`, specifically so P6 only has to start
+setting it `true` under real conditions — never introduce it as a new field a caller must learn to check
+for. A round-1 critic found this undocumented; now commented at the point it is set.
+
+**Decision 5 — `baseRevision: 'HEAD~1'` and `integrationBase: 'HEAD'` are hardcoded, with no CLI flag to
+override either.** `PLAN-M15.md` P3's own research (`## Q282`) found no existing project convention for
+"the commit before this story's implementation landed," and this Mandate's own CLI signature takes no
+such flag. Correct for the common case of one story landing as one commit; not for a story whose
+implementation spans several commits. Disclosed in `runTestBindingCommand`'s own doc comment as a known
+v1 limitation, not silently assumed to always hold.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P4`.

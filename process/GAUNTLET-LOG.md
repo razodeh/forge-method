@@ -19480,3 +19480,128 @@ evidence; the restore-skip and main-repo-instead-of-worktree self-tests (`PLAN-M
 Mutation evidence line) both reverted and reconfirmed to fail the correct, specific assertion.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q282`.
+
+## M15 P4 — `forge test binding --story <id> [--json]`: the stateless verb
+
+Three full gauntlet rounds, the maximum. Round 1 caught a genuinely misleading error message plus
+three real documentation/test-coverage gaps. Round 2, re-verifying round 1's fixes, confirmed them all
+correct and caught one further coverage gap of the identical shape. Round 3, the final allowed round,
+again confirmed everything prior genuine and caught two more coverage gaps — neither round ever found a
+live defect in the shipped behavior, every finding across all three rounds was real and fixed, and none
+rose to a design dispute requiring `BLOCKED-P4.md`.
+
+**What the piece builds.** `runTestBindingCommand` (`packages/cli/src/bin.ts`): resolves `--story` to a
+real, schema-valid Story, refuses a dirty working tree before any git work (`assertCleanWorkingTree`,
+the existing `VCS-010` pipeline, no new refusal code needed), runs `PLAN-M15.md` P3's own
+`runBindingCheck`, and — only on a genuinely completed check — assembles and writes a real
+`MutationEvidence` record (`binding-evidence.ts`'s new `assembleAndWriteMutationEvidence`, mirroring the
+existing `writeGateReportFile` pattern: id via the shared allocator, `renderArtifactPath`,
+`documentProblems` self-check, `writeNewFileAtomic` for the append-only guarantee P2 built). Two new
+error codes close `PLAN-M15.md`'s own `RUN-110`..`RUN-114` budget: `RUN-110` (cannot resolve `--story`
+to a real, valid Story) and `RUN-111` (the resolved story has nothing real to check binding against).
+
+**Self-found, pre-critic bug.** Manual smoke-testing (before any critic ran) found `RUN-111` sharing one
+hardcoded "no test-shaped path" message across three genuinely distinct causes (no test paths declared,
+an undetectable test ecosystem, no configured test command) — a scratch project with no `package.json`
+hit the ecosystem-detection cause but was told its `files_expected` was the problem. Fixed before round
+1 by adding a `reason` discriminator with three distinct messages — the identical shape round 1 then
+independently found was still missing from `RUN-110` (see below).
+
+**Critic round 1 (two independent, fresh-context critics): one major, four minor — all real, all
+fixed.**
+
+- **Major, reproduced live by one critic against a real fixture:** `RUN-110` collapsed two genuinely
+  different causes — "no story with this id exists at all" and "a story document naming this id exists
+  but fails `storySchema` for an unrelated field" — into one identical, misleading message and remedy
+  ("<id> does not name a real story... pass --story <id> naming a real, existing Story"), factually
+  wrong for the second case (the id *was* real) and silent about which field actually failed. Fixed the
+  same way `RUN-111` already had been: a `reason: 'missing-flag' | 'not-found' | 'invalid'`
+  discriminator, wired through three separate checks in `runTestBindingCommand` instead of one collapsed
+  `storyDoc && storySchema.safeParse(...)` ternary. Mutation-verified: reverted to the collapsed check,
+  confirmed the new regression test failed with the exact wrong, misleading message, restored.
+
+- **Minor, reproduced independently and identically by both critics:** `assembleAndWriteMutationEvidence`
+  ran a second, explicit `mutationEvidenceSchema.safeParse(frontMatter)` call after `documentProblems`,
+  under a doc comment claiming `documentProblems` only checks structural shape, not field-level rules
+  like "`failedUnderMutation` is a subset of `namedTests`." Both critics traced `documentProblems` ->
+  `validateArtifact` -> `DEFAULT_ARTIFACT_REGISTRY['MutationEvidence']` and found it is the literal same
+  `mutationEvidenceSchema` object, `superRefine` subset check included — the comment's architectural
+  claim was false, and the second check was genuinely dead, redundant validation. Fixed by removing the
+  redundant check and its now-unused import, and rewriting the comment to state the true architecture
+  (one check, not two, is the real, whole check).
+
+- **Minor, both critics:** `exempt: false` in the `--json` envelope, and folding `restoreVerified ===
+  false` into the identical `ok: false`/exit-1 path as a real non-binding test, were both undocumented —
+  a future reader had no way to tell a disclosed `P6`-deferred placeholder from an oversight, or to know
+  a restore failure and a real non-binding verdict are deliberately indistinguishable by exit code today.
+  Fixed with explanatory comments at both sites.
+
+- **Minor, both critics:** the dirty-working-tree test's own name and comment claimed to prove the
+  refusal happens "before any lane/revert/test machinery," but its assertions (exit code, error code,
+  absence of `MUT-` in stdout) would not actually catch a regression that created and tore down a lane
+  worktree before the refusal fired. Strengthened with a direct check that the real lane worktree
+  directory (`.forge/state/worktrees`, `packages/vcs/src/lanes.ts`) never gets created at all — a
+  `readdir` that must reject `ENOENT`.
+
+- **Minor, critic-b only:** `RUN-111`'s `'unknown-ecosystem'` and `'no-test-command'` reasons (the
+  pre-critic self-fix above) had zero test coverage — only `'no-test-paths'` was exercised. Added two
+  real-subprocess tests, one per reason, each asserting the distinct real message text.
+
+**Critic round 2 (two independent, fresh-context critics, explicitly re-verifying round 1's fixes): both
+confirmed all five fixes genuine and correct, and converged on one further minor finding.** One critic
+independently re-traced `documentProblems` -> `validateArtifact` -> the registry to confirm the
+corrected comment is now factually true, not just reworded. Both: `runTestBindingCommand`'s own
+non-`'completed'` outcome mapping (the `result.outcome === 'baseline-not-green' ? ... : result.message`
+ternary, covering `baseline-not-green` and the three `*-tool-error` variants) had zero CLI-level test
+coverage — only P3's own `runBindingCheck` unit tests exercised those outcomes, never the real spawned
+`forge` binary's exit code/JSON shape for them. Both confirmed, by manually driving the real binary
+against a real fixture whose own test already failed before any mutation, that the shipped code is
+already correct — a pure coverage gap, not a live bug. Fixed with two new real-subprocess tests:
+`baseline-not-green` (a story whose test body is written to fail outright) and the ternary's `else`
+branch (a `testCommands.unit` value containing shell chaining, which `shell-safety.ts`'s own
+`containsShellChaining` deterministically refuses as a tool-error before ever invoking a test runner —
+chosen specifically because it is deterministic, never flaky, unlike an actually-broken command's own
+exit code). Both mutation-verified: each half of the ternary replaced with a sentinel string in turn,
+confirming only the matching new test fails, then restored.
+
+**Critic round 3 (final, the maximum — two independent, fresh-context critics): both again confirmed
+every prior round's fix intact, and converged on two further minor coverage gaps.** Neither critic found
+any residual trace of any round-1 or round-2 finding. New: (1) the `--json` envelope's `tests` field
+(`{name, binding}` per named test) was emitted but asserted nowhere — one critic proved this by flipping
+the `binding` computation to its exact logical opposite (`!result.failedUnderMutation.includes(name)`)
+and running the real suite twice, both runs 12/12 green with the inverted logic in place; (2) every one
+of the suite's real-subprocess tests passed `--json`, leaving the entire human-readable output path (the
+success summary line, the per-test `non-binding: <name>` stderr lines, the plain-text early-failure
+line) with zero coverage — both critics independently found this, one citing the sibling `forge story
+verify` command's own existing non-`--json` test (`bin-story-verify.test.ts`) as the repo's own
+precedent for covering this exact shape. Fixed: `tests` field assertions added to both existing
+`--json` tests (the genuinely-binding case and the non-binding case); two new plain-text tests added
+(the success summary line; the non-binding summary plus per-test stderr lines). Both mutation-verified:
+the `tests` field's `binding` computation flipped and confirmed both JSON tests now fail with the exact
+wrong array; the plain-text non-binding stderr line's format string replaced with a sentinel and
+confirmed only the new plain-text test fails, the `--json` tests entirely unaffected (proving they never
+exercised that branch) — both restored.
+
+**Why three rounds, not two.** Unlike `## M15 P3` (two rounds, round 2 clean from both critics), round
+2 here returned `MINOR_ISSUES` from both critics, not `CLEAN` — the process's own 3-round cap is a
+ceiling, and round 3 was run because round 2 was not yet clean, not merely because a round remained
+available. Round 3 itself also returned `MINOR_ISSUES` from both critics (never `BLOCKING` or
+disagreement between critics at any round), so with the cap reached, the real, fixable findings were
+fixed and the piece finalized rather than looping a fourth time — no genuine design dispute ever
+surfaced at any round that would have warranted `BLOCKED-P4.md` instead.
+
+**Not independently mutation-verified:** the strengthened dirty-tree test's own `readdir(...
+'worktrees')` assertion (round 1) was added and confirmed to pass against the real, correct code, but —
+unlike every other fix above — was not separately proven to fail against a reordered
+`assertCleanWorkingTree` by actually restructuring `runTestBindingCommand`'s own call order, since doing
+so safely would have required a more invasive, verification-only change to otherwise-finished code.
+Disclosed rather than silently left unqualified alongside the fixes that were mutation-verified.
+
+**Verification.** `pnpm typecheck` (21/21) and `pnpm lint` (eslint + prettier) clean on the final,
+round-3-complete state. `packages/cli/test/commands/loop/test/` (18 files, 207 tests, including this
+piece's own `bin-binding.test.ts` grown from 7 to 14 and `binding-evidence.test.ts`'s 4) all pass. The
+full, pre-existing `packages/cli/test/bin.test.ts` suite (177 real-subprocess tests, confirming the
+extensive `bin.ts` edits introduced no regression anywhere else in the CLI) run twice — once after round
+1's fixes, once after round 3's — both 177/177.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q283`.
