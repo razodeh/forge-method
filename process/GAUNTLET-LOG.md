@@ -19605,3 +19605,142 @@ extensive `bin.ts` edits introduced no regression anywhere else in the CLI) run 
 1's fixes, once after round 3's — both 177/177.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q283`.
+
+## M15 P5 — `test:binding` becomes a deterministic check on `G-Verify`
+
+Three full gauntlet rounds, the maximum, and all three returned real findings — round 1 and round 2 both
+came back BLOCKING, round 3 (the final allowed round) still found two more real things. This is the
+piece that makes the milestone's own opening argument real: from here, a story whose tests do not bind
+cannot pass `G-Verify`.
+
+**What the piece builds.** A new deterministic check, `test:binding` (`run: 'forge test binding --json'`,
+`parser: forge-json`), added to the real, shipped `G-Verify.gate.yaml`, placed after `test:run` and
+before `story:ac-coverage` (priority ordering, never enforced execution order — `evaluateGate` runs every
+deterministic check concurrently). `forge test binding`'s own `--story` flag (M15 P4) becomes OPTIONAL:
+given, the single-story behavior is unchanged; omitted, a new discover mode scans every Story with
+`status: done` (`loadDoneStories`, moved out of `coverage.ts` into `shared.ts` and exported, the identical
+scope `story:ac-coverage` already established, not a second, independently-written copy) and runs the
+binding check for each concurrently, aggregating `bound`/`nonBinding`/`evidenceIds`/`problems` with
+story-id prefixes. `forge story verify` gets the identical mechanism natively: `checkBinding`
+(`packages/cli/src/commands/story.ts`) calls `runBindingCheck` in-process, scoped to the one story being
+verified, writing no `MutationEvidence` (a disclosed asymmetry — fast local feedback, never a permanent
+record for an exploratory run).
+
+**Critic round 1 (two independent, fresh-context critics): both BLOCKING, converging on the same root
+bug, plus one more real regression and one real MAJOR gap.** The shipped `failOn: 'length(nonBinding) >
+0'` read only the `nonBinding` array — never `restoreVerified` or the discover-mode `problems` array,
+both of which the command's own envelope already computed specifically to mean "this check did not reach
+a trustworthy verdict." A baseline-not-green story, a tool-error, or a failed restore-verification all
+silently passed the real `G-Verify` gate; both critics reproduced this live against the real
+`evaluateGate` and the real, shipped gate YAML. Also found: a real regression in a pre-existing,
+untouched file, `packages/cli/test/commands/gate-family-coverage.test.ts` (derives every `forge
+doctor`/`kb lint`/`test` command line from the shipped gate YAMLs; the new line satisfied neither of its
+two accepted shapes); a MAJOR gap in `checkBinding` (no dirty-working-tree guard, unlike `forge test
+binding`'s own CLI verb — `runBindingCheck`'s scratch lane is built from committed `HEAD`, so an
+uncommitted edit was silently invisible, giving a stale verdict); two MINOR coverage gaps (no
+multi-story discover-mode test; three of `checkBinding`'s seven outcome branches untested).
+
+**The round-1 fix.** `length(nonBinding) > 0` became `incomplete > 0`, a new, comprehensive NUMBER field
+(`nonBinding.length` + 1-if-`restoreVerified`-is-false + the discover-mode `problems.length`) — matching
+this check family's own established convention (`test:run`'s `failed`, `test:quarantine-cap`'s
+`quarantined`: one bare numeric field per check) and closing the real bug in one fix, not a patch.
+`gate-family-coverage.test.ts`'s own `PINNED_REJECTED` map got `'forge test binding --json'` added, which
+required `RUN-111`'s own message text (`packages/core/src/errors/codes.ts`) to be reworded to include the
+phrase "needs a real ..." — the literal substring that file's own detection mechanism reads — while
+preserving every substring M15 P4's own existing tests already asserted on. `checkBinding` got a
+`getDirtyFiles`-based guard (`unverifiable`, never a silent stale pass, deliberately NOT
+`assertCleanWorkingTree`, which would make `forge story verify` refuse on almost every ordinary,
+mid-iteration invocation). A real two-story discover-mode test was added, built by hand rather than by
+stacking a second story's commit on an existing single-story fixture — doing the latter would have
+silently broken the FIRST story's own `HEAD~1` resolution, since `baseRevision: 'HEAD~1'` is resolved
+against the real, shared git history, not per story (see Decision 6 below). Two of `checkBinding`'s three
+untested branches got tests.
+
+**Critic round 2 (two independent, fresh-context critics): both BLOCKING AGAIN — two more real
+regressions, the identical class of bug round 1 had already found once.** `packages/cli/test/commands/
+gate-fail-closed.test.ts` has its OWN, separate `PINNED_REJECTED` map (distinct from the one round 1
+fixed), covering every deterministic check across every shipped gate and module check file — still
+empty, so its own "the CLI rejects exactly the pinned lines" assertion failed for real. `test/
+gates.test.ts`'s own canonical `PASSING_OUTPUT`/`FAILING_OUTPUT` envelopes — used by an `it.each`
+round-trip test proving "every check scripted to pass → the WHOLE gate passes," for all 10 shipped gates,
+not `G-Verify`-specific — never got an `incomplete` field, so `evaluateGate`'s own fail-closed logic made
+every single shipped gate report `passed: false` even when every check was individually "passing." Also
+found: a stale, disconnected test in `gate-integration.test.ts` still hardcoding the pre-round-1
+`'length(nonBinding) > 0'` string, testing nothing real; and, via a real (non-mocked) repro the critic
+built and ran, that `checkBinding`'s previously-untested `restoreVerified === false` branch IS cheaply
+testable after all — a `.gitignore`'d counter file survives `resetLaneWorktree`'s own `git reset --hard`
++ `git clean -fd` (`clean -fd`, no `-x`, skips gitignored paths), so a test asserting its own invocation
+count stays below 2 passes on the baseline and mutated runs but fails on the third, restore-verification
+run.
+
+**The round-2 fix.** `gate-fail-closed.test.ts`'s own `PINNED_REJECTED` got the identical entry and
+reasoning. `test/gates.test.ts`'s `PASSING_OUTPUT` got `incomplete: 0`, `FAILING_OUTPUT` got
+`incomplete: 1`. `gate-integration.test.ts`'s stale test was rewritten to read the real `failOn` text
+directly off the real, shipped YAML (`loadRealGVerify()`) and assert it equals `'incomplete > 0'`. The
+critic's own verified `.gitignore`-sentinel technique now exercises `checkBinding`'s `restoreVerified ===
+false` branch for real, with zero mocking, in `story-binding.test.ts`. A broad, deliberate sweep
+afterward (`gate-p26-coverage.test.ts`, `spec/gate-rule-coverage.test.ts` — both run and confirmed
+genuinely unaffected by construction, their own `FAMILY` filters never matching `forge test binding`)
+found no further sibling at that point — round 3 found one more anyway (below).
+
+**Critic round 3 (final, the maximum — two independent, fresh-context critics): MINOR_ISSUES and
+BLOCKING — a fourth sibling regression, plus a real MAJOR gap in the round's own headline fix.** One
+critic found `packages/templates/templates/briefs/critique-verification.md` (the advisory `G-Verify`
+reviewer's own brief) — never touched by this piece, derived from the real `G-Verify.gate.yaml` via
+`GATE_INDEX` by a pre-existing test (`packages/agents/test/prompt/briefs-ops-gates-content.test.ts`) —
+still listed only the pre-`test:binding` "Already checked mechanically" set, a real, reproduced test
+failure, the fourth sibling of this exact class across three rounds. The other critic found something
+sharper: the `incomplete` field's own `restoreVerified` contribution — the entire headline fix of round
+1 — had NO test anywhere exercising it through `bin.ts`'s real CLI/gate path. Every existing
+`restoreVerified: false` test exercised `checkBinding` (`forge story verify`'s own, structurally separate
+function, with its own early-return branch), never `runSingleStoryBindingCommand`/
+`runDiscoverModeBindingCommand`. The critic proved this by mutating both lines to drop
+`restoreVerified`'s contribution entirely: the full, relevant suite (77 tests, 4 files) stayed green.
+
+**The round-3 fix.** The brief's "Already checked mechanically" paragraph now names `test:binding`
+alongside its sibling checks, with a short explanation of what it does and does not prove (it cannot
+tell whether a bound test asserts what the criterion specifically says, only that some real failure
+occurs under a full revert — VR2 remains the advisory reviewer's own job, now informed by, not replaced
+by, the mechanical check). Two new tests, one per uncovered line, reuse the identical `.gitignore`-
+sentinel technique round 2's own critic validated — adapted with one real correction found while building
+them: `./impl.js` must be a DYNAMIC import inside the test body, never a static top-level one, or the
+mutated run's own module-load failure (the implementation genuinely missing) skips the sentinel write for
+that entire invocation, silently shrinking three real invocations down to two and making the whole
+mechanism never trip (confirmed directly: with a static import, the restore run only ever saw `count=1`,
+never `2`, and never failed). Both new tests — one exercising `runSingleStoryBindingCommand` through the
+real CLI (`bin-binding.test.ts`), one exercising `runDiscoverModeBindingCommand` through the real
+`evaluateGate` + the real, shipped `G-Verify.gate.yaml` (`gate-integration.test.ts`) — construct a single
+test that is BOTH genuinely binding (fails under a real implementation revert, keeping `nonBinding`
+empty) AND independently fails its own third invocation via the sentinel, cleanly isolating
+`restoreVerified`'s own contribution to `incomplete` from `nonBinding`'s. Both mutation-verified:
+`restoreVerified`'s contribution to `incomplete` dropped to 0 in turn on each of the two lines, each
+new test caught it, both restored.
+
+**Not re-escalated to a fourth round.** `process/BUILD-PROMPT.md`'s own 3-round cap is a hard ceiling,
+not merely a default: round 3's own two findings were fixed and mutation-verified the same way every
+prior finding across all three rounds was, and neither was a genuine, unresolvable design dispute that
+would have warranted `BLOCKED-P5.md` instead — both were real, fixable gaps, the fourth and fifth
+instances respectively of two already-understood classes of bug (a missed sibling cross-cutting test; an
+undertested branch of new code), not a new, deeper problem the cap was reached without resolving.
+
+**Not independently mutation-verified:** `checkBinding`'s own generic `'could not run: <message>'`
+fallback branch (for a `runBindingCheck` outcome that is neither `no-test-paths`, `baseline-not-green`,
+nor `completed` — i.e. `mutated-tool-error`/`restore-verification-tool-error`) remains untested, flagged
+by round 1 and reconfirmed still real but non-blocking by round 3 — a disclosed, accepted gap, not an
+oversight.
+
+**Verification.** `pnpm typecheck` (21/21) and `pnpm lint` (eslint + prettier) clean on the final,
+round-3-complete state. The full set of directly affected test files (28 files, 481 tests — every
+`loop/test/` file, `story.test.ts`, `story-binding.test.ts`, `shared.test.ts`,
+`gate-family-coverage.test.ts`, `gate-fail-closed.test.ts`, `gate-p26-coverage.test.ts`,
+`spec/gate-rule-coverage.test.ts`, `greenfield-fixture-generated.test.ts`, `gates.test.ts`,
+`briefs-ops-gates-content.test.ts`) all pass together, not merely file-by-file. The full, pre-existing
+`packages/cli/test/bin.test.ts` suite (177 real-subprocess tests) run three times across the three
+rounds, 177/177 each time. The shipped fixture (`fixtures/greenfield-service/.forge/`) regenerated twice
+(once for the `G-Verify.gate.yaml` check/`failOn` changes, once for the brief content change) via a real
+`forge init <dir> --yes` re-init against a scratch copy of the fixture's own existing config, with only
+the genuinely-changed files copied back — the fixture's own pre-existing, unrelated drift in other
+generated files (briefs/templates/workflows, confirmed present before this piece touched anything)
+deliberately left untouched.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q284`.

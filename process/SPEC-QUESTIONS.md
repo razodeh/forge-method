@@ -26046,3 +26046,94 @@ implementation spans several commits. Disclosed in `runTestBindingCommand`'s own
 v1 limitation, not silently assumed to always hold.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P4`.
+
+## Q284 — M15 P5: `test:binding` on `G-Verify` — discover mode, a failOn that had to earn its own
+numeric field twice, and a real limit on `baseRevision: 'HEAD~1'` this piece's own build uncovered
+
+**Context.** `PLAN-M15.md` P5's own Mandate gives the literal check YAML to add to `G-Verify.gate.yaml`,
+including `failOn: 'nonBinding > 0'`. Neither the literal text nor the obvious first fix survived contact
+with the real, already-shipped machinery this piece wires into — `evaluateGate`'s own fail-closed
+expression language, and three separate, pre-existing, cross-cutting tests that each independently derive
+facts from the real shipped gate YAMLs. Three gauntlet rounds, the maximum, all three with real findings;
+full round-by-round narrative in `GAUNTLET-LOG.md`'s own `## M15 P5` entry.
+
+**Decision 1 — `failOn` is `'incomplete > 0'`, not `'nonBinding > 0'` (the Mandate's literal text) and
+not `'length(nonBinding) > 0'` (this piece's own first attempt).** The Mandate's own literal expression
+compares a STRING ARRAY (`nonBinding`) to a number, which `evaluateGate`'s own expression language
+(`packages/engine/src/expr`) cannot order — it would have evaluated to `false` regardless of how many
+non-binding tests existed, never failing the gate at all. The first real fix, `length(nonBinding) > 0`
+(the expression language's own `length(...)` function, built for exactly this), was itself a real bug a
+round-1 critic reproduced live: it reads only `nonBinding`, never `restoreVerified` or the discover-mode
+`problems` array, both of which the command's own envelope already computes specifically to mean "this
+check did not reach a trustworthy verdict" — a baseline-not-green story or a failed restore-verification
+silently passed the real gate. The actual fix is a new, comprehensive NUMBER field, `incomplete`
+(`nonBinding.length` + 1-if-`restoreVerified`-is-false + the discover-mode `problems.length`), matching
+this check family's own established convention of one bare numeric field per check (`test:run`'s
+`failed`, `test:quarantine-cap`'s `quarantined`) rather than inventing a second shape.
+
+**Decision 2 — `--story` becomes optional on `forge test binding`; omitted means discover every `done`
+story, not a usage error.** `G-Verify` is evaluated once per STAGE, over a branch that can hold many
+stories at once (`build-stage.workflow.yaml`'s own `verify` step has no `itemKey`, unlike every per-story
+step above it) — there is no single "current story" the gate's own `run: 'forge test binding --json'`
+line could mean. The precedent already existed: `story:ac-coverage` (`forge test coverage --rule
+acceptance-criteria --json`) already takes no `--story` and scans every `done` story
+(`loadDoneStories`) — M15 P5 moved that scan out of `coverage.ts` into `shared.ts`, exported, rather than
+writing a second, independently-maintained copy (the identical lesson M15 P3's own `existsAtRevision`
+consolidation already paid down once this milestone). `RUN-110`'s own `'missing-flag'` reason, real in
+M15 P4, became genuinely dead code once omission stopped being an error — removed, not left unreachable.
+
+**Decision 3 — `forge story verify`'s own `test:binding` branch (`checkBinding`) calls `runBindingCheck`
+natively, in-process, and writes no `MutationEvidence`.** Every other check in that dispatcher
+(`runLayer`/`runRule`/`checkAcCoverage`) answers natively rather than shelling out to `forge`, and
+`forge story verify`'s own existing discipline (`runLayer`'s `persistState: false`) is "fast, local,
+iterative feedback, no permanent side effect." A real mutation check — a scratch worktree plus three full
+test passes — is the single most expensive thing this command can run; writing a permanent evidence
+record on every exploratory run a developer makes while iterating would pollute `docs/forge/reports/
+mutation/` with throwaway records nothing is meant to read. The real, permanent evidence is written when
+`forge test binding` itself runs for real — standalone, or as `G-Verify`'s own gate check.
+
+**Decision 4 — `checkBinding` refuses as `unverifiable` on a dirty working tree, deliberately NOT the
+hard `assertCleanWorkingTree` refusal `forge test binding`'s own CLI verb uses.** A round-1 critic
+reproduced live that, without any guard at all, an uncommitted edit was silently invisible (`runBindingCheck`'s
+scratch lane is built from committed `HEAD`), giving a stale verdict about already-committed code. A hard
+refusal would be wrong here specifically: `forge story verify` runs mid-iteration, before a commit, as a
+matter of course — refusing outright on almost every ordinary invocation would make the check nearly
+useless for its real job. `getDirtyFiles` (a real, non-throwing predicate, `@forge/vcs`) reports the
+condition; `checkBinding` turns it into the identical "cannot give a trustworthy answer" `unverifiable`
+status every other such case in that function already uses.
+
+**Decision 5 — `RUN-111`'s own message text was reworded to literally include "needs a real ..." —
+a genuine rewording, not a contrived one to satisfy a test.** Two separate, pre-existing, cross-cutting
+tests (`gate-family-coverage.test.ts`, `gate-fail-closed.test.ts`) each derive every `forge doctor`/
+`kb lint`/`test`/module command line a shipped gate names and require each to either print a real
+envelope on a bare project or be a recognizable, pinned "needs a real X" usage rejection — the literal
+substring their own detection mechanism reads. `forge test binding --json` on either file's own
+deliberately bare fixture (no `package.json` at all) always hits `RUN-111` (`unknown-ecosystem`), and
+`RUN-111` genuinely IS "the command needs something it was never given," the identical shape every other
+`needs a real X` refusal in this codebase already names (a missing required flag, here a missing
+detectable ecosystem or configured test command) — not a different kind of refusal being disguised to
+pass a test. Both files' own `PINNED_REJECTED` maps now carry `'forge test binding --json'`, each with a
+comment distinguishing this reason ("always refused on this fixture, by design, not yet wired") from
+every other hypothetical entry those maps were built for ("a future piece will wire this").
+
+**Decision 6 — a real, disclosed limitation surfaced only by actually building the multi-story discover-
+mode test: `baseRevision: 'HEAD~1'` is resolved against the real, SHARED git history, not per story.**
+M15 P3/P4 already disclosed `HEAD~1` as a v1 simplification for a single story whose own implementation
+spans several commits. Discover mode exposes a second, broader version of the identical limitation:
+`runOneStoryBinding` resolves `'HEAD~1'` fresh for EVERY story it checks, against whatever the CURRENT
+tip of history happens to be — correct only for a story whose own implementation happens to be the single
+most recent commit. A real project where several `done` stories' implementations landed in separate,
+sequential commits would get a WRONG verdict for every one of them except (at most) the very last:
+`HEAD~1` for an earlier story resolves to some OTHER, unrelated commit, not that story's own pre-
+implementation state, so nothing reverts and the story appears trivially "bound" by coincidence. Building
+this piece's own multi-story test (`bin-binding.test.ts`) hit this directly: naively stacking a second
+story's own commit on top of an existing single-story fixture silently broke the FIRST story's own
+`HEAD~1` resolution rather than testing real aggregation, and had to be rebuilt with both stories'
+implementations landing together in one shared commit, after one shared "neither implemented" base.
+Not fixed in this piece — a real fix needs per-story implementation-landing tracking this milestone has
+no mechanism for yet (likely `Forge-Step`/`Forge-Run` commit trailers, P7's own `EvidenceBundle` territory)
+— disclosed here, in `runDiscoverModeBindingCommand`'s own doc comment, and in the fixture-construction
+comment of the test that found it, rather than silently assumed to always hold the way the single-story
+case already was.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P5`.
