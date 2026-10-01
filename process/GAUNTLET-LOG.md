@@ -19256,3 +19256,134 @@ piece's actual content. Every edit additive; `05` §5.5's own word-for-word-comp
 untouched.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q280`.
+
+## M15 P2 — `MutationEvidence` and `EvidenceBundle` as registered artifact types
+
+Three full gauntlet rounds, the maximum. Round 1 caught real registration gaps (schema drift, a
+docstring claiming a test existed that did not). Round 2 caught something more serious: round 1's own
+fix for the milestone's actual load-bearing requirement — a real write-refusal mechanism — had only
+relabeled the gap as someone else's problem, directly contradicting this piece's own, already-committed
+P1 spec text. Round 3 confirmed the real fix (new production code, not more prose) and caught a live
+regression it introduced in an unrelated, pre-existing test.
+
+**What the piece builds.** `MutationEvidence` and `EvidenceBundle`: Zod schemas (`packages/schemas/
+src/artifacts/mutation-evidence.ts`, `evidence-bundle.ts`), registry rows (`packages/schemas/src/
+registry/artifact-types.ts`), emitted JSON Schema (`pnpm emit-schemas`, two new files), real stub
+templates (`packages/templates/templates/artifacts/*.md`, plus the matching regenerated fixture under
+`fixtures/greenfield-service/.forge/templates/`), and — added in round 2, after round 2's own critics
+refused to accept anything less — a new, generic append-only write primitive, `writeNewFileAtomic`
+(`packages/core/src/fs/atomic.ts`, `RUN-114`), proven end to end against both real types.
+
+**Critic round 1 (two independent, fresh-context critics): two blocking, five major, all fixed.**
+Both caught real schema drift (`pnpm emit-schemas` was never run; a hardcoded `expect(schemas.size).
+toBe(23)` in `scripts/schema-drift.test.ts` was never bumped) and a docstring in `evidence-bundle.
+test.ts` falsely claiming the "a bundle that edits an existing evidence record is refused" test
+(`PLAN-M15.md` P2's own "Tests first" line) was exercised in that file, when no such test, and no
+writer code for either type, existed anywhere. Major, all fixed: the `fixtures/greenfield-service/
+.forge/templates/` snapshot was stale (22 files, missing both new templates, regenerated here with
+real `forge:generated` headers, hashes verified against the real `sha256`/`withGeneratedHeader`
+algorithm); no concurrent id-allocation test existed for the `MUT`/`EVID` prefixes despite `PLAN-
+M15.md` P2's own "Tests first" line requiring one (added to `packages/core/test/ids/allocator.test.ts`,
+reusing the existing 50-concurrent-`Story`-allocation pattern); two stale "22 registered types"
+comments (`artifact-types.test.ts`, `test/templates.test.ts`).
+
+**Critic round 2 (two independent, fresh-context critics, explicitly re-verifying round 1's fixes):
+both BLOCKING_ISSUES — and the blocking finding was the same one in both, independently, pointing
+directly at this piece's own already-committed spec text.** Round 1's fix for the write-refusal
+requirement disclosed the gap honestly but then assigned it to `PLAN-M15.md` P3/P4 (`MutationEvidence`)
+and P7 (`EvidenceBundle`) — reasoning that neither of this codebase's two pre-existing write
+mechanisms (`KbWriter.write()`'s `KB-009`, scoped to `kb/`-rooted entries; `GateReport`/`ReviewReport`'s
+direct, unguarded `writeFileAtomic()`) already covered a `reports/`-rooted, non-KB, append-only type.
+That reasoning about the pre-existing mechanisms was correct — but the conclusion was wrong. Both
+critics quoted the same already-committed sentence back: `specs/18` §18.7's own normative text (written
+by this very milestone's own P1, landed at `f6b972e`) states, present tense, "The writer refuses an
+attempt to write to an already-existing path of either type (`PLAN-M15.md` P2's own ... test)." `P2`,
+by name. `SPEC-QUESTIONS.md` Q280 Decision 3 says the identical thing. `PLAN-M15.md` P2's own Surface
+line lists `packages/kb` writers as in-scope. The round-1/round-2 builder had never gone back and
+checked the new "deferred" framing against this piece's own already-shipped spec text before writing
+it — repeating, one round later, the exact failure mode P1's own round 2 had already been caught making
+once (a fix that resolves a local problem by contradicting a document it was supposed to agree with).
+Both critics also found the round-1 docstring fix had not propagated everywhere: `mutation-evidence.
+test.ts` and the `MutationEvidence` registry row's own comment still asserted "needs no immutability
+enforcement," a direct, same-repository contradiction of `mutation-evidence.ts`'s own, already-corrected
+text three files over. Both also caught two fabricated forward citations — `evidence-bundle.test.ts`
+citing a `GAUNTLET-LOG.md` `## M15 P2` entry that did not exist yet (this one; written only now, at the
+true end of the gauntlet, the same way `## M15 P1` was), and `outputs.test.ts` citing a `SPEC-QUESTIONS.
+md` Q281 that did not exist yet (this entry; same reason) — and, independently, several more stale
+"22"/"21" registered-type comments beyond what round 1 had found (`packages/schemas/src/artifacts/
+index.ts`, `json-schema/emit.ts`, `packages/core/src/artifacts/validate.ts`, `modules/fm-core/
+module.yaml`, `packages/templates/src/index.ts` — the last one self-contradicting, "22" on one line and
+the already-correct "24" fifteen lines below — plus five more in `packages/kb`).
+
+**The real fix.** A new function, `writeNewFileAtomic` (`packages/core/src/fs/atomic.ts`), identical to
+the pre-existing `writeFileAtomic` except its final step is `fsp.link(tempPath, target)`, not
+`fsp.rename` — `link` fails atomically with `EEXIST` when `target` already exists, which this function
+maps to a new error code, `RUN-114` (`packages/core/src/errors/codes.ts` — the one code `PLAN-M15.md`'s
+own "takes `RUN-110`..`RUN-114`" milestone budget, line 71, still had free; confirmed by grepping the
+whole repository for every other `RUN-110`..`RUN-114` use before claiming it). Chosen over a separate
+`pathExists`-then-`writeFileAtomic` check specifically because that would leave the identical
+check-then-write race `KbWriter` itself already tolerates (acceptable there only because its own
+`enqueue()` serialises same-instance calls) — `link`'s own atomicity closes the race unconditionally,
+proven by a real `Promise.allSettled` concurrency test, not merely asserted. 10 new tests in `packages/
+core/test/fs/atomic.test.ts` (13 → 23; generic, type-agnostic: happy path, refusal with `RUN-114`, original
+content preserved untouched, no temp file left behind on either success or refusal, the concurrency
+proof, crash-safety identical to `writeFileAtomic`'s own) plus a new file, `packages/core/test/
+artifacts/append-only-evidence.test.ts` (3 tests: a real, schema-valid `MutationEvidence`/
+`EvidenceBundle` record — parsed from the real shipped template, validated against the real schema — is
+written to its real registry path via `renderArtifactPath`, and a second write to the identical path is
+refused, content unchanged; a genuinely new `EvidenceBundle` id is never refused). Mutation-verified
+directly, by a round-3 critic, not merely claimed: the `EEXIST`→`RUN-114` mapping was replaced live with
+a bare `fsp.rename` (the exact silent-overwrite bug this function exists to prevent), 9 of the 26 tests
+failed with the precise expected errors, and the file was restored byte-for-byte. `mutation-evidence.ts`,
+its own test file, `evidence-bundle.test.ts`, and the `MutationEvidence` registry row's comment were all
+rewritten to describe this real mechanism, retracting round 2's "deferred" framing — while correctly
+continuing to leave `EvidenceBundle`'s own *domain* fields (what real data a bundle holds) deferred to
+`PLAN-M15.md` P7, which both `specs/18` §18.7 and `SPEC-QUESTIONS.md` Q280 independently confirm is the
+Plan's own, intentional asymmetry (P7's Mandate gives the real shape; P2's is a placeholder), not a
+second instance of the same dodge. The fabricated citations were removed; every newly-found stale "22"/
+"21" comment from round 2's own list (thirteen locations across ten files) was corrected, re-verified
+by round 3.
+
+**Critic round 3 (final, the maximum — two independent, fresh-context critics): the write-refusal fix
+itself confirmed real and correct by both (one critic reverted it live to prove the tests catch its
+absence); one real, currently-failing regression found, plus four more stale-count comments, all
+fixed.** Both independently re-derived, from the actual code, that `writeNewFileAtomic` genuinely uses
+`link` not `rename`, genuinely maps only `EEXIST` to `RUN-114` (any other failure is a generic
+`RUN-034`, verified by a dedicated test), genuinely cleans up its temp file on every exit path, and
+genuinely cannot hit `EXDEV` (the temp file is always built via `path.dirname(target)`, so it and
+`target` are always on the same filesystem — the identical invariant `writeFileAtomic`'s own pre-
+existing `rename` call already relies on). One, real, reproducible regression, found by both: this
+piece's own two new, `{story}`-keyed registry rows were never reconciled with a pre-existing, generic,
+spec-described cross-cutting test (`packages/engine/test/dispatch/output-claim.test.ts`, "the claim of
+every registry type covers a concrete path of that type") whose `concretePath()` helper supplied every
+placeholder EXCEPT `story` — a file this piece's own diff never touched, so nobody noticed its coverage
+had gone from 22-for-22 to 22-for-24. Fixed with a one-line addition (`story: 'STORY-001'` added to the
+helper's vars object); both new tests pass. One critic independently confirmed, via a scratch edit and
+exact revert, that `resolveStepClaim`'s own real glob-matching for both new types was already correct —
+only the generic test fixture itself had never been exercised against them. Major: three more
+present-tense "21-type"/"22-type registry" comments survived round 2's own sweep (`packages/core/src/
+ids/allocator.ts`, `packages/kb/src/write/scan.ts`, `packages/kb/src/schema/tree.ts`); minor: one more
+in a test's own title string (`packages/cli/test/bin.test.ts`) and one in `packages/kb/src/schema/
+components-file.ts`, found by a final, independent repository-wide grep sweep after round 3's own
+findings were fixed. All fixed.
+
+**Two pre-existing, unrelated flaky tests observed during verification, neither caused by this piece
+and neither fixed by it.** `packages/kb/test/adopt/survey.test.ts`'s own "genuinely oversized fixture"
+test (creates 5,001 real files via `Promise.all`, a 30s timeout) and `packages/engine/test/dispatch/
+confined-command.test.ts`'s own "huge tree" glob-expansion test (a 60s timeout) both intermittently
+time out under load; both predate this piece (the first committed `2026-09-11`, at `e7b1fd3`; the
+second untouched by any commit in this piece's own diff) and both reproduce identically in isolation,
+confirming they are pre-existing, environment-sensitive flakes, not regressions — consistent with this
+repository's own recent, separate fix for two other "load-sensitive" tests (`40519da`). Not this
+piece's job to fix; recorded here so a future reader does not mistake a clean run's occasional red for
+something this work introduced.
+
+**Verification.** `pnpm typecheck` (21/21), `pnpm lint` (eslint + prettier, clean), `node scripts/
+assert-schema-drift.mjs` ("No drift"), and the full suite (`node scripts/run-tests.mjs run`) all clean
+on the final, round-3-complete state: 13,871 passed, 22 skipped, the two pre-existing flakes above the
+only failures, out of 13,895 tests — re-run once under contention from concurrent critic processes
+(11 failures, all explained: the 2 flakes above, the then-still-open `output-claim.test.ts` gap, and 8
+more in files this piece never touched that cleared completely on a second, uncontended run, confirming
+they were resource-contention artifacts, not real regressions) and once clean, alone.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q281`.

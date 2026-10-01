@@ -25761,3 +25761,139 @@ scope would be exactly the kind of silent, undisclosed absorption this milestone
 Recorded here so it stays visible rather than being quietly folded into "M15 handled mutation testing."
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P1`.
+
+## Q281 — M15 P2: registering `MutationEvidence`/`EvidenceBundle`, and the real cost of deferring a
+requirement instead of building it
+
+**Context.** `PLAN-M15.md` P2's own Mandate: register both new types as real artifact types (Zod
+schemas, registry rows, emitted JSON Schema, templates), with provenance consistent with every other
+artifact. Its "Tests first" line names one requirement explicitly: "a bundle that edits an existing
+evidence record is refused." Three full gauntlet rounds, the maximum. The first two pieces of this were
+mechanical (schema drift, stale counts, a dishonest docstring) and fixed cleanly in round 1. The third —
+the write-refusal requirement itself — took two full rounds to get right, and the way it went wrong the
+first time is the more useful record here than the mechanics.
+
+**Decision 1 — the write-refusal requirement belongs to P2, not to whichever piece later writes real
+content into these types, and this piece's own earlier attempt to assign it elsewhere was wrong.**
+After round 1, a reasonable-sounding argument was made: no writer code for either type exists yet (P2
+registers the type, not the writer), and neither of this codebase's two pre-existing write mechanisms
+(`KbWriter.write()`'s `KB-009`, scoped to `kb/`-rooted entries; `GateReport`/`ReviewReport`'s own
+direct, unguarded `writeFileAtomic()`) already covers a `reports/`-rooted, non-KB, append-only type —
+so, the argument went, the refusal genuinely belongs to whichever piece builds the real writer (`P3`/
+`P4` for `MutationEvidence`, `P7` for `EvidenceBundle`). The investigation behind that argument was
+real and correct. The conclusion was not: it was never checked against this milestone's own,
+already-committed P1 spec text before being written down. `specs/18` §18.7 (landed at `f6b972e`, this
+piece's own sibling, not some older document) says, present tense: "The writer refuses an attempt to
+write to an already-existing path of either type (`PLAN-M15.md` P2's own ... test) rather than relying
+on the naming scheme alone." Not "a future writer will refuse." `P2`, by its own real, pre-existing
+name. `PLAN-M15.md` P2's own Surface line independently says the same thing a different way: `packages/
+kb` writers are explicitly in-scope. Two independent round-2 critics caught this, both quoting the
+identical sentence back. Decided, finally: the requirement is P2's, and the right scope is a generic,
+reusable primitive — not a type-specific one, since "refuse to overwrite an append-only path" is not a
+`MutationEvidence`/`EvidenceBundle`-specific concern, and building it type-specific would have meant
+building it twice more at P3/P4 and P7.
+
+**Decision 2 — the primitive is a new function in `@forge/core/fs`, not a new method on `KbWriter`,
+despite `PLAN-M15.md` P2's own Surface line literally naming "packages/kb writers."** That Surface line
+turned out to be itself slightly inaccurate, in the same category `08` and `10`'s own citation slips
+got in P1: it assumed, without checking, that these two new types would go through `KbWriter` the way
+`kb/`-rooted entries do. They do not and structurally cannot — `KbWriter` is scoped to the `kb/` tree
+(`parseKbTree`, `kb/decisions/`, `kb/risks.md`) and `MutationEvidence`/`EvidenceBundle` live under
+`reports/`, the same family as `GateReport`/`ReviewReport`, which bypass `KbWriter` entirely. Checked
+directly (`packages/kb/src/write/writer.ts`, `packages/engine/src/interaction/swarm-review-step.ts`)
+before deciding anything. Reusing `KB-009`'s own error code was considered and rejected: its message
+("`write()` only creates a brand-new entry") and remedy ("propose a change to the existing entry
+instead") both assume KB's own propose-a-change mechanism, which these append-only, non-KB types have
+no equivalent of — reusing the code would have meant a believable but wrong remedy on every refusal. A
+new code, `RUN-114` (`PLAN-M15.md`'s own "takes `RUN-110`..`RUN-114`" budget, line 71 — confirmed, by
+grepping the whole repository for every other use of that range, to be the one code neither `P3`/`P4`
+(`RUN-110`/`RUN-111`) nor `P5`/`P8` (`RUN-112`/`RUN-113`) had already claimed), with its own generic
+message and remedy.
+
+**Decision 3 — `fsp.link`, not a `pathExists` pre-check, closes the write-refusal race atomically.** A
+separate `pathExists(target)` check before the existing `writeFileAtomic` would have worked for the
+common case but left open the identical check-then-write race `KbWriter` itself already tolerates
+(acceptable there only because its own `enqueue()` serialises calls against the same instance — a
+guarantee a brand-new, standalone primitive with no such queue cannot assume of its future callers).
+`fsp.link(tempPath, target)` fails atomically with `EEXIST` when `target` already exists, with no such
+window: the temp file is still fully written and `fsync`'d first (identical crash-safety to
+`writeFileAtomic`'s own), so a crash between the write and the link leaves `target` untouched either
+way, and two truly concurrent callers racing for the same new path can never both land. Proven, not
+merely asserted: a real `Promise.allSettled` test (`packages/core/test/fs/atomic.test.ts`) confirms
+exactly one of two concurrent writers to the same path succeeds. `path.dirname(target)` is also the
+reason `EXDEV` (a cross-filesystem link failure) cannot occur: the temp file and the target are always
+in the literal same directory, the identical invariant the pre-existing `writeFileAtomic`'s own
+`rename` call already relies on — confirmed by a round-3 critic, not assumed.
+
+**Decision 4 — `EvidenceBundle`'s own field shape stays deferred to `PLAN-M15.md` P7; that is a
+different, and correct, kind of deferral from Decision 1's mistake.** Both the write-refusal MECHANISM
+(now built, this entry's own Decisions 1-3) and the bundle's real DOMAIN CONTENT (what fields it
+actually holds) were at issue across this piece's rounds, and conflating the two was part of what went
+wrong the first time. The mechanism is P2's, per Decisions 1-3 above. The content genuinely is P7's:
+`PLAN-M15.md` P2's own Mandate for `EvidenceBundle`'s fields is a real placeholder ("references a set
+of evidence artifacts plus the gate they support"), while P7's Mandate gives the real, detailed shape —
+an asymmetry the Plan itself states, not invented by this piece, and already settled correctly in Q280
+Decision 3 for the original field-design question. This entry's own round-2 mistake was applying that
+same, correct "defer to the piece whose Mandate actually decides it" reasoning to a question the Plan
+had never left open at all.
+
+**Critic round 1 (two independent, fresh-context critics): two blocking, five major, all fixed —
+mechanical, no design question.** Both caught real, confirmed schema drift (`pnpm emit-schemas` never
+run; a hardcoded `expect(schemas.size).toBe(23)` in `scripts/schema-drift.test.ts` never bumped) and a
+docstring in `evidence-bundle.test.ts` claiming the write-refusal test was "exercised here" when no
+such test, and no writer, existed anywhere — the first sign of what round 2 would find was a deeper
+problem than a dishonest comment. Major, all fixed: the `fixtures/greenfield-service/.forge/templates/`
+snapshot was stale (22 files, regenerated with real, independently-verified `forge:generated` hashes);
+no concurrent id-allocation test existed for `MUT`/`EVID` despite `PLAN-M15.md` P2's own "Tests first"
+line requiring one (added, reusing the existing 50-concurrent-`Story` pattern); two stale "22
+registered types" comments.
+
+**Critic round 2 (two independent, fresh-context critics, explicitly re-verifying round 1's fix): both
+BLOCKING_ISSUES, both naming the same root cause independently.** Covered in full in Decisions 1-2
+above — round 1's own fix for the write-refusal requirement had relabeled it as someone else's problem
+rather than building it, directly contradicting this very milestone's own, already-committed P1 spec
+text. Both critics also found the round-1 docstring fix had not propagated to two sibling files
+(`mutation-evidence.test.ts`'s own docstring and the `MutationEvidence` registry row's own comment both
+still asserted "needs no immutability enforcement," contradicting `mutation-evidence.ts`'s own,
+already-corrected text three files over — the identical "fixed it in one place, not everywhere it was
+said" gap `13`/`18`'s own stale counts kept exhibiting throughout this piece); two fabricated forward
+citations to process-log entries that did not exist yet (`GAUNTLET-LOG.md`'s own `## M15 P2`, this
+entry's own `Q281` — both now real, written at the true end of the gauntlet, not invented mid-flight);
+and several more stale "22"/"21" comments beyond round 1's own list, including one genuinely
+self-contradicting file (`packages/templates/src/index.ts`: "22" on one line, the already-correct "24"
+fifteen lines below it).
+
+**Critic round 3 (final, the maximum): the real fix confirmed correct by both critics independently —
+one reverted it live to prove the tests catch its absence — plus one real, currently-failing regression
+in an untouched, pre-existing test, found by both, and five more stale-count comments, found by one.**
+The regression: this piece's own two new, `{story}`-keyed registry rows were never reconciled with
+`packages/engine/test/dispatch/output-claim.test.ts`'s own pre-existing, generic "every registry type
+renders to a concrete, claimed path" test — its `concretePath()` helper supplied every placeholder
+`renderArtifactPath` might need except `story`, so it threw before either new type's real assertion
+ever ran. A file this piece's own diff had never touched, so nobody had re-run it since the registry
+grew. Fixed with one line (`story: 'STORY-001'` added to the helper's own vars object); one critic
+independently confirmed, via a scratch edit and an exact revert, that `resolveStepClaim`'s real
+glob-matching for both new types was already correct — only the generic coverage fixture had never been
+exercised against them. Five more present-tense "21"/"22-type registry" comments, found by a final
+repository-wide grep after fixing everything named above: `packages/core/src/ids/allocator.ts`,
+`packages/kb/src/write/scan.ts`, `packages/kb/src/schema/tree.ts`, `packages/kb/src/schema/
+components-file.ts` (present-tense), and one test's own title string (`packages/cli/test/bin.test.ts`,
+cosmetic). All fixed; none a repeat of a location already named in rounds 1 or 2.
+
+**Why round 3's findings were fixed rather than escalated.** The same reasoning Q280 already recorded
+for its own round 3 applies identically here: every round-3 finding had exactly one correct, mechanical
+resolution (a missing test fixture value, a stale count), not a genuine design question with two
+legitimate answers. Treated as completing this piece's own already-decided scope, not as a fourth round
+of contested design.
+
+**Two pre-existing, unrelated flaky tests, observed but not fixed.** `packages/kb/test/adopt/
+survey.test.ts`'s own 5,001-file "genuinely oversized fixture" test and `packages/engine/test/dispatch/
+confined-command.test.ts`'s own "huge tree" glob-expansion test both intermittently time out under
+load; both predate this piece (the first since `2026-09-11`, `e7b1fd3`; the second untouched by any
+commit in this piece's diff) and both reproduce identically in isolation. Not this piece's job — `13`
+F-TEST-5 names nightly operator-level mutation testing as the place FORGE's own test-suite health is a
+milestone's job, and `specs/21`'s own nightly-testing requirement (Q280's own closing Observation)
+remains the real, already-disclosed gap this symptom points at. Recorded here only so a future reader
+does not mistake either for something this piece broke.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P2`.
