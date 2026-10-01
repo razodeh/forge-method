@@ -20098,3 +20098,171 @@ own real defect (revert the fix, confirm the exact predicted failure reproduces,
 — not merely shown green on unmodified code.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q286`.
+
+## M15 P8 — Gate evidence resolution ("a verdict without evidence is not a verdict")
+
+Three full gauntlet rounds, the maximum — all three returned real findings in round 1, substantial
+findings in round 2 (one BLOCKING, four MAJOR, across two independent critics), and only non-blocking
+MINOR notes in round 3. This is the piece that makes a gate's `evidence:` declaration (parsed and stored
+since P2, never checked by anything) a real integrity rule: `forge gate approve`/`forge gate waive` now
+resolve every declared reference to a real, committed, schema-valid artifact and refuse (`RUN-112`) when
+one is missing or superseded, naming which artifacts a successful approval or waiver actually rests on.
+
+**What the piece builds.** `packages/engine/src/gates/approve.ts` gains `parseEvidenceRef` (the `(*)`/
+`(id)` grammar `evidenceArtifactType` never needed to read), `ResolvedEvidenceRef`, and
+`refuseOnUnresolvedEvidence` (`RUN-112`), called both by `approveGate` itself (the "computed once,
+enforced twice" shape `GATE-508`/`GATE-511` already use) and directly by `gateWaive` (which never calls
+`approveGate` at all). `packages/cli/src/commands/run/gate-commands.ts` gains the real resolution engine:
+`listCommittedPaths` (`git ls-tree -r HEAD --name-only -z`, degrading to an empty set on any failure),
+`listParsedArtifacts` (the whole-project `.md` scan, filtered to committed paths, each candidate run
+through `validateArtifact`), `isResolvableEvidenceType` (skips a reference naming an unregistered type or
+a non-Markdown-pathed one), and `resolveGateEvidence`, wired into both `gateApprove` and `gateWaive` right
+after `evaluateFresh`. `GateApprovalSummary.evidence` and the `GateWaived` event's own `evidence` field
+record what a successful approval/waiver actually resolved against; `formatGateApproval` shows it.
+
+**Critic round 1 (two independent critics): two BLOCKING, plus a wrong exit code, a TOCTOU ordering gap,
+a grammar disagreement, and zero git-commit verification.**
+
+1. **BLOCKING (both critics).** A literal, unconditional resolution requirement would permanently break
+   the real shipped `G-Design.gate.yaml` (`ArchitectureSpec`/`ThreatModel` are not registered artifact
+   types at all — a pre-existing, long-disclosed "type nothing produces" gap, not introduced here) and
+   `G-Integration.gate.yaml` (its entire evidence list is `InterfaceContract(*)`, whose registered path is
+   a `.yaml` file the whole-project `.md` scan can never read). Fixed by `isResolvableEvidenceType`,
+   which skips a reference naming such a type (`ids: []`, no `problem`, never refuses) rather than
+   treating it as permanently missing.
+2. **Wrong exit code.** `RUN-112` used `EXIT_CODES.usage` (2) instead of `prerequisiteMissing` (5) — the
+   identical mistake `GATE-516` (M15 P7, directly above) had already made and been corrected for within
+   the same milestone. Fixed, with a doc comment citing `GATE-516` as the precedent.
+3. **TOCTOU ordering.** Evidence was resolved BEFORE `evaluateFresh` in both `gateApprove` and
+   `gateWaive` — a stale, pre-check snapshot by the time an approval is actually recorded. Moved to run
+   immediately after the checks, narrowing (not eliminating) the window.
+4. **Grammar disagreement.** An earlier, independent regex in `parseEvidenceRef` disagreed with
+   `evidenceArtifactType`'s own simpler grammar on malformed input (an unclosed paren read as two
+   different "types" by the two functions in the same module). Fixed by having `parseEvidenceRef`
+   delegate type-extraction to `evidenceArtifactType` directly.
+5. **Zero git-commit verification.** The first version resolved evidence off plain filesystem presence —
+   an agent step running `forge gate approve` from inside its own, never-merged lane worktree with a
+   scratch `.md` file satisfied resolution. Fixed via `listCommittedPaths`/`git ls-tree -r HEAD
+   --name-only -z`, confirmed empirically against a fresh (zero-commit) repo's real failure shape
+   (`exitCode 128`, not the narrower shape `@forge/vcs`'s own `isNoCommitsYetResult` expects for a
+   different git command).
+
+**Critic round 2 (two independent, fresh critics): one BLOCKING and four MAJOR, converging on several
+points — the round that found this piece's evidence-binding was materially weaker than both the
+Mandate's own prose and round 1's own disclosures conveyed.**
+
+1. **BLOCKING (critic A, directly contradicting `specs/10` §10.3's own frozen text).** `gateWaive`
+   resolved and could refuse on unresolved evidence, but never RECORDED which evidence a SUCCESSFUL
+   waiver resolved against — the spec's own words are "the approval OR WAIVER event records which
+   artifacts it resolved against," and `GateWaived`'s event payload carried no such field. Fixed by
+   adding `evidence: resolvedEvidence.flatMap((entry) => entry.ids)` to the event.
+2. **MAJOR (critic A): the piece's own "mutation evidence" test didn't test what it claimed.** A test
+   titled "proven by direct removal, not asserted" instead called `gateCheck` — an unrelated,
+   pre-existing, by-design evidence-free dry-run path that never calls `approveGate` at all. Its
+   docstring's claim was simply false. Fixed by deleting it and performing the REAL mutation verification
+   by hand (see Verification below) — the coverage it claimed to provide was already real, just proven
+   by a different, pre-existing test, not by this one.
+3. **MAJOR (critic A): `gateWaive`'s own M14-refusal-ordering and "superseded" case were completely
+   untested**, unlike `gateApprove`'s. `gateWaive` is a structurally separate implementation (it never
+   calls `approveGate`), so this was a real gap against the Mandate's own "order asserted" text, not
+   redundant coverage. Fixed with four new tests (GATE-508/GATE-511 firing before RUN-112, a superseded
+   refusal, and an event-level evidence-recording assertion).
+4. **MAJOR (critic B, independently reproduced): zero schema validation of evidence documents.** `
+   listParsedArtifacts` read only three raw front-matter fields (`type`/`id`/`status`) through
+   `ArtifactDocument.parse`, never running a candidate through its own type's real schema. Empirically
+   confirmed: a bare three-field stub, missing every field `adrSchema` actually requires (`deciders`,
+   `category`, `date`, `reversibility`, `blast_radius`, six required body sections), satisfied `ADR(*)`
+   evidence — the test suite's own original fixture helper used exactly this shape. "A human approves a
+   claim with proof attached rather than a name" cannot mean a document that fails its own schema. Fixed
+   by running every candidate through `validateArtifact` (`@forge/core`, the identical check
+   `documentProblems`/`forge template validate` already use) and excluding anything that fails it; the
+   test fixture helper (`writeResolvableEvidence`) was rewritten to produce genuinely schema-valid `ADR`/
+   `InterfaceContract` documents (full front matter, and for `ADR`, all six required `## ` sections).
+5. **MAJOR (critic A, independently confirmed by direct source reading): `G-Verify`'s own shipped
+   `evidence: - artifact: GateReport` is a real, undocumented bootstrapping requirement.** `GateReport`
+   IS registered with a `.md` path, so `isResolvableEvidenceType` does not skip it — but nothing in
+   either shipped workflow using `G-Verify` (`build-stage`/`verify-stage`) ever produces one
+   automatically: a `GateReport` file is written only by the `gate check`/`approve`/`waive` COMMANDS,
+   never by the automatic `kind: gate` workflow step, and nothing anywhere `git add`s/commits one either.
+   For `forge gate approve G-Verify` to ever succeed, a human must have already manually run some gate
+   command and committed its output at least once. Disclosed in full (see below) rather than coded
+   around — `GateReport` is genuinely resolvable and genuinely different in kind from gap 1's two
+   unregistered/wrong-extension types, so adding it to the same skip list would be dishonest.
+   (Critic B independently found and disclosed two related, narrower gaps in the same area: `Type(*)`
+   wildcard matching is project-wide and relation-free for EVERY real shipped gate's wildcard reference,
+   not only the two unused story-scoped types an earlier disclosure implied were the whole of it; and
+   only the literal string `status: 'superseded'` excludes a match, so an ADR with `status: 'rejected'`/
+   `'proposed'`, or an `RCA`/`Defect` — whose own schemas carry no status enum narrower than the generic
+   base at all — can never be refused on status grounds. Both match `specs/10`'s own literal "existence...
+   not an ongoing freshness guarantee" v1 bar; both are now disclosed explicitly rather than left implied
+   by a narrower, since-corrected comment.)
+6. **MINOR (critic B, disclosure-only): `gateWaive`'s own resolved evidence is recorded on its event but
+   not surfaced in `formatGateReport`'s text output or the written `GateReport` file**, unlike
+   `gateApprove`'s `formatGateApproval`. Not a Mandate violation (the Mandate's own transparency promise
+   names only `forge gate approve`); `GateReport` is shared by the evidence-free `gateCheck` too, so
+   widening it is a real, disclosed asymmetry, not built here.
+
+**Incidentally found and fixed while re-running the complete, untargeted suite for the first time since
+round 1: a pre-existing defect in already-committed M15 P7 code, invisible to both P7's own gauntlet and
+P8's rounds 1-2 because neither ran the full, cross-cutting `packages/core/test/errors.test.ts` suite —
+only targeted files.** `GATE-516`'s remedy ("forge story evidence only sees reviews recorded...") did not
+open with an imperative verb, failing that test's own exhaustive "every remedy names a concrete next
+action" check; `RUN-112`'s own message reads a `ref` field `SAMPLE_DETAILS` (that same test file's shared
+sample-value bag) had no entry for, rendering a literal `<missing>` placeholder in the exhaustive
+render-every-code test. Fixed: `GATE-516`'s remedy reworded to open with "Run" (identical meaning,
+`'Run'` was already whitelisted); `ref: 'ADR(*)'` added to `SAMPLE_DETAILS`; `'Commit'` added to that
+file's own `IMPERATIVE_VERBS` whitelist, since `RUN-112`'s own remedy legitimately opens with "Commit a
+real, non-superseded artifact...". Both independently confirmed by round-3 critics not to be a P8
+regression and to have no other side effect.
+
+**Critic round 3 (final round, two fresh critics): no BLOCKING or MAJOR findings — both independently
+verified every round-2 fix by direct reading, live reproduction, and (one critic) a standalone schema-
+validation script, not by trusting doc comments.** One critic independently re-performed the mutation
+verification of finding round-2-#2 themselves (commenting out `gateApprove`'s own resolution call and the
+`resolvedEvidence` it passes to `approveGate`, confirming 10 tests fail exactly as predicted, restoring,
+reconfirming 86/86 green, diffed byte-identical to baseline afterward). Two MINOR, non-blocking notes:
+RUN-112-vs-GATE-507 ordering (both are genuine blockers regardless of order; untested only as a specific
+combination) and a new, concrete instance of the already-disclosed "schema-valid is not the same as
+meaningful" principle — `validateArtifact`'s own required-section check only confirms a `## ` heading is
+PRESENT, never that there is real content beneath it, so a six-heading, zero-prose `ADR` stub already
+satisfies evidence. The disclosure comment was extended with one clause naming this concretely.
+
+**Discloses** (full record in the doc comments above `resolveGateEvidence`, `listCommittedPaths`,
+`runGateStep`, and `formatGateReport`; summarized here): (1) a reference naming an unregistered or
+non-Markdown-pathed type is skipped, not refused — real and permanent for `ArchitectureSpec`/
+`ThreatModel`/`InterfaceContract`, pre-existing and long-disclosed, not introduced here. (2) "Committed"
+means a real git commit at `HEAD`, but has no lane-worktree concept: a tracked-but-locally-modified file
+still counts, and (more severe than it sounds) a scratch file committed only to a lane's own never-merged
+branch still satisfies resolution when the command runs from that same worktree — closing this needs
+knowing which branch is "the real one," which this command has no concept of today. (3) `Type(*)`
+wildcard matching is project-wide and relation-free for every real shipped gate's wildcard reference, not
+scoped to the story/run/decision an approval is actually about. (4) Only the literal string `'superseded'`
+excludes a match; `RCA`/`Defect` can never be refused on status grounds at all, by construction. (5)
+`validateArtifact`'s required-section check never confirms real content exists under a heading. (6)
+`G-Verify`'s own `GateReport` evidence needs a one-time, undocumented manual bootstrapping step nothing
+in the automated pipeline performs. (7) The automatic in-run `kind: gate` workflow step (`runGateStep`)
+consults neither `evidence:` nor `approval:` at all — `RUN-112`'s guarantee protects only the explicit,
+human-or-agent-typed CLI/TUI path, not what the engine's own commentary elsewhere calls the canonical way
+a gate step gets approved; pre-existing for both concepts, not a P8 regression. (8) `gateWaive`'s own
+resolved evidence is recorded on its event but not surfaced in its own text/file output. (9) `RUN-112`'s
+remedy names no concrete artifact path — `IdRegistry` tracks no canonical directory per type and the scan
+is whole-project, not rooted at one.
+
+**Verification.** `pnpm typecheck` (21/21), the REAL `pnpm lint` (`eslint . --max-warnings 0 && prettier
+--check .`, run for real in every round after P7's own lesson), `pnpm boundaries`, and
+`node scripts/assert-schema-drift.mjs` all clean on the final state. Directly affected suites:
+`packages/cli/test/commands/run/gate-commands.test.ts` (86 tests), `packages/engine/test/gates/
+approve.test.ts` (46 tests), `packages/core/test/errors.test.ts` (482 tests), plus
+`packages/engine/test/dispatch/gate.test.ts` and `packages/engine/test/security/
+s6-taint-enforcement.test.ts` — all pass together. Two full, untargeted monorepo suite runs (14,088+
+tests) confirmed no collateral regression beyond resource-contention timeouts in an unrelated file
+(`packages/engine/test/dispatch/confined-command.test.ts`, reproduced as a flake by re-running it alone
+in 1.9s against a 60s timeout under contention) and one flaky TUI snapshot test
+(`packages/tui/test/screens/kb.test.tsx`, likewise reproduced clean in isolation) — neither touches this
+piece's own Surface. Every fix across all three rounds individually mutation-verified against its own
+real defect (revert, confirm the exact predicted failure, restore, reconfirm green), including a live,
+independently-reproduced-twice verification (once by the builder, once by a round-3 critic) that
+`gateApprove`'s own `resolveGateEvidence`/`refuseOnUnresolvedEvidence` call is genuinely load-bearing —
+removing it reproduces exactly the Mandate's own named mutation ("the missing-evidence test passes").
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q287`.

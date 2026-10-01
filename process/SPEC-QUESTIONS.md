@@ -26327,3 +26327,176 @@ this workflow) — an honest absence, not a failure, needing no further disclosu
 doc comment.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P7`.
+
+## Q287 — M15 P8: Gate evidence resolution — what "a real artifact" turned out to actually mean
+
+**Context.** `PLAN-M15.md` P8's own Mandate is short: a gate declaring `evidence: - artifact: X` must
+resolve those references to committed artifacts at approval time, refusing (`RUN-112`) when one is
+missing or superseded. The real difficulty was not the happy path — it was that "resolve," "committed,"
+and "a real artifact" each turned out to have a narrower, more literal meaning than the Mandate's own
+prose ("a human approves a claim with proof attached rather than a name") implies, and every one of those
+gaps was found by a gauntlet critic, not anticipated at build time. Three full rounds; round 2 alone
+returned one BLOCKING and four MAJOR findings across two independent critics. Full round-by-round
+narrative: `GAUNTLET-LOG.md`'s own `## M15 P8` entry.
+
+**Decision 1 — a reference naming an unregistered or non-Markdown-pathed artifact type is SKIPPED, never
+refused.** The literal Mandate text ("resolve those references to committed artifacts") names no
+exception, but the real, shipped gate templates this piece ships alongside make one unavoidable:
+`G-Design.gate.yaml` declares `evidence: [ArchitectureSpec, ADR(*), DataModel, ThreatModel]`, and
+`ArchitectureSpec`/`ThreatModel` are not in `@forge/schemas`' own registry at all (`SPEC-QUESTIONS.md`'s
+own M14-era record already names this exact gap — "a type nothing produces," pre-existing and
+long-disclosed, not introduced here); `G-Integration.gate.yaml`'s entire evidence list is the single
+reference `InterfaceContract(*)`, whose registered path (`specs/interfaces/{name}.yaml`) is a file the
+whole-project `.md` scan this piece uses can never read regardless of what is really committed. Enforcing
+resolution literally would make `forge gate approve G-Design`/`G-Integration` refuse FOREVER on every real
+project, from the moment this piece lands — confirmed directly by reading every real shipped
+`*.gate.yaml`'s own `evidence:` block before writing `isResolvableEvidenceType`, not assumed. Found by
+both round-1 critics independently.
+
+**Decision 2 — `RUN-112` is `EXIT_CODES.prerequisiteMissing` (5), not `usage` (2), for the identical
+reason `GATE-516` (M15 P7, directly before this piece) already established.** The gate's own `evidence:`
+declaration is a perfectly valid value; the real precondition (a committed, non-superseded artifact)
+simply has not happened yet — the same "run X first, then retry" shape every other `prerequisiteMissing`
+code in `codes.ts` already uses, not a malformed invocation the way every sibling `GATE-501`–`515` `usage`
+code genuinely is. An earlier version of THIS code repeated `GATE-516`'s own already-corrected mistake
+within the same milestone — caught by a round-1 critic, not learned the first time either.
+
+**Decision 3 — evidence is resolved AFTER `evaluateFresh` runs, in both `gateApprove` and `gateWaive`,
+narrowing (not eliminating) a real TOCTOU window.** The Mandate's own words are "resolve... AT APPROVAL
+TIME," and a deterministic check command has no time limit — resolving before the checks run would let an
+evidence artifact be deleted or superseded during a long check run and still approve against a stale,
+pre-check snapshot. Resolving immediately after narrows the window to the waiver-selection loop and the
+report write, real but bounded local I/O, not an external command of unbounded duration — it does not
+close the window entirely (a write between that line and the event append is still possible), and no
+cheaper closing mechanism exists given this codebase has no cross-process locking around CLI gate commands
+anywhere else either (a round-3 critic looked for one and confirmed none exists to borrow).
+
+**Decision 4 — `parseEvidenceRef` delegates type-extraction to `evidenceArtifactType` directly, rather
+than an independent grammar.** An earlier version used its own stricter regex
+(`/^([^()]+)\(([^()]*)\)$/`) that silently misparsed malformed input differently than
+`evidenceArtifactType` did on the identical string (an unclosed paren read as two different "types" by
+two functions in the same module, one of which — `GATE-511`'s own conflict-of-interest check — was
+already load-bearing). Fixed by reusing `evidenceArtifactType` for the type, falling back to the wildcard
+id `'*'` for any suffix that isn't a genuinely well-formed `(...)` — the safer failure direction for a
+reference nothing validates the internal grammar of at gate-load time.
+
+**Decision 5 — "committed" means a real git commit at `HEAD` (`git ls-tree -r HEAD --name-only -z`),
+degrading to an empty set on any failure, with two disclosed residual gaps.** The first version resolved
+evidence off plain filesystem presence; a round-1 critic found the exact bypass this enables directly: an
+agent step writing a scratch `.md` file inside its own, never-merged lane worktree and immediately running
+`forge gate approve` satisfied resolution with something never `git add`ed, let alone landed anywhere.
+Fixed with a real git query, empirically confirmed safe across every failure shape a round-2 critic tested
+(zero commits, a non-git directory, an unborn-branch HEAD, a detached HEAD, a missing `git` binary, a
+nonexistent cwd) — every one degrades to the empty set, never an uncaught throw or a stale non-empty
+result. Two gaps remain, disclosed rather than solved: a tracked-but-locally-modified file still counts as
+committed (content is never diffed against `HEAD`); and — more severe than it first reads — `HEAD` is
+whatever branch the invoking worktree happens to be on, so an agent that `git commit`s a scratch file on
+its own lane's never-merged branch, then runs `forge gate approve` from that same worktree, still passes.
+Closing that fully needs this command to know which branch is "the real one" (the integration branch a
+merge step lands onto), a concept `gate-commands.ts` has none of today.
+
+**Decision 6 — every resolved candidate is run through `validateArtifact`, not merely well-formed YAML
+front matter.** The original implementation read only three raw fields (`type`/`id`/`status`) out of
+`ArtifactDocument.parse`'s own front matter, with no schema check at all. A round-2 critic reproduced the
+exact consequence: a three-field stub, missing every field `adrSchema` genuinely requires (`deciders`,
+`category`, `date`, `reversibility`, `blast_radius`, six required `## ` body sections), satisfied `ADR(*)`
+evidence for a `G-Design`-shaped gate — and the test suite's own original fixture helper used exactly this
+shape, so nothing anywhere exercised "is this actually a valid instance of its declared type." Fixed by
+running every candidate through `validateArtifact` (`@forge/core`, the identical two-phase check
+`documentProblems`/`forge template validate` already apply to every other artifact document in this
+codebase) and excluding anything that fails it. The test fixture helper (`writeResolvableEvidence`) was
+rewritten to produce genuinely schema-valid `ADR`/`InterfaceContract` documents — independently validated
+against the real schemas by a round-3 critic via a standalone script, not merely by trusting the suite.
+A residual gap remains, found independently by a different round-3 critic: `validateArtifact`'s own
+required-section check only confirms a `## ` heading is PRESENT, never that real content exists beneath
+it, so a six-heading, zero-prose `ADR` stub is already schema-valid and already satisfies evidence —
+pre-existing behavior of `validateArtifact` shared by every other consumer in the codebase, not introduced
+or closable within this piece's own Surface, now named explicitly in `resolveGateEvidence`'s own
+disclosure comment rather than left as an unstated edge of Decision 7's broader point.
+
+**Decision 7 — "a real artifact" means "exists, is schema-valid, and is not literally superseded," not
+"was ever accepted, concluded, confirmed, or related to this approval."** Three real, separate narrownesses
+in that bar, each verified directly against the registry/schemas/templates, not merely asserted:
+(a) a `Type(*)`/bare-type reference matches ANY committed, schema-valid, non-superseded artifact of that
+type ANYWHERE in the project, with no relation to the story, run, or decision the approval is actually
+about — true of every real shipped gate's own wildcard evidence reference (`G-Design`'s `ADR(*)`,
+`G-Stable`'s `RCA(*)`/`Defect(*)`, `G-Product`'s `Capability(*)`/`NFR(*)`, `G-Ready`'s `Epic(*)`/
+`Story(*)`, `G-Problem`'s `NFR(*)`/`Assumption(*)`, `G-Deliver`/`G-Operate`'s `Environment(*)`/
+`Runbook(*)`), not merely a latent concern about the two story-scoped types (`MutationEvidence`/
+`EvidenceBundle`) nothing references yet — an earlier version of this disclosure implied the scoping gap
+was contained to those two unused types, and a round-2 critic found that framing materially understated
+the real scope; (b) only the literal string `status: 'superseded'` excludes a match — an `ADR` with
+`status: 'rejected'` or `'proposed'` (real, valid `ADR_STATUSES` members) still satisfies evidence, and
+`RCA`/`Defect` carry no status enum narrower than the generic base `status: z.string()` at all, so
+`G-Stable`'s own shipped `RCA(*)`/`Defect(*)` evidence can never be refused on status grounds, by
+construction, regardless of content; (c) Decision 6's residual gap above. `specs/10` §10.3's own frozen
+"Evidence resolution" text is explicit that v1's bar is "existence of a real artifact at the moment of
+approval or waiver, not an ongoing freshness guarantee against a later revision" — none of (a)/(b)/(c)
+contradicts that text, but all three are worth stating as plainly as the spec itself does, since a reader
+of an earlier, narrower disclosure could reasonably have concluded the gaps were smaller or more contained
+than they actually are. None is fixed here: closing (a) needs a real scoping concept (which story/run/
+decision THIS approval is for) this function has no way to derive from a gate definition and a
+project-wide file scan alone; closing (b)/(c) would mean inventing a type-specific or content-aware
+supersession/completeness concept `specs/10`'s own text does not ask for. All three are named explicitly
+in `resolveGateEvidence`'s own doc comment, not left implied.
+
+**Decision 8 — `G-Verify`'s own shipped `evidence: - artifact: GateReport` is a real, undocumented,
+one-time bootstrapping requirement, disclosed rather than worked around.** `GateReport` IS registered with
+a `.md` path, so `isResolvableEvidenceType` does not skip it the way it skips Decision 1's two
+unregistered/wrong-extension types — it is genuinely resolvable. But confirmed directly: neither shipped
+workflow using `G-Verify` (`build-stage.workflow.yaml`, `verify-stage.workflow.yaml`) ever produces one
+automatically — both wire it as a `kind: gate` step, and a `GateReport` file is written only by the
+`gate check`/`approve`/`waive` COMMANDS (`writeGateReportFile`), never by the automatic in-run gate step
+(`runGateStep`'s own doc comment confirms it "writes no report FILE of its own"); nothing in this file or
+any shipped workflow ever `git add`s or commits one either. Net effect: for `forge gate approve G-Verify`
+to ever succeed on a real project, a human must have ALREADY manually run some gate command (any gate —
+the reference is a bare wildcard) and committed its output file at least once. Found by a round-2 critic,
+independently confirmed by a round-3 critic against the real workflow YAML and a full-source grep for any
+automated writer. Not fixed: adding `GateReport` to the skip list would make `G-Verify`'s own evidence
+declaration permanently inert the moment some future piece DOES wire automatic production, which would be
+the wrong failure direction; rewriting `G-Verify.gate.yaml`'s own requirement, or making some workflow
+step automatically commit a `GateReport`, are both real fixes but both outside this piece's own Surface
+(`approve.ts`/gate loader/`gate-commands.ts`/`codes.ts`) — named here for whichever future piece owns
+workflow or gate-template design.
+
+**Decision 9 — `gateWaive` records its resolved evidence on the `GateWaived` event, mirroring
+`gateApprove`'s `GateApprovalSummary.evidence`, but not in its own text/file output.** `specs/10` §10.3's
+own frozen text is explicit and literal: "the approval OR WAIVER event records which artifacts it
+resolved against." An earlier version of this piece enforced `RUN-112` correctly for waiving but never
+recorded anything on a SUCCESSFUL waiver — a round-2 critic found this as a direct, cheap-to-fix violation
+of the piece's own cited spec text, not a matter of interpretation. Fixed by mirroring `GateApprovalSummary
+.evidence`'s own flattening into the `GateWaived` event payload. `GateReport` (returned by `gateWaive`,
+`gateCheck`, and `gateApprove`'s own underlying evaluation) carries no `evidence` field, so this is not
+also surfaced in `formatGateReport`'s text form or the written report file — disclosed as a real,
+accepted asymmetry rather than built here, since the Mandate's own transparency promise names only
+`forge gate approve`, and widening `GateReport` itself would touch the evidence-free `gateCheck` path too.
+
+**Decision 10 — a pre-existing defect in already-committed M15 P7 code, found and fixed incidentally.**
+Running the complete, untargeted monorepo suite (`node scripts/run-tests.mjs run`, no path filter) for
+the first time since this piece's round-1 fixes surfaced two failures neither P7's own gauntlet nor this
+piece's rounds 1-2 had caught, because neither ran `packages/core/test/errors.test.ts` in full (only
+targeted files): `GATE-516`'s own remedy ("forge story evidence only sees reviews recorded...") did not
+open with an imperative verb, failing that file's own exhaustive "every remedy names a concrete next
+action" check; and `RUN-112`'s own message reads a `ref` field that file's shared `SAMPLE_DETAILS` bag had
+no sample value for, rendering the literal placeholder `<missing>` in the exhaustive render-every-code
+test. Both fixed: `GATE-516`'s remedy reworded to open with "Run" (`Re-run`/`Run` was already whitelisted,
+meaning fully preserved); `ref: 'ADR(*)'` added to `SAMPLE_DETAILS`; `'Commit'` added to that file's own
+`IMPERATIVE_VERBS` whitelist, since `RUN-112`'s own remedy legitimately opens with "Commit a real,
+non-superseded artifact...". A round-3 critic independently confirmed both fixes are correct, confirmed no
+other error code's remedy relied on the narrower whitelist to intentionally fail, and confirmed this is a
+pre-existing gap in P7's own verification discipline, not a regression P8 introduced.
+
+**Discloses.** All nine real, open gaps are named in full above (Decisions 1, 5, 6, 7a-c, 8, 9) and in
+`resolveGateEvidence`/`listCommittedPaths`/`runGateStep`/`formatGateReport`'s own doc comments; not
+repeated a third time here. One more, structural rather than a scoping gap: `RUN-112`'s own remedy names
+no concrete artifact path to write to — `IdRegistry` tracks no canonical directory per type and
+`resolveGateEvidence`'s own scan is whole-project, not rooted at one; a caller already knows the type (it
+is in the message) but the committed id/location is left for them to work out from `@forge/schemas`' own
+`pathTemplate`. And, pre-existing rather than introduced here: the automatic in-run `kind: gate` workflow
+step (`runGateStep`) consults neither `evidence:` nor `approval:` at all (`isApproved` is purely
+`result.passed || a valid recorded waiver`) — `RUN-112`'s own guarantee concretely protects only the
+explicit, human-or-agent-typed `forge gate approve`/`waive` CLI/TUI path, not what this engine's own
+commentary elsewhere calls the canonical way a gate step gets approved; both `evidence:` and `approval:`
+were equally inert on this path before this piece landed.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P8`.
