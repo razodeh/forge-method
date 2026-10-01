@@ -4,13 +4,17 @@
  * @see specs/03 §3.2.4
  * @see specs/10 §10.3
  */
+import { execa } from 'execa';
+
 import {
   ArtifactDocument,
   ForgeError,
   isForgeError,
+  listArtifactFiles,
   listDirSorted,
   pathExists,
   readTextFile,
+  validateArtifact,
   writeFileAtomic,
   SYSTEM_CLOCK,
   type Clock,
@@ -23,7 +27,9 @@ import {
   buildGateReport,
   evaluateGate,
   evidenceArtifactType,
+  parseEvidenceRef,
   recordChecks,
+  refuseOnUnresolvedEvidence,
   renderGateReportFile,
   validateWaiverPolicy,
   waiverExceedsCap,
@@ -33,6 +39,7 @@ import {
   type GateDefinition,
   type GateEvaluationResult,
   type GateReport,
+  type ResolvedEvidenceRef,
   type Waiver,
 } from '@forge/engine/gates';
 import {
@@ -42,7 +49,7 @@ import {
   runShellCommand,
 } from '@forge/engine/dispatch';
 import { SECRET_PATTERNS } from '@forge/extensions/skills';
-import { definitionForType, renderArtifactPath } from '@forge/schemas';
+import { ARTIFACT_TYPES, definitionForType, renderArtifactPath } from '@forge/schemas';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { appendEvent, readEvents } from '@forge/telemetry/events';
 
@@ -341,7 +348,15 @@ export function formatGateApproval(
       : `${String(summary.checksPassed)} checks passed`;
   const reportLine =
     summary.reportPath === undefined ? '' : `\nreport: ${sanitizeForTerminal(summary.reportPath)}`;
-  return `forge gate approve ${sanitizeForTerminal(gateId)}: recorded (${how}).${reportLine}`;
+  // `specs/22` M15 P8: "a human approves a claim with proof attached rather than a name" (`PLAN-M15.md`
+  // P8's own Mandate) -- shown whenever the gate declared evidence at all (`summary.evidence` is `[]`
+  // for the ordinary, no-`evidence:`-declared gate, the identical "line only present when there is
+  // something to say" convention `reportLine` just above already uses).
+  const evidenceLine =
+    summary.evidence.length === 0
+      ? ''
+      : `\nevidence: ${summary.evidence.map((id) => sanitizeForTerminal(id)).join(', ')}`;
+  return `forge gate approve ${sanitizeForTerminal(gateId)}: recorded (${how}).${evidenceLine}${reportLine}`;
 }
 
 /** Human-mode `forge gate check`/`waive` output: the verdict, then for EVERY failing check its id, its exit code and
@@ -350,7 +365,15 @@ export function formatGateApproval(
  * failed (`PLAN-M14.md` P20: reported, never a reason to refuse), then the real `GateReport` document this
  * evaluation just wrote (`PLAN-M14.md` P17) — `reportPath`/`warnings` optional so a caller that hand-builds a
  * `GateReport` without either (a test fixture) still formats. A check whose own `failOn` tripped has no
- * `reason`: the finding is in its output, so the first line of that is shown instead. */
+ * `reason`: the finding is in its output, so the first line of that is shown instead.
+ *
+ * `specs/22` M15 P8: unlike `formatGateApproval`, this shows no evidence line -- `GateReport`
+ * (`@forge/engine/gates`, shared by `check`/`approve`/`waive`) carries no `evidence` field, only
+ * `GateApprovalSummary` does. `gateWaive`'s own resolved evidence is still recorded (on the `GateWaived`
+ * event, matching `specs/10` §10.3's own literal text), just not surfaced in this text form or in the
+ * written report file -- `specs/10`'s own Mandate promises the CLI states what it approves against only
+ * for `forge gate approve`. Widening `GateReport` itself (also returned by the evidence-free `gateCheck`)
+ * to carry this is a real, disclosed asymmetry, not built here -- `SPEC-QUESTIONS.md` Q287. */
 export function formatGateReport(
   report: GateReport & {
     readonly reportPath?: string;
@@ -596,6 +619,204 @@ async function agentProducedEvidenceForGate(
   return false;
 }
 
+/** `git ls-tree -r HEAD --name-only -z` — every path genuinely committed at `HEAD`, the one real
+ * "committed" test this function can perform (`-z`, NUL-separated: the identical reason `@forge/vcs`'s
+ * own `diffLaneChanges` uses it, an accented or otherwise special-charactered path survives byte-for-
+ * byte only split on `\0`, never `\n`). `specs/22` M15 P8's own Mandate uses the word "committed"
+ * twice, normatively -- the FIRST version of this function skipped this check entirely and resolved
+ * evidence off plain filesystem presence, which a gauntlet critic round confirmed directly: an agent
+ * step running `echo '---\nid: ADR-9999\ntype: ADR\nstatus: accepted\n---' > scratch.md && forge gate
+ * approve G-X` from inside its own, never-merged lane worktree satisfied evidence resolution with a
+ * file that was never `git add`ed, let alone landed on any real branch. Any failure (not a git
+ * repository, git not installed, zero commits yet -- confirmed directly that a fresh repo's own real
+ * failure shape here is `exitCode 128`/non-empty stderr, NOT the narrower `isNoCommitsYetResult` shape
+ * `@forge/vcs` already has for a different git command) degrades to the empty set rather than
+ * crashing the whole gate command: "nothing is committed" is itself an honest, safe answer for a
+ * project with no commits yet, and `RUN-112 missing` is the correct, fail-closed consequence, not a
+ * reason to treat presence-on-disk as good enough. Does NOT also verify a tracked file's on-disk
+ * content matches what is actually committed (a locally-modified-but-uncommitted tracked file still
+ * counts as "committed" here) -- a narrower, disclosed residual gap, `SPEC-QUESTIONS.md` Q287.
+ *
+ * `HEAD`, not any particular branch: this is a genuine git commit test, not a "landed on the real
+ * integration branch" test. Run from inside a lane's own worktree (`06` §6.x's per-lane checkout,
+ * `@forge/vcs`'s `LaneHandle`), `HEAD` is that lane's own branch tip -- an agent that `git commit`s a
+ * scratch file on its own never-merged lane branch, then runs `forge gate approve` from that same
+ * worktree, still passes this check. Closing that fully would mean this command knowing which branch
+ * is "the real one" (the integration branch a merge step lands onto), which `gate-commands.ts` has no
+ * concept of today -- a residual gap disclosed, not fixed, here and in `SPEC-QUESTIONS.md` Q287
+ * (critic finding M5). */
+async function listCommittedPaths(projectRoot: string): Promise<ReadonlySet<string>> {
+  try {
+    const { stdout } = await execa('git', ['ls-tree', '-r', 'HEAD', '--name-only', '-z'], {
+      cwd: projectRoot,
+    });
+    return new Set(stdout.split('\0').filter((entry) => entry !== ''));
+  } catch {
+    return new Set();
+  }
+}
+
+/** One parsed artifact document's own real `id`/`type`/`status` — the three fields `resolveGateEvidence`
+ * below reads out of every real, COMMITTED, SCHEMA-VALID `.md` file in the project (`listCommittedPaths`
+ * above), best-effort per file (`nextGateReportId`'s own identical "one malformed file must not make
+ * this fail outright" stance). */
+interface ParsedArtifactSummary {
+  readonly type: string;
+  readonly id: string;
+  readonly status: string;
+}
+
+async function listParsedArtifacts(
+  paths: ProjectPaths,
+  projectRoot: string,
+): Promise<readonly ParsedArtifactSummary[]> {
+  const committed = await listCommittedPaths(projectRoot);
+  const out: ParsedArtifactSummary[] = [];
+  for (const file of await listArtifactFiles(paths)) {
+    if (!committed.has(file)) continue;
+    let doc: ArtifactDocument;
+    try {
+      const text = await readTextFile(paths.resolveWithin(file));
+      doc = ArtifactDocument.parse(text, file);
+    } catch {
+      continue;
+    }
+    // `specs/22` M15 P8: validated against its own declared type's REAL schema (`validateArtifact`, the
+    // identical check `documentProblems`/`forge template validate` already run every other artifact
+    // document in this codebase through), not merely well-formed YAML front matter -- a round-2 gauntlet
+    // critic found and empirically reproduced that, without this, a bare three-field stub (`id`/`type`/
+    // `status`, missing every field a real `ADR` requires: `deciders`/`category`/`date`/`reversibility`/
+    // `blast_radius`) satisfied `ADR(*)` evidence for a G-Design-shaped gate -- "a human approves a claim
+    // with proof attached rather than a name" (`PLAN-M15.md` P8's own Mandate) cannot mean a document
+    // that fails its own type's schema. An artifact of an UNREGISTERED type (`ArchitectureSpec`/
+    // `ThreatModel`) fails this unconditionally (`validateArtifact`'s own `CFG-008`) and is excluded here
+    // too -- harmless, since `isResolvableEvidenceType` already keeps any evidence reference naming such
+    // a type from ever consulting this list at all.
+    if (!validateArtifact(doc).valid) continue;
+    const frontMatter = doc.frontMatter as Record<string, unknown>;
+    const type = frontMatter['type'];
+    const id = frontMatter['id'];
+    const status = frontMatter['status'];
+    if (typeof type !== 'string' || typeof id !== 'string') continue;
+    out.push({ type, id, status: typeof status === 'string' ? status : '' });
+  }
+  return out;
+}
+
+/** Whether `type` names an artifact this function can actually resolve at all: a REGISTERED type
+ * (`@forge/schemas`'s own 25-entry `ARTIFACT_TYPES`) whose own `pathTemplate` is a Markdown file --
+ * the only shape `listArtifactFiles`/`ArtifactDocument.parse` can ever read, whole-project-scan or not.
+ * `specs/22` M15 P8's own real Mandate text ("resolve those references to committed artifacts") names
+ * no exception, but the REAL, shipped gate templates this piece ships alongside make one unavoidable:
+ * `G-Design.gate.yaml` declares `evidence: [ArchitectureSpec, ADR(*), DataModel, ThreatModel]`, and
+ * `ArchitectureSpec`/`ThreatModel` are NOT in the registry at all (`SPEC-QUESTIONS.md`'s own M14-era
+ * "Found, not fixed" record already names this exact gap: "a type nothing produces," pre-existing and
+ * long-disclosed, not introduced here); `G-Integration.gate.yaml`'s own ENTIRE evidence list is the
+ * single reference `InterfaceContract(*)`, whose registered `pathTemplate` is a `.yaml` file this scan
+ * can never read regardless of what is really committed. Enforcing resolution literally, with no
+ * exception, would make `forge gate approve G-Design`/`G-Integration` refuse FOREVER on every real
+ * project, for every user, from the moment this piece lands -- confirmed directly by reading every
+ * real shipped `*.gate.yaml`'s own `evidence:` block before writing this, not assumed. A reference
+ * this function cannot resolve at all is therefore SKIPPED (contributes `ids: []`, no `problem`, never
+ * refuses) rather than treated as permanently missing -- the identical "this piece's own Surface does
+ * not include fixing it, so it is disclosed, not silently worked around" stance already taken for
+ * `coverage`/`gates` scoping in `specs/22` M15 P7. See `SPEC-QUESTIONS.md` Q287 for the full record;
+ * found by a gauntlet critic round, not anticipated at build time. */
+function isResolvableEvidenceType(type: string): boolean {
+  const definition = ARTIFACT_TYPES.find((candidate) => candidate.id === type);
+  return definition?.pathTemplate.toLowerCase().endsWith('.md') === true;
+}
+
+/** `specs/22` M15 P8: `definition.evidence`, each entry resolved against every real, committed,
+ * SCHEMA-VALID artifact document currently in the project (`listParsedArtifacts`, built on
+ * `listArtifactFiles` — the identical whole-project scan `@forge/core/ids`'s own `IdAllocator` already
+ * uses for the identical "truth is a scan of existing artifacts" reason, `18` §18.8 — not a second,
+ * gate-specific directory-scan mechanism). One scan, reused for every declared entry, not one scan per
+ * entry. `[]` when the gate declares no evidence at all -- the scan never runs, since there is nothing
+ * to resolve against it. A reference naming an unresolvable type (`isResolvableEvidenceType` above) is
+ * skipped entirely -- `ids: []`, no `problem`, never refuses. A reference with SEVERAL real matches
+ * (`Type(*)`/a bare type name) resolves to every one of their ids; `Type(id)` resolves only if that
+ * exact id matches and is the right type.
+ *
+ * `specs/10` §10.3's own frozen "Evidence resolution" text is explicit about what v1's bar actually is,
+ * and what it deliberately is not: **"existence of a real artifact at the moment of approval or waiver,
+ * not an ongoing freshness guarantee against a later revision."** Three real, verified consequences of
+ * that narrow bar, found by a round-2 gauntlet critic and confirmed directly against the real registry
+ * and the real shipped gate templates, not merely asserted:
+ *
+ * 1. **Project-wide, not approval-specific.** A `Type(*)`/bare-type reference matches ANY committed,
+ *    schema-valid, non-superseded artifact of that type ANYWHERE in the project -- with no relation to
+ *    the story, run, or decision the approval is actually about. This is true of EVERY real shipped
+ *    gate's wildcard evidence reference (`G-Design`'s `ADR(*)`, `G-Stable`'s `RCA(*)`/`Defect(*)`,
+ *    `G-Product`'s `Capability(*)`/`NFR(*)`, `G-Ready`'s `Epic(*)`/`Story(*)`, `G-Problem`'s `NFR(*)`/
+ *    `Assumption(*)`, `G-Deliver`/`G-Operate`'s `Environment(*)`/`Runbook(*)`) -- not merely a latent
+ *    concern about the two story-scoped types (`MutationEvidence`/`EvidenceBundle`) nothing references
+ *    yet. An earlier version of this comment implied the scoping gap was contained to those two unused
+ *    types; it is not. Closing this needs a real scoping concept (which story/run/decision is THIS
+ *    approval for, and does the candidate artifact actually relate to it) this function has no way to
+ *    derive from a gate definition and a project-wide file scan alone -- out of this piece's own
+ *    Surface, `SPEC-QUESTIONS.md` Q287.
+ * 2. **"Not superseded" is the only status check, and it is deliberately narrow.** Only the literal
+ *    string `status: 'superseded'` excludes a match (checked generically, off the one `status` field
+ *    every artifact type's base front matter carries, `18` §18.6 -- not a second, type-specific
+ *    supersession mechanism). An `ADR` with `status: 'rejected'` or `'proposed'` (real, valid members of
+ *    `ADR_STATUSES`, meaning the decision was turned down or not yet made) still satisfies `ADR(*)`
+ *    evidence; `RCA`/`Defect` have NO status enum narrower than the generic base `status: z.string()` at
+ *    all (`rcaSchema`/`defectSchema` never override it), so `G-Stable`'s own shipped `RCA(*)`/`Defect(*)`
+ *    evidence can never be refused on status grounds, by construction, regardless of content. This
+ *    matches `specs/10`'s own literal text ("missing or superseded," naming no broader status concept)
+ *    but is worth stating plainly: "evidence" here means "a real, schema-valid, not-literally-superseded
+ *    document exists," not "a document whose own content was ever accepted, concluded, or confirmed" --
+ *    concretely, `validateArtifact`'s own required-section check (`@forge/core`) only confirms a
+ *    required `## ` heading is PRESENT, never that there is any real content beneath it, so a
+ *    six-heading, zero-prose `ADR` stub is already schema-valid and already satisfies this.
+ * 3. **`G-Verify`'s own shipped `evidence: - artifact: GateReport` is a real, undocumented bootstrapping
+ *    requirement, not a permanent block like gap 1's two unregistered types.** `GateReport` IS
+ *    registered with a `.md` path, so `isResolvableEvidenceType` does not skip it. But nothing in either
+ *    shipped workflow that uses `G-Verify` (`build-stage`/`verify-stage`) ever produces a `GateReport`
+ *    automatically -- a `GateReport` file is written only by the `gate check`/`approve`/`waive` COMMANDS
+ *    (`writeGateReportFile` below), never by the automatic `kind: gate` workflow step
+ *    (`runGateStep`'s own doc comment, `@forge/engine/dispatch/steps.ts`), and nothing in this file or
+ *    any shipped workflow ever `git add`s/commits one either. For `forge gate approve G-Verify` to ever
+ *    succeed, a human must have ALREADY manually run some gate command (any gate; the reference is a
+ *    bare wildcard) and committed its output file at least once -- a real, one-time, first-use
+ *    bootstrapping cost this piece does not solve or explain beyond `RUN-112`'s own generic remedy text.
+ *
+ * "Committed" is read as "present in the project's own working tree under `ProjectPaths`, with a git
+ * commit at `HEAD` (`listCommittedPaths` above)" -- this command has no lane-worktree concept of its own
+ * to distinguish a scratch copy committed only to a never-merged lane branch from one that has actually
+ * landed; see `listCommittedPaths`'s own doc comment. Full disclosure record: `SPEC-QUESTIONS.md` Q287. */
+async function resolveGateEvidence(
+  ctx: GateCommandContext,
+  definition: GateDefinition,
+): Promise<readonly ResolvedEvidenceRef[]> {
+  const refs = definition.evidence ?? [];
+  if (refs.length === 0) return [];
+  const docs = await listParsedArtifacts(ctx.paths, ctx.projectRoot);
+  return refs.map((ref): ResolvedEvidenceRef => {
+    const { type, id: wantId } = parseEvidenceRef(ref.artifact);
+    if (!isResolvableEvidenceType(type)) {
+      return { ref: ref.artifact, ids: [] };
+    }
+    const matching = docs.filter(
+      (doc) => doc.type === type && (wantId === '*' || doc.id === wantId),
+    );
+    if (matching.length === 0) {
+      return { ref: ref.artifact, ids: [], problem: 'missing' };
+    }
+    const live = matching.filter((doc) => doc.status !== 'superseded');
+    if (live.length === 0) {
+      return {
+        ref: ref.artifact,
+        ids: [],
+        problem: 'superseded',
+        supersededId: matching[0]?.id,
+      };
+    }
+    return { ref: ref.artifact, ids: live.map((doc) => doc.id) };
+  });
+}
+
 /** `[definition.id]` when `approver` is an agent who produced evidence for `definition` in this run
  * (`agentProducedEvidenceForGate`), else `[]` -- what `ApproveGateInput.producedEvidenceFor` and
  * `gateWaive`'s own identical check both consult. A human approver is never scanned for at all: `10`
@@ -656,6 +877,20 @@ export async function gateApprove(
     throw new ForgeError('GATE-511', { gateId, agentId: approver.agentId });
   }
   const evaluated = await evaluateFresh(ctx, definition);
+  // `specs/22` M15 P8: resolved AFTER the checks run, deliberately NOT alongside the authorisation
+  // refusals above (`GATE-508`/`GATE-511`, both genuine "decided first" prerequisites the checks
+  // themselves have no bearing on) -- the Mandate's own words are "resolve those references to
+  // committed artifacts AT APPROVAL TIME", and a deterministic check command has no time limit
+  // (confirmed by the comment on `nowIso` just below, already true before this piece), so resolving
+  // BEFORE them would let an evidence artifact be deleted or superseded during a long check run and
+  // still approve against a stale, pre-check snapshot. Resolving here narrows that window to the
+  // waiver-selection loop and the report write just below -- real, local disk/event-log I/O, not an
+  // external command of unbounded duration -- though it does not eliminate the window entirely (a
+  // write between this line and the event append is still possible; disclosed, not solved,
+  // `SPEC-QUESTIONS.md` Q287). `approveGate` decides it again below for a caller that bypasses this
+  // (the same "computed once, enforced twice" shape `refusal`/`producedEvidenceFor` already are).
+  const resolvedEvidence = await resolveGateEvidence(ctx, definition);
+  refuseOnUnresolvedEvidence(gateId, resolvedEvidence);
   // Sampled AFTER the checks ran (they have no time limit): a waiver that lapsed while they ran has lapsed.
   const nowIso = clock.now();
   const now = Date.parse(nowIso);
@@ -692,6 +927,7 @@ export async function gateApprove(
         approver,
         now,
         producedEvidenceFor,
+        resolvedEvidence,
       });
       usedWaiver = recorded?.waiver;
       break;
@@ -802,6 +1038,13 @@ export async function gateWaive(
     throw new ForgeError('GATE-511', { gateId, agentId: approver.agentId });
   }
   const evaluated = await evaluateFresh(ctx, definition);
+  // `specs/22` M15 P8: resolved AFTER the checks run, for the identical "at approval time, not a
+  // stale pre-check snapshot" reasoning `gateApprove`'s own identical comment gives -- a waiver is
+  // what lets a failing gate be approved, so a gate whose own declared evidence does not resolve must
+  // not be waivable into passing either. `gateWaive` never calls `approveGate` (see the comment
+  // above), so this is likewise the ONLY place `RUN-112` is enforced for waiving.
+  const resolvedEvidence = await resolveGateEvidence(ctx, definition);
+  refuseOnUnresolvedEvidence(gateId, resolvedEvidence);
   const waiver: Waiver = input;
   // A waiver excuses failing checks. On a gate that passes there is nothing to excuse, and recording one anyway
   // would be a standing waiver for whatever fails later (`10` §10.3 rule 1).
@@ -823,10 +1066,21 @@ export async function gateWaive(
   // The waiver and what it waived: the checks that were failing when it was granted, with the digests of their
   // output, so a later reader sees what was excused and not only that something was (`10` §10.3 rule 1: waivers
   // "appear in every report until resolved").
+  //
+  // `specs/22` M15 P8: `specs/10` §10.3's own frozen "Evidence resolution" text is explicit that "the
+  // approval OR WAIVER event records which artifacts it resolved against" -- `gateApprove`'s own
+  // `GateApprovalSummary.evidence` already satisfies this for approval; `evidence` here is the identical
+  // flattening (`resolvedEvidence.flatMap(entry => entry.ids)`) for the waiver event, mirrored rather
+  // than shared code, since `gateWaive` builds its own event payload inline and never calls `approveGate`
+  // at all (see this function's own comments above). A round-2 gauntlet critic found an earlier version
+  // of this event omitted it entirely -- `refuseOnUnresolvedEvidence` ran and could refuse, but nothing
+  // recorded what a SUCCESSFUL waiver actually resolved against, a direct gap against this exact spec
+  // sentence, not merely an omission nobody had written down.
   await emitGateEvent(ctx, 'GateWaived', gateId, {
     reason: input.reason,
     owner: input.owner,
     expiresAt: input.expiresAt,
+    evidence: resolvedEvidence.flatMap((entry) => entry.ids),
     evaluation: {
       passed: evaluated.passed,
       checks: recordChecks(evaluated, !evaluated.passed),

@@ -77,6 +77,69 @@ export function evidenceArtifactType(ref: string): string {
   return openParen === -1 ? ref : ref.slice(0, openParen);
 }
 
+/** `specs/22` M15 P8: unlike `evidenceArtifactType` above (which this piece's own conflict-of-interest
+ * check still uses, type name only), RESOLVING a reference against committed artifacts needs the
+ * `(*)`/`(id)` suffix too — the one piece of this grammar nothing before P8 ever read. `'*'` (bare, or
+ * an explicit `(*)`) means "at least one committed, non-superseded artifact of this type"; a specific
+ * id means exactly that id. */
+export function parseEvidenceRef(ref: string): { readonly type: string; readonly id: string } {
+  // The type name is always `evidenceArtifactType`'s own reading -- the IDENTICAL extraction
+  // `GATE-511`'s own same-run conflict-of-interest check already uses for the same raw string, so the
+  // two checks can never disagree about what type a given reference names. A gauntlet critic round
+  // found an earlier version of this function used a stricter, independent regex instead
+  // (`/^([^()]+)\(([^()]*)\)$/`) that silently misparsed anything not perfectly well-formed (an
+  // unbalanced paren, trailing garbage) as a literal, never-matching type name — e.g. `ADR(ADR-0011`
+  // (missing the closing paren) read as the type `"ADR(ADR-0011"` here but `"ADR"` under
+  // `evidenceArtifactType`, two different readings of the one string within the same module.
+  const type = evidenceArtifactType(ref);
+  // The id/wildcard portion, read only from a GENUINELY well-formed `Type(...)` suffix immediately
+  // after that same type name — anything else (no parens at all, an unterminated one, trailing text
+  // after the closing paren) falls back to `'*'` (wildcard: "any committed, non-superseded artifact
+  // of this type") rather than a stricter reading that could never match — the safer failure
+  // direction for a malformed reference nothing has rejected at gate-load time (`document.ts`'s own
+  // `readEvidence` validates only that `artifact` is a non-blank string, not its internal grammar).
+  const suffix = ref.slice(type.length);
+  const match = /^\(([^()]*)\)$/.exec(suffix);
+  return { type, id: match?.[1] ?? '*' };
+}
+
+/** One `evidence:` entry, resolved against committed artifacts by the caller (`gate-commands.ts`'s own
+ * `resolveGateEvidence`, a real directory scan — this module reads only the result, never touches disk
+ * itself, the identical "no ambient I/O in a pure decision function" stance `producedEvidenceFor`
+ * already takes). `ids`: every committed, non-superseded, type-matching artifact id found — for a
+ * `Type(*)`/bare reference, every one found; for `Type(id)`, that one id if it resolved. `problem`,
+ * when present, is why resolution failed (`RUN-112`'s own two real reasons); `supersededId` names which
+ * specific id was found-but-superseded, for a precise remedy. */
+export interface ResolvedEvidenceRef {
+  readonly ref: string;
+  readonly ids: readonly string[];
+  readonly problem?: 'missing' | 'superseded' | undefined;
+  readonly supersededId?: string | undefined;
+}
+
+/** `RUN-112`: refuses on the FIRST unresolved evidence reference, in declaration order — a gate
+ * declaring several, several of which are unresolved, names the first rather than every one at once
+ * (the identical "name one real reason, not a bag of them" shape `GATE-507`'s own `failing` already
+ * takes for several failing checks). Called both by `approveGate` below (so this module's own exported,
+ * independently-callable decision function never approves a gate with unresolved evidence even for a
+ * caller that bypasses `forge gate approve`'s own CLI wrapper) and directly by `gate-commands.ts`'s own
+ * `gateWaive` (which never calls `approveGate` at all — see this module's own top-of-file doc comment,
+ * "Same-run conflict of interest", for the identical reason `GATE-511` also has two real call sites). */
+export function refuseOnUnresolvedEvidence(
+  gateId: string,
+  resolvedEvidence: readonly ResolvedEvidenceRef[],
+): void {
+  for (const entry of resolvedEvidence) {
+    if (entry.problem === undefined) continue;
+    throw new ForgeError('RUN-112', {
+      gateId,
+      ref: entry.ref,
+      reason: entry.problem,
+      ...(entry.supersededId === undefined ? {} : { id: entry.supersededId }),
+    });
+  }
+}
+
 /** Who is approving. `human` is a person at the terminal; `agent` carries the agent's role id and the
  * `gates.may_approve` list of its (immutable) definition. */
 export type GateApprover =
@@ -119,6 +182,14 @@ export interface GateApprovalSummary {
   readonly advisoryRun: false;
   readonly openQuestionsPolicy: 'block' | 'warn';
   readonly approver: string;
+  /** `specs/22` M15 P8: every artifact id `resolvedEvidence` actually found, flattened across every
+   * declared `evidence:` entry — "a human approves a claim with proof attached rather than a name"
+   * (`PLAN-M15.md` P8's own Mandate), so the ids a real approval was recorded against are themselves
+   * part of the recorded summary, not just the fact that resolution succeeded. `[]` for a gate that
+   * declares no evidence at all (most gates today) or declares some but, since `refuseOnUnresolvedEvidence`
+   * already ran above with nothing thrown, every entry resolved to at least one id — this field is only
+   * ever `[]` in the first, no-evidence-declared case. */
+  readonly evidence: readonly string[];
 }
 
 function sha256(text: string): string {
@@ -211,6 +282,10 @@ export interface ApproveGateInput {
    * containing `definition.id`: no conflict, the ordinary rules above decide alone. Only ever consulted
    * for `approver.kind === 'agent'`: a human approver ignores it, whatever it contains. */
   readonly producedEvidenceFor?: readonly string[] | undefined;
+  /** `specs/22` M15 P8: `definition.evidence`, each entry resolved against committed artifacts by the
+   * caller (`gate-commands.ts`'s own `resolveGateEvidence`) — see `ResolvedEvidenceRef`'s own doc
+   * comment. Absent/empty: no evidence declared, nothing to check (most gates today). */
+  readonly resolvedEvidence?: readonly ResolvedEvidenceRef[] | undefined;
   /** Epoch milliseconds, injected (`21` §21.1: no ambient clock in the engine). */
   readonly now: number;
 }
@@ -243,6 +318,11 @@ export function approveGate(input: ApproveGateInput): GateApprovalSummary {
   if (approver.kind === 'agent' && (input.producedEvidenceFor ?? []).includes(definition.id)) {
     throw new ForgeError('GATE-511', { gateId: definition.id, agentId: approver.agentId });
   }
+  // `specs/22` M15 P8: checked right after the same-run conflict-of-interest refusal above, for the
+  // identical reason it sits right after the authorisation refusal — a prerequisite the checks
+  // themselves have no bearing on. `RUN-112`'s own doc comment (`refuseOnUnresolvedEvidence`) has the
+  // full reasoning for why this module throws it directly rather than deferring to the caller.
+  refuseOnUnresolvedEvidence(definition.id, input.resolvedEvidence ?? []);
 
   // A waiver is consulted only when a check failed: a gate that passed needs none, and a stale one lying around
   // must not turn a clean approval into a `GATE-505`.
@@ -304,5 +384,6 @@ export function approveGate(input: ApproveGateInput): GateApprovalSummary {
     advisoryRun: false,
     openQuestionsPolicy: definition.openQuestionsPolicy,
     approver: describeApprover(approver),
+    evidence: (input.resolvedEvidence ?? []).flatMap((entry) => entry.ids),
   };
 }

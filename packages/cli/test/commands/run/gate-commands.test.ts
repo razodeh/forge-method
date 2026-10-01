@@ -12,6 +12,7 @@ import path from 'node:path';
 
 import { ArtifactDocument, validateArtifact } from '@forge/core/artifacts';
 import { appendEvent, readEvents, type ForgeEvent } from '@forge/telemetry/events';
+import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as YAML from 'yaml';
 
@@ -142,6 +143,134 @@ prompt:
   system: prompts/${id}.system.md
 `,
   );
+}
+
+/** A real, SCHEMA-VALID `ADR` document's front matter + body -- every field `adrSchema` requires
+ * (`packages/schemas/src/artifacts/adr.ts`) and all six `## ` sections its own `requiredSections`
+ * demands (`Context`/`Options considered`/`Decision`/`Diagram`/`Consequences`/`Reversal plan`),
+ * modelled on `packages/engine/test/dispatch/artifact-fixtures.ts`'s own `adrText` (not imported
+ * cross-package; this test tree has no dependency on `@forge/engine`'s own test sources). `status:
+ * 'superseded'` sets a real `superseded_by` id too -- `adrSchema`'s own `superRefine` rejects a
+ * superseded ADR with `superseded_by: null`, and rejects a non-superseded one that sets it. */
+function adrFixtureText(id: string, status: string): string {
+  const supersededBy = status === 'superseded' ? "'ADR-9999'" : 'null';
+  return [
+    '---',
+    `id: ${id}`,
+    'type: ADR',
+    'schemaVersion: 1',
+    `title: Fixture decision ${id}`,
+    `status: ${status}`,
+    'created: 2026-01-15',
+    'updated: 2026-01-15',
+    'revision: 1',
+    'author: architect',
+    'changelog: []',
+    'category: architecture',
+    'deciders: [architect]',
+    'date: 2026-01-15',
+    'reversibility: medium',
+    'blast_radius: []',
+    "revisit_trigger: 'n/a'",
+    'supersedes: []',
+    `superseded_by: ${supersededBy}`,
+    'related: []',
+    'diagrams: []',
+    "framework: 'n/a'",
+    '---',
+    '',
+    '## Context',
+    '',
+    'x',
+    '',
+    '## Options considered',
+    '',
+    'x',
+    '',
+    '## Decision',
+    '',
+    'x',
+    '',
+    '## Diagram',
+    '',
+    'x',
+    '',
+    '## Consequences',
+    '',
+    'x',
+    '',
+    '## Reversal plan',
+    '',
+    'x',
+    '',
+  ].join('\n');
+}
+
+/** A real, SCHEMA-VALID `InterfaceContract` document: `interfaceContractSchema` is the base front
+ * matter narrowed to `type: 'InterfaceContract'` with no extra fields and no required body sections
+ * (`packages/schemas/src/artifacts/interface-contract.ts`) -- simpler than `ADR`, but still the real
+ * base-shape fields (`schemaVersion`/`title`/`created`/`updated`/`revision`/`author`/`changelog`), not
+ * the three-field stub an earlier version of this helper wrote. */
+function interfaceContractFixtureText(id: string, status: string): string {
+  return [
+    '---',
+    `id: ${id}`,
+    'type: InterfaceContract',
+    'schemaVersion: 1',
+    `title: Fixture interface ${id}`,
+    `status: ${status}`,
+    'created: 2026-01-15',
+    'updated: 2026-01-15',
+    'revision: 1',
+    'author: architect',
+    'changelog: []',
+    '---',
+    '',
+    'Fixture evidence.',
+    '',
+  ].join('\n');
+}
+
+/** A real, resolvable artifact document for `resolveGateEvidence` (`specs/22` M15 P8) to find. Written
+ * directly under the project root rather than any type's own registered `pathTemplate` -- the whole-
+ * project scan (`@forge/core/ids`'s own `listArtifactFiles`) does not care where a `.md` file lives,
+ * only what its front matter says, so an exact, realistic path is not needed for this to resolve.
+ * `InterfaceContract`'s own REAL registered path (`specs/interfaces/{name}.yaml`) is a `.yaml` file,
+ * which `listArtifactFiles`'s own "every `.md` file" scan can never find regardless of content -- a
+ * pre-existing registry inconsistency (no real writer anywhere in this codebase produces one today
+ * either) this piece discloses rather than fixes, out of its own Surface. Every P19 test below that
+ * declares `evidence: - artifact: InterfaceContract` already used that type name arbitrarily, for its
+ * own same-run conflict-of-interest purposes, never to exercise a real `InterfaceContract` document's
+ * real format -- writing one here as an ordinary `.md` file continues that same arbitrary-type-name
+ * convention, just now backed by something `resolveGateEvidence` can actually resolve.
+ *
+ * Writes AND COMMITS the fixture artifact — `resolveGateEvidence` (`specs/22` M15 P8) now checks real
+ * `git ls-tree HEAD` membership, not plain filesystem presence (a gauntlet critic round found the
+ * first version resolved evidence off an untracked, never-merged scratch file, defeating the whole
+ * point of "committed" evidence), so a test fixture that never commits its own file would never
+ * satisfy it either -- confirmed directly: every test using the pre-commit version of this helper
+ * failed once the real check landed.
+ *
+ * `type` is restricted to the two real, registered types this test file ever asks for: a round-2
+ * gauntlet critic empirically reproduced that a bare three-field stub (`id`/`type`/`status` only, no
+ * other required field) satisfied evidence resolution despite failing its own type's real schema --
+ * `resolveGateEvidence` now runs every candidate through `validateArtifact` (`gate-commands.ts`), so a
+ * fixture that is not genuinely schema-valid (all required fields, all required `## ` body sections)
+ * no longer resolves at all. `ArchitectureSpec` (used by the "wrong type" test below) is deliberately
+ * NOT handled here -- it is not a registered type at all, so a fixture naming it can never validate or
+ * resolve regardless of shape, which is exactly what that test needs. */
+async function writeResolvableEvidence(
+  project: TestProject,
+  type: 'ADR' | 'InterfaceContract',
+  id: string,
+  status = 'accepted',
+): Promise<void> {
+  const relativePath = `${id}.md`;
+  const text =
+    type === 'ADR' ? adrFixtureText(id, status) : interfaceContractFixtureText(id, status);
+  await writeFile(path.join(project.dir, relativePath), text);
+  await execa('git', ['add', relativePath], { cwd: project.dir });
+  await execa('git', ['commit', '--quiet', '-m', `fixture evidence ${id}`], { cwd: project.dir });
 }
 
 async function collectEvents(project: TestProject, runId: string) {
@@ -644,6 +773,7 @@ describe('an agent never approves a gate it produced evidence for in the same ru
       'G-Ev4',
       evidenceGate('G-Ev4', 'InterfaceContract', '[human, sre, platform]'),
     );
+    await writeResolvableEvidence(project, 'InterfaceContract', 'INT-001');
     await writeAgent(project, 'sre', ['G-Ev4']);
     await writeAgent(project, 'platform', ['G-Ev4']);
     await appendEvent(project.dir, 'run-p19d', {
@@ -662,6 +792,7 @@ describe('an agent never approves a gate it produced evidence for in the same ru
   it('a human approver ignores the same-run evidence entirely', async () => {
     const project = await createTestProject();
     await writeGate(project, 'G-Ev5', evidenceGate('G-Ev5', 'InterfaceContract', '[human]'));
+    await writeResolvableEvidence(project, 'InterfaceContract', 'INT-001');
     await appendEvent(project.dir, 'run-p19e', {
       type: 'StepStarted',
       runId: 'run-p19e',
@@ -676,6 +807,7 @@ describe('an agent never approves a gate it produced evidence for in the same ru
   it('evidence recorded in ANOTHER run is not consulted', async () => {
     const project = await createTestProject();
     await writeGate(project, 'G-Ev6', evidenceGate('G-Ev6', 'InterfaceContract'));
+    await writeResolvableEvidence(project, 'InterfaceContract', 'INT-001');
     await writeAgent(project, 'sre', ['G-Ev6']);
     await appendEvent(project.dir, 'run-other-p19', {
       type: 'StepStarted',
@@ -693,6 +825,7 @@ describe('an agent never approves a gate it produced evidence for in the same ru
   it('neither source present: the agent approves normally', async () => {
     const project = await createTestProject();
     await writeGate(project, 'G-Ev7', evidenceGate('G-Ev7', 'InterfaceContract'));
+    await writeResolvableEvidence(project, 'InterfaceContract', 'INT-001');
     await writeAgent(project, 'sre', ['G-Ev7']);
     const marker = { runId: 'run-p19g', stepId: 'design', agentId: 'sre' };
     await expect(gateApprove(ctx(project, 'run-p19g', marker), 'G-Ev7')).resolves.toMatchObject({
@@ -703,6 +836,7 @@ describe('an agent never approves a gate it produced evidence for in the same ru
   it('a StepStarted naming a DIFFERENT gate in its own gateEvidence does not conflict with THIS gate', async () => {
     const project = await createTestProject();
     await writeGate(project, 'G-Ev8', evidenceGate('G-Ev8', 'InterfaceContract'));
+    await writeResolvableEvidence(project, 'InterfaceContract', 'INT-001');
     await writeAgent(project, 'sre', ['G-Ev8']);
     await appendEvent(project.dir, 'run-p19h', {
       type: 'StepStarted',
@@ -958,6 +1092,7 @@ describe('formatGateReport (human-mode gate check)', () => {
       basis: 'waiver',
       checksWaived: 1,
       waiver: { owner: 'evil\u001b[31m', reason: 'r', expiresAt: 'x' },
+      evidence: [],
     } as never);
     expect(line).toContain('waiver by evil');
     expect(line).not.toContain('\u001b');
@@ -1421,5 +1556,344 @@ describe('gate report files (PLAN-M14.md P17)', () => {
     });
     // only the hand-placed GATE-999 file is there -- nothing new was written
     expect(await readdir(gatesDir(project))).toEqual(['G-Old-2020-01-01T00-00-00.000Z.md']);
+  });
+});
+
+// `specs/22` M15 P8: "a verdict without evidence is not a verdict" -- a gate declaring `evidence: -
+// artifact: X` must resolve those references to committed artifacts at approval (or waiver) time, or
+// the approval/waiver itself is refused (`RUN-112`), before any check command runs.
+describe('gate evidence resolution (specs/22 M15 P8, RUN-112)', () => {
+  const evidenceCheckGate = (id: string, evidence: string): string =>
+    `id: ${id}\n` +
+    'checks:\n' +
+    '  deterministic:\n' +
+    '    - id: t\n' +
+    `      run: "echo '{\\"errors\\":0}'"\n` +
+    '      failOn: "errors > 0"\n' +
+    '  advisory: []\n' +
+    'openQuestionsPolicy: warn\n' +
+    `evidence:\n  - artifact: ${evidence}\n`;
+
+  it('approval with complete evidence succeeds and records the evidence ids', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Ok', evidenceCheckGate('G-Ev-Ok', 'ADR(*)'));
+    await writeResolvableEvidence(project, 'ADR', 'ADR-0001');
+    await writeResolvableEvidence(project, 'ADR', 'ADR-0002');
+    const summary = await gateApprove(ctx(project, 'run-ev-ok'), 'G-Ev-Ok');
+    expect([...summary.evidence].sort()).toEqual(['ADR-0001', 'ADR-0002']);
+  });
+
+  it('an UNCOMMITTED artifact -- present on disk but never git-added or committed -- does NOT satisfy evidence (RUN-112), the real gap a gauntlet critic round found and this closes', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Uncommitted', evidenceCheckGate('G-Ev-Uncommitted', 'ADR(*)'));
+    // Deliberately a plain writeFile, no git add/commit -- exactly the scratch-file bypass an agent
+    // step running inside its own lane worktree could otherwise produce.
+    await writeFile(
+      path.join(project.dir, 'ADR-0001.md'),
+      '---\nid: ADR-0001\ntype: ADR\nstatus: accepted\n---\n\nFixture evidence.\n',
+    );
+    await expect(
+      gateApprove(ctx(project, 'run-ev-uncommitted'), 'G-Ev-Uncommitted'),
+    ).rejects.toMatchObject({ code: 'RUN-112', details: { reason: 'missing' } });
+  });
+
+  it('a TRACKED-BUT-UNCOMMITTED (staged, not yet committed) artifact also does NOT satisfy evidence', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Staged', evidenceCheckGate('G-Ev-Staged', 'ADR(*)'));
+    await writeFile(
+      path.join(project.dir, 'ADR-0001.md'),
+      '---\nid: ADR-0001\ntype: ADR\nstatus: accepted\n---\n\nFixture evidence.\n',
+    );
+    await execa('git', ['add', 'ADR-0001.md'], { cwd: project.dir }); // staged, never committed
+    await expect(gateApprove(ctx(project, 'run-ev-staged'), 'G-Ev-Staged')).rejects.toMatchObject({
+      code: 'RUN-112',
+      details: { reason: 'missing' },
+    });
+  });
+
+  it('a Type(id) reference resolves to exactly that id, not every artifact of the type', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Id', evidenceCheckGate('G-Ev-Id', 'ADR(ADR-0002)'));
+    await writeResolvableEvidence(project, 'ADR', 'ADR-0001');
+    await writeResolvableEvidence(project, 'ADR', 'ADR-0002');
+    const summary = await gateApprove(ctx(project, 'run-ev-id'), 'G-Ev-Id');
+    expect(summary.evidence).toEqual(['ADR-0002']);
+  });
+
+  it('approval with a missing reference is refused (RUN-112) with a remedy naming what is absent, no event appended', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Miss', evidenceCheckGate('G-Ev-Miss', 'ADR(*)'));
+    const error = await gateApprove(ctx(project, 'run-ev-miss'), 'G-Ev-Miss').catch(
+      (e: unknown) => e,
+    );
+    expect(error).toMatchObject({
+      code: 'RUN-112',
+      details: { gateId: 'G-Ev-Miss', ref: 'ADR(*)', reason: 'missing' },
+    });
+    expect((error as { remedy: string }).remedy).toContain('Commit a real');
+    expect(await collectEvents(project, 'run-ev-miss')).toEqual([]);
+  });
+
+  it('approval against superseded evidence is refused (RUN-112), naming the superseded id', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Sup', evidenceCheckGate('G-Ev-Sup', 'ADR(ADR-0001)'));
+    await writeResolvableEvidence(project, 'ADR', 'ADR-0001', 'superseded');
+    await expect(gateApprove(ctx(project, 'run-ev-sup'), 'G-Ev-Sup')).rejects.toMatchObject({
+      code: 'RUN-112',
+      details: { gateId: 'G-Ev-Sup', ref: 'ADR(ADR-0001)', reason: 'superseded', id: 'ADR-0001' },
+    });
+  });
+
+  it('a superseded match does not block a DIFFERENT, live artifact of the same type from satisfying a wildcard reference', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Mix', evidenceCheckGate('G-Ev-Mix', 'ADR(*)'));
+    await writeResolvableEvidence(project, 'ADR', 'ADR-0001', 'superseded');
+    await writeResolvableEvidence(project, 'ADR', 'ADR-0002', 'accepted');
+    const summary = await gateApprove(ctx(project, 'run-ev-mix'), 'G-Ev-Mix');
+    expect(summary.evidence).toEqual(['ADR-0002']);
+  });
+
+  it('resolves against the declared type only -- a real, committed, schema-valid artifact of a DIFFERENT type is not a match (mutation: wrong-type)', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Type', evidenceCheckGate('G-Ev-Type', 'ADR(*)'));
+    // A real, schema-valid, committed InterfaceContract -- not an ADR of any id -- must not satisfy an
+    // ADR(*) reference. (Two real registered types can never share the same literal id either way:
+    // `checkIdMatchesRegisteredType` ties every type to its own id prefix/width, so "same id, wrong
+    // type" is not a constructible schema-valid scenario -- this tests the type filter directly instead.)
+    await writeResolvableEvidence(project, 'InterfaceContract', 'INT-001');
+    await expect(gateApprove(ctx(project, 'run-ev-type'), 'G-Ev-Type')).rejects.toMatchObject({
+      code: 'RUN-112',
+      details: { reason: 'missing' },
+    });
+  });
+
+  it('forge gate approve --json carries the evidence ids (the real CLI envelope, not just the summary)', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Json', evidenceCheckGate('G-Ev-Json', 'ADR(*)'));
+    await writeResolvableEvidence(project, 'ADR', 'ADR-0001');
+    const summary = await gateApprove(ctx(project, 'run-ev-json'), 'G-Ev-Json');
+    // `bin.ts`'s own `--json` envelope is `{ v: 1, gateId, recorded: true, evaluation: summary }` --
+    // `summary` spread verbatim, so proving the real returned summary itself carries `evidence` is
+    // proving the real `--json` envelope does too, with no separate CLI-layer wiring to re-test.
+    expect(summary.evidence).toEqual(['ADR-0001']);
+    expect(
+      JSON.stringify({ v: 1, gateId: 'G-Ev-Json', recorded: true, evaluation: summary }),
+    ).toContain('"evidence":["ADR-0001"]');
+  });
+
+  it('formatGateApproval shows the resolved evidence ids in the plain-text form', async () => {
+    const project = await createTestProject();
+    await writeGate(project, 'G-Ev-Text', evidenceCheckGate('G-Ev-Text', 'ADR(*)'));
+    await writeResolvableEvidence(project, 'ADR', 'ADR-0001');
+    const summary = await gateApprove(ctx(project, 'run-ev-text'), 'G-Ev-Text');
+    expect(formatGateApproval('G-Ev-Text', summary)).toContain('evidence: ADR-0001');
+  });
+
+  it('a gate with no evidence declared at all is completely unaffected: no scan, no RUN-112, as before', async () => {
+    const project = await createTestProject();
+    const summary = await gateApprove(ctx(project), FIXTURE_GATE_ID);
+    expect(summary.evidence).toEqual([]);
+  });
+
+  // The Mandate's own "Mutation evidence" section ("Skip the resolution check: the missing-evidence
+  // test passes") is satisfied by the "approval with a missing reference is refused (RUN-112)..." test
+  // above, which genuinely depends on `gateApprove`'s own `resolveGateEvidence`/`refuseOnUnresolvedEvidence`
+  // call (`gate-commands.ts`): removing those two lines locally and re-running this file's own tests
+  // reproduces the exact predicted failure (that test, and several others in this describe block, start
+  // approving instead of refusing) -- confirmed directly, by reverting the fix and restoring it, not
+  // merely asserted; see `GAUNTLET-LOG.md`'s own `## M15 P8` entry for the verification record. An
+  // earlier version of this file instead had a SEPARATE test here, titled as this same mutation proof
+  // but calling `gateCheck` (a pre-existing, by-design evidence-free dry-run path that never calls
+  // `approveGate` at all) -- a round-2 gauntlet critic found its own claim ("proven by direct removal")
+  // was simply false: `gateCheck` passing cleanly proves nothing about what deleting `gateApprove`'s own
+  // resolution call would do. Removed as dead weight rather than fixed in place, since the coverage it
+  // claimed never existed to begin with.
+
+  // `PLAN-M15.md` P8's own Mandate: "the existing M14 separation-of-duties and session-marker
+  // refusals still fire first (order asserted)". Reuses the identical "touch a marker, prove the
+  // check command never ran" technique the pre-existing GATE-508 ordering test above already uses.
+  describe('fires after every pre-existing M14 refusal, never instead of one (order asserted)', () => {
+    it('GATE-508 (unauthorised approver) fires before RUN-112, even though the evidence is also unresolved', async () => {
+      const project = await createTestProject();
+      const marker = path.join(project.dir, 'ran-marker-508');
+      await writeGate(
+        project,
+        'G-Ev-508',
+        `id: G-Ev-508\n` +
+          'checks:\n' +
+          '  deterministic:\n' +
+          `    - id: t\n      run: "touch ran-marker-508; echo '{\\"errors\\":0}'"\n      failOn: "errors > 0"\n` +
+          'approval:\n  roles: [pm]\n' +
+          'evidence:\n  - artifact: ADR(*)\n',
+      );
+      // Deliberately no ADR written: evidence is ALSO unresolved, to prove GATE-508 still wins.
+      await expect(gateApprove(ctx(project, 'run-ev-508'), 'G-Ev-508')).rejects.toMatchObject({
+        code: 'GATE-508',
+      });
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('GATE-511 (same-run conflict of interest) fires before RUN-112, even though the evidence is also unresolved', async () => {
+      const project = await createTestProject();
+      await writeGate(
+        project,
+        'G-Ev-511',
+        `${evidenceCheckGate('G-Ev-511', 'ADR(*)')}approval:\n  roles: [human, sre]\n`,
+      );
+      await writeAgent(project, 'sre', ['G-Ev-511']);
+      await appendEvent(project.dir, 'run-ev-511', {
+        type: 'StepStarted',
+        runId: 'run-ev-511',
+        ts: '2026-01-01T00:00:00.000Z',
+        agentId: 'sre',
+        payload: { gateEvidence: ['G-Ev-511'] },
+      });
+      const marker = { runId: 'run-ev-511', stepId: 'design', agentId: 'sre' };
+      // Deliberately no ADR written: evidence is ALSO unresolved, to prove GATE-511 still wins.
+      await expect(
+        gateApprove(ctx(project, 'run-ev-511', marker), 'G-Ev-511'),
+      ).rejects.toMatchObject({ code: 'GATE-511' });
+    });
+  });
+
+  describe('gateWaive: the identical RUN-112 enforcement, since gateWaive never calls approveGate', () => {
+    it('refuses a waiver on a gate whose evidence does not resolve, no event appended', async () => {
+      const project = await createTestProject();
+      await writeGate(
+        project,
+        'G-Ev-Waive',
+        `id: G-Ev-Waive\n` +
+          'checks:\n' +
+          '  deterministic:\n' +
+          `    - id: t\n      run: "echo '{\\"errors\\":1}'"\n      failOn: "errors > 0"\n` +
+          '  advisory: []\n' +
+          'openQuestionsPolicy: warn\n' +
+          'evidence:\n  - artifact: ADR(*)\n',
+      );
+      await expect(
+        gateWaive(ctx(project, 'run-ev-waive'), 'G-Ev-Waive', WAIVER),
+      ).rejects.toMatchObject({ code: 'RUN-112' });
+      expect(await collectEvents(project, 'run-ev-waive')).toEqual([]);
+    });
+
+    it('waives cleanly once the evidence resolves', async () => {
+      const project = await createTestProject();
+      await writeGate(
+        project,
+        'G-Ev-Waive-Ok',
+        `id: G-Ev-Waive-Ok\n` +
+          'checks:\n' +
+          '  deterministic:\n' +
+          `    - id: t\n      run: "echo '{\\"errors\\":1}'"\n      failOn: "errors > 0"\n` +
+          '  advisory: []\n' +
+          'openQuestionsPolicy: warn\n' +
+          'evidence:\n  - artifact: ADR(*)\n',
+      );
+      await writeResolvableEvidence(project, 'ADR', 'ADR-0001');
+      const report = await gateWaive(ctx(project, 'run-ev-waive-ok'), 'G-Ev-Waive-Ok', WAIVER);
+      expect(report.approved).toBe(true);
+    });
+
+    // `specs/22` M15 P8's own Mandate: "the existing M14 separation-of-duties and session-marker
+    // refusals still fire first (order asserted)" -- asserted above for `gateApprove`, but `gateWaive`
+    // is a structurally SEPARATE implementation (it never calls `approveGate`, per this describe
+    // block's own title) with its own independent GATE-508/511 checks, so the identical ordering had no
+    // test of its own here until a round-2 gauntlet critic pointed out the gap.
+    it('GATE-508 (unauthorised waiver owner) fires before RUN-112, even though the evidence is also unresolved', async () => {
+      const project = await createTestProject();
+      await writeGate(
+        project,
+        'G-Ev-Waive-508',
+        `id: G-Ev-Waive-508\n` +
+          'checks:\n' +
+          '  deterministic:\n' +
+          `    - id: t\n      run: "echo '{\\"errors\\":1}'"\n      failOn: "errors > 0"\n` +
+          '  advisory: []\n' +
+          'openQuestionsPolicy: warn\n' +
+          'approval:\n  roles: [pm]\n' +
+          'evidence:\n  - artifact: ADR(*)\n',
+      );
+      // Deliberately no ADR written: evidence is ALSO unresolved, to prove GATE-508 still wins.
+      await expect(
+        gateWaive(ctx(project, 'run-ev-waive-508'), 'G-Ev-Waive-508', WAIVER),
+      ).rejects.toMatchObject({ code: 'GATE-508' });
+    });
+
+    it('GATE-511 (same-run conflict of interest) fires before RUN-112, even though the evidence is also unresolved', async () => {
+      const project = await createTestProject();
+      await writeGate(
+        project,
+        'G-Ev-Waive-511',
+        `id: G-Ev-Waive-511\n` +
+          'checks:\n' +
+          '  deterministic:\n' +
+          `    - id: t\n      run: "echo '{\\"errors\\":1}'"\n      failOn: "errors > 0"\n` +
+          '  advisory: []\n' +
+          'openQuestionsPolicy: warn\n' +
+          'approval:\n  roles: [human, sre]\n' +
+          'evidence:\n  - artifact: ADR(*)\n',
+      );
+      await writeAgent(project, 'sre', ['G-Ev-Waive-511']);
+      await appendEvent(project.dir, 'run-ev-waive-511', {
+        type: 'StepStarted',
+        runId: 'run-ev-waive-511',
+        ts: '2026-01-01T00:00:00.000Z',
+        agentId: 'sre',
+        payload: { gateEvidence: ['G-Ev-Waive-511'] },
+      });
+      const marker = { runId: 'run-ev-waive-511', stepId: 'design', agentId: 'sre' };
+      // Deliberately no ADR written: evidence is ALSO unresolved, to prove GATE-511 still wins.
+      await expect(
+        gateWaive(ctx(project, 'run-ev-waive-511', marker), 'G-Ev-Waive-511', WAIVER),
+      ).rejects.toMatchObject({ code: 'GATE-511' });
+    });
+
+    // The "missing" case above and in the earlier `gateApprove`-focused describe block both exercise
+    // RUN-112's `reason: 'missing'` branch for waive; the `'superseded'` branch (a real critic finding:
+    // `gateWaive`'s own ordering/superseded coverage was entirely absent, unlike `gateApprove`'s) had no
+    // test here at all before this one.
+    it('a waiver on a gate whose only matching evidence is superseded is refused, naming the superseded id', async () => {
+      const project = await createTestProject();
+      await writeGate(
+        project,
+        'G-Ev-Waive-Sup',
+        `id: G-Ev-Waive-Sup\n` +
+          'checks:\n' +
+          '  deterministic:\n' +
+          `    - id: t\n      run: "echo '{\\"errors\\":1}'"\n      failOn: "errors > 0"\n` +
+          '  advisory: []\n' +
+          'openQuestionsPolicy: warn\n' +
+          'evidence:\n  - artifact: ADR(ADR-0001)\n',
+      );
+      await writeResolvableEvidence(project, 'ADR', 'ADR-0001', 'superseded');
+      await expect(
+        gateWaive(ctx(project, 'run-ev-waive-sup'), 'G-Ev-Waive-Sup', WAIVER),
+      ).rejects.toMatchObject({
+        code: 'RUN-112',
+        details: { gateId: 'G-Ev-Waive-Sup', reason: 'superseded', id: 'ADR-0001' },
+      });
+    });
+
+    it('a successful waiver records the resolved evidence ids on the GateWaived event', async () => {
+      const project = await createTestProject();
+      await writeGate(
+        project,
+        'G-Ev-Waive-Event',
+        `id: G-Ev-Waive-Event\n` +
+          'checks:\n' +
+          '  deterministic:\n' +
+          `    - id: t\n      run: "echo '{\\"errors\\":1}'"\n      failOn: "errors > 0"\n` +
+          '  advisory: []\n' +
+          'openQuestionsPolicy: warn\n' +
+          'evidence:\n  - artifact: ADR(*)\n',
+      );
+      await writeResolvableEvidence(project, 'ADR', 'ADR-0001');
+      await gateWaive(ctx(project, 'run-ev-waive-event'), 'G-Ev-Waive-Event', WAIVER);
+      const events = await collectEvents(project, 'run-ev-waive-event');
+      const waived = events.find((event) => event.type === 'GateWaived');
+      expect((waived?.payload as { evidence?: readonly string[] } | undefined)?.evidence).toEqual([
+        'ADR-0001',
+      ]);
+    });
   });
 });

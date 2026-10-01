@@ -635,6 +635,56 @@ export const ERROR_CODES = {
       'execution.testCommands.unit (forge config set execution.testCommands.unit "<command>") for a ' +
       'project forge can detect as js or python, before running `forge test binding`.',
   },
+  // `specs/22` M15 P8: "a verdict without evidence is not a verdict" -- a gate declaring `evidence: -
+  // artifact: X` (`10` §10.3) must have every declared, RESOLVABLE reference (`gate-commands.ts`'s own
+  // `isResolvableEvidenceType` -- a reference naming an unregistered type, or a registered one whose
+  // own path is not a Markdown file, is skipped entirely, never reaches this code; `SPEC-QUESTIONS.md`
+  // Q287 has the full reasoning) resolve to a real, committed, non-superseded artifact of the declared
+  // type BEFORE an approval or a waiver is recorded, or the approval/waiver itself is refused.
+  // `'missing'`: no committed artifact of the declared type (and, for a `Type(id)` reference, that
+  // specific id) exists at all. `'superseded'`: one was found but its own `status` field is literally
+  // `superseded` -- the identical, type-agnostic signal `baseFrontMatterShape`'s own `status` field
+  // already carries for every artifact type, not a second, type-specific supersession mechanism
+  // invented for this piece (`ADR`'s own `superseded_by` field names WHO replaced it, which this check
+  // has no need to read). Thrown by `approveGate` (`@forge/engine/gates`) itself, not only its CLI
+  // caller, the identical "computed once by the real I/O layer, re-enforced by the pure decision
+  // function" shape `GATE-508`/`GATE-511` already take for the identical reason: `approveGate` is
+  // independently exported and callable, and must not approve a gate with unresolved evidence even for
+  // a caller that bypasses `forge gate approve`'s own wrapper.
+  //
+  // `prerequisiteMissing` (5), not `usage` (2): the gate's own `evidence:` declaration is a perfectly
+  // valid value -- the real precondition this command depends on (a committed, non-superseded artifact)
+  // simply has not happened yet, the identical "run X first, then retry" shape every other
+  // `prerequisiteMissing` code in this file already uses (`ENV-004`/`005`, `RUN-052`/`078`/`080`,
+  // `CFG-017`/`020`, `VCS-010`'s own "the missing prerequisite is a clean working tree") -- not a
+  // malformed invocation the way every sibling `GATE-501`-`515` `usage` code genuinely is. `GATE-516`
+  // (`specs/22` M15 P7, above) already names this exact distinction explicitly; an earlier version of
+  // THIS code used `usage` anyway, repeating the identical mistake within the same milestone -- caught
+  // by a gauntlet critic round, not learned the first time.
+  //
+  // The remedy below names no concrete PATH to write the missing artifact to: `IdRegistry` tracks no
+  // canonical directory per type, and `resolveGateEvidence`'s own scan is whole-project, not rooted at
+  // one. A caller already knows the type (it is in the message); the committed id/location is still
+  // left for them to work out from `@forge/schemas`' own `pathTemplate` for that type -- a real,
+  // disclosed gap (`SPEC-QUESTIONS.md` Q287, critic finding), not closed here: resolving it would mean
+  // this error formatter reaching into the schema registry `codes.ts` has no dependency on today.
+  'RUN-112': {
+    severity: 'error',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: {
+      gateId: string;
+      ref: string;
+      reason: 'missing' | 'superseded';
+      id?: string;
+    }) => {
+      if (d.reason === 'superseded')
+        return `gate ${show(d.gateId)}'s own evidence ${show(d.ref)} resolved to ${show(d.id ?? '')}, whose own status is "superseded" -- a superseded artifact is not evidence of current work.`;
+      return `gate ${show(d.gateId)}'s own evidence ${show(d.ref)} resolved to no committed, non-superseded artifact of that type.`;
+    },
+    remedy:
+      'Commit a real, non-superseded artifact of the declared type (and, for a Type(id) reference, ' +
+      'that exact id) before approving or waiving this gate.',
+  },
   // `06` §6.2's own rule 5 (`PLAN-M5.md` P11's own `detectCycles`, operating on a compiled `StepNode[]`).
   // A lower-level utility, unlike `@forge/engine/plan`'s own `compilePlan`/`expandFanout` (which never
   // throw): `detectCycles` throws this for the one input shape no realistic compiled plan gets remotely
@@ -2401,11 +2451,17 @@ export const ERROR_CODES = {
         return `cannot assemble an EvidenceBundle for ${show(d.storyId)}: no ReviewReport with a recorded verdict was found for this story's own review step.`;
       return `cannot assemble an EvidenceBundle for ${show(d.storyId)}: no verify/done-phase check result was found for this story.`;
     },
+    // `specs/22` M15 P8: reworded to open with an imperative verb ("Run"), preserving the exact same
+    // meaning -- `packages/core/test/errors.test.ts`'s own exhaustive "every remedy names a concrete
+    // next action" check was never run against this code during P7's own gauntlet (it is cross-cutting,
+    // not among P7's own directly-affected test files), so this pre-existing defect from `specs/22` M15
+    // P7 sat latent in already-committed, already-shipped code until a full, untargeted suite run during
+    // P8 surfaced it. Fixed opportunistically here rather than left for a future piece to trip over.
     remedy:
-      'forge story evidence only sees reviews recorded in the CURRENT forge run (FORGE_RUN_ID) ' +
-      "own event log: run it as part of the story's real implement-story workflow run, after the " +
-      'review step has completed, not standalone or in a different run -- `forge story verify` does ' +
-      'not record a review and cannot fix this.',
+      "Run `forge story evidence` only as part of the story's real implement-story workflow run, " +
+      'after the review step has completed, never standalone or in a different run -- `forge story ' +
+      'verify` does not record a review and cannot fix this (reviews are read from the CURRENT ' +
+      "forge run's own event log, FORGE_RUN_ID).",
   },
   'SPEC-501': {
     // I6: "traceability edges required by the spec graph cannot be disabled."

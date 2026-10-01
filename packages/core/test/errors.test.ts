@@ -98,6 +98,9 @@ const SAMPLE_DETAILS = {
   command: 'accept',
   role: 'reviewer',
   gateId: 'G-Verify',
+  // `RUN-112` (`specs/22` M15 P8): the raw `evidence:` reference text a gate declared (`ADR(*)`, say),
+  // echoed verbatim in the message so a reader sees exactly what was declared, not a parsed fragment.
+  ref: 'ADR(*)',
   checkId: 'coverage.min',
   autonomy: 'supervised',
   edgeKind: 'STORY->ACCEPTANCE_CRITERION',
@@ -187,7 +190,7 @@ const SAMPLE_DETAILS = {
  * remedies are "do the thing again after fixing it".
  */
 const IMPERATIVE_VERBS =
-  /^(Run|Re-run|Set|Add|Remove|Rename|Move|Check|Install|Upgrade|Update|Configure|Choose|Delete|Edit|Pass|Reduce|Raise|Wait|Retry|Resolve|Split|Merge|Replace|Provide|Create|Restore|Approve|Waive|Stop|Free|Point|Supersede|Address|Verify|Re-verify|Write|Fix|Widen)\b/;
+  /^(Run|Re-run|Set|Add|Remove|Rename|Move|Check|Install|Upgrade|Update|Configure|Choose|Delete|Edit|Pass|Reduce|Raise|Wait|Retry|Resolve|Split|Merge|Replace|Provide|Create|Restore|Approve|Waive|Stop|Free|Point|Supersede|Address|Verify|Re-verify|Write|Fix|Widen|Commit)\b/;
 
 /** CSI introducer. Written as an escape so the source stays free of control characters. */
 const ESC = '[';

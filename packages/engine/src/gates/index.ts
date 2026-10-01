@@ -9,11 +9,14 @@ export {
   approveGate,
   approverRefusal,
   evidenceArtifactType,
+  parseEvidenceRef,
   recordChecks,
+  refuseOnUnresolvedEvidence,
   type ApprovedCheckRecord,
   type ApproveGateInput,
   type GateApprovalSummary,
   type GateApprover,
+  type ResolvedEvidenceRef,
 } from './approve.ts';
 export {
   parseCheckDocument,

@@ -1178,6 +1178,27 @@ export async function runCommandStep(
   );
 }
 
+/** `ctx.gates.evaluate` below is the deterministic `checks:` pass only -- it has never read a gate
+ * document's own `evidence:` block, before or after `specs/22` M15 P8, and (pre-existing, not this
+ * piece's own doing) never reads `approval:` (roles/required/quorum) either: `isApproved`
+ * (`gates/waiver.ts`) is purely `result.passed || a valid recorded waiver`, so `report.approved` here
+ * owes nothing to who is allowed to approve or what evidence backs it. That block's resolution
+ * (`parseEvidenceRef`/`refuseOnUnresolvedEvidence`/`RUN-112`, `@forge/engine/gates`) is wired only into
+ * the explicit, human-or-agent-invoked `forge gate approve`/`forge gate waive` commands
+ * (`gate-commands.ts`'s own `resolveGateEvidence`) -- an automatic in-run `gate` step, reached purely by
+ * a workflow's own `dependsOn` graph with no explicit approve/waive call, never resolves or refuses on
+ * `evidence:` at all. P8 added a SECOND, independent evidence concept this path still does not share.
+ *
+ * Worth being explicit about the real weight of this, since a narrower reading (just evidence) risks
+ * underselling it: every real shipped workflow using a gate with `evidence:` declared (`verify`/
+ * `verify-gate` → `G-Verify`, which also declares `approval: required: true, roles: [human]`) wires it
+ * as a `kind: gate` step, this automatic path -- `G-Verify` auto-"approves" the instant its deterministic
+ * checks pass, with no evidence check AND no human-approval check at all, in the fully automated `forge
+ * run` this engine itself drives. `RUN-112`'s own guarantee concretely protects only the explicit,
+ * human-or-agent-typed CLI/TUI path (`specs/04`'s own prescribed `forge gate approve G-Design`), not
+ * what this engine's own commentary elsewhere calls the canonical way a gate step gets approved. A real,
+ * disclosed scope gap -- see `SPEC-QUESTIONS.md` Q287 (critic findings, M15 P8 gauntlet round 2) -- not
+ * a P8 regression: both `evidence:` and `approval:` were equally inert on this path before P8 landed. */
 export async function runGateStep(node: StepNode, ctx: ExecuteStepContext): Promise<StepOutcome> {
   const startedAt = ctx.now();
   await ctx.telemetry.emit({ type: 'StepStarted', stepId: node.id });

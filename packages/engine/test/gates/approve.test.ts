@@ -6,7 +6,13 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { approveGate, approverRefusal, evidenceArtifactType } from '../../src/gates/approve.ts';
+import {
+  approveGate,
+  approverRefusal,
+  evidenceArtifactType,
+  parseEvidenceRef,
+  refuseOnUnresolvedEvidence,
+} from '../../src/gates/approve.ts';
 import { evaluateGate } from '../../src/gates/evaluate.ts';
 import type { GateDefinition, GateEvaluationResult, Waiver } from '../../src/gates/types.ts';
 
@@ -408,5 +414,95 @@ describe('evidenceArtifactType', () => {
   });
   it('a bare type name with no "(" at all is returned unchanged', () => {
     expect(evidenceArtifactType('ArchitectureSpec')).toBe('ArchitectureSpec');
+  });
+});
+
+describe('parseEvidenceRef (specs/22 M15 P8)', () => {
+  it('a bare type name with no "(" at all resolves to the wildcard id "*"', () => {
+    expect(parseEvidenceRef('ArchitectureSpec')).toEqual({ type: 'ArchitectureSpec', id: '*' });
+  });
+  it('Type(*) resolves to the explicit wildcard id "*"', () => {
+    expect(parseEvidenceRef('ADR(*)')).toEqual({ type: 'ADR', id: '*' });
+  });
+  it('Type(id) resolves to that specific id', () => {
+    expect(parseEvidenceRef('ADR(ADR-0011)')).toEqual({ type: 'ADR', id: 'ADR-0011' });
+  });
+});
+
+describe('refuseOnUnresolvedEvidence / RUN-112 (specs/22 M15 P8)', () => {
+  it('does nothing when every entry resolved (no problem field)', () => {
+    expect(() => {
+      refuseOnUnresolvedEvidence('G-T', [{ ref: 'ADR(*)', ids: ['ADR-001'] }]);
+    }).not.toThrow();
+  });
+  it('does nothing when there is no evidence at all', () => {
+    expect(() => {
+      refuseOnUnresolvedEvidence('G-T', []);
+    }).not.toThrow();
+  });
+  it('throws RUN-112 missing for an entry with no matching artifact', () => {
+    expect(() => {
+      refuseOnUnresolvedEvidence('G-T', [{ ref: 'ADR(*)', ids: [], problem: 'missing' }]);
+    }).toThrow(expect.objectContaining({ code: 'RUN-112' }));
+  });
+  it('throws RUN-112 superseded for an entry whose only match is superseded, naming that id', () => {
+    try {
+      refuseOnUnresolvedEvidence('G-T', [
+        { ref: 'ADR(ADR-001)', ids: [], problem: 'superseded', supersededId: 'ADR-001' },
+      ]);
+      expect.unreachable('refuseOnUnresolvedEvidence must throw');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'RUN-112' });
+      expect((error as { message: string }).message).toContain('ADR-001');
+    }
+  });
+  it('names the FIRST unresolved entry, in declaration order, when several are unresolved', () => {
+    try {
+      refuseOnUnresolvedEvidence('G-T', [
+        { ref: 'ADR(*)', ids: ['ADR-001'] },
+        { ref: 'ArchitectureSpec', ids: [], problem: 'missing' },
+        { ref: 'InterfaceContract', ids: [], problem: 'missing' },
+      ]);
+      expect.unreachable('refuseOnUnresolvedEvidence must throw');
+    } catch (error) {
+      expect((error as { message: string }).message).toContain('ArchitectureSpec');
+    }
+  });
+});
+
+describe('approveGate: unresolved evidence (specs/22 M15 P8, RUN-112)', () => {
+  it('refuses a gate whose declared evidence did not resolve, even though every check passed', async () => {
+    const definition = gate({ evidence: [{ artifact: 'ADR(*)' }] });
+    const evaluation = await evaluated(definition);
+    expect(() =>
+      approveGate({
+        definition,
+        evaluated: evaluation,
+        approver: HUMAN,
+        now: NOW,
+        resolvedEvidence: [{ ref: 'ADR(*)', ids: [], problem: 'missing' }],
+      }),
+    ).toThrow(expect.objectContaining({ code: 'RUN-112' }));
+  });
+  it('approves a gate whose declared evidence resolved, and records the resolved ids on the summary', async () => {
+    const definition = gate({ evidence: [{ artifact: 'ADR(*)' }] });
+    const summary = approveGate({
+      definition,
+      evaluated: await evaluated(definition),
+      approver: HUMAN,
+      now: NOW,
+      resolvedEvidence: [{ ref: 'ADR(*)', ids: ['ADR-001', 'ADR-002'] }],
+    });
+    expect(summary.evidence).toEqual(['ADR-001', 'ADR-002']);
+  });
+  it('a gate with no evidence declared at all approves exactly as before, with an empty evidence list', async () => {
+    const definition = gate();
+    const summary = approveGate({
+      definition,
+      evaluated: await evaluated(definition),
+      approver: HUMAN,
+      now: NOW,
+    });
+    expect(summary.evidence).toEqual([]);
   });
 });
