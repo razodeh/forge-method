@@ -547,6 +547,23 @@ export const ERROR_CODES = {
       `Filesystem operation "${show(d.operation)}" failed for ${show(d.path)}.`,
     remedy: 'Check the underlying cause (permissions, disk space, a locked file) and retry.',
   },
+  // `18` §18.7 (post-v1.0, M15 P2): `MutationEvidence`/`EvidenceBundle` are append-only — every
+  // instance gets its own, newly-allocated id/timestamp-bearing path (`18` §18.7's own registry
+  // rows), so a second write to the SAME path can only mean a collision (two runs resolving an
+  // identical timestamp, or a retried command), never a legitimate revision. `writeNewFileAtomic`
+  // (`@forge/core/fs`) throws this instead of silently overwriting the prior evidence record the way
+  // `writeFileAtomic`'s own unconditional `rename` would — distinct from `KB-009` (the identical
+  // refusal for `kb/`-rooted entries specifically, which also offers "propose a change instead," a
+  // path these append-only, non-KB types have no equivalent of). `PLAN-M15.md`'s own "takes
+  // `RUN-110`..`RUN-114`" budget (its only unassigned code at the time this piece claimed it).
+  'RUN-114': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string }) =>
+      `${show(d.path)} already exists: this artifact type is append-only and is never overwritten.`,
+    remedy:
+      'Write to a new, distinct path instead (a new id or timestamp) — never to an existing one.',
+  },
   // `06` §6.2's own rule 5 (`PLAN-M5.md` P11's own `detectCycles`, operating on a compiled `StepNode[]`).
   // A lower-level utility, unlike `@forge/engine/plan`'s own `compilePlan`/`expandFanout` (which never
   // throw): `detectCycles` throws this for the one input shape no realistic compiled plan gets remotely

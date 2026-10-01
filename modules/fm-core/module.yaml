@@ -13,7 +13,7 @@
 # (`packages/templates/templates/`), not duplicated in here:
 #
 #   - `packages/templates/src/index.ts`'s own `WORKFLOW_INDEX` (20 ids), `GATE_INDEX` (10 ids),
-#     `FRAMEWORK_INDEX` (43 ids), `SKILL_INDEX` (32 ids) and `TEMPLATE_INDEX` (21 artifact-type ids)
+#     `FRAMEWORK_INDEX` (43 ids), `SKILL_INDEX` (32 ids) and `TEMPLATE_INDEX` (24 artifact-type ids)
 #     are exactly `10` §10.5/§10.3, `11`-`14` and `15` §15.4.4/`18` §18.7's own real, already-built
 #     content, each resolved as a path relative to wherever `@forge/templates` is actually installed.
 #   - `packages/cli/src/init/content.ts` already reads every one of those five indexes directly (via
@@ -309,7 +309,7 @@ provides:
       api-reference-writing,
     ]
 
-  # `@forge/templates`'s own real `TEMPLATE_INDEX` -- all 21 artifact stub templates `18` §18.7
+  # `@forge/templates`'s own real `TEMPLATE_INDEX` -- all 24 artifact stub templates `18` §18.7
   # registers (base templates, per this module's own `19` §19.1 shipped-modules row).
   artifactTypes:
     [
@@ -335,6 +335,8 @@ provides:
       GateReport,
       HandoffRecord,
       ReviewReport,
+      MutationEvidence,
+      EvidenceBundle,
     ]
 
   # See the header comment above: real, already-built content this module does not itself own or

@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "author": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "changelog": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "by": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "type": "string"
+          },
+          "revision": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "summary": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision",
+          "date",
+          "by",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "created": {
+      "format": "date",
+      "type": "string"
+    },
+    "failedUnderMutation": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "id": {
+      "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
+      "type": "string"
+    },
+    "mutationKind": {
+      "const": "revert-implementation",
+      "type": "string"
+    },
+    "namedTests": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "ranAt": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "restoreVerified": {
+      "type": "boolean"
+    },
+    "revertedRange": {
+      "additionalProperties": false,
+      "properties": {
+        "fromSha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
+        },
+        "toSha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fromSha",
+        "toSha"
+      ],
+      "type": "object"
+    },
+    "revision": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "run": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "schemaVersion": {
+      "exclusiveMinimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "story": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "title": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "toolVersions": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "type": {
+      "const": "MutationEvidence",
+      "type": "string"
+    },
+    "updated": {
+      "format": "date",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "schemaVersion",
+    "title",
+    "status",
+    "created",
+    "updated",
+    "revision",
+    "author",
+    "changelog",
+    "story",
+    "mutationKind",
+    "revertedRange",
+    "namedTests",
+    "failedUnderMutation",
+    "restoreVerified",
+    "toolVersions",
+    "ranAt"
+  ],
+  "type": "object"
+}

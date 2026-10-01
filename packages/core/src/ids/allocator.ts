@@ -21,7 +21,7 @@ export type ArtifactId = string;
 export interface IdAllocatorDeps {
   readonly paths: ProjectPaths;
   readonly clock: Clock;
-  /** Defaults to the real 21-type registry; a test overrides one entry to exercise `CFG-010`. */
+  /** Defaults to the real 24-type registry; a test overrides one entry to exercise `CFG-010`. */
   readonly registry?: IdRegistry;
 }
 

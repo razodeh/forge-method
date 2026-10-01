@@ -2364,7 +2364,7 @@ describe('forge spec (real subprocess dispatch, PLAN-M12.md P4)', () => {
     expect(JSON.parse(result.stdout)).toHaveProperty('errors', 0);
   });
 
-  it("exits 2 for `forge spec new` with an unrecognised <type>, naming only spec.ts's own real eight-type domain, not the unrelated full 21-type registry", async () => {
+  it("exits 2 for `forge spec new` with an unrecognised <type>, naming only spec.ts's own real eight-type domain, not the unrelated full registry (previously listed in full, 21 wide at the time)", async () => {
     // A fresh critic round found this message previously listed every registered `ArtifactTypeId`
     // (`ADR`/`Diagram`/`SessionRecord`/... included) as if each were a valid `spec new` answer, when
     // every one of those still fails `specNew`'s own real, narrower domain check.

@@ -123,7 +123,8 @@ describe('outputGlob (18 §18.7 path templates under the configured roots)', () 
 
   // `PLAN-M14.md` P33: `outputGlob` is now built on `registryTail` (`@forge/schemas`); every result below
   // was pinned BEFORE that refactor and stays byte-identical -- the remaining 13 registry types the assertion
-  // above did not already cover, so all 22 are pinned here between the two tests.
+  // above did not already cover, so all 22 types registered at P33's own time are pinned between this test
+  // and the one above it (`MutationEvidence`/`EvidenceBundle`, added post-v1.0 M15, are pinned separately below).
   it('is byte-identical to before the registryTail refactor, for every registry type (P33)', () => {
     expect(outputGlob('Capability', ROOTS)).toBe('docs/forge/specs/capabilities/CAP-*.md');
     expect(outputGlob('NFR', ROOTS)).toBe('docs/forge/specs/nfr/NFR-*.md');
@@ -138,6 +139,17 @@ describe('outputGlob (18 §18.7 path templates under the configured roots)', () 
     expect(outputGlob('Environment', ROOTS)).toBe('docs/forge/kb/delivery/environments.md');
     expect(outputGlob('Runbook', ROOTS)).toBe('docs/forge/kb/ops/runbooks/RUN-*.md');
     expect(outputGlob('ReviewReport', ROOTS)).toBe('docs/forge/sessions/reviews/REVIEW-*.md');
+  });
+
+  // `MutationEvidence`/`EvidenceBundle` (post-v1.0, `specs/18` §18.7 M15): registered via the same
+  // generic `registryTail` mechanism as every type above, so the composed glob is already correct even
+  // though no workflow step declares either as an `outputs:` entry yet (`PLAN-M15.md` P2 registers the
+  // type; wiring either into a real step's `outputs:` is `PLAN-M15.md` P7's own job for `EvidenceBundle`).
+  // Pinned here so this file's own "unchanged for every registered type" claim a few lines above stays
+  // true for all 24, not 22.
+  it('composes the correct glob for the two post-v1.0 M15 types, via the same generic mechanism', () => {
+    expect(outputGlob('MutationEvidence', ROOTS)).toBe('docs/forge/reports/mutation/*-*.md');
+    expect(outputGlob('EvidenceBundle', ROOTS)).toBe('docs/forge/reports/evidence/EVID-*-*.md');
   });
 
   it('honours a project that relocated its docs (paths.specs etc.)', () => {

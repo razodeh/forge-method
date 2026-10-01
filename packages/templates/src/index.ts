@@ -3,7 +3,7 @@
  * type, per `PLAN-M1.md` P11.
  *
  * This package cannot import `@forge/schemas` (`02` §2.2: `templates: []`, zero `@forge/*`
- * dependencies), so `TemplateArtifactTypeId` is its own, independently declared 22-member union
+ * dependencies), so `TemplateArtifactTypeId` is its own, independently declared 24-member union
  * rather than `@forge/schemas`'s `ArtifactTypeId` — the two are kept in sync by a test at the
  * repository root (`test/templates.test.ts`), the one place allowed to depend on both packages.
  * See `SPEC-QUESTIONS.md` Q28.
@@ -19,8 +19,12 @@ import { PLANNING_BRIEFS } from './content/briefs-planning.ts';
 import { PROMPTS_A } from './content/prompts-a.ts';
 import { PROMPTS_B } from './content/prompts-b.ts';
 
-/** The 22 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`, added
- * post-v1.0), transcribed independently — see above. */
+/** The 24 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
+ * `MutationEvidence` and `EvidenceBundle`, each added post-v1.0), transcribed independently — see
+ * above. `Disclosure` (also `specs/18` §18.7, `specs/22` M15 `PLAN-M15.md` P10) is deliberately NOT
+ * here yet: it is spec-registered but not code-registered (`@forge/schemas`'s own `ArtifactTypeId`
+ * does not include it either — see that file's own trailing comment), so there is no real schema for
+ * a template to validate against until P10 builds one. */
 export type TemplateArtifactTypeId =
   | 'Vision'
   | 'Capability'
@@ -43,7 +47,9 @@ export type TemplateArtifactTypeId =
   | 'Runbook'
   | 'GateReport'
   | 'HandoffRecord'
-  | 'ReviewReport';
+  | 'ReviewReport'
+  | 'MutationEvidence'
+  | 'EvidenceBundle';
 
 /**
  * Resolves a type to its template file, as a path relative to this package's own root
@@ -271,6 +277,8 @@ export const TEMPLATE_INDEX: Readonly<Record<TemplateArtifactTypeId, string>> = 
   GateReport: 'templates/artifacts/GateReport.md',
   HandoffRecord: 'templates/artifacts/HandoffRecord.md',
   ReviewReport: 'templates/artifacts/ReviewReport.md',
+  MutationEvidence: 'templates/artifacts/MutationEvidence.md',
+  EvidenceBundle: 'templates/artifacts/EvidenceBundle.md',
 };
 
 /** `15` §15.4.4's own six-group built-in skill library table, one real skill per named example

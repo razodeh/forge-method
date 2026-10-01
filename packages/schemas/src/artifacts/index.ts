@@ -1,5 +1,5 @@
 /**
- * `@forge/schemas/artifacts` — zod schemas for all 22 registry artifact types.
+ * `@forge/schemas/artifacts` — zod schemas for all 24 registry artifact types.
  *
  * @see specs/09 §9.3
  * @see specs/09 §9.6
@@ -35,6 +35,8 @@ export { NFR_TARGET_PATTERN, nfrSchema, type NFR } from './nfr.ts';
 export { openQuestionSchema, type OpenQuestion } from './open-question.ts';
 export { rcaSchema, type RCA } from './rca.ts';
 export { reviewReportSchema, type ReviewReport } from './review-report.ts';
+export { mutationEvidenceSchema, type MutationEvidence } from './mutation-evidence.ts';
+export { evidenceBundleSchema, type EvidenceBundle } from './evidence-bundle.ts';
 export { riskSchema, type Risk } from './risk.ts';
 export { runbookSchema, type Runbook } from './runbook.ts';
 export {

@@ -111,7 +111,7 @@ type FileKind =
  * mirrors `08` §8.2's own fixed layout, not file content. `ops/runbooks/RUN-###-*.md` (`08` §8.2:
  * "per-failure runbooks"; `18` §18.7's own `Runbook` row: `pathTemplate: kb/ops/runbooks/{id}-{slug}.md`)
  * routes to the already-built `runbookSchema`, not `kbEntrySchema` — a gauntlet critic found this
- * subtree fell through to the generic case and always failed there, since a Runbook uses the 21-type
+ * subtree fell through to the generic case and always failed there, since a Runbook uses the 24-type
  * registry's own `RUN-###`/base-front-matter shape, not a `KB-{SECTION}-####` one. */
 function classifyFile(relativePath: string): FileKind {
   const fileName = relativePath.split('/').at(-1) ?? relativePath;

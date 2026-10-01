@@ -696,6 +696,10 @@ describe('the claim of every registry type covers a concrete path of that type',
       section: 'delivery',
       gate: 'G-Deliver',
       ts: '20260920T101500',
+      // `MutationEvidence`/`EvidenceBundle` (post-v1.0, `specs/18` §18.7 M15): the only two registry
+      // types whose `pathTemplate` needs `{story}` — a real story id, the same shape every other
+      // vars entry here already uses (a plausible, concrete placeholder, not a live lookup).
+      story: 'STORY-001',
     });
     if (!rendered.success) throw new Error(`cannot render ${type.id}: ${rendered.missingVariable}`);
     const [first = '', ...rest] = rendered.path.split('/');

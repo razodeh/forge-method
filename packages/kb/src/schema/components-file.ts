@@ -2,7 +2,7 @@
  * `componentSchema`/`componentsFileSchema` — `architecture/components.md`'s own on-disk shape: "the
  * component inventory: responsibility, owner, deps, failure modes" (`08` §8.2), a `collection: true`
  * register the same way `risks.md`/`assumptions.md`/`open-questions.md`/`delivery/environments.md`
- * already are (`SPEC-QUESTIONS.md` Q50) — except `Component` is not one of `18` §18.7's 21 registered
+ * already are (`SPEC-QUESTIONS.md` Q50) — except `Component` is not one of `18` §18.7's 24 registered
  * types, so this lives here in `@forge/kb/schema` rather than `@forge/schemas/artifacts`, the same
  * place `KbEntry` itself already lives for the identical reason.
  *

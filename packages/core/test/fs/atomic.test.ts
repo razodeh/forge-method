@@ -15,7 +15,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ProjectPaths } from '../../src/fs/paths.ts';
-import { writeFileAtomic } from '../../src/fs/atomic.ts';
+import { writeFileAtomic, writeNewFileAtomic } from '../../src/fs/atomic.ts';
 
 let projectRoot: string | undefined;
 
@@ -227,5 +227,126 @@ describe('writeFileAtomic — real crash simulation', () => {
     await writeFileAtomic(target, 'the real content');
 
     expect(readFileSync(target, 'utf8')).toBe('the real content');
+  });
+});
+
+// `18` §18.7 (post-v1.0, M15 P2), `PLAN-M15.md` P2's own "a bundle that edits an existing evidence
+// record is refused" test: the append-only write primitive `MutationEvidence`/`EvidenceBundle` (and
+// any future append-only type) use instead of `writeFileAtomic`.
+describe('writeNewFileAtomic — the happy path', () => {
+  it('writes a brand-new path that can be read back', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('reports/mutation/STORY-001-t0.md');
+    await writeNewFileAtomic(target, '# evidence\n');
+    expect(readFileSync(target, 'utf8')).toBe('# evidence\n');
+  });
+
+  it('creates intermediate directories that do not exist yet', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('reports/evidence/EVID-001-STORY-001.md');
+    await writeNewFileAtomic(target, 'content');
+    expect(readFileSync(target, 'utf8')).toBe('content');
+  });
+
+  it('leaves no temp file behind after a successful write', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('a.md');
+    await writeNewFileAtomic(target, 'content');
+    const entries = readdirSync(path.dirname(target));
+    expect(entries).toEqual(['a.md']);
+  });
+});
+
+describe('writeNewFileAtomic — refuses an already-existing target (RUN-114)', () => {
+  it('refuses a second write to the same path, with RUN-114, rather than overwriting it', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('reports/mutation/STORY-001-t0.md');
+    await writeNewFileAtomic(target, 'the first, real run');
+
+    try {
+      await writeNewFileAtomic(target, 'a second run that must not land');
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe('RUN-114');
+    }
+  });
+
+  it('preserves the original content exactly: the refused write never touches the target', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('a.md');
+    await writeNewFileAtomic(target, 'original, must survive');
+
+    await expect(writeNewFileAtomic(target, 'attempted overwrite')).rejects.toMatchObject({
+      code: 'RUN-114',
+    });
+
+    expect(readFileSync(target, 'utf8')).toBe('original, must survive');
+  });
+
+  it('refuses even when a plain writeFileAtomic wrote the colliding file first', async () => {
+    // The refusal is a property of the TARGET path, not of which function created it — a file
+    // this function did not itself write is refused identically.
+    const paths = freshProject();
+    const target = paths.resolveWithin('a.md');
+    await writeFileAtomic(target, 'written by the ordinary, overwriting primitive');
+
+    await expect(writeNewFileAtomic(target, 'must not land')).rejects.toMatchObject({
+      code: 'RUN-114',
+    });
+    expect(readFileSync(target, 'utf8')).toBe('written by the ordinary, overwriting primitive');
+  });
+
+  it('leaves no temp file behind after a refused write', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('a.md');
+    await writeNewFileAtomic(target, 'first');
+
+    await expect(writeNewFileAtomic(target, 'second')).rejects.toMatchObject({ code: 'RUN-114' });
+
+    const entries = readdirSync(path.dirname(target)).sort();
+    expect(entries).toEqual(['a.md']);
+  });
+
+  it('closes the check-then-write race: two concurrent writers to the same new path never both succeed', async () => {
+    // Not a `pathExists`-then-`writeFileAtomic` check (which both callers could pass before either
+    // commits) -- `fsp.link`'s own atomicity means exactly one of two truly concurrent calls lands.
+    const paths = freshProject();
+    const target = paths.resolveWithin('a.md');
+    const results = await Promise.allSettled([
+      writeNewFileAtomic(target, 'writer A'),
+      writeNewFileAtomic(target, 'writer B'),
+    ]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.reason).toMatchObject({ code: 'RUN-114' });
+  });
+});
+
+describe('writeNewFileAtomic — atomicity and crash-safety, identical to writeFileAtomic', () => {
+  it('leaves nothing behind when the write is interrupted before the link', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('a.md');
+    vi.spyOn(fsp, 'link').mockRejectedValueOnce(new Error('simulated crash'));
+
+    await expect(writeNewFileAtomic(target, 'content')).rejects.toThrow();
+
+    expect(readdirSync(path.dirname(target))).toEqual([]);
+  });
+
+  it('reports a RUN-034 ForgeError for a failure other than an existing target', async () => {
+    const paths = freshProject();
+    const target = paths.resolveWithin('a.md');
+    vi.spyOn(fsp, 'link').mockRejectedValueOnce(
+      Object.assign(new Error('simulated disk failure'), { code: 'EIO' }),
+    );
+
+    try {
+      await writeNewFileAtomic(target, 'content');
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect((error as { code?: string }).code).toBe('RUN-034');
+    }
   });
 });

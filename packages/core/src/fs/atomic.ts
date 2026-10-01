@@ -1,11 +1,13 @@
 /**
- * `writeFileAtomic` — the one way `@forge/core/fs` puts bytes on disk.
+ * `writeFileAtomic`/`writeNewFileAtomic` — the two ways `@forge/core/fs` puts bytes on disk.
  *
  * `specs/18` §18.10: "Atomic writes: temp file in the same directory → `fsync` → `rename`. Never
  * partial artifacts." A reader can only ever observe the file at its previous content or its new
- * content — the destination path itself is never opened for writing, only atomically renamed onto.
+ * content — the destination path itself is never opened for writing, only atomically renamed (or, for
+ * `writeNewFileAtomic`, linked) onto.
  *
  * @see specs/18 §18.10
+ * @see specs/18 §18.7 (post-v1.0, M15 P2: `writeNewFileAtomic`'s own append-only refusal)
  */
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -108,4 +110,73 @@ export async function writeFileAtomic(
   }
 
   await fsyncDirectoryBestEffort(dir);
+}
+
+/**
+ * Writes `contents` to `target`, atomically, the identical way {@link writeFileAtomic} does — except
+ * that landing on an already-existing `target` is a refusal (`RUN-114`), never a silent overwrite.
+ *
+ * `18` §18.7 (post-v1.0, M15 P2): `MutationEvidence`/`EvidenceBundle` are append-only — every instance
+ * gets its own, newly-allocated id/timestamp-bearing path, so a second write to the same path can only
+ * mean a collision, never a legitimate revision (a Story-style same-file edit uses `writeFileAtomic`
+ * directly instead; this function is for the append-only family specifically).
+ *
+ * Uses `fsp.link` (a hard link), not `fsp.rename`, for the final step: `link` fails atomically with
+ * `EEXIST` when `target` already exists, closing the check-then-write race a separate `pathExists`
+ * check before `writeFileAtomic` would leave open (two concurrent callers could both pass the check
+ * before either renames). The temp file is still fully written and `fsync`'d first, so a crash between
+ * the write and the link leaves `target` untouched either way, identically to `writeFileAtomic`'s own
+ * crash-safety.
+ *
+ * @throws {ForgeError} `RUN-114` if `target` already exists.
+ * @throws {ForgeError} `RUN-034` if any other step fails. The temp file is not left behind.
+ */
+export async function writeNewFileAtomic(
+  target: AbsolutePath,
+  contents: string | Uint8Array,
+): Promise<void> {
+  const dir = path.dirname(target);
+  const tempPath = tempPathFor(target);
+
+  try {
+    await fsp.mkdir(dir, { recursive: true });
+
+    const handle = await fsp.open(tempPath, 'wx');
+    try {
+      await handle.writeFile(contents);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+
+    try {
+      await fsp.link(tempPath, target);
+    } catch (cause) {
+      if (errorCode(cause) === 'EEXIST') {
+        throw new ForgeError('RUN-114', { path: target });
+      }
+      throw cause;
+    }
+  } catch (cause) {
+    try {
+      await fsp.rm(tempPath, { force: true });
+    } catch {
+      // The original `cause` below is what matters; a failed cleanup attempt is not itself fatal.
+    }
+    if (cause instanceof ForgeError) throw cause;
+    throw new ForgeError('RUN-034', { operation: 'writeNewFileAtomic', path: target }, { cause });
+  }
+
+  await fsp.rm(tempPath, { force: true });
+  await fsyncDirectoryBestEffort(dir);
+}
+
+/** Narrows a caught value to a Node error code, without asserting anything about the rest of it —
+ * the identical helper `@forge/core/fs`'s own `operations.ts` declares separately for its own
+ * `pathExists`, duplicated here rather than imported: two small, single-file-local copies of a
+ * three-line type guard, not a shared dependency either file's own public contract needs. */
+function errorCode(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'code' in error
+    ? String(error.code)
+    : undefined;
 }

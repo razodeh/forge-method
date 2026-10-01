@@ -1,6 +1,6 @@
 /**
- * `@forge/templates`'s 22 artifact stub templates (21 original + `ReviewReport`, added post-v1.0),
- * per `PLAN-M1.md` P11.
+ * `@forge/templates`'s 24 artifact stub templates (21 original + `ReviewReport`, added post-v1.0, +
+ * `MutationEvidence`/`EvidenceBundle`, post-v1.0 M15), per `PLAN-M1.md` P11.
  *
  * Lives at the repository root, not inside `packages/templates/test/` or `packages/schemas/test/`:
  * this is the one check in the whole piece that needs both `@forge/schemas` (the real per-type zod
@@ -33,9 +33,11 @@ import {
   diagramSchema,
   environmentSchema,
   epicSchema,
+  evidenceBundleSchema,
   gateReportSchema,
   handoffRecordSchema,
   interfaceContractSchema,
+  mutationEvidenceSchema,
   nfrSchema,
   openQuestionSchema,
   rcaSchema,
@@ -79,6 +81,8 @@ const SCHEMA_BY_TYPE: Record<ArtifactTypeId, z.ZodTypeAny> = {
   GateReport: gateReportSchema,
   HandoffRecord: handoffRecordSchema,
   ReviewReport: reviewReportSchema,
+  MutationEvidence: mutationEvidenceSchema,
+  EvidenceBundle: evidenceBundleSchema,
 };
 
 function readTemplate(type: TemplateArtifactTypeId): {
@@ -124,8 +128,8 @@ const HANDLEBARS_BUILTIN_HELPERS = new Set([
 /**
  * Custom Handlebars helpers this repository has declared, per `02`'s tech-stack pin and `19` §19.2's
  * `TemplateContext`. Empty at M1: no piece before the M2 engine renders a template at all, and none
- * of these 21 static stubs use `{{...}}` syntax (`SPEC-QUESTIONS.md` Q28) — populate this the same
- * milestone something actually registers a helper with Handlebars.
+ * of these static stubs (24 now, 21 at M1) use `{{...}}` syntax (`SPEC-QUESTIONS.md` Q28) — populate
+ * this the same milestone something actually registers a helper with Handlebars.
  */
 const DECLARED_HELPERS: ReadonlySet<string> = new Set();
 

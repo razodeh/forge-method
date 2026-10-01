@@ -21,11 +21,13 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const templatesDir = path.join(repoRoot, 'packages', 'templates', 'templates', 'artifacts');
 
 /**
- * The 16 `@forge/templates` stubs that extend `baseFrontMatterShape` (carry their own `type` field) —
+ * The 18 `@forge/templates` stubs that extend `baseFrontMatterShape` (carry their own `type` field) —
  * `validateArtifact` selects a schema by reading `frontMatter.type`, which the 6 flat
  * "collection-entry" types (Risk, Assumption, OpenQuestion, Waiver, Environment, HandoffRecord) do
  * not have at all: those are one register entry, not a whole document, per `SPEC-QUESTIONS.md` Q28 —
- * out of scope for this function, which validates a standalone artifact file.
+ * out of scope for this function, which validates a standalone artifact file. `MutationEvidence` and
+ * `EvidenceBundle` (added post-v1.0, `specs/22` M15) both carry their own `type` field like every
+ * other document-shaped stub, so they belong here, not among the collection-entry six.
  */
 const DOCUMENT_TYPE_FILES = [
   'ADR.md',
@@ -34,8 +36,10 @@ const DOCUMENT_TYPE_FILES = [
   'Defect.md',
   'Diagram.md',
   'Epic.md',
+  'EvidenceBundle.md',
   'GateReport.md',
   'InterfaceContract.md',
+  'MutationEvidence.md',
   'NFR.md',
   'RCA.md',
   'ReviewReport.md',
@@ -47,11 +51,11 @@ const DOCUMENT_TYPE_FILES = [
 ];
 
 describe('validateArtifact — every @forge/templates document-shaped stub', () => {
-  it('found all 16 document-shaped stubs this describe block expects', () => {
+  it('found all 18 document-shaped stubs this describe block expects', () => {
     const allFiles = readdirSync(templatesDir).filter((name) => name.endsWith('.md'));
     const collectionFiles = allFiles.filter((name) => !DOCUMENT_TYPE_FILES.includes(name));
     expect(collectionFiles).toHaveLength(6);
-    expect(DOCUMENT_TYPE_FILES).toHaveLength(16);
+    expect(DOCUMENT_TYPE_FILES).toHaveLength(18);
   });
 
   it.each(DOCUMENT_TYPE_FILES)('%s validates as-is', (fileName) => {

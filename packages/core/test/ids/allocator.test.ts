@@ -260,6 +260,28 @@ describe('IdAllocator concurrency', () => {
     const all = [...single, ...many];
     expect(new Set(all).size).toBe(20);
   });
+
+  // `PLAN-M15.md` P2's own "Tests first" line: "registry id allocation gives distinct ids under
+  // concurrency (reuse the ... concurrent-allocation pattern)" for `MutationEvidence`/`EvidenceBundle`
+  // (`MUT`/`EVID`, `specs/18` §18.7) specifically — the same 50-concurrent-call shape as `Story` above,
+  // run across both new prefixes at once (never one type's own allocator serialising against itself
+  // only) to also prove the two prefixes' own counters do not interfere with each other.
+  it('50 concurrent allocate("MutationEvidence")/allocate("EvidenceBundle") calls return 50 distinct, contiguous ids per prefix, with no cross-prefix collision', async () => {
+    const paths = freshProject();
+    const allocator = new IdAllocator({ paths, clock: fakeClock() });
+    const [mutationIds, evidenceIds] = await Promise.all([
+      Promise.all(Array.from({ length: 25 }, () => allocator.allocate('MutationEvidence'))),
+      Promise.all(Array.from({ length: 25 }, () => allocator.allocate('EvidenceBundle'))),
+    ]);
+    expect(new Set(mutationIds).size).toBe(25);
+    expect(new Set(evidenceIds).size).toBe(25);
+    expect(mutationIds.every((id) => id.startsWith('MUT-'))).toBe(true);
+    expect(evidenceIds.every((id) => id.startsWith('EVID-'))).toBe(true);
+    const mutationNumbers = mutationIds.map((id) => Number(id.split('-')[1])).sort((a, b) => a - b);
+    const evidenceNumbers = evidenceIds.map((id) => Number(id.split('-')[1])).sort((a, b) => a - b);
+    expect(mutationNumbers).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
+    expect(evidenceNumbers).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
+  });
 });
 
 describe('IdAllocator — the injected clock, not Date.now()', () => {

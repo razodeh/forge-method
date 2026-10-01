@@ -6,7 +6,7 @@
  * that fails `kbEntrySchema` validation (for any reason, including a field with nothing to do with its
  * `id`) into `errors`, not `entries` — reusing that here would silently free an id that is really
  * still claimed, exactly the mistake `@forge/core/ids/scan.ts`'s own `countIdsFromFiles` doc comment
- * warns against for the 21-type registry's own allocator. This reads each file's raw front matter
+ * warns against for the 24-type registry's own allocator. This reads each file's raw front matter
  * directly instead, the same "a schema-invalid document's id still counts as claimed" rule.
  *
  * @see specs/08 §8.6

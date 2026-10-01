@@ -125,10 +125,38 @@ const RAW_ARTIFACT_TYPES = [
   // actually registered here -- `forge workflow validate --all` reported it as an unknown artifact
   // type on every fresh `forge init` until this fix. See `SPEC-QUESTIONS.md` for the full record.
   { id: 'ReviewReport', idPrefix: 'REVIEW', pathTemplate: 'sessions/reviews/{id}.md', idWidth: 3 },
+  // Added post-v1.0 (`specs/22` M15, `PLAN-M15.md` P2): `13` F-TEST-5's behavioural binding and `10`
+  // §10.3's evidence resolution needed committed, typed artifacts and did not have them.
+  // `MutationEvidence` is one file per `forge test binding` run (`{story}-{ts}`). `18` §18.7's own
+  // normative text requires the writer to actively refuse a second write to an already-existing path,
+  // not merely rely on the naming scheme making collision unlikely -- `@forge/core/fs`'s
+  // `writeNewFileAtomic` is that refusal (`RUN-114`), the same primitive `EvidenceBundle` below uses.
+  {
+    id: 'MutationEvidence',
+    idPrefix: 'MUT',
+    pathTemplate: 'reports/mutation/{story}-{ts}.md',
+    idWidth: 3,
+    parent: 'Story',
+  },
+  // `EvidenceBundle` is one file per assembly, carrying its OWN `{id}` in the path (not a fixed
+  // per-story path) specifically so a later assembly is a new, distinct, never-reused file rather
+  // than an edit of a prior one -- `SPEC-QUESTIONS.md` Q280's Decision 3/4 records the real,
+  // disclosed history of getting this one wrong twice before landing here.
+  {
+    id: 'EvidenceBundle',
+    idPrefix: 'EVID',
+    pathTemplate: 'reports/evidence/{id}-{story}.md',
+    idWidth: 3,
+    parent: 'Story',
+  },
 ] as const;
 
-/** The 22 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`, added
- * post-v1.0 -- see this array's own trailing entry for the full record). */
+/** The 24 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
+ * `MutationEvidence` and `EvidenceBundle`, each added post-v1.0 -- see this array's own trailing
+ * entries for the full record). `Disclosure` (`specs/18` §18.7, `PLAN-M15.md` P10) is spec-registered
+ * but not yet code-registered here: its own code registration is P10's job, when the disclosure
+ * ledger it names is actually built (`SPEC-QUESTIONS.md` Q280's Decision 6) -- a deliberate,
+ * disclosed asymmetry, not an oversight. */
 export type ArtifactTypeId = (typeof RAW_ARTIFACT_TYPES)[number]['id'];
 
 /**

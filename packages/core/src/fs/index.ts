@@ -9,7 +9,7 @@
  * @see specs/02 §2.5
  * @see specs/18 §18.10
  */
-export { writeFileAtomic } from './atomic.ts';
+export { writeFileAtomic, writeNewFileAtomic } from './atomic.ts';
 export {
   ensureDir,
   isExecutable,

@@ -110,12 +110,29 @@ const SPEC_TABLE: readonly Omit<ArtifactTypeDefinition, 'requiredSections'>[] = 
   },
   // Added post-v1.0, not part of the original 21 -- see `artifact-types.ts`'s own trailing entry.
   { id: 'ReviewReport', idPrefix: 'REVIEW', pathTemplate: 'sessions/reviews/{id}.md', idWidth: 3 },
+  // Added post-v1.0 (`specs/22` M15, `PLAN-M15.md` P2) -- see `artifact-types.ts`'s own trailing
+  // entries. `Disclosure` (also `specs/18` §18.7, `PLAN-M15.md` P10) is NOT here: it is spec-
+  // registered but deliberately not yet code-registered (`SPEC-QUESTIONS.md` Q280 Decision 6).
+  {
+    id: 'MutationEvidence',
+    idPrefix: 'MUT',
+    pathTemplate: 'reports/mutation/{story}-{ts}.md',
+    idWidth: 3,
+    parent: 'Story',
+  },
+  {
+    id: 'EvidenceBundle',
+    idPrefix: 'EVID',
+    pathTemplate: 'reports/evidence/{id}-{story}.md',
+    idWidth: 3,
+    parent: 'Story',
+  },
 ];
 
 describe('specs/18 §18.7 — the registry table', () => {
-  it('has exactly 22 types (21 original + ReviewReport, added post-v1.0)', () => {
-    expect(SPEC_TABLE).toHaveLength(22);
-    expect(ARTIFACT_TYPES).toHaveLength(22);
+  it('has exactly 24 types (21 original + ReviewReport, MutationEvidence, EvidenceBundle, each added post-v1.0)', () => {
+    expect(SPEC_TABLE).toHaveLength(24);
+    expect(ARTIFACT_TYPES).toHaveLength(24);
   });
 
   it('matches the spec table row-for-row, in order', () => {
@@ -258,7 +275,8 @@ describe('definitionForType', () => {
  * bare file name. Pinned for EVERY registered type (not merely a sample) so the refactor this piece
  * makes to `outputGlob` (`@forge/engine`) has a full, independent ground truth to be built on top of;
  * `packages/engine/test/dispatch/outputs.test.ts`'s own `outputGlob` table asserts the composed result
- * (this tail plus a configured root) is unchanged for every one of these same 22 types.
+ * (this tail plus a configured root) is unchanged for every one of these same types — 22 at the time of
+ * the P33 refactor itself, now all 24 including `MutationEvidence`/`EvidenceBundle` (post-v1.0 M15).
  */
 describe('registryTail (P33)', () => {
   const EXPECTED: Readonly<Record<ArtifactTypeId, string>> = {
@@ -284,6 +302,8 @@ describe('registryTail (P33)', () => {
     GateReport: 'gates/*-*.md',
     HandoffRecord: 'reports/handoffs.md',
     ReviewReport: 'reviews/REVIEW-*.md',
+    MutationEvidence: 'mutation/*-*.md',
+    EvidenceBundle: 'evidence/EVID-*-*.md',
   };
 
   it('enumerates every registered type (a floor against a vacuous pass)', () => {
