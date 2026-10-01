@@ -19146,3 +19146,113 @@ Run by the orchestrator with the owner's real key from the gitignored `.env` (lo
 **Verification.** `pnpm typecheck` (21/21), `pnpm run boundaries`, combined `pnpm lint` clean; the full `@forge/engine` (144 files, 3195 tests) and `@forge/kb` (36 files, 524 tests) suites green in a clean worktree of the final commit. One unrelated `lane-integration.test.ts` flake under the full suite's own heavy parallel load during an earlier check, confirmed a pre-existing, load-sensitive non-issue by rerunning that file alone (33/33 clean) and again clean in the final full-suite run.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q279`.
+
+## M15 P1 — Spec first: behavioural binding, evidence resolution, two new artifact types, an exemption mechanism, and a disclosure ledger
+
+Spec-only piece, no code: `PLAN-M15.md`'s own opening argument (shipped gates certify diligence, not
+correctness) needed checking against normative text already in the pack before any implementation
+started. Three full gauntlet rounds, the maximum — each round's fresh critics found something real
+the piece's own author had missed, including the author's own fix from the round before. The whole
+sequence is itself a small, self-contained demonstration of why the milestone exists: this file
+originally shipped round 1's fix as if it were final; it was not.
+
+**What the check found (before any writing).** `09` §9.5's "binding rule" already uses "binding" for
+AC-to-test traceability — a test is named and annotated with an AC id so a reporter can map a result
+back to it. Nothing in that rule asks whether the test would fail if the AC's behaviour were removed:
+`test('AC-014-2 returns 422 for an empty invoice', () => expect(true).toBe(true))` satisfies every
+word of §9.5 today. Separately, `13` F-TEST-5 already requires nightly, operator-level mutation
+testing (Stryker/mutmut/PIT) on core domain packages — real, but explicitly not per-commit, and
+scoped to FORGE's own correctness-critical packages, not every user story in every project. Both
+gaps named precisely as distinct from a new concept, **behavioural binding**, rather than silently
+duplicated or conflated — confirmed clean by all three critic rounds and never revisited after round 1.
+
+**Critic round 1 (two independent, fresh-context critics): two blocking, five major, all fixed —
+but the fix itself introduced new problems round 2 had to catch.** Both independently caught the
+first draft's `18` §18.7 paragraph as self-contradictory: it described specific run data each new
+type "records," then stated flatly that neither "carries type-specific fields beyond the base front
+matter" — a field list and no fields cannot both be true. Critic 2 caught the sharper version
+underneath: the draft also called both types' later changes "superseded, not edited in place...
+exactly like a Story or an ADR being revised," but a same-file `revision` bump IS editing in place.
+Both also caught that this piece shipped with no test anchoring any of its own new sentences at all.
+Major, all fixed in round 1's pass: a dropped `MutationEvidence` field (mutation kind, tool versions)
+versus `PLAN-M15.md` P2's own Mandate; Gate rule 7 forbidding a waiver while also claiming evidence
+absence is "refused the same way" as a waivable failing check (self-contradictory against rule 1);
+the same rule's wrong-direction citation; and `test/output-contract-known-gaps.test.ts` named in
+`PLAN-M15.md`'s own P1 Mandate but never updated, undisclosed.
+
+**Critic round 2 (two independent, fresh-context critics, explicitly re-verifying round 1's fix):
+one blocking, two major — all genuinely new, none a repeat of round 1, all against the PLAN, not
+the prose.** Round 1 resolved its own self-contradiction by asserting `EvidenceBundle` "is genuinely
+revised in place... an ordinary edit" — which directly contradicts `PLAN-M15.md` P2's own unedited,
+binding Mandate text: "Both are append-only: a bundle is never edited, only superseded." The fix had
+never been checked against the governing Plan it was supposed to implement. Critic 2 separately
+caught that round 1's citation of `18` §18.8 for what "superseded" means was fabricated — that
+section never uses the word; it is about id-never-reused on deletion, a different lifecycle event.
+Major: round 1 had also reassigned `MutationEvidence`'s field design from P2 to "P3/P4," contradicting
+P2's own Mandate, which already states that field list in full — an over-correction of round 1's own
+self-contradiction, not a resolution of it.
+
+**Critic round 3 (final, the maximum — two independent, fresh-context critics): one major (both
+critics, independently) and one blocking (one critic), both real, both fixed; the other critic found
+nothing further and said so.** Major, found by both: this very file had never been updated after
+round 2's fix landed — it still asserted the round-1 position (`EvidenceBundle` "revised in place,"
+`MutationEvidence` fields "deferred to P3/P4") that `SPEC-QUESTIONS.md` Q280's own round-2 section had
+already overturned, with no "round 2" section here at all, and a stale test count (26/7 new instead
+of the real 28/9). Blocking, found by the second critic: `PLAN-M15.md`'s own P1 Mandate is one
+sentence naming FOUR things this piece must make the spec state — (a) evidence-with-provenance, (b)
+a reverted-behaviour test failing verification, (c) the exemption mechanism (reason, owner, expiry,
+staleness), (d) the disclosure ledger as a first-class artifact. Only (a)/(b) had been written; (c)
+and (d) were never addressed, in either direction's prose, and never disclosed as deferred — the
+critic's own sharpest point: `P6`'s and `P10`'s own Surface sections name only code/schema/CLI files,
+never a `specs/*.md` file, so if P1 does not write this normative text, nothing in the rest of the
+milestone ever will, and P6/P10 would have to invent it from inside an implementation piece — the
+exact "P2 implements written text rather than inventing it" failure this piece's own Mandate exists
+to prevent, reproduced for two more artifacts one piece later.
+
+**The fix, final (survives round 3 on both remaining points, independently re-verified against
+`PLAN-M15.md` P1/P2/P7's own exact words by both round-3 critics):**
+- `18` §18.7: `MutationEvidence`'s field list is committed to VERBATIM from `PLAN-M15.md` P2's
+  Mandate (nothing deferred — the Plan already decided it). `EvidenceBundle`'s field list remains
+  genuinely deferred, but now correctly to P7 (not P2) — justified because P2's own Mandate for
+  `EvidenceBundle` really is a placeholder ("references a set of evidence artifacts plus the gate
+  they support"), while P7's Mandate gives the real, detailed shape.
+- Both types are genuinely append-only this time: `EvidenceBundle`'s registry path changed from a
+  bare `reports/evidence/{story}.md` (one fixed path per story — the structural root of round 2's
+  whole problem: a second assembly could only ever be an edit of the first, never a new instance) to
+  `reports/evidence/{id}-{story}.md`, carrying its own real `EVID-####` id, matching `PLAN-M15.md`
+  P7's own "two concurrent stories get distinct bundle ids" requirement.
+- "Superseded" now correctly cites `08` §8.3/§8.4's real `status: superseded` convention (checked
+  against the real section headings this time), not the fabricated `18` §18.8 citation.
+- `13` gains a new `F-TEST-8 · Exempting a test from behavioural binding` subsection (appended after
+  F-TEST-7, NOT inserted before F-TEST-6 — those two are cited by exact number across dozens of
+  already-shipped files; renumbering was checked and rejected before writing anything), covering
+  reason/owner/expiry (reusing `10` §10.3 rule 1's waiver shape), a stale exemption failing the check
+  (reusing `test/brief-write-paths-in-claim.test.ts`'s own `EXEMPT`-staleness convention, correctly
+  attributed to that test file, not — as a first internal draft of this fix wrongly tried — to F-TEST-2,
+  which does not say this), an expired exemption failing the check, and exempting a currently-binding
+  test being refused outright.
+- `18` §18.7 registers a new `Disclosure` type (`kb/disclosures.md`, `collection: true` — the
+  `Risk`/`Assumption`/`OpenQuestion` shape, not the per-instance-file shape the two types above use,
+  because a disclosure is a running list a human reads start to finish) as the user-project analogue
+  of `SPEC-QUESTIONS.md`, per `PLAN-M15.md` P10's own Mandate.
+- `test/spec-cli-examples.test.ts`'s pinned-sentence block grew across both fixes (two round-2
+  corrections, four round-3 additions) to its real, current, verified-live count: **30 tests total
+  in the file, 11 new**, mutation-verified against a live revert at every round (reconfirmed once
+  more at the end of round 3, not just claimed).
+
+**One disclosed, out-of-scope gap surfaced by this piece and deliberately not fixed by it.** `21`
+§21.1/§21.6 require nightly mutation testing on FORGE's own `core`/`engine`/`extensions`/`schemas` —
+checked directly: no nightly CI workflow and no Stryker/mutmut/PIT dependency exist anywhere in this
+repository. Real, pre-existing, and conflating it with M15's own per-story, user-project-facing
+`test:binding` check would be exactly the kind of silent scope-absorption this milestone exists to
+stop. Recorded, not fixed, in `SPEC-QUESTIONS.md` Q280's own closing Observation.
+
+**Verification.** No code changed, so the floor (`pnpm typecheck`, `pnpm run boundaries`, `pnpm lint`)
+is the regression guard for everything this piece touches outside prose — but, per round 1's own
+blocking finding, the floor alone does not exercise prose, so `test/spec-cli-examples.test.ts`'s own
+pinned-sentence block (30 tests, 11 new, confirmed passing and separately mutation-verified against a
+live revert after every one of the three rounds, not just the first) is the real guard for this
+piece's actual content. Every edit additive; `05` §5.5's own word-for-word-compared operating contract
+untouched.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q280`.

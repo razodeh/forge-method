@@ -25525,3 +25525,239 @@ Also noted (informational, both critics): the round-1 fix commit's own message s
 **Not closed by this fix (disclosed, matching Q278's own scope boundary).** The human-input fallback path for `writeSessionArtifactBack` (no agent session, so no DECIDE lane to write onto) still writes directly to `ctx.projectRoot`, uncommitted — the identical structural gap, left alone because no real caller populates `HumanSessionInput` yet (confirmed unchanged from before Q278).
 
 **Verification.** `pnpm typecheck` (21/21), `pnpm run boundaries`, combined `pnpm lint` clean; the full `@forge/engine` (144 files, 3195 tests) and `@forge/kb` (36 files, 524 tests) suites green, in a clean worktree of the final commit. Two new regression tests (Q278/this fix's own scope): a real `estimation` write-back with no agent-authored file change (matching the live run precisely) reaches the real integration branch with a full `MergeQueued`/`MergeStarted`/`MergeCompleted` sequence and zero untracked debris; two concurrent `estimation` write-backs land successfully with distinct real KB entry ids. Both confirmed failing with their own precise, literal claimed symptom against the appropriate pre-fix commit, and passing after.
+
+## Q280 — M15 P1: Evidence over ceremony — reconciling behavioural binding with the existing AC-binding rule, the existing nightly-mutation-testing line, and two new artifact types
+
+**Context.** `PLAN-M15.md`'s own opening argument (and the conversation that produced the milestone)
+claimed FORGE's shipped gates certify diligence, not correctness, and proposed a per-story mutation
+check — "revert the implementation, require the named tests to fail, restore, require them to pass" —
+as the fix. Before touching any spec text, this piece checked whether that claim was already
+contradicted by normative text already in the pack. It was, twice, and both are reconciled here rather
+than silently duplicated.
+
+**Decision 1 — this is not a new concept; it is the gap in two existing ones, named precisely.** `09`
+§9.5's "binding rule" already uses the word "binding" for something real but much weaker than what
+this milestone needs: a test is bound to an AC by being *named and annotated* with the AC's id, so a
+reporter can map a result back to it. Nothing in §9.5 asks whether the test would fail if the AC's own
+behaviour were removed —
+`test('AC-014-2 returns 422 for an empty invoice', () => expect(true).toBe(true))` satisfies every
+rule in that section today. Separately, `13` F-TEST-5 already requires "mutation testing... as the
+real adequacy signal," but scopes it to nightly, operator-level tooling (Stryker/mutmut/PIT) on core
+domain packages only — explicitly *not* per-commit, which F-TEST-7 point 6's fast-feedback requirement
+(`test:affected` under ~60s) would not tolerate at that depth. Decided: keep both existing rules
+exactly as written (neither is wrong), and name the new thing **behavioural binding** — a cheap, coarse
+mutation operator (the whole implementation change, reverted, not one line) run per story at commit
+time as a gate-blocking check — explicitly as the thing §9.5's binding rule never asked and a cheaper,
+complementary sibling to F-TEST-5's nightly operator-level testing, not a replacement for either. Spec
+edits: `09` §9.5 (one paragraph, naming the gap and forward-referencing `13`), `13` F-TEST-5 (one
+bullet, defining behavioural binding and its relationship to the existing mutation-testing bullet), `10`
+§10.3 (the Check contract gains an Evidence resolution rule; the Gate rules gain rule 7; the `G-Verify`
+catalogue row gains the new failure mode), `18` §18.7 (two new registry rows). No existing normative
+sentence was reworded or removed; every edit is additive.
+
+**Decision 2 — a verdict without evidence is a gate failure, not a softer category.** `10` §10.3
+already lets a gate declare `evidence:` (artifact types an approval rests on) but never required those
+references to resolve to anything real — a gate could name `ArchitectureSpec` in `evidence:` and
+approve with none committed. Decided: resolution failure is refused the identical way a failing
+deterministic check is refused (new Gate rule 7), not a warning, an advisory finding, or silently
+ignored — approving against missing proof is exactly the "certifies diligence, not correctness" failure
+mode this milestone exists to close, and treating it as anything less than a refusal would reopen the
+gap one layer up.
+
+**Decision 3 (REVISED TWICE — by round-1 AND round-2 critic findings, see both below; this is the
+text that survived round 2) — both types are genuinely append-only (`PLAN-M15.md` P2's own binding
+Mandate, "never edited, only superseded"); `MutationEvidence`'s fields are decided here because P2's
+Mandate already fully decides them; `EvidenceBundle`'s are genuinely deferred to P7, because P2's own
+Mandate for it is a real placeholder, not a decided shape.** This decision was wrong twice before
+landing here, in opposite directions, and both wrong versions are worth recording so a future reader
+does not repeat either mistake. Round 1's first draft invented a field list for both types while ALSO
+claiming neither "carries type-specific fields" in the very next sentence (self-contradictory on its
+own terms) and called a same-file revision bump "superseded... exactly like a Story being revised"
+(factually wrong against `18` §18.8's real meaning, and against `PLAN-M15.md` P2's own explicit
+"never edited, only superseded" — this piece had not checked the Plan's own words before writing an
+opinion that contradicted them). The round-1 fix overcorrected: it resolved the self-contradiction by
+deferring BOTH types' fields to their producer pieces, which directly contradicted `PLAN-M15.md` P2's
+own Mandate for `MutationEvidence` specifically — that Mandate does not leave the field list open; it
+states it in full ("the story/piece id, the mutation kind (`revert-implementation` in v1), the exact
+commit range or hunk set reverted, the named tests, which tests failed under mutation, the restore
+verification, tool versions, and a timestamp"). Deferring a decision the governing Plan has already
+made is not a simplification, it is a second, different divergence from the Plan — caught by round 2.
+Decided, finally: read `PLAN-M15.md` P2 AND P7's own Mandates side by side before deciding anything,
+rather than reasoning from an analogy (`ReviewReport`'s own history) that does not actually hold for
+both types. `MutationEvidence`'s field list is committed to in `18` §18.7 verbatim from P2's own
+Mandate — nothing to defer, the Plan already decided it. `EvidenceBundle`'s field list is genuinely
+deferred to P7, because P2's own Mandate for it really is a placeholder ("references a set of evidence
+artifacts plus the gate they support") while P7's Mandate gives the real, detailed shape (binding
+evidence, test results, coverage delta, every `ReviewReport` verdict, gate outcomes, exemptions in
+force, real cost) — the asymmetry is the Plan's own, not invented by this piece a second time.
+Immutability: both types are genuinely append-only via the SAME mechanism, not two different ones —
+every instance of either type gets its own, newly-allocated id and its own, never-reused path (Decision
+4), so there is never a second write to an existing path; `PLAN-M15.md` P2's own "a bundle that edits
+an existing evidence record is refused" test requirement means the writer must ACTIVELY REFUSE an
+attempt to write an already-existing path, not merely rely on the naming scheme making collision
+unlikely (left for P2 itself to implement and test; not claimed as already enforced here, since no code
+exists yet). "Superseded" is `08` §8.3/§8.4's real, existing meaning (an ADR's own
+`status: superseded` — an older, distinct instance stays on disk, readable, while a newer one exists),
+correctly cited this time (checked against the real section headings) after round 2 caught the first
+fix citing `18` §18.8 for a definition that section does not contain.
+
+**Decision 4 — registry paths give both types their own real distinguishing id/timestamp, not a fixed
+per-story path, because Decision 3's append-only requirement needs it.** `MutationEvidence` is
+`reports/mutation/{story}-{ts}.md` (one file per `forge test binding` run, mirroring `GateReport`'s own
+`{gate}-{ts}` shape — a timestamp is sufficient here because nothing needs to look up "the Nth
+`MutationEvidence` for this story" by number, only "the one from this run"). `EvidenceBundle` is
+`reports/evidence/{id}-{story}.md` — genuinely carrying its own `EVID-####` id in the path (round 1's
+first draft used a bare `reports/evidence/{story}.md` with no id or timestamp at all, which is what
+made "never edited, only superseded" impossible to honour: there was only ever one possible path per
+story, so a second assembly could only ever be an edit of the first one, not a new instance; round 2
+caught this as the structural root of the whole Decision-3 problem). `PLAN-M15.md` P7's own "two
+concurrent stories get distinct bundle ids" requirement is what confirms `EvidenceBundle` needs a real
+id in its path, not just a timestamp. Both take `parent: Story` (the registry's existing graph-edge
+field, used identically by `Task`/`Epic`/`Capability`), since both are produced in service of exactly
+one story in this milestone's v1 scope.
+
+**Critic round 1 (two independent, fresh-context critics): two blocking and five major findings
+across both, all real, all fixed before this entry's own corrected text above was written.** Both
+critics independently caught the Decision-3 self-contradiction above (field list vs. "no fields";
+false "superseded" equivalence) as blocking — critic 2's version was sharper, catching specifically
+that a same-file revision bump is editing in place, not `18` §18.8's actual "superseded" meaning,
+which the first draft had silently conflated. Both also caught, as a second blocking finding, that
+this piece shipped with no test anchoring any of its own new sentences — fixed by adding a pinned-
+sentence `describe` block to `test/spec-cli-examples.test.ts`, following the exact convention
+`## M14 P1`/`## M14 P11` already established there (mutation-verified: reverting one pinned sentence
+reproduces the exact expected failure, confirmed live, restored, reconfirmed green). Major findings,
+both fixed: (a) the first-draft `MutationEvidence` field list silently dropped two fields
+`PLAN-M15.md`'s own pre-existing P2 Mandate had already named (`mutation kind`, `tool versions`),
+undisclosed — resolved by Decision 3's revision above, which no longer commits to any field list at
+all, so there is nothing left to contradict; (b) `10` §10.3's new Gate rule 7 said evidence absence is
+"refused the same way a failing deterministic check is refused" while also forbidding a waiver —
+contradicting rule 1, which lets a failing deterministic check be waived; fixed by rewording rule 7 to
+state plainly that evidence absence has NO waiver path at all, stricter than rule 1, not equivalent to
+it, and by extending the Evidence resolution paragraph to cover `forge gate waive` explicitly (it
+previously named only `forge gate approve`); (c) the same Gate rule 7 cited "the Evidence resolution
+rule above" when that paragraph is defined below it in the document (confirmed by line number) — fixed
+by rewording to "below" and verifying the real line order this time; (d) `PLAN-M15.md`'s own P1
+Mandate named `test/output-contract-known-gaps.test.ts` as a file this piece would update "to name the
+two new artifact types as not-yet-implemented rather than unknown," and this was never done, with no
+disclosure — recorded here, now: checked directly, that file's `KNOWN_GAPS` inventory tracks a
+different concept entirely (which shipped workflow *steps* declare outputs their assigned agent cannot
+write), not artifact-type registration status, and since neither this piece nor P2 wires
+`MutationEvidence`/`EvidenceBundle` into any workflow step's `outputs:` (that first happens at P7, for
+`EvidenceBundle`, inside an `implement-story` step), that file has nothing to anchor to either new type
+yet and genuinely cannot be meaningfully updated by this piece — the Mandate's own "Tests first" line
+was written before this constraint was discovered, and is superseded by this disclosure the same way
+`SPEC-QUESTIONS.md` Q277 recorded a `PLAN-M14.md` Mandate's own citation inaccuracy rather than
+silently working around it.
+
+**Critic round 2 (two independent, fresh-context critics, explicitly re-verifying round 1's own fixes
+against fresh reads of the real files): one blocking and two major findings, all real, none a repeat
+of round 1, all fixed.** Both critics confirmed round 1's two blocking findings (the field-list/
+no-fields self-contradiction; the missing pinned-sentence test) were genuinely resolved — but both
+independently found that round 1's FIX for the "superseded" contradiction had itself created a new,
+different contradiction: round 1 resolved its own internal inconsistency by asserting `EvidenceBundle`
+is "genuinely revised in place... an ordinary edit," which directly contradicts `PLAN-M15.md` P2's own
+unedited, binding Mandate text — "Both are append-only: a bundle is never edited, only superseded,
+mirroring the deprecate-not-delete rule M14 already enforces on KB outputs" — a sentence this piece had
+apparently never gone back to re-read while writing its own "corrected" position. Blocking: fixed by
+Decision 3's final text above, which actually implements "never edited, only superseded" this time
+(every instance gets a new id/path, never a rewrite), rather than arguing the Plan's own words were a
+misreading. Major (critic 2's independent catch, sharper than round 1's own citation): round 1's fix
+cited `18` §18.8 as defining what "superseded" means; §18.8 ("ID allocation") never uses that word at
+all — its one relevant bullet describes a DELETED artifact becoming `deprecated` with its file
+retained, a different lifecycle event than being superseded by a newer instance. Fixed: the real
+definition, `08` §8.3/§8.4's ADR `status: superseded` convention, is cited instead, checked against the
+real section headings this time. Major: round 1's fix also reassigned `MutationEvidence`'s field design
+from P2 to "P3/P4," contradicting `PLAN-M15.md` P2's own Mandate, which already states that exact field
+list in full — round 1 had over-corrected its own self-contradiction by deferring a decision the Plan
+had never left open. Fixed: `MutationEvidence`'s fields are committed to in `18` §18.7 exactly as P2's
+Mandate already states them; only `EvidenceBundle`'s fields remain deferred, to P7, because P7 (not P2)
+is where the Plan's own text actually gives them. One structural root cause behind two of these three
+findings, also surfaced by round 2: `EvidenceBundle`'s registry path had no `{id}` or `{ts}` in it at
+all (`reports/evidence/{story}.md`, a single fixed path per story), which made "never edited, only
+superseded" structurally impossible to honour regardless of what the prose claimed — fixed in Decision
+4 by giving it a real `{id}`-bearing path, `reports/evidence/{id}-{story}.md`.
+
+**Critic round 3 (final round, the maximum per `process/BUILD-PROMPT.md`'s own 3-round cap — two
+independent, fresh-context critics): one major (both critics, independently) and one blocking (one
+critic), both real, both fixed below; treated as completing this piece's own already-decided scope
+and correcting a documentation lapse, NOT as a fourth design dispute needing escalation — see the
+reasoning at the end of this section.** Major, found independently by both: `GAUNTLET-LOG.md`'s own
+`## M15 P1` entry had never been updated after round 2's fix landed — it still asserted the round-1
+position this very entry's Decision 3 above explicitly overturns (`EvidenceBundle` "revised in
+place," `MutationEvidence` fields "deferred to P3/P4"), carried no "round 2" section at all despite
+this file's own universal per-round-logging convention (checked against `## M14 P30`/`## M14 P44` as
+precedent), and misstated the test count (26 total/7 new instead of the real, current 28/9 at the
+time of round 3). Fixed: `GAUNTLET-LOG.md`'s entry rewritten in full to narrate all three rounds
+accurately, with the final, correct counts.
+
+Blocking, found by one critic (the sharper of the two, and the one worth recording in full): this
+piece's OWN Mandate in `PLAN-M15.md` — one sentence naming FOUR things to make the spec state — had
+only ever delivered two. Quoted exactly: "Amend the testing/quality spec (`10`) and the gate spec
+sections that `checks/*.gate.yaml` realise, to state: (a) a deterministic check returns a verdict and
+evidence with provenance; (b) a test that passes while the behaviour it names is reverted does not
+satisfy the verification duty; (c) the exemption mechanism — reason, owner, expiry, and staleness as a
+failure; (d) the disclosure ledger as a first-class project artifact." Items (a)/(b) were written
+(Decisions 1-2 above); (c)/(d) were never addressed in either direction — not written, not disclosed
+as deferred. The critic's own decisive argument: `PLAN-M15.md` P6's Surface section (`packages/schemas`,
+the waiver machinery, `packages/cli/src/commands/loop/test/*`, `codes.ts`) and P10's Surface section
+(`packages/kb`, `packages/templates`, `packages/cli/src/commands/kb.ts`, `forge doctor`) both name
+only code/schema/CLI files — neither names a `specs/*.md` file at all. If P1 does not write this
+normative text, nothing else in the milestone ever will, and P6/P10 would have to invent the
+exemption-staleness rule and the disclosure-ledger concept from inside an implementation piece — the
+precise "P2 implements written text rather than inventing it" failure P1's own Mandate exists to
+prevent, reproduced for two more artifacts one piece later. Also noted (minor, same finding category):
+P1's own Mandate calls `10` "the testing/quality spec," which is imprecise — `13`, not `10`, is the
+real testing/quality spec (`10` is workflow engine and lifecycle, where gates happen to live); this
+piece's own plan had the wrong spec number for its own primary target.
+
+**Decision 5 — the exemption mechanism lands in `13` as a NEW `F-TEST-8`, appended after `F-TEST-7`,
+never inserted before `F-TEST-6`.** `F-TEST-6`/`F-TEST-7` are cited by their exact numbers across
+dozens of already-shipped source and test files (`packages/cli/src/commands/story.ts`,
+`packages/cli/src/commands/loop/test/{flaky,run,reporter}.ts` and their tests, among many others) —
+checked directly before writing anything, specifically because this piece had already fabricated one
+wrong cross-reference (`18` §18.8) earlier in the same round-2 cycle and was not going to risk a
+renumbering disaster on top of it. `F-TEST-8` mirrors `F-TEST-6`'s own quarantine shape (an escape
+hatch is governance, not a free pass) rather than inventing a new one: reason/owner/expiry reuse `10`
+§10.3 rule 1's waiver shape exactly; the stale-exemption-fails rule is correctly attributed to
+`test/brief-write-paths-in-claim.test.ts`'s own `EXEMPT`-staleness convention (an early draft of this
+fix wrongly attributed the identical idea to `13` F-TEST-2, which does not say it — checked and
+corrected before this entry was written, not after another critic round caught it); exempting a
+currently-binding test is refused outright, matching P6's own Mandate exactly.
+
+**Decision 6 — the disclosure ledger is a new registered artifact type, `Disclosure`, collection-
+shaped like `Risk`/`Assumption`/`OpenQuestion`, not per-instance-file like `MutationEvidence`/
+`EvidenceBundle`.** `PLAN-M15.md` P10's own Mandate describes "a KB-located disclosure ledger" that is
+"the user-project analogue of `SPEC-QUESTIONS.md`" and is "never deleted, only resolved with a
+reason" — a running list a human reads start to finish (`forge kb`), structurally identical to how
+`Risk`/`Assumption`/`OpenQuestion` already work (one growing file, `kb/disclosures.md`, entries
+appended, an id never reused), not to how `MutationEvidence`/`EvidenceBundle` work (a new file per
+instance). Registered in `18` §18.7 (`idPrefix: DISC`) following that precedent exactly, with its
+"never deleted, only resolved" rule named as the same deprecate-not-delete discipline `18` §18.8
+already states registry-wide, applied here to resolution specifically because no prior type in this
+registry needed a reason recorded at the moment an entry stops being open.
+
+**Why round 3's findings were fixed rather than escalated via a `BLOCKED-<piece>.md` file, despite
+being found on the third and final allowed round.** `process/BUILD-PROMPT.md`'s own escalation rule
+exists for genuine disagreement or stuckness — "what the bar demands, what you produced, why the gap
+persists, and the two options you see." Neither round-3 finding is that: the `GAUNTLET-LOG.md` sync
+issue has exactly one correct fix (make it match what this entry already correctly says), and the
+(c)/(d) gap has exactly one correct fix (write the normative text `PLAN-M15.md`'s own, already-written
+Mandate already specifies) — in both cases there is no real design question left open for a human to
+decide between two genuine options, only an incomplete execution of already-decided scope. Treated as
+completing this piece, not as a fourth round of contested design, and disclosed as exactly that here
+rather than silently treated as if it were always the plan.
+
+**Observation, not a decision — `specs/21`'s own nightly-mutation-testing requirement for FORGE's own
+repository remains unbuilt, and this milestone does not fix it.** `21` §21.1 ("Mutation testing nightly
+on `core`, `engine`, `extensions`, `schemas`") and §21.6 ("Additional CI jobs: ... mutation testing
+(nightly) ...") both predate this milestone and describe FORGE's own CI, not what FORGE ships to a
+user's project. Checked directly: no `.github/workflows/nightly.yml` or equivalent exists, and no
+Stryker (or mutmut/PIT) dependency is declared anywhere in this repository. This is a real,
+pre-existing gap, visible the moment `pnpm test` could finally complete a full run (the CI-hardening
+work immediately preceding this milestone), and `PLAN-M15.md` deliberately does not claim to close it
+— M15's `test:binding` is a per-story, coarse, user-project-facing check; `21`'s requirement is a
+nightly, operator-level, FORGE's-own-repository one, and conflating the two in this milestone's own
+scope would be exactly the kind of silent, undisclosed absorption this milestone exists to stop doing.
+Recorded here so it stays visible rather than being quietly folded into "M15 handled mutation testing."
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P1`.
