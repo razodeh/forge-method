@@ -127,12 +127,20 @@ const SPEC_TABLE: readonly Omit<ArtifactTypeDefinition, 'requiredSections'>[] = 
     idWidth: 3,
     parent: 'Story',
   },
+  // Added post-v1.0 (`specs/22` M15, `PLAN-M15.md` P6) -- see `artifact-types.ts`'s own trailing entry.
+  {
+    id: 'Exemption',
+    idPrefix: 'EXEMPT',
+    pathTemplate: 'reports/exemptions.md',
+    idWidth: 3,
+    collection: true,
+  },
 ];
 
 describe('specs/18 §18.7 — the registry table', () => {
-  it('has exactly 24 types (21 original + ReviewReport, MutationEvidence, EvidenceBundle, each added post-v1.0)', () => {
-    expect(SPEC_TABLE).toHaveLength(24);
-    expect(ARTIFACT_TYPES).toHaveLength(24);
+  it('has exactly 25 types (21 original + ReviewReport, MutationEvidence, EvidenceBundle, Exemption, each added post-v1.0)', () => {
+    expect(SPEC_TABLE).toHaveLength(25);
+    expect(ARTIFACT_TYPES).toHaveLength(25);
   });
 
   it('matches the spec table row-for-row, in order', () => {
@@ -226,12 +234,20 @@ describe('specs/18 §18.7 — the registry table', () => {
     ]);
   });
 
-  it('marks exactly the six collection types the spec table declares', () => {
+  it('marks exactly the seven collection types the spec table declares plus Exemption (post-v1.0 M15 P6)', () => {
     const collections = ARTIFACT_TYPES.filter((type) => type.collection === true).map(
       (type) => type.id,
     );
     expect(collections.sort()).toEqual(
-      ['Risk', 'Assumption', 'OpenQuestion', 'Waiver', 'Environment', 'HandoffRecord'].sort(),
+      [
+        'Risk',
+        'Assumption',
+        'OpenQuestion',
+        'Waiver',
+        'Environment',
+        'HandoffRecord',
+        'Exemption',
+      ].sort(),
     );
   });
 });
@@ -276,7 +292,8 @@ describe('definitionForType', () => {
  * makes to `outputGlob` (`@forge/engine`) has a full, independent ground truth to be built on top of;
  * `packages/engine/test/dispatch/outputs.test.ts`'s own `outputGlob` table asserts the composed result
  * (this tail plus a configured root) is unchanged for every one of these same types — 22 at the time of
- * the P33 refactor itself, now all 24 including `MutationEvidence`/`EvidenceBundle` (post-v1.0 M15).
+ * the P33 refactor itself, now all 25 including `MutationEvidence`/`EvidenceBundle`/`Exemption`
+ * (post-v1.0 M15).
  */
 describe('registryTail (P33)', () => {
   const EXPECTED: Readonly<Record<ArtifactTypeId, string>> = {
@@ -294,6 +311,7 @@ describe('registryTail (P33)', () => {
     Assumption: 'kb/assumptions.md',
     OpenQuestion: 'kb/open-questions.md',
     Waiver: 'reports/waivers.md',
+    Exemption: 'reports/exemptions.md',
     SessionRecord: 'sessions/SESSION-*.md',
     RCA: 'rca/RCA-*.md',
     Defect: 'defects/DEF-*.md',
@@ -318,7 +336,7 @@ describe('registryTail (P33)', () => {
   );
 
   it('drops the literal section root when an interior directory is left, keeps it for a bare file name', () => {
-    // The seven types whose pathTemplate is exactly "<root>/<file>" (no interior directory): the root
+    // The eight types whose pathTemplate is exactly "<root>/<file>" (no interior directory): the root
     // stays, so the tail still opens with that literal segment. Every other type either has an
     // interior directory after its root (dropped) or an unrecognised, placeholder root (Diagram,
     // never eligible for dropping): none of those repeats its own literal root segment as the tail's
@@ -329,6 +347,7 @@ describe('registryTail (P33)', () => {
       'Assumption',
       'OpenQuestion',
       'Waiver',
+      'Exemption',
       'SessionRecord',
       'HandoffRecord',
     ]);

@@ -19,6 +19,7 @@ import { ProjectPaths } from '@forge/core/fs';
 
 export const KB_ROOT = 'docs/forge/kb';
 export const SPECS_ROOT = 'docs/forge/specs';
+export const REPORTS_ROOT = 'docs/forge/reports';
 
 export interface TestProject {
   readonly dir: string;

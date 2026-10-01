@@ -157,8 +157,8 @@ export async function specOrphans(ctx: SpecCommandContext): Promise<readonly Orp
 }
 
 /** The `ArtifactTypeId`s `docs/forge/specs/**` actually holds (`03` §3.2.2's own `forge spec new
- * <type>` domain) — a real subset of the full 24-type registry, distinct from `@forge/templates`'
- * own `TemplateArtifactTypeId` (all 24: every registered type has a template, but not every type
+ * <type>` domain) — a real subset of the full 25-type registry, distinct from `@forge/templates`'
+ * own `TemplateArtifactTypeId` (all 25: every registered type has a template, but not every type
  * lives under `specs/` — `ADR` lives under `kb/decisions/`, `Risk` under `kb/risks.md`, etc.). */
 export type SpecArtifactType =
   'Vision' | 'Capability' | 'NFR' | 'Epic' | 'Story' | 'Task' | 'InterfaceContract' | 'DataModel';

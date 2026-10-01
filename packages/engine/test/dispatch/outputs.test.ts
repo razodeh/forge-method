@@ -146,10 +146,16 @@ describe('outputGlob (18 §18.7 path templates under the configured roots)', () 
   // though no workflow step declares either as an `outputs:` entry yet (`PLAN-M15.md` P2 registers the
   // type; wiring either into a real step's `outputs:` is `PLAN-M15.md` P7's own job for `EvidenceBundle`).
   // Pinned here so this file's own "unchanged for every registered type" claim a few lines above stays
-  // true for all 24, not 22.
+  // true for all 25, not 22 (`Exemption`, M15 P6, is pinned in its own block just below).
   it('composes the correct glob for the two post-v1.0 M15 types, via the same generic mechanism', () => {
     expect(outputGlob('MutationEvidence', ROOTS)).toBe('docs/forge/reports/mutation/*-*.md');
     expect(outputGlob('EvidenceBundle', ROOTS)).toBe('docs/forge/reports/evidence/EVID-*-*.md');
+  });
+
+  // `Exemption` (post-v1.0, `specs/18` §18.7 M15 P6): the same generic mechanism, now 25 registered
+  // types, not 24.
+  it('composes the correct glob for Exemption (M15 P6)', () => {
+    expect(outputGlob('Exemption', ROOTS)).toBe('docs/forge/reports/exemptions.md');
   });
 
   it('honours a project that relocated its docs (paths.specs etc.)', () => {

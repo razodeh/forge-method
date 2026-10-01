@@ -32,6 +32,7 @@ import {
   environmentSchema,
   epicSchema,
   evidenceBundleSchema,
+  exemptionSchema,
   gateReportSchema,
   handoffRecordSchema,
   interfaceContractSchema,
@@ -63,7 +64,7 @@ export type SchemaFileName = `${string}.schema.json`;
 /**
  * Exported (not module-private) so a per-type zod schema is available without a second, hand-kept
  * `ArtifactTypeId -> schema` map elsewhere — `PLAN-M2.md` P6's `requiredFieldsFor` reads `.schema`
- * off this same table rather than re-importing and re-listing all 24 artifact schemas itself.
+ * off this same table rather than re-importing and re-listing all 25 artifact schemas itself.
  */
 export const ARTIFACT_SCHEMAS: Record<ArtifactTypeId, { fileStem: string; schema: z.ZodTypeAny }> =
   {
@@ -81,6 +82,7 @@ export const ARTIFACT_SCHEMAS: Record<ArtifactTypeId, { fileStem: string; schema
     Assumption: { fileStem: 'assumption', schema: assumptionSchema },
     OpenQuestion: { fileStem: 'open-question', schema: openQuestionSchema },
     Waiver: { fileStem: 'waiver', schema: waiverSchema },
+    Exemption: { fileStem: 'exemption', schema: exemptionSchema },
     SessionRecord: { fileStem: 'session-record', schema: sessionRecordSchema },
     RCA: { fileStem: 'rca', schema: rcaSchema },
     Defect: { fileStem: 'defect', schema: defectSchema },

@@ -19,6 +19,7 @@ import { execa } from 'execa';
 import { ProjectPaths } from '@forge/core/fs';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { appendExemption } from '../../src/commands/loop/test/exemptions.ts';
 import { storyVerify, type StoryVerifyContext } from '../../src/commands/story.ts';
 
 function resolveRealVitestEntry(): string {
@@ -146,6 +147,7 @@ async function freshProject(
     projectRoot: dir,
     specsRoot: 'docs/forge/specs',
     kbRoot: 'docs/forge/kb',
+    reportsRoot: 'docs/forge/reports',
     testCommands: { unit: TEST_COMMAND },
   };
   return { dir, ctx };
@@ -193,6 +195,102 @@ describe('forge story verify — test:binding (specs/22 M15 P5)', () => {
     const check = outcome.report.checks.find((c) => c.check === 'test:binding');
     expect(check?.status).toBe('fail');
     expect(check?.message).toContain('tautology');
+  }, 30_000);
+
+  // `checkBinding`'s own exemption wiring (`specs/22` M15 P6: "checked on every later `forge test
+  // binding`/`forge story verify` run") -- a round-3 gauntlet critic found this path, though
+  // confirmed correct by direct, independent reproduction, had ZERO test coverage anywhere in this
+  // piece's own diff (`bin-exempt.test.ts` only ever exercises `forge test binding`, never `forge
+  // story verify`): a future change to `checkBinding`'s own `loadExemptions` call, its `reportsRoot`
+  // resolution, or the qualified-key matching could silently break this entry point while every
+  // other shipped test stayed green.
+  it('passes when a declared exemption covers the non-binding test', async () => {
+    const { ctx } = await freshProject({
+      filesExpected: ['impl.js', 'tautology.test.js'],
+      skipImpl: true,
+    });
+    await writeFile(
+      path.join(ctx.projectRoot, 'impl.js'),
+      'export function add(a, b) { return a + b; }\n',
+      'utf8',
+    );
+    await writeFile(
+      path.join(ctx.projectRoot, 'tautology.test.js'),
+      "import { test, expect } from 'vitest';\ntest('tautology', () => { expect(true).toBe(true); });\n",
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: ctx.projectRoot });
+    await execa('git', ['commit', '--quiet', '-m', 'the story: a genuinely unrelated test file'], {
+      cwd: ctx.projectRoot,
+    });
+    await appendExemption(
+      ctx.paths,
+      ctx.reportsRoot,
+      { now: () => new Date().toISOString() },
+      {
+        testId: 'STORY-001: tautology',
+        reason: 'A pure tautology, never touches impl.js.',
+        owner: 'alice',
+        expiry: '2099-01-01',
+      },
+    );
+    // `checkBinding` reverts to `HEAD~1`, like `forge test binding` itself -- amended onto the
+    // implementation commit (not a separate commit on top of it) so `HEAD~1` still resolves to the
+    // true pre-implementation base, the identical reason `bin-exempt.test.ts`'s own
+    // `amendOntoImplementation` helper exists.
+    await execa('git', ['add', '-A'], { cwd: ctx.projectRoot });
+    await execa('git', ['commit', '--amend', '--no-edit', '--quiet'], { cwd: ctx.projectRoot });
+
+    const outcome = await storyVerify(ctx, 'STORY-001');
+
+    expect(outcome.kind).toBe('verified');
+    if (outcome.kind !== 'verified') throw new Error('unreachable');
+    const check = outcome.report.checks.find((c) => c.check === 'test:binding');
+    expect(check?.status).toBe('pass');
+  }, 30_000);
+
+  it('fails, naming the exemption, its owner and its expiry, when the declared exemption is expired', async () => {
+    const { ctx } = await freshProject({
+      filesExpected: ['impl.js', 'tautology.test.js'],
+      skipImpl: true,
+    });
+    await writeFile(
+      path.join(ctx.projectRoot, 'impl.js'),
+      'export function add(a, b) { return a + b; }\n',
+      'utf8',
+    );
+    await writeFile(
+      path.join(ctx.projectRoot, 'tautology.test.js'),
+      "import { test, expect } from 'vitest';\ntest('tautology', () => { expect(true).toBe(true); });\n",
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: ctx.projectRoot });
+    await execa('git', ['commit', '--quiet', '-m', 'the story: a genuinely unrelated test file'], {
+      cwd: ctx.projectRoot,
+    });
+    await appendExemption(
+      ctx.paths,
+      ctx.reportsRoot,
+      { now: () => new Date().toISOString() },
+      {
+        testId: 'STORY-001: tautology',
+        reason: 'A pure tautology, never touches impl.js.',
+        owner: 'alice',
+        expiry: '2020-01-01',
+      },
+    );
+    await execa('git', ['add', '-A'], { cwd: ctx.projectRoot });
+    await execa('git', ['commit', '--amend', '--no-edit', '--quiet'], { cwd: ctx.projectRoot });
+
+    const outcome = await storyVerify(ctx, 'STORY-001');
+
+    expect(outcome.kind).toBe('verified');
+    if (outcome.kind !== 'verified') throw new Error('unreachable');
+    const check = outcome.report.checks.find((c) => c.check === 'test:binding');
+    expect(check?.status).toBe('fail');
+    expect(check?.message).toContain('STORY-001: tautology');
+    expect(check?.message).toContain('alice');
+    expect(check?.message).toContain('expired');
   }, 30_000);
 
   it('is unverifiable, not a crash, for a story whose files_expected names no test path', async () => {
@@ -277,6 +375,7 @@ describe('forge story verify — test:binding (specs/22 M15 P5)', () => {
       projectRoot: dir,
       specsRoot: 'docs/forge/specs',
       kbRoot: 'docs/forge/kb',
+      reportsRoot: 'docs/forge/reports',
       testCommands: { unit: TEST_COMMAND },
     };
 

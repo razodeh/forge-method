@@ -85,7 +85,9 @@ import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID, SYSTEM_CLOCK, type Clock }
 import { EXIT_CODES, ForgeError, isForgeError } from '@forge/core/errors';
 import { pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
 import type { ExpressionContext } from '@forge/engine/expr';
+import { isWaiverOwnerIdentifier, waiverExceedsCap } from '@forge/engine/gates';
 import type { RunState } from '@forge/engine/resume';
+import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import type { ForgeConfig } from '@forge/schemas/config';
 
 import { agentValidateAll } from './commands/agent.ts';
@@ -217,8 +219,15 @@ import { runUpgrade } from './commands/upgrade/index.ts';
 import { gateValidateAll, workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
 import { test as runTestRefusal } from './commands/loop/test.ts';
-import { runBindingCheck } from './commands/loop/test/binding.ts';
+import { runBindingCheck, type BindingCheckCompleted } from './commands/loop/test/binding.ts';
 import { assembleAndWriteMutationEvidence } from './commands/loop/test/binding-evidence.ts';
+import {
+  appendExemption,
+  applyExemptions,
+  describeExemptionProblems,
+  loadExemptions,
+  qualifiedTestId,
+} from './commands/loop/test/exemptions.ts';
 import { testCoverage } from './commands/loop/test/coverage.ts';
 import { detectEcosystem } from './commands/loop/test/ecosystem.ts';
 import { testFlaky } from './commands/loop/test/flaky.ts';
@@ -295,7 +304,7 @@ import { isStoryPhase, renderStoryVerify, storyVerify, STORY_PHASES } from './co
 import { listSpecArtifacts, loadDoneStories } from './commands/shared.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
 import { ARTIFACT_TYPES, storySchema } from '@forge/schemas';
-import type { ArtifactTypeId, Story } from '@forge/schemas';
+import type { ArtifactTypeId, Exemption, Story } from '@forge/schemas';
 import { assertCleanWorkingTree } from '@forge/vcs';
 import type { CompileOptions, CompileSources } from '@forge/extensions/compile';
 import { readWorkflowSource } from './commands/run/run.ts';
@@ -1442,32 +1451,33 @@ interface TestOutcomeEntry {
   readonly binding: boolean;
 }
 
-/** One story's own binding check, factored out of `runTestBindingCommand` so both its single-story
- * mode (`--story <id>`) and its discover mode (`specs/22` M15 P5: no `--story`, every `done` story)
- * share the identical runId/evidence/outcome-mapping logic rather than drifting apart. `runId`
- * includes `story.id` (not just a timestamp, unlike single-story mode's own pre-P5 format) so
- * discover mode's concurrent, same-tick calls across several stories can never collide even if
- * `clock.now()`'s own resolution happened to coincide. */
-async function runOneStoryBinding(
-  paths: ProjectPaths,
+/** The shared "run a real binding check for one story" core, factored out of `runOneStoryBinding` so
+ * `runTestExemptCommand`'s own pre-check (`PLAN-M15.md` P6: "is `testId` currently non-binding") can
+ * reuse it WITHOUT also getting `runOneStoryBinding`'s own `assembleAndWriteMutationEvidence` side
+ * effect. Before this split, `runTestExemptCommand` called `runOneStoryBinding` directly, which always
+ * writes a real `MutationEvidence` document to the project tree whenever the check reaches
+ * `'completed'` — exactly the case that is about to be refused (`GATE-515` `'exempts-a-binding-test'`)
+ * whenever the named test turns out to bind. A round-1 gauntlet critic reproduced this live: the
+ * refusal fired as documented, but the evidence write had already happened, leaving the project tree
+ * dirty and `assertCleanWorkingTree` then refusing the user's own very next retry with an unrelated
+ * `VCS-010`. This helper makes the exempt command's own pre-check genuinely read-only against the
+ * project tree, the identical "fast local feedback, never a permanent record for an exploratory run"
+ * stance `story.ts`'s own `checkBinding` already takes for the same underlying check. */
+async function runRawBindingCheck(
   projectRoot: string,
-  reportsRoot: string,
   story: Story,
   testCommand: string,
   ecosystem: 'js' | 'python',
   clock: Clock,
 ): Promise<
+  | { readonly kind: 'skipped' }
+  | { readonly kind: 'problem'; readonly problem: string }
   | {
       readonly kind: 'completed';
-      readonly storyId: string;
-      readonly bound: readonly string[];
-      readonly nonBinding: readonly string[];
-      readonly tests: readonly TestOutcomeEntry[];
-      readonly restoreVerified: boolean;
-      readonly evidenceId: string;
+      readonly runId: string;
+      readonly result: BindingCheckCompleted;
+      readonly rawNonBinding: readonly string[];
     }
-  | { readonly kind: 'skipped' }
-  | { readonly kind: 'problem'; readonly storyId: string; readonly problem: string }
 > {
   const runId = `test-binding-${story.id}-${clock.now().replace(/[^0-9]/g, '')}`;
   const result = await runBindingCheck({
@@ -1491,9 +1501,72 @@ async function runOneStoryBinding(
       result.outcome === 'baseline-not-green'
         ? `${String(result.failing.length)} test(s) already failing before any mutation: ${result.failing.join(', ')}.`
         : result.message;
-    return { kind: 'problem', storyId: story.id, problem };
+    return { kind: 'problem', problem };
   }
-  const nonBinding = result.namedTests.filter((name) => !result.failedUnderMutation.includes(name));
+  const rawNonBinding = result.namedTests.filter(
+    (name) => !result.failedUnderMutation.includes(name),
+  );
+  return { kind: 'completed', runId, result, rawNonBinding };
+}
+
+/** One story's own binding check, factored out of `runTestBindingCommand` so both its single-story
+ * mode (`--story <id>`) and its discover mode (`specs/22` M15 P5: no `--story`, every `done` story)
+ * share the identical runId/evidence/outcome-mapping logic rather than drifting apart. `runId`
+ * includes `story.id` (not just a timestamp, unlike single-story mode's own pre-P5 format) so
+ * discover mode's concurrent, same-tick calls across several stories can never collide even if
+ * `clock.now()`'s own resolution happened to coincide. Built on `runRawBindingCheck` above (the shared
+ * core), adding the two things that function deliberately does NOT do: matching against declared
+ * exemptions and writing `MutationEvidence`.
+ *
+ * `exemptions` (`specs/22` M15 P6): every exemption declared in the whole project (`loadExemptions`,
+ * called once by this function's own two callers, never per-story — the file is small and shared).
+ * `applyExemptions` builds and compares the qualified `"<storyId>: <testName>"` key itself, so a
+ * single-story caller's own BARE `nonBinding` output (unprefixed, M15 P4's already-shipped contract)
+ * and discover mode's own prefixed one both match the identical declared exemption correctly — this
+ * function is the one place that does the matching, not two independently-drifting copies of it. A
+ * stale or expired exemption becomes a `'problem'` outcome (`describeExemptionProblems`, a plain
+ * string — `GATE-515`'s own doc comment, `packages/core/src/errors/codes.ts`, explains why this is
+ * not a thrown code), the identical "no MutationEvidence for a check that never fully completed"
+ * treatment `baseline-not-green`/`*-tool-error` already get: an exemption problem means this story's
+ * own binding result cannot be trusted as reported, exactly as real as those two causes. */
+async function runOneStoryBinding(
+  paths: ProjectPaths,
+  projectRoot: string,
+  reportsRoot: string,
+  story: Story,
+  testCommand: string,
+  ecosystem: 'js' | 'python',
+  clock: Clock,
+  exemptions: readonly Exemption[],
+): Promise<
+  | {
+      readonly kind: 'completed';
+      readonly storyId: string;
+      readonly bound: readonly string[];
+      readonly nonBinding: readonly string[];
+      readonly exemptApplied: boolean;
+      readonly tests: readonly TestOutcomeEntry[];
+      readonly restoreVerified: boolean;
+      readonly evidenceId: string;
+    }
+  | { readonly kind: 'skipped' }
+  | { readonly kind: 'problem'; readonly storyId: string; readonly problem: string }
+> {
+  const raw = await runRawBindingCheck(projectRoot, story, testCommand, ecosystem, clock);
+  if (raw.kind === 'skipped') return { kind: 'skipped' };
+  if (raw.kind === 'problem') return { kind: 'problem', storyId: story.id, problem: raw.problem };
+  const { runId, result, rawNonBinding } = raw;
+  const application = applyExemptions(
+    story.id,
+    rawNonBinding,
+    exemptions,
+    clock.now().slice(0, 10),
+  );
+  const exemptionProblems = describeExemptionProblems(application);
+  if (exemptionProblems.length > 0) {
+    return { kind: 'problem', storyId: story.id, problem: exemptionProblems.join(' ') };
+  }
+  const nonBinding = application.nonBinding;
   const tests: readonly TestOutcomeEntry[] = result.namedTests.map((name) => ({
     name,
     binding: result.failedUnderMutation.includes(name),
@@ -1512,6 +1585,7 @@ async function runOneStoryBinding(
     storyId: story.id,
     bound: result.failedUnderMutation,
     nonBinding,
+    exemptApplied: nonBinding.length < rawNonBinding.length,
     tests,
     restoreVerified: result.restoreVerified,
     evidenceId: written.id,
@@ -1543,6 +1617,7 @@ async function runSingleStoryBindingCommand(
   ecosystem: 'js' | 'python',
   testCommand: string,
   clock: Clock,
+  exemptions: readonly Exemption[],
   json: boolean,
 ): Promise<number> {
   const story = await resolveStoryById(paths, storyId);
@@ -1554,6 +1629,7 @@ async function runSingleStoryBindingCommand(
     testCommand,
     ecosystem,
     clock,
+    exemptions,
   );
   if (outcome.kind === 'skipped') {
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
@@ -1608,11 +1684,12 @@ async function runSingleStoryBindingCommand(
         incomplete,
         bound: outcome.bound,
         nonBinding: outcome.nonBinding,
-        // Always `false` in v1: `PLAN-M15.md` splits the real exemption mechanism (F-TEST-8) into its
-        // own later piece (P6), which this piece does not implement. The field is emitted now, already
-        // `false`, so P6 only has to start setting it `true` under real conditions -- never add it as a
-        // new field callers must learn to check for.
-        exempt: false,
+        // `true` iff a declared exemption (`specs/22` M15 P6, `forge test exempt`) actually suppressed
+        // at least one otherwise-non-binding test this run -- `runOneStoryBinding`'s own `exemptApplied`,
+        // computed once, at the single place that does the exemption matching. P5 shipped this field
+        // hardcoded `false` with a comment that P6 would "start setting it true under real conditions";
+        // this is that change.
+        exempt: outcome.exemptApplied,
         evidenceId: outcome.evidenceId,
         restoreVerified: outcome.restoreVerified,
         tests: outcome.tests,
@@ -1659,12 +1736,22 @@ async function runDiscoverModeBindingCommand(
   ecosystem: 'js' | 'python',
   testCommand: string,
   clock: Clock,
+  exemptions: readonly Exemption[],
   json: boolean,
 ): Promise<number> {
   const doneStories = await loadDoneStories(paths, specsRoot);
   const outcomes = await Promise.all(
     doneStories.map((story) =>
-      runOneStoryBinding(paths, projectRoot, reportsRoot, story, testCommand, ecosystem, clock),
+      runOneStoryBinding(
+        paths,
+        projectRoot,
+        reportsRoot,
+        story,
+        testCommand,
+        ecosystem,
+        clock,
+        exemptions,
+      ),
     ),
   );
   const bound: string[] = [];
@@ -1672,6 +1759,7 @@ async function runDiscoverModeBindingCommand(
   const evidenceIds: string[] = [];
   const problems: string[] = [];
   let restoreVerified = true;
+  let exempt = false;
   for (const outcome of outcomes) {
     if (outcome.kind === 'skipped') continue;
     if (outcome.kind === 'problem') {
@@ -1682,6 +1770,7 @@ async function runDiscoverModeBindingCommand(
     nonBinding.push(...outcome.nonBinding.map((name) => `${outcome.storyId}: ${name}`));
     evidenceIds.push(outcome.evidenceId);
     if (!outcome.restoreVerified) restoreVerified = false;
+    if (outcome.exemptApplied) exempt = true;
   }
   // Named `passed`, never `ok` -- the identical reason `runSingleStoryBindingCommand`'s own envelope
   // avoids `ok` (its own doc comment has the full story): `evaluateGate`'s `failureMarker` treats `ok`
@@ -1706,7 +1795,9 @@ async function runDiscoverModeBindingCommand(
         incomplete,
         bound,
         nonBinding,
-        exempt: false,
+        // `true` iff any checked story's own exemption actually suppressed a test -- see
+        // `runSingleStoryBindingCommand`'s own identical-purpose comment for the full history.
+        exempt,
         evidenceIds,
         restoreVerified,
         problems,
@@ -1752,6 +1843,7 @@ async function runTestBindingCommand(
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
   }
   const clock = SYSTEM_CLOCK;
+  const exemptions = await loadExemptions(paths, config.paths.reports);
 
   if (storyId === undefined) {
     return runDiscoverModeBindingCommand(
@@ -1762,6 +1854,7 @@ async function runTestBindingCommand(
       ecosystem,
       testCommand,
       clock,
+      exemptions,
       json,
     );
   }
@@ -1773,8 +1866,174 @@ async function runTestBindingCommand(
     ecosystem,
     testCommand,
     clock,
+    exemptions,
     json,
   );
+}
+
+/** `DEFAULT_CONFIG.gates` is typed optional on `ForgeConfig` (a real, schema-valid config written
+ * before `PLAN-M14.md` P16 shipped has no `gates` block at all) even though the real, shipped default
+ * object always defines one (`packages/schemas/src/config/defaults.ts`) -- the identical narrowing
+ * `commands/run/gate-commands.ts`'s own PRIVATE `defaultWaiverMaxDays` already does for `forge gate
+ * waive`, replicated here (that function is not exported, `SPEC-QUESTIONS.md`'s own summary of this
+ * piece's research has the full reasoning) rather than imported. */
+function defaultWaiverMaxDays(): number {
+  const { gates } = DEFAULT_CONFIG;
+  if (gates === undefined) {
+    throw new Error('DEFAULT_CONFIG.gates is unexpectedly absent (schemas/src/config/defaults.ts)');
+  }
+  return gates.waiverMaxDays;
+}
+
+/** A real `YYYY-MM-DD` calendar date -- the identical strictness `exemptionSchema`'s own `expiry:
+ * z.string().date()` already enforces, checked here too so a malformed `--expires` is refused as a
+ * clean usage error rather than reaching `appendExemption`'s own internal schema check as an uncaught
+ * `RangeError`. Deliberately NOT `Number.isNaN(Date.parse(value))` alone: a round-1 gauntlet critic
+ * reproduced live that `Date.parse` silently rolls a calendar-invalid day-of-month over into the next
+ * month instead of rejecting it (`Date.parse('2026-02-30')` parses as March 2, 2026) -- the regex
+ * guard this replaced caught the FORMAT but not that. Round-tripping through `Date.UTC` and comparing
+ * the parts back out is what actually catches a rolled-over date: constructing it changes what comes
+ * back out, which plain parsing alone can never detect. */
+function isRealCalendarDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (match === null) return false;
+  const [, yearStr, monthStr, dayStr] = match;
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+/** `forge test exempt <storyId> <testId> --reason <text> --owner <identifier> --expires <iso-date>`
+ * (`specs/22` M15 P6): declares one exemption, reusing `forge gate waive`'s own policy machinery
+ * (`isWaiverOwnerIdentifier`/`waiverExceedsCap`, `@forge/engine/gates`) rather than inventing a second
+ * owner/cap rule, per this piece's own Mandate. Refusals fire, in this order, before anything is
+ * written:
+ *
+ * 1. Usage (missing positional/flag, a blank `--reason`, a malformed `--expires`) -- exit 2, no git
+ *    work at all, the identical "usage errors never touch git" ordering `runTestBindingCommand`'s own
+ *    doc comment establishes for its sibling command.
+ * 2. A dirty working tree (`VCS-010`) -- `assertCleanWorkingTree`, the same gate every git-touching
+ *    `forge` command opens with; the real binding check below needs a clean tree to revert against.
+ * 3. `--owner` (`GATE-513`) / `--expires` cap (`GATE-515` `'expiry-exceeds-cap'`) -- checked against the
+ *    project's configured `gates.waiverMaxDays` (falling back to `defaultWaiverMaxDays()` above), before
+ *    any real binding check runs: a malformed declaration should not pay for a real mutation test run
+ *    just to be told its own shape was wrong.
+ * 4. `testId` already binds (`GATE-515` `'exempts-a-binding-test'`) -- the one refusal that genuinely
+ *    needs a real answer, so it runs last: a fresh `runRawBindingCheck` call (never `runOneStoryBinding`
+ *    -- see that helper's own doc comment for why: this pre-check must never write `MutationEvidence`),
+ *    deliberately ignoring every exemption already on record, so this always asks "is this test
+ *    non-binding RIGHT NOW," never "is it still covered by some earlier exemption."
+ *
+ * A `'problem'` outcome from that binding check (baseline not green, a tool error) is reported the
+ * identical way `runSingleStoryBindingCommand` already reports one -- a soft, non-thrown failure, not a
+ * crash -- since declaring an exemption is impossible to judge when the check itself never reached a
+ * real verdict. Nothing is written to the project tree by this pre-check either way: a refused
+ * declaration (any reason) leaves the tree exactly as clean as it found it, so an immediate retry
+ * reaches this function's own logic again rather than tripping over debris `assertCleanWorkingTree`
+ * would then refuse.
+ *
+ * `reports/exemptions.md` is NOT yet mirrored into the disclosure ledger (P10): a real, disclosed gap
+ * this piece's own `SPEC-QUESTIONS.md` entry states outright. `Disclosure` itself is registered as a
+ * `18` §18.7 artifact type but deliberately not yet code-registered (`SPEC-QUESTIONS.md` Q280 decision
+ * 6) -- its own code registration, and the real ledger-mirroring this comment names, are P10's job,
+ * not this piece's. */
+async function runTestExemptCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  storyId: string | undefined,
+  testId: string | undefined,
+  reason: string | undefined,
+  owner: string | undefined,
+  expiresAt: string | undefined,
+  json: boolean,
+): Promise<number> {
+  if (storyId === undefined || testId === undefined) {
+    console.error('forge: "test exempt" needs exactly two positionals: <storyId> <testId>.');
+    return EXIT_CODES.usage;
+  }
+  if (reason === undefined || owner === undefined || expiresAt === undefined) {
+    console.error(
+      'forge: "test exempt" needs --reason <text> --owner <identifier> --expires <iso-date>.',
+    );
+    return EXIT_CODES.usage;
+  }
+  // A blank `--reason` -- stripped the identical Unicode-aware way `@forge/engine/gates/waiver.ts`'s
+  // own private `isNonBlank` already strips a waiver's `reason`/`owner` (`\p{Cc}`/`\p{Cf}`/ordinary
+  // whitespace), not a plain `.trim()`: a round-1 gauntlet critic reproduced live that `.trim()` alone
+  // accepts a `--reason` made entirely of zero-width spaces (U+200B) as "non-blank," durably recording
+  // an invisible, meaningless governance entry that satisfies `exemptionSchema`'s own `z.string()
+  // .min(1)` by length while conveying nothing -- the exact gap `isNonBlank` was already built to
+  // close for the sibling `reason`/`owner` fields of a waiver. That helper is not exported, so this is
+  // the identical regex, not a second design.
+  if (reason.replace(/[\p{Cc}\p{Cf}\s]/gu, '').length === 0) {
+    console.error('forge: "test exempt" needs a real, non-blank --reason.');
+    return EXIT_CODES.usage;
+  }
+  if (!isRealCalendarDate(expiresAt)) {
+    console.error('forge: "test exempt" needs a real --expires <iso-date> (YYYY-MM-DD).');
+    return EXIT_CODES.usage;
+  }
+
+  await assertCleanWorkingTree(projectRoot);
+
+  if (!isWaiverOwnerIdentifier(owner)) {
+    throw new ForgeError('GATE-513', { owner });
+  }
+
+  const config = await readConfig(paths);
+  const maxDays = config.gates?.waiverMaxDays ?? defaultWaiverMaxDays();
+  const clock = SYSTEM_CLOCK;
+  const grantedAt = Date.parse(clock.now());
+  if (waiverExceedsCap({ reason, owner, expiresAt }, grantedAt, maxDays)) {
+    throw new ForgeError('GATE-515', { testId, reason: 'expiry-exceeds-cap', maxDays });
+  }
+
+  const detectedEcosystem = await detectEcosystem(paths);
+  if (detectedEcosystem === 'unknown') {
+    throw new ForgeError('RUN-111', { storyId, reason: 'unknown-ecosystem' });
+  }
+  const ecosystem = detectedEcosystem;
+  const testCommand = config.execution.testCommands.unit;
+  if (testCommand === undefined) {
+    throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
+  }
+
+  const story = await resolveStoryById(paths, storyId);
+  // Never `runOneStoryBinding`: this pre-check must write no `MutationEvidence` -- see
+  // `runRawBindingCheck`'s own doc comment for the real bug this avoids.
+  const raw = await runRawBindingCheck(projectRoot, story, testCommand, ecosystem, clock);
+  if (raw.kind === 'skipped') {
+    throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
+  }
+  if (raw.kind === 'problem') {
+    if (json) {
+      console.log(JSON.stringify({ v: 1, ok: false, problem: raw.problem }));
+    } else {
+      console.error(`forge test exempt: ${raw.problem}`);
+    }
+    return EXIT_CODES.failure;
+  }
+  if (!raw.rawNonBinding.includes(testId)) {
+    throw new ForgeError('GATE-515', { testId, reason: 'exempts-a-binding-test' });
+  }
+
+  const qualified = qualifiedTestId(storyId, testId);
+  const id = await appendExemption(paths, config.paths.reports, clock, {
+    testId: qualified,
+    reason,
+    owner,
+    expiry: expiresAt,
+  });
+  console.log(
+    json
+      ? JSON.stringify({ v: 1, recorded: true, id, testId: qualified })
+      : `forge test exempt ${storyId} ${testId}: recorded ${id} (expires ${expiresAt}).`,
+  );
+  return EXIT_CODES.success;
 }
 
 const TEST_COVERAGE_RULE_IDS = ['acceptance-criteria', 'ratchet'] as const;
@@ -3686,6 +3945,7 @@ async function runStoryCommand(
       projectRoot,
       specsRoot: SPECS_ROOT,
       kbRoot: KB_ROOT,
+      reportsRoot: config.paths.reports,
       testCommands: config.execution.testCommands,
       flakeConfig: config.quality.flake,
       testRoots: config.execution.testRoots,
@@ -4297,6 +4557,26 @@ async function main(): Promise<number> {
     const { values, positionals } = parseCommandFlags(rest, { '--story': true });
     assertNoArgs(positionals);
     return runTestBindingCommand(paths, projectRoot, values.get('--story'), flags.json);
+  }
+  if (command === 'test' && sub === 'exempt') {
+    const { values, positionals } = parseCommandFlags(rest, {
+      '--reason': true,
+      '--owner': true,
+      '--expires': true,
+    });
+    if (positionals.length > 2) {
+      throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[2] ?? '' });
+    }
+    return runTestExemptCommand(
+      paths,
+      projectRoot,
+      positionals[0],
+      positionals[1],
+      values.get('--reason'),
+      values.get('--owner'),
+      values.get('--expires'),
+      flags.json,
+    );
   }
   // `test plan`/`test generate`/`test report` (`03` §3.2.5) — real, disclosed `USR-003` refusals
   // (`loop/test.ts`'s own doc comment: no real test-strategy-planning/generation/reporting mechanism

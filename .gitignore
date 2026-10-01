@@ -6,6 +6,12 @@ coverage-boundaries/
 *.tsbuildinfo
 .DS_Store
 
+# `exemptions.test.ts`'s own real cross-process concurrency test: a worker script has to live
+# somewhere Node's ESM resolver can walk up from and find the real, workspace-linked `node_modules/`
+# (ruling out the system tmpdir) but NOT inside `node_modules/` itself (Node refuses to strip types for
+# a file under there) -- this is that one remaining place, repo-nested but outside `node_modules/`.
+.forge-test-scratch/
+
 # specs/20: never let a local secret or personal override become a commit.
 .env
 .env.*

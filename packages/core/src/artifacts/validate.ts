@@ -16,6 +16,7 @@ import {
   environmentSchema,
   epicSchema,
   evidenceBundleSchema,
+  exemptionSchema,
   gateReportSchema,
   handoffRecordSchema,
   interfaceContractSchema,
@@ -73,6 +74,7 @@ const SCHEMA_BY_TYPE: Record<ArtifactTypeId, z.ZodTypeAny> = {
   ReviewReport: reviewReportSchema,
   MutationEvidence: mutationEvidenceSchema,
   EvidenceBundle: evidenceBundleSchema,
+  Exemption: exemptionSchema,
 };
 
 /** The real registry: every type's real schema and its real `requiredSections`. */
@@ -118,7 +120,7 @@ function isArtifactTypeId(
 }
 
 /**
- * `registry` defaults to the real 24-type registry; a caller (a test, mainly) may pass a smaller one.
+ * `registry` defaults to the real 25-type registry; a caller (a test, mainly) may pass a smaller one.
  */
 export function validateArtifact(
   doc: ArtifactDocument,

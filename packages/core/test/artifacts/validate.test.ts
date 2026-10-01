@@ -22,12 +22,13 @@ const templatesDir = path.join(repoRoot, 'packages', 'templates', 'templates', '
 
 /**
  * The 18 `@forge/templates` stubs that extend `baseFrontMatterShape` (carry their own `type` field) —
- * `validateArtifact` selects a schema by reading `frontMatter.type`, which the 6 flat
- * "collection-entry" types (Risk, Assumption, OpenQuestion, Waiver, Environment, HandoffRecord) do
- * not have at all: those are one register entry, not a whole document, per `SPEC-QUESTIONS.md` Q28 —
- * out of scope for this function, which validates a standalone artifact file. `MutationEvidence` and
- * `EvidenceBundle` (added post-v1.0, `specs/22` M15) both carry their own `type` field like every
- * other document-shaped stub, so they belong here, not among the collection-entry six.
+ * `validateArtifact` selects a schema by reading `frontMatter.type`, which the 7 flat
+ * "collection-entry" types (Risk, Assumption, OpenQuestion, Waiver, Environment, HandoffRecord,
+ * Exemption) do not have at all: those are one register entry, not a whole document, per
+ * `SPEC-QUESTIONS.md` Q28 — out of scope for this function, which validates a standalone artifact
+ * file. `MutationEvidence` and `EvidenceBundle` (added post-v1.0, `specs/22` M15) both carry their own
+ * `type` field like every other document-shaped stub, so they belong here, not among the
+ * collection-entry seven. `Exemption` (M15 P6) is the newest of those seven, not one of these 18.
  */
 const DOCUMENT_TYPE_FILES = [
   'ADR.md',
@@ -54,7 +55,7 @@ describe('validateArtifact — every @forge/templates document-shaped stub', () 
   it('found all 18 document-shaped stubs this describe block expects', () => {
     const allFiles = readdirSync(templatesDir).filter((name) => name.endsWith('.md'));
     const collectionFiles = allFiles.filter((name) => !DOCUMENT_TYPE_FILES.includes(name));
-    expect(collectionFiles).toHaveLength(6);
+    expect(collectionFiles).toHaveLength(7);
     expect(DOCUMENT_TYPE_FILES).toHaveLength(18);
   });
 

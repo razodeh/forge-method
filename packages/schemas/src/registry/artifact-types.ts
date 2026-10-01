@@ -149,13 +149,28 @@ const RAW_ARTIFACT_TYPES = [
     idWidth: 3,
     parent: 'Story',
   },
+  // `specs/22` M15 P6: a mutation-binding exemption, declared (`forge test exempt`), checked by
+  // `forge test binding`/`forge story verify` on every run (stale/expired exemptions fail the check,
+  // `GATE-515`) — the identical "reason/owner/expiry" shape `Waiver` above already carries, per this
+  // piece's own Mandate ("reusing that machinery rather than inventing a second one"), plus the one
+  // field `Waiver` has no equivalent of: which test the exemption names. Appended here, at the end,
+  // rather than next to `Waiver` above -- this array's own trailing entries are where every post-v1.0
+  // addition lives (`ReviewReport`/`MutationEvidence`/`EvidenceBundle` immediately above), and this is
+  // one of those, not a revision of the original spec table.
+  {
+    id: 'Exemption',
+    idPrefix: 'EXEMPT',
+    pathTemplate: 'reports/exemptions.md',
+    idWidth: 3,
+    collection: true,
+  },
 ] as const;
 
-/** The 24 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
- * `MutationEvidence` and `EvidenceBundle`, each added post-v1.0 -- see this array's own trailing
- * entries for the full record). `Disclosure` (`specs/18` §18.7, `PLAN-M15.md` P10) is spec-registered
- * but not yet code-registered here: its own code registration is P10's job, when the disclosure
- * ledger it names is actually built (`SPEC-QUESTIONS.md` Q280's Decision 6) -- a deliberate,
+/** The 25 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
+ * `MutationEvidence`, `EvidenceBundle` and `Exemption`, each added post-v1.0 -- see this array's own
+ * trailing entries for the full record). `Disclosure` (`specs/18` §18.7, `PLAN-M15.md` P10) is spec-
+ * registered but not yet code-registered here: its own code registration is P10's job, when the
+ * disclosure ledger it names is actually built (`SPEC-QUESTIONS.md` Q280's Decision 6) -- a deliberate,
  * disclosed asymmetry, not an oversight. */
 export type ArtifactTypeId = (typeof RAW_ARTIFACT_TYPES)[number]['id'];
 

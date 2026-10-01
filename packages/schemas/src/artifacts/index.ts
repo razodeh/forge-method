@@ -1,5 +1,5 @@
 /**
- * `@forge/schemas/artifacts` — zod schemas for all 24 registry artifact types.
+ * `@forge/schemas/artifacts` — zod schemas for all 25 registry artifact types.
  *
  * @see specs/09 §9.3
  * @see specs/09 §9.6
@@ -18,16 +18,19 @@ export {
   assumptionsFileSchema,
   openQuestionsFileSchema,
   environmentsFileSchema,
+  exemptionsFileSchema,
   type RisksFile,
   type AssumptionsFile,
   type OpenQuestionsFile,
   type EnvironmentsFile,
+  type ExemptionsFile,
 } from './collection-file.ts';
 export { dataModelSchema, type DataModel } from './data-model.ts';
 export { defectSchema, SEVERITIES, type Defect } from './defect.ts';
 export { diagramSchema, DIAGRAM_NOTATIONS, type Diagram } from './diagram.ts';
 export { environmentSchema, type Environment } from './environment.ts';
 export { epicSchema, type Epic } from './epic.ts';
+export { exemptionSchema, type Exemption } from './exemption.ts';
 export { gateReportSchema, type GateReport } from './gate-report.ts';
 export { handoffRecordSchema, type HandoffRecord } from './handoff-record.ts';
 export { interfaceContractSchema, type InterfaceContract } from './interface-contract.ts';

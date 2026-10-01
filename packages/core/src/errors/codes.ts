@@ -2314,6 +2314,58 @@ export const ERROR_CODES = {
       "or widen the GateReport registry entry's idWidth (schemas/src/registry/artifact-types.ts) if the " +
       'project genuinely needs more than 999 gate reports.',
   },
+  // `specs/22` M15 P6: the four real refusals `forge test exempt` itself makes when DECLARING a new
+  // exemption, before anything is written — never thrown by `forge test binding`/`forge story verify`
+  // later. `'exempts-a-binding-test'` ("you may not pre-emptively exempt something that works" --
+  // the Mandate's own words: `forge test exempt` runs a real binding check for the named test first
+  // and refuses outright if it is not currently non-binding). `'expiry-exceeds-cap'` (the identical
+  // `gates.waiverMaxDays` cap `GATE-512` already enforces for a waiver's own `--expires`, reused here
+  // rather than a second, parallel cap -- not reusing `GATE-512` itself, whose own message literally
+  // says "waiver", which would misname the real command a caller just ran). `--owner` validation
+  // reuses `GATE-513` directly, unlike `GATE-512`: `GATE-513`'s own message ("--owner ... is not a
+  // real identifier") never mentions "waiver" at all, so no exemption-specific rewording is needed.
+  // `'id-exhausted'` (`exemptions.ts`'s own `nextExemptionId`): the identical "refuse, never silently
+  // widen or wrap the id" stance `GATE-514` already takes for `GateReport`'s own identical exhaustion
+  // case, reused here rather than invented a second way for the same class of problem.
+  // `'lock-exhausted'` (`exemptions.ts`'s own `withExemptionsLock`, round 2's own fix): the real
+  // cross-process lock around the write gave up after its full retry budget under sustained
+  // contention -- never a bare, non-`ForgeError` `Error`, the identical "every refusal in this
+  // codebase is a typed code" rule (R2, `QUALITY-BAR.md`) every other reason on this code already
+  // follows.
+  //
+  // This piece's own OTHER two honesty rules -- a stale exemption (no currently non-binding test
+  // matches it, the identical discipline `test/brief-write-paths-in-claim.test.ts`'s own `EXEMPT`
+  // table already applies to itself) and an expired one (`expiry` has passed) -- are discovered
+  // LATER, by a real binding check, not at declaration time; they report through the identical
+  // `'problem'` outcome (a plain string, not a thrown code) `baseline-not-green`/`*-tool-error`
+  // already use -- `runOneStoryBinding`'s own doc comment (`packages/cli/src/bin.ts`) has the full
+  // reasoning for why a declaration-time refusal and a later, real-check-time finding are not the
+  // same kind of event and should not share one code.
+  'GATE-515': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: {
+      testId: string;
+      reason: 'exempts-a-binding-test' | 'expiry-exceeds-cap' | 'id-exhausted' | 'lock-exhausted';
+      maxDays?: number;
+      max?: number;
+    }) => {
+      if (d.reason === 'exempts-a-binding-test')
+        return `${show(d.testId)} already fails when its implementation is reverted: you may not pre-emptively exempt a test that already binds.`;
+      if (d.reason === 'expiry-exceeds-cap')
+        return `--expires is more than ${show(d.maxDays ?? 0)} days after this exemption's own grant (gates.waiverMaxDays).`;
+      if (d.reason === 'id-exhausted')
+        return `reports/exemptions.md already holds the highest Exemption id this project's idWidth allows (EXEMPT-${show(d.max ?? 0)}); no id is free for a new one.`;
+      return `reports/exemptions.md's own write lock is still held after ${show(d.max ?? 0)} attempts to acquire it -- sustained contention, or a wedged lock file.`;
+    },
+    remedy:
+      'Choose a test `forge test binding` already reports as non-binding, and an --expires no later ' +
+      'than the configured cap (forge config set gates.waiverMaxDays <days> to raise it, if ' +
+      'genuinely warranted); if ids are exhausted, remove or archive old entries under ' +
+      'reports/exemptions.md (ids are never reused once freed); if the lock is exhausted, retry once ' +
+      'contention clears, or remove .forge/state/exemptions.lock if its own owning process is ' +
+      'confirmed gone.',
+  },
   'SPEC-501': {
     // I6: "traceability edges required by the spec graph cannot be disabled."
     severity: 'error',

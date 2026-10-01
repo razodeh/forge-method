@@ -41,7 +41,14 @@ import {
   type StoryVerifyReport,
   type TestRunner,
 } from '../../src/commands/story.ts';
-import { KB_ROOT, SPECS_ROOT, cleanupAll, createTestProject, type TestProject } from './helpers.ts';
+import {
+  KB_ROOT,
+  REPORTS_ROOT,
+  SPECS_ROOT,
+  cleanupAll,
+  createTestProject,
+  type TestProject,
+} from './helpers.ts';
 
 afterEach(cleanupAll);
 
@@ -165,6 +172,7 @@ function ctxFor(
     projectRoot: project.dir,
     specsRoot: SPECS_ROOT,
     kbRoot: KB_ROOT,
+    reportsRoot: REPORTS_ROOT,
     testCommands,
     ...(runTests !== undefined ? { runTests } : {}),
     ...(testRoots !== undefined ? { testRoots } : {}),

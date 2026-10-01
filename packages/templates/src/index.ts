@@ -19,12 +19,12 @@ import { PLANNING_BRIEFS } from './content/briefs-planning.ts';
 import { PROMPTS_A } from './content/prompts-a.ts';
 import { PROMPTS_B } from './content/prompts-b.ts';
 
-/** The 24 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
- * `MutationEvidence` and `EvidenceBundle`, each added post-v1.0), transcribed independently — see
- * above. `Disclosure` (also `specs/18` §18.7, `specs/22` M15 `PLAN-M15.md` P10) is deliberately NOT
- * here yet: it is spec-registered but not code-registered (`@forge/schemas`'s own `ArtifactTypeId`
- * does not include it either — see that file's own trailing comment), so there is no real schema for
- * a template to validate against until P10 builds one. */
+/** The 25 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
+ * `MutationEvidence`, `EvidenceBundle` and `Exemption`, each added post-v1.0), transcribed
+ * independently — see above. `Disclosure` (also `specs/18` §18.7, `specs/22` M15 `PLAN-M15.md` P10)
+ * is deliberately NOT here yet: it is spec-registered but not code-registered (`@forge/schemas`'s own
+ * `ArtifactTypeId` does not include it either — see that file's own trailing comment), so there is no
+ * real schema for a template to validate against until P10 builds one. */
 export type TemplateArtifactTypeId =
   | 'Vision'
   | 'Capability'
@@ -40,6 +40,7 @@ export type TemplateArtifactTypeId =
   | 'Assumption'
   | 'OpenQuestion'
   | 'Waiver'
+  | 'Exemption'
   | 'SessionRecord'
   | 'RCA'
   | 'Defect'
@@ -269,6 +270,7 @@ export const TEMPLATE_INDEX: Readonly<Record<TemplateArtifactTypeId, string>> = 
   Assumption: 'templates/artifacts/Assumption.md',
   OpenQuestion: 'templates/artifacts/OpenQuestion.md',
   Waiver: 'templates/artifacts/Waiver.md',
+  Exemption: 'templates/artifacts/Exemption.md',
   SessionRecord: 'templates/artifacts/SessionRecord.md',
   RCA: 'templates/artifacts/RCA.md',
   Defect: 'templates/artifacts/Defect.md',

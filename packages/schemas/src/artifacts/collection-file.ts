@@ -1,9 +1,9 @@
 /**
- * `risksFileSchema`/`assumptionsFileSchema`/`openQuestionsFileSchema`/`environmentsFileSchema` — the
- * on-disk shape of a `collection: true` file once it holds more than one entry (`08` §8.2 calls these
- * "registers": `risks.md`, `assumptions.md`, `open-questions.md`, `kb/delivery/environments.md`). No
- * spec page states this shape — `SPEC-QUESTIONS.md` Q29 (M1) found the gap and deferred it; this
- * closes that deferral (Q50).
+ * `risksFileSchema`/`assumptionsFileSchema`/`openQuestionsFileSchema`/`environmentsFileSchema`/
+ * `exemptionsFileSchema` — the on-disk shape of a `collection: true` file once it holds more than one
+ * entry (`08` §8.2 calls these "registers": `risks.md`, `assumptions.md`, `open-questions.md`,
+ * `kb/delivery/environments.md`, `reports/exemptions.md`). No spec page states this shape —
+ * `SPEC-QUESTIONS.md` Q29 (M1) found the gap and deferred it; this closes that deferral (Q50).
  *
  * Modelled on the one concrete precedent the spec pack gives for "a list of these exact entry-shaped
  * objects": `05` §5.6's `HandoffRecord` example embeds
@@ -36,6 +36,7 @@ import { z } from 'zod';
 import { baseFrontMatterShape } from '../registry/front-matter.ts';
 import { assumptionSchema } from './assumption.ts';
 import { environmentSchema } from './environment.ts';
+import { exemptionSchema } from './exemption.ts';
 import { openQuestionSchema } from './open-question.ts';
 import { riskSchema } from './risk.ts';
 
@@ -72,3 +73,11 @@ export const environmentsFileSchema = collectionFileBase
   })
   .strict();
 export type EnvironmentsFile = z.infer<typeof environmentsFileSchema>;
+
+export const exemptionsFileSchema = collectionFileBase
+  .extend({
+    type: z.literal('Exemption'),
+    exemptions: z.array(exemptionSchema),
+  })
+  .strict();
+export type ExemptionsFile = z.infer<typeof exemptionsFileSchema>;

@@ -85,6 +85,11 @@ import { minimatch } from 'minimatch';
 import { listSpecArtifacts } from './shared.ts';
 import { runBindingCheck } from './loop/test/binding.ts';
 import { detectEcosystem } from './loop/test/ecosystem.ts';
+import {
+  applyExemptions,
+  describeExemptionProblems,
+  loadExemptions,
+} from './loop/test/exemptions.ts';
 import type { TestOutcome } from './loop/test/reporter.ts';
 import { createSystemTempPath } from './loop/test/system-temp.ts';
 import {
@@ -156,6 +161,11 @@ export interface StoryVerifyContext {
   readonly projectRoot: string;
   readonly specsRoot: string;
   readonly kbRoot: string;
+  /** `config.paths.reports` (`specs/22` M15 P6): where `checkBinding`'s own `loadExemptions` reads
+   * `reports/exemptions.md` from — the identical configured root `forge test binding` already uses,
+   * not a hardcoded default, since a project that has relocated `paths.reports` must still have its
+   * own declared exemptions found. */
+  readonly reportsRoot: string;
   readonly testCommands: TestCommands;
   readonly flakeConfig?: TestRunContext['flakeConfig'];
   readonly runTests?: TestRunner;
@@ -708,7 +718,21 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
         'the scratch worktree was not fully restored after the binding check -- its own result cannot be trusted.',
     };
   }
-  const nonBinding = result.namedTests.filter((name) => !result.failedUnderMutation.includes(name));
+  const rawNonBinding = result.namedTests.filter(
+    (name) => !result.failedUnderMutation.includes(name),
+  );
+  const exemptions = await loadExemptions(ctx.paths, ctx.reportsRoot);
+  const application = applyExemptions(
+    story.id,
+    rawNonBinding,
+    exemptions,
+    SYSTEM_CLOCK.now().slice(0, 10),
+  );
+  const exemptionProblems = describeExemptionProblems(application);
+  if (exemptionProblems.length > 0) {
+    return { status: 'fail', message: exemptionProblems.join(' ') };
+  }
+  const nonBinding = application.nonBinding;
   if (nonBinding.length > 0) {
     return {
       status: 'fail',

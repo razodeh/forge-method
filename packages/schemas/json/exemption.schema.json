@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "expiry": {
+      "format": "date",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^EXEMPT-\\d{3}(-\\d+)?$",
+      "type": "string"
+    },
+    "owner": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "reason": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "testId": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "testId",
+    "reason",
+    "owner",
+    "expiry"
+  ],
+  "type": "object"
+}
