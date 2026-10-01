@@ -19387,3 +19387,96 @@ more in files this piece never touched that cleared completely on a second, unco
 they were resource-contention artifacts, not real regressions) and once clean, alone.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q281`.
+
+## M15 P3 — The binding engine: revert-the-implementation mutation, in an isolated worktree
+
+Two gauntlet rounds, not three: round 1 found one blocking and several major/minor issues; round 2,
+run against the real fixes (not just the claims), came back genuinely clean from both independent
+critics — the first clean round-2 verdict this milestone has had. Recorded in full because round 1's
+findings were real, substantive correctness bugs, not cosmetic ones, and because the self-calibrating
+fix for round 1's own test-timing finding is itself a small, disclosed methodology lesson.
+
+**What the piece builds.** `runBindingCheck` (`packages/cli/src/commands/loop/test/binding.ts`, new):
+for a story's `files_expected`, splits implementation from test paths (`isTestPath`, the identical
+heuristic `run-plan.ts` already uses), creates a scratch lane worktree (`@forge/vcs`'s own lane
+lifecycle), runs the named tests once unmutated (discovering their real names and confirming a green
+start), reverts exactly the implementation paths (`revertPathsToRevision`, new in `@forge/vcs`), runs
+them again (binding evidence: whichever now fail), restores, and runs them a third time (requiring all
+pass again). Returns a structured outcome a later piece (`PLAN-M15.md` P4) turns into a real
+`MutationEvidence` record — this piece deliberately writes no artifact and allocates no id itself.
+
+**Critic round 1 (two independent, fresh-context critics): one blocking, two major (both
+independently), three minor — all real, all fixed.** Blocking, found by one critic and reproduced
+directly: a story naming no test-shaped path at all (`files_expected` all implementation) passed
+`files: []` to `runAndNormalize`, which `reporter.ts`'s own `runVitest` treats identically to "no
+scoping at all" — silently running and misattributing a project's ENTIRE test suite, the opposite of
+the Plan's own "run exactly those named tests." Fixed with a new, type-checked outcome,
+`'no-test-paths'`, refused before any lane is ever created — proven against the critic's own exact
+reproduction (an unrelated, pre-existing test file that must never be discovered).
+
+Major, found independently by both critics: `revertPathsToRevision`'s own `existsAtRevision` (`git
+cat-file -e`) claimed "any failure means absent" — false for a real git submodule/gitlink path (mode
+`160000`), which `cat-file -e` cannot read at all (a gitlink names a commit in the submodule's own,
+separate object database), reproduced directly by one critic against a real scratch repo. The second
+critic independently found this exact function was a byte-for-byte duplicate of an existing, private
+`existsAtRevision` already in `packages/vcs/src/claims.ts` — whose own doc comment already discloses a
+documented history of the identical "any failure = absent" assumption being proven false once before,
+and whose every other function in the module goes through `wrapGitFailure`, a convention this one
+broke by silently swallowing every failure, not just absence. Fixed by consolidating into one real,
+shared `existsAtRevision` (`packages/vcs/src/git.ts`), using `git ls-tree <revision> -- <path>` (reads
+existence from stdout emptiness, not a non-uniform exit code; confirmed empirically to correctly
+report a blob, a tree, AND a gitlink), routed through `wrapGitFailure` for the first time. Both
+`claims.ts` and `lanes.ts` now import the one function; both private copies are gone. A second,
+independently-surfaced bug found while fixing this: `revertPathsToRevision`'s own delete branch used
+`rm(path, {force: true})` without `recursive: true`, which throws `EISDIR` for a real directory even
+with `force` set (confirmed empirically) — a real-world-plausible failure for any directory-shaped
+implementation path, not only a gitlink. Fixed by adding `recursive: true`.
+
+Major, found independently by both critics: `binding-sigkill.test.ts`'s own five hardcoded kill delays
+(5/150/400/700/950ms) were claimed, in its own comment, to land inside lane creation, the three test
+runs, and restore/verification — both critics independently re-measured real phase timing and found
+the claim false (a full run takes meaningfully longer than the comment assumed, and the restore/
+verification phase was never actually reached by any trial). Fixed properly, not by guessing new
+numbers: the test now measures a real, uninterrupted run's own duration on whatever environment it is
+actually running on, then computes kill delays as proportions of that measured value (2%/20%/40%/60%/
+80%/95%) — self-calibrating rather than hardcoded, and immune to exactly the kind of environment/load
+variance that made the original numbers wrong. A related minor finding (a kill that never lands could
+silently degrade coverage with no warning) closed in the same fix: the test now asserts a real majority
+of trials actually landed a genuine kill, not merely that the suite passed either way.
+
+Minor, both fixed: no test exercised two concurrent `runBindingCheck` calls for the identical story and
+run id (the real collision `createLaneWorktree`'s own branch-name guard protects against) — added,
+proving one call completes and the other fails with a real, typed `VcsError`, never corrupted state.
+`PLAN-M15.md` P3's own Surface line names `resolveStepClaim` for the implementation/test-path split;
+the shipped code uses `isTestPath` instead (a materially different, simpler, already-proven mechanism —
+`resolveStepClaim` resolves a compiled workflow step's own write-claim globs, not a plain path-list
+split) — disclosed in `splitImplementationAndTestPaths`'s own doc comment rather than left silent.
+
+**Critic round 2 (two independent, fresh-context critics, explicitly re-verifying round 1's fixes):
+CLEAN from both — no findings.** Both critics independently tried to construct new counterexamples to
+the ls-tree-based `existsAtRevision` beyond the gitlink case already fixed (symlinks, unicode paths,
+paths with spaces, directories, glob-shaped names, an invalid revision) and found none. Both ran the
+self-calibrating SIGKILL test twice in a row for real and confirmed it passes consistently (31–51s
+each, well under its own 60s timeout) with a real majority of kills landing. One critic independently
+reproduced the `workspace-floor.test.ts` `IGNORED_PATHS` necessity directly — removed the new entry,
+confirmed the exact predicted failure, restored it. Both critics observed real, external test-suite
+contention (a separate, full-suite run this piece's own build process had started in the background)
+colliding with `workspace-floor.test.ts`'s own pre-existing, unrelated practice of planting probe
+files at hardcoded repo-root paths, correctly identified it as resource contention rather than a defect
+in this diff, and did not flag it as a finding — the identical class of transient noise this milestone
+has repeatedly had to distinguish from real regressions.
+
+**Verification.** `pnpm typecheck` (21/21), `pnpm lint` (eslint + prettier, clean), and the real
+suite: `packages/vcs` (247 tests across the whole package, including 59 in `lanes.test.ts`, +10 from
+this piece — `claims.ts`'s own existing suite untouched by the `existsAtRevision` consolidation) and
+the three new/changed CLI
+test files (`binding.test.ts` 13, `binding-restore-failure.test.ts` 2, `binding-sigkill.test.ts` 1
+self-calibrating test covering 6 real proportional kill trials) all pass, plus `test/workspace-
+floor.test.ts`'s own 18 tests confirming the new fixture-file exemption. Every one of the round-1
+fixes was mutation-verified directly during the build (not merely asserted): the `no-test-paths` guard
+removed and reconfirmed to reproduce the exact "whole suite silently run" bug; the gitlink revert test
+run against the pre-fix `cat-file -e` version and reconfirmed to fail with the real, wrong-sha
+evidence; the restore-skip and main-repo-instead-of-worktree self-tests (`PLAN-M15.md` P3's own
+Mutation evidence line) both reverted and reconfirmed to fail the correct, specific assertion.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q282`.

@@ -25897,3 +25897,101 @@ remains the real, already-disclosed gap this symptom points at. Recorded here on
 does not mistake either for something this piece broke.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P2`.
+
+## Q282 — M15 P3: the binding engine itself, and why "run exactly those named tests" needed a real
+refusal, not a fallback
+
+**Context.** `PLAN-M15.md` P3's own Mandate: for a story, compute its implementation change set, revert
+it in a scratch worktree, run its named tests, require at least one to fail, restore, re-run requiring
+all pass. This is the actual engine the whole milestone's own opening argument depends on — P1/P2
+registered the artifact types and the write-refusal primitive the evidence this check produces will
+eventually use; P3 is the first piece that actually performs a mutation check. Two gauntlet rounds, not
+three: round 1 found real, substantive bugs; round 2, against the real fixes, came back clean from both
+independent critics.
+
+**Decision 1 — the binding engine lives in `packages/cli`, not `packages/engine`, despite the more
+"natural module location" a research pass (done before any code was written) initially suggested.**
+`packages/engine` cannot depend on `packages/cli` (confirmed directly against both packages' own
+`package.json` dependency lists — the edge only exists the other way), and the real, reusable test-
+running primitive this piece needs (`runAndNormalize`, `packages/cli/src/commands/loop/test/
+reporter.ts`) lives in `packages/cli`. `PLAN-M15.md` P3's own Surface line already resolves this
+correctly, once read carefully: it names `packages/cli/src/commands/loop/test/*` FIRST ("where the real
+test runner lives") and explicitly marks `packages/engine/src/dispatch/outputs.ts` as "read, not
+modified" — i.e., P3 needs no write access to `packages/engine` at all. The real module is `packages/
+cli/src/commands/loop/test/binding.ts`.
+
+**Decision 2 — `runBindingCheck` calls `runAndNormalize` directly, never the higher-level `testRun`
+wrapper (`run.ts`) that also lives in the same directory.** `testRun` iterates every configured test
+layer and, by default (`persistState: true`), overwrites the project's own `docs/forge/reports/
+test-results.json` and `flaky.json` as a side effect of running — exactly the kind of side effect an
+internal, repeated (baseline/mutated/restore-verification) mutation probe must not have. `runAndNormalize`
+is the lower-level primitive `testRun` itself is built on, and calling it directly, with an explicit
+`files` list, avoids both the layer-iteration complexity and the unwanted persistence.
+
+**Decision 3 — P3 computes the check and returns a structured result; it does not write a
+`MutationEvidence` artifact or allocate an id.** `PLAN-M15.md` P4's own Mandate ("`forge test binding`
+— the stateless verb") is explicitly the piece that wraps this function, assembles the full record
+using the real schema P2 already registered, and maps the outcome to an exit code. Keeping P3 a pure,
+narrowly-scoped computation — given a story's claim and a project, what actually happened when its
+implementation was reverted — makes it directly testable on its own, with no artifact-writing or
+id-allocation machinery needed just to exercise it.
+
+**Decision 4 — the write-refusal mechanism this type's own evidence will eventually need (`P2`'s
+`writeNewFileAtomic`, `specs/18` §18.7) is correctly NOT this piece's concern.** P3 produces data; it
+writes nothing. This is a deliberate, narrow scope boundary, not an oversight — recorded here only so a
+future reader checking "did P3 forget the append-only write guarantee" has the real answer: no, it
+never needed it, because it never writes.
+
+**Critic round 1 (two independent, fresh-context critics): one blocking, two major (independently,
+same root causes), three minor — all real, all fixed; full narrative in `GAUNTLET-LOG.md`'s own `## M15
+P3` entry.** Three findings are worth a decision record of their own, beyond what the gauntlet log
+already narrates:
+
+- **The blocking finding (`files: []` silently running a project's whole test suite) was a real gap in
+  this piece's own understanding of `runAndNormalize`'s contract**, not a typo: `reporter.ts`'s own
+  `files !== undefined && files.length > 0` ternary treats an empty array identically to "not scoped at
+  all," a distinction this piece's own author had not checked before assuming `files: []` was a safe,
+  narrow "run nothing" request. Decided: a story with no declared test path is a genuine precondition
+  failure (nothing exists to bind-check), refused outright (`'no-test-paths'`) before any lane is
+  created — never a fallback to "run everything," which is a materially different, far more dangerous
+  failure mode (misattributing an unrelated test's own result to this story).
+
+- **The `existsAtRevision` finding revealed a real, pre-existing duplication this piece's own author
+  should have found before writing a second copy.** `packages/vcs/src/claims.ts` already had an
+  identically-shaped, identically-named private function, with its own doc comment already disclosing a
+  documented history of the exact "any failure means absent" assumption being proven wrong once before.
+  A `grep` for the function's own name before writing it would have found this. Decided: consolidate
+  into one real, shared function in `git.ts` (the package's own "primitives every later piece builds
+  on" file), fixed with a correctness improvement neither prior copy had (`git ls-tree`, which — unlike
+  `git cat-file -e` — correctly reports existence for a submodule/gitlink tree entry, confirmed
+  empirically by a round-1 critic against a real scratch repository), routed through `wrapGitFailure`
+  for the first time (a genuine git failure now propagates as a real `VcsError` instead of being
+  silently folded into "the path doesn't exist," closing a second, independent gap the module's own
+  "never swallow a real failure" convention should already have prevented).
+
+- **The SIGKILL test's own kill-delay calibration was wrong because it was measured once, informally,
+  and then hardcoded — exactly the kind of untested claim this milestone's own opening argument exists
+  to stop shipping.** Both round-1 critics independently re-measured real phase timing and found the
+  comment's own claim false. The fix is the more interesting record: rather than re-measuring once more
+  and hardcoding new (equally fragile) numbers, the test now measures its own environment's real timing
+  at run time and computes kill delays as proportions of that measurement — a fix that cannot go stale
+  the way a hardcoded guess already had, confirmed by both round-2 critics running it multiple times and
+  observing real, meaningfully different wall-clock durations (one critic saw a difference of nearly
+  20 seconds between two consecutive runs on the same machine) while the test itself stayed correct
+  throughout.
+
+**Critic round 2 (two independent, fresh-context critics, explicitly re-verifying round 1's fixes):
+CLEAN from both.** Both critics went beyond re-checking the claimed fixes and independently hunted for
+new counterexamples to the `ls-tree`-based `existsAtRevision` (symlinks, unicode paths, paths with
+spaces, directories, an invalid revision) and found none. One critic independently reproduced the
+`workspace-floor.test.ts` `IGNORED_PATHS` necessity directly (removed the new entry, confirmed the
+predicted failure, restored it) rather than trusting the claim. Both correctly distinguished real,
+external test-suite resource contention (this piece's own build process had a separate, full-suite
+verification run active in the background throughout both critic rounds) from an actual defect,
+disclosed it, and did not treat it as a finding — the same distinction this milestone's own process has
+had to make repeatedly (`GAUNTLET-LOG.md`'s own M15 P2 entry records an earlier instance). Treated as
+genuinely complete at two rounds, not escalated to a third: `process/BUILD-PROMPT.md`'s own 3-round cap
+is a ceiling, not a requirement to always use every round, and manufacturing a third round against a
+piece two independent, adversarial critics already found clean would not itself uncover anything real.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P3`.
