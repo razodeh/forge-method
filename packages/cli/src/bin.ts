@@ -301,6 +301,7 @@ import {
   type ValidateRuleId,
 } from './commands/spec/validate-rules.ts';
 import { isStoryPhase, renderStoryVerify, storyVerify, STORY_PHASES } from './commands/story.ts';
+import { assembleAndWriteEvidenceBundle } from './commands/loop/test/evidence-bundle.ts';
 import { listSpecArtifacts, loadDoneStories } from './commands/shared.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
 import { ARTIFACT_TYPES, storySchema } from '@forge/schemas';
@@ -3913,8 +3914,11 @@ async function runStoryCommand(
   dryRun: boolean,
   json: boolean,
 ): Promise<number> {
+  if (sub === 'evidence') {
+    return runStoryEvidenceCommand(paths, projectRoot, rest, dryRun, json);
+  }
   if (sub !== 'verify') {
-    console.error('forge: "story" needs a real subcommand (verify).');
+    console.error('forge: "story" needs a real subcommand (verify, evidence).');
     return EXIT_CODES.usage;
   }
   const { values, positionals } = parseCommandFlags(rest, STORY_VERIFY_FLAGS);
@@ -3957,6 +3961,112 @@ async function runStoryCommand(
   if (rendering.stdout !== undefined) console.log(rendering.stdout);
   if (rendering.stderr !== undefined) console.error(rendering.stderr);
   return rendering.exitCode;
+}
+
+/** `forge story evidence <storyId> [--json]` — `implement-story.workflow.yaml`'s own `evidence`
+ * command step (`specs/22` M15 P7, `dependsOn: [done-check]`): assembles and commits a real
+ * `EvidenceBundle` for one story.
+ *
+ * Re-runs the project's own `done`-phase verification itself — the identical real test execution
+ * `done-check` already ran immediately before this step — rather than reading a cached result: no
+ * prior command step persists one to disk for this one to read back. This is a REAL, undisclosed-
+ * until-a-gauntlet-critic-round cost, not a harmless redundancy: if the `done` profile names any
+ * `test:*` layer check (`storyVerify`'s own `resolveGuarded`/`TEST_LAYERS` spawn the project's real
+ * `execution.testCommands`), the project's real test suite runs TWICE per story completion, and since
+ * `commit`/`merge` now `dependsOn: [evidence]` (not `[done-check]` directly), a test flaky enough to
+ * pass at `done-check` and fail on this immediate re-run blocks the whole lane even though the
+ * identical `done`-phase check legitimately passed moments earlier. No cache exists today to avoid
+ * this without `done-check` itself persisting a result to disk for `evidence` to read back — a real
+ * change to a step this piece's own Surface does not include, not attempted here rather than half-
+ * built; named for a later piece, the identical "disclosed, not solved" stance `PLAN-M15.md` P7's own
+ * "Discloses" section already takes for bundle retention.
+ *
+ * `--dry-run` is refused for the identical reason `story verify` already refuses it. A `ForgeError`
+ * thrown by `assembleAndWriteEvidenceBundle` (`GATE-516` `missing-review`/`missing-verify`, `RUN-114`
+ * path collision) is left to propagate to `main`'s own top-level refusal handler, the same "the
+ * dispatcher renders it, this function does not" stance `runTestExemptCommand` already takes for
+ * `appendExemption`'s own thrown codes. */
+async function runStoryEvidenceCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  rest: readonly string[],
+  dryRun: boolean,
+  json: boolean,
+): Promise<number> {
+  const { positionals } = parseCommandFlags(rest, {});
+  const [storyId] = positionals;
+  if (storyId === undefined || positionals.length > 1) {
+    console.error('forge: "story evidence" needs a real <storyId>.');
+    return EXIT_CODES.usage;
+  }
+  if (dryRun) {
+    console.error(
+      'forge: "story evidence" needs a real run: it re-runs the story\'s own done-phase verification, so it has no --dry-run form.',
+    );
+    return EXIT_CODES.usage;
+  }
+  const config = await readConfig(paths);
+  const verifyOutcome = await storyVerify(
+    {
+      paths,
+      projectRoot,
+      specsRoot: SPECS_ROOT,
+      kbRoot: KB_ROOT,
+      reportsRoot: config.paths.reports,
+      testCommands: config.execution.testCommands,
+      flakeConfig: config.quality.flake,
+      testRoots: config.execution.testRoots,
+    },
+    storyId,
+    'done',
+  );
+  // A story whose own done-phase verification is not a clean pass never gets a committed
+  // EvidenceBundle, inside the real orchestrated workflow or standalone: `done-check` (the step
+  // immediately before `evidence`) already refuses the DAG on a real failure, but `forge story
+  // evidence` is also a standalone command, and nothing else stops it from being pointed at a story
+  // that is not actually done -- a critic round caught an earlier version of this function committing
+  // a bundle with `verify.passed: false` and still exiting 0 as if assembly had succeeded.
+  if (verifyOutcome.kind !== 'verified' || !verifyOutcome.report.passed) {
+    const rendering = renderStoryVerify(verifyOutcome, json);
+    if (rendering.stdout !== undefined) console.log(rendering.stdout);
+    if (rendering.stderr !== undefined) console.error(rendering.stderr);
+    return rendering.exitCode;
+  }
+  const { report } = verifyOutcome;
+  const coverageCtx = { paths, projectRoot, specsRoot: SPECS_ROOT };
+  const [acCoverage, ratchetCoverage] = await Promise.all([
+    testCoverage(coverageCtx, { rule: 'acceptance-criteria' }),
+    testCoverage(coverageCtx, { rule: 'ratchet' }),
+  ]);
+  const coverageProblems = [...(acCoverage.problems ?? []), ...(ratchetCoverage.problems ?? [])];
+  const written = await assembleAndWriteEvidenceBundle({
+    paths,
+    projectRoot,
+    reportsRoot: config.paths.reports,
+    storyId,
+    runId: realEnvSnapshot()[FORGE_RUN_ID],
+    verify: {
+      phase: report.phase,
+      passed: report.passed,
+      errors: report.errors,
+      checks: report.checks,
+    },
+    coverage: {
+      acCoveragePercent: acCoverage.coverage,
+      ratchetRegressions: ratchetCoverage.regressions,
+      ...((acCoverage.missingAcIds?.length ?? 0) > 0
+        ? { missingAcIds: acCoverage.missingAcIds }
+        : {}),
+      ...(coverageProblems.length > 0 ? { problems: coverageProblems } : {}),
+    },
+    clock: SYSTEM_CLOCK,
+  });
+  console.log(
+    json
+      ? JSON.stringify({ v: 1, ...written, story: storyId })
+      : `forge story evidence ${storyId}: wrote ${written.id} (${written.path}).`,
+  );
+  return EXIT_CODES.success;
 }
 
 const DEPLOY_FLAGS = { '--confirm': true, '--rollback-check': false } as const;

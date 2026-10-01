@@ -904,10 +904,10 @@ describe('the shipped implement-story inner loop, end to end (runEngine, stacked
     expect(seen.get(`${PS}red`)).toEqual([HANDOFF_PATH]);
     expect(seen.get(`${PS}green`)).toEqual([HANDOFF_PATH, 'tests/story-001/story-001.test.ts']);
     expect(seen.get(`${PS}refactor`)).toContain('src/story-001/story-001.ts');
-    // `self-verify` AND `done-check` (M14 P25, both `forge story verify ...` in a lane) each ran where
-    // green's code and red's tests are: the fake `forge` (which does not read the `--phase` argument at
-    // all) says so twice.
-    expect(markerLines(verified)).toHaveLength(2);
+    // `self-verify`, `done-check` (M14 P25, `forge story verify ...` in a lane) AND `evidence` (`specs/22`
+    // M15 P7, `forge story evidence ...` in a lane) each ran where green's code and red's tests are: the
+    // fake `forge` (which does not read the subcommand or any flag at all) says so three times.
+    expect(markerLines(verified)).toHaveLength(3);
     for (const perspective of ['design', 'security', 'testing', 'performance']) {
       expect(seen.get(`${PS}review:review:${perspective}`)).toContain('src/story-001/story-001.ts');
     }
@@ -915,7 +915,8 @@ describe('the shipped implement-story inner loop, end to end (runEngine, stacked
     // Review-before-merge: every landing belongs to the one merge step.
     const merged = events.filter((event) => event.type === 'MergeCompleted');
     expect(new Set(merged.map((event) => event.stepId))).toEqual(new Set([`${PS}merge`]));
-    // Six lanes changed something (plan, red, green, refactor, review, document); self-verify changed nothing.
+    // Six lanes changed something (plan, red, green, refactor, review, document); self-verify, done-check
+    // and evidence each changed nothing (the fake `forge` writes no tracked file).
     expect(merged).toHaveLength(6);
     const lines = markerLines(marker);
     expect(

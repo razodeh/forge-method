@@ -2,9 +2,20 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "properties": {
+    "assembledAt": {
+      "format": "date-time",
+      "type": "string"
+    },
     "author": {
       "minLength": 1,
       "type": "string"
+    },
+    "bindingEvidence": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
     },
     "changelog": {
       "items": {
@@ -37,13 +48,132 @@
       },
       "type": "array"
     },
+    "cost": {
+      "additionalProperties": false,
+      "properties": {
+        "estimated": {
+          "type": "boolean"
+        },
+        "problems": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "totalUsd": {
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "totalUsd",
+        "estimated"
+      ],
+      "type": "object"
+    },
+    "coverage": {
+      "additionalProperties": false,
+      "properties": {
+        "acCoveragePercent": {
+          "maximum": 100,
+          "minimum": 0,
+          "type": "number"
+        },
+        "missingAcIds": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "problems": {
+          "items": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ratchetRegressions": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "acCoveragePercent",
+        "ratchetRegressions"
+      ],
+      "type": "object"
+    },
     "created": {
       "format": "date",
       "type": "string"
     },
+    "exemptions": {
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "gates": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "gate": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "passed",
+              "failed",
+              "waived"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "gate"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "id": {
       "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
       "type": "string"
+    },
+    "reviews": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "blocked",
+              "incomplete",
+              "concerns",
+              "clear"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
     },
     "revision": {
       "exclusiveMinimum": 0,
@@ -61,6 +191,10 @@
       "minLength": 1,
       "type": "string"
     },
+    "story": {
+      "minLength": 1,
+      "type": "string"
+    },
     "title": {
       "minLength": 1,
       "type": "string"
@@ -72,6 +206,62 @@
     "updated": {
       "format": "date",
       "type": "string"
+    },
+    "verify": {
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "check": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "unverifiable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "check",
+              "status",
+              "message"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "errors": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "phase": {
+          "enum": [
+            "verify",
+            "done"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "phase",
+        "passed",
+        "errors",
+        "checks"
+      ],
+      "type": "object"
     }
   },
   "required": [
@@ -84,7 +274,16 @@
     "updated",
     "revision",
     "author",
-    "changelog"
+    "changelog",
+    "story",
+    "verify",
+    "coverage",
+    "bindingEvidence",
+    "reviews",
+    "gates",
+    "exemptions",
+    "cost",
+    "assembledAt"
   ],
   "type": "object"
 }

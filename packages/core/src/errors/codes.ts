@@ -2366,6 +2366,47 @@ export const ERROR_CODES = {
       'contention clears, or remove .forge/state/exemptions.lock if its own owning process is ' +
       'confirmed gone.',
   },
+  // `specs/22` M15 P7: `forge story evidence` refuses to write an `EvidenceBundle` when a required
+  // evidence kind is genuinely absent, rather than writing a bundle that silently under-reports what
+  // it claims to summarize -- the Mandate's own "a missing kind is a typed failure naming which."
+  // `coverage`/`bindingEvidence`/`gates`/`exemptions`/`cost` are all legitimately empty in an honest,
+  // otherwise-complete story (no coverage tooling configured, no `forge test binding` ever run, no
+  // gates configured yet, no exemptions declared, no billable spend recorded) and are written as
+  // empty/zeroed rather than refused. `'missing-review'` is the one reason a real `forge story
+  // evidence` invocation can actually hit: `findReviewsThisRun` (`loop/test/evidence-bundle.ts`) reads
+  // the review from the CURRENT `forge run`'s own event log (`FORGE_RUN_ID`), so it fires whenever
+  // that run never performed this story's review, OR the command is invoked with no real
+  // `FORGE_RUN_ID` at all (any hand invocation outside a real `forge run`) -- there is no way to
+  // "catch up" a missing review after the fact; the remedy below says so rather than naming a fix that
+  // does not work. `'missing-verify'` is checked for the same defensive reason `assembleAndWrite
+  // MutationEvidence` validates its own inputs, but is dead code on the real CLI path: `storyVerify`
+  // (`commands/story.ts`) never returns a `'verified'` outcome with empty `checks` (confirmed directly
+  // against its source; every branch that could produce one instead synthesizes a single `(profile)`
+  // check) -- an earlier version of this comment claimed otherwise and was wrong, caught by a gauntlet
+  // critic round.
+  'GATE-516': {
+    severity: 'error',
+    // `prerequisiteMissing` (5), not `usage` (2): unlike GATE-501-515's own `usage` classification
+    // (every one of those is a value the CALLER supplied being wrong -- a bad `--owner`, an `--expires`
+    // past the cap, a resource exhaustion), `missing-review` fires when the ARGUMENT is perfectly valid
+    // and the real precondition this command depends on (a completed, verdicted review in the CURRENT
+    // run's own event log) simply has not happened yet -- the identical "run X first, then retry" shape
+    // every other `prerequisiteMissing` code in this file already uses (ENV-004/005, RUN-052/078/080,
+    // CFG-017/020, VCS-010's own "Exit 5: the missing prerequisite is a clean working tree"), not a
+    // malformed invocation. Caught by a gauntlet critic round: an earlier version of this code used
+    // `usage`, misclassifying a real run-sequencing/timing condition as a caller mistake.
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: { storyId: string; reason: 'missing-review' | 'missing-verify' }) => {
+      if (d.reason === 'missing-review')
+        return `cannot assemble an EvidenceBundle for ${show(d.storyId)}: no ReviewReport with a recorded verdict was found for this story's own review step.`;
+      return `cannot assemble an EvidenceBundle for ${show(d.storyId)}: no verify/done-phase check result was found for this story.`;
+    },
+    remedy:
+      'forge story evidence only sees reviews recorded in the CURRENT forge run (FORGE_RUN_ID) ' +
+      "own event log: run it as part of the story's real implement-story workflow run, after the " +
+      'review step has completed, not standalone or in a different run -- `forge story verify` does ' +
+      'not record a review and cannot fix this.',
+  },
   'SPEC-501': {
     // I6: "traceability edges required by the spec graph cannot be disabled."
     severity: 'error',

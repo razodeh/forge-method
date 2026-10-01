@@ -97,9 +97,29 @@ steps:
     run: 'forge story verify {{storyId}} --phase done --json'
     dependsOn: [document]
 
+  # specs/22 M15 P7: assembles and commits a real EvidenceBundle for this story -- binding evidence,
+  # test results, coverage delta, every ReviewReport verdict, gate outcomes, exemptions in force, and
+  # real cost. `produces` names the exact file `forge story evidence` writes (EvidenceBundle's own
+  # registered path template, `reports/evidence/{id}-{story}.md`, rooted under the real configured
+  # `paths.reports` -- `docs/forge/reports` by default) so the bundle lands inside this story's own
+  # claim, not reverted by claim enforcement on commit. Spelled out in full (`docs/forge/reports/...`),
+  # not the bare `reports/...` registry-path shorthand: `resolveStepClaim`'s own `resolveDocsRootPrefix`
+  # (`packages/engine/src/dispatch/outputs.ts`) only rewrites a `produces` entry that OPENS WITH a full
+  # shipped default docs root (`docs/forge/reports`, matched at a path-segment boundary) to the
+  # project's own configured one -- a bare `reports/...` prefix matches none of those roots and passes
+  # through completely unrewritten, which is an entirely different, nonexistent path at both the
+  # default config and any configured one. Caught by a gauntlet critic round: under the bare form the
+  # real write (`docs/forge/reports/evidence/...`) never matched the compiled claim, so `strict` policy
+  # reverted the freshly-committed bundle on every real run.
+  - id: evidence
+    kind: command
+    run: 'forge story evidence {{storyId}} --json'
+    dependsOn: [done-check]
+    produces: ['docs/forge/reports/evidence/*-{{storyId}}.md']
+
   - id: commit
     kind: checkpoint
-    dependsOn: [done-check]
+    dependsOn: [evidence]
 
   - id: merge
     kind: merge

@@ -4,17 +4,17 @@
  * (`packages/engine/src/dispatch/outputs.ts`) gives a `command` step `globs: produces` and the run's
  * default claim policy; under `strict` (`supervised`/`autonomous`/an adopted project) a write outside
  * that claim is reverted, and since `PLAN-M14.md` P3 the step fails outright too. This file is the
- * guard: for each of the fifteen non-inline command steps the nine named workflows ship, it proves the
+ * guard: for each of the sixteen non-inline command steps the nine named workflows ship, it proves the
  * command's own documented write (read from its real source, not guessed) lies inside the step's real,
  * compiled `produces` claim.
  *
  * **Enumeration.** `kind: command` steps that are not `inline: true`, parsed straight off the shipped
  * YAML the same way `test/command-steps.test.ts` does (an independent re-derivation, not a shared
- * walker) — checked against a pinned list of fifteen and against `test/non-forge-steps.ts`'s own
+ * walker) — checked against a pinned list of sixteen and against `test/non-forge-steps.ts`'s own
  * `NON_FORGE_STEPS` (shared with that file; every one of which is `inline: true`, confirmed here rather
  * than assumed, so the two files' claims about the same workflows cannot quietly diverge).
  *
- * **Unwired today.** Three of the fifteen commands (`forge adopt inventory`, `forge migrate run`,
+ * **Unwired today.** Three of the sixteen commands (`forge adopt inventory`, `forge migrate run`,
  * `forge spec re-derive`) are not wired into `bin.ts` at all yet — each is rejected by the real CLI
  * (`test/command-steps.test.ts`'s own `KNOWN_UNACCEPTED`, Q213). That is why the write determination
  * below is by reading source, not by running the command: shelling any of the three for real would
@@ -48,6 +48,14 @@
  * - `implement-story:done-check` (`forge story verify {{storyId}} --phase done --json`, M14 P25) — the
  *   identical `story.ts` command, a different `--phase`: the same `persistState: false` doc comment
  *   applies. Writes nothing; no `produces`.
+ * - `implement-story:evidence` (`forge story evidence {{storyId}} --json`, `specs/22` M15 P7) —
+ *   `assembleAndWriteEvidenceBundle` (`loop/test/evidence-bundle.ts`) writes a real `EvidenceBundle`
+ *   at `EvidenceBundle`'s own registered path, rooted under the real configured `paths.reports`
+ *   (`docs/forge/reports/evidence/{id}-{story}.md` under the shipped default); `produces` names the
+ *   matching glob spelled out in full (`docs/forge/reports/evidence/*-{{storyId}}.md`), not the bare
+ *   `reports/...` registry-path shorthand -- `resolveDocsRootPrefix` only rewrites an entry that opens
+ *   with a full shipped default docs root, so a shorter prefix would pass through unrewritten and never
+ *   match the real write (a real bug a gauntlet critic round caught in an earlier version of this).
  * - `migrate:migrate-data` (`forge migrate run --phase expand --json`) and `replan:re-derive`'s approved
  *   branch (`forge spec re-derive --json`) — unwired and unimplemented (see "Unwired today" above):
  *   refused before either could write anything. No `produces` until a later piece wires and implements
@@ -78,7 +86,8 @@
  * @see specs/18 §18.4
  * @see specs/10 §10.1
  * @see PLAN-M14.md P2, P3
- * @see SPEC-QUESTIONS.md Q212, Q216, Q232
+ * @see PLAN-M15.md P7
+ * @see SPEC-QUESTIONS.md Q212, Q216, Q232, Q286
  */
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -96,6 +105,7 @@ import {
   createTelemetryFacade,
   createVcsFacade,
   runLaneLifecycle,
+  type DocRoots,
   type ExecuteStepContext,
   type LaneHandle,
   type PromptAssemblyContext,
@@ -168,7 +178,7 @@ function shippedRawCommandSteps(): readonly RawCommandStep[] {
 }
 
 // ---------------------------------------------------------------------------------------------------
-// What each of the fifteen steps writes, per the header comment's own citations.
+// What each of the sixteen steps writes, per the header comment's own citations.
 // ---------------------------------------------------------------------------------------------------
 
 interface KnownWrite {
@@ -184,7 +194,7 @@ const TEST_RUN_WRITES: readonly KnownWrite[] = [
 
 /** Keyed by the compiled step id (`${workflowId}:${stepId}`). Empty means the header comment's reading of
  * the real command found no write at all — the step is still exercised below (with nothing to write),
- * so all fifteen are covered by one table, not just the six that need `produces`. */
+ * so all sixteen are covered by one table, not just the seven that need `produces`. */
 const STEP_FIXTURES: Readonly<Record<string, readonly KnownWrite[]>> = {
   'adopt:inventory-codebase': [
     { relativePath: 'reports/adoption/inventory.json', content: '{}\n' },
@@ -195,6 +205,9 @@ const STEP_FIXTURES: Readonly<Record<string, readonly KnownWrite[]>> = {
   'deliver-stage:smoke-test': [],
   'implement-story:self-verify': [],
   'implement-story:done-check': [],
+  'implement-story:evidence': [
+    { relativePath: 'docs/forge/reports/evidence/EVID-001-story-1.md', content: '{}\n' },
+  ],
   'migrate:migrate-data': [],
   'migrate:verify-migration': TEST_RUN_WRITES,
   'quick-fix:verify': TEST_RUN_WRITES,
@@ -207,17 +220,17 @@ const STEP_FIXTURES: Readonly<Record<string, readonly KnownWrite[]>> = {
 
 const EXPECTED_STEPS = Object.keys(STEP_FIXTURES);
 
-describe('the shipped non-inline command steps are exactly the pinned fifteen (PLAN-M14 P2, P25)', () => {
+describe('the shipped non-inline command steps are exactly the pinned sixteen (PLAN-M14 P2, P25; PLAN-M15 P7)', () => {
   it('a plain parse-level walk of every shipped workflow finds exactly these, no more and no fewer', () => {
     const nonInline = shippedRawCommandSteps()
       .filter((step) => !step.inline)
       .map((step) => step.key)
       .sort();
-    expect(EXPECTED_STEPS.length).toBe(15);
+    expect(EXPECTED_STEPS.length).toBe(16);
     expect(nonInline).toEqual([...EXPECTED_STEPS].sort());
   });
 
-  it("non-forge-steps.ts's own NON_FORGE_STEPS are each inline (so they are not a fifteenth non-inline step this file missed)", () => {
+  it("non-forge-steps.ts's own NON_FORGE_STEPS are each inline (so they are not a seventeenth non-inline step this file missed)", () => {
     const inlineByKey = new Map(shippedRawCommandSteps().map((step) => [step.key, step.inline]));
     for (const key of NON_FORGE_STEPS) {
       expect(inlineByKey.get(key), `${key} is not inline`).toBe(true);
@@ -226,7 +239,7 @@ describe('the shipped non-inline command steps are exactly the pinned fifteen (P
 });
 
 // ---------------------------------------------------------------------------------------------------
-// Claim coverage: the real, compiled `produces` for each of the fifteen against the write it names.
+// Claim coverage: the real, compiled `produces` for each of the sixteen against the write it names.
 // ---------------------------------------------------------------------------------------------------
 
 /** The one shared fixture context every one of the nine workflows below compiles against — copied from
@@ -347,6 +360,7 @@ function buildContext(
   runId: string,
   claimPolicy: 'strict' | 'warn',
   claimResults: ClaimResult[],
+  docRoots?: DocRoots,
 ): ExecuteStepContext {
   const now = createTestClock();
   const gateRegistry: ReadonlyMap<string, GateDefinition> = new Map();
@@ -369,6 +383,7 @@ function buildContext(
     now,
     laneRegistry: new Map<string, LaneHandle>(),
     gateRegistry,
+    ...(docRoots === undefined ? {} : { docRoots }),
   };
 }
 
@@ -405,11 +420,12 @@ async function runStep(
   node: StepNode,
   writes: readonly KnownWrite[],
   claimPolicy: 'strict' | 'warn',
+  docRoots?: DocRoots,
 ): Promise<StepRunResult> {
   const projectRoot = await createTempRepo(slug(node.id));
   const runId = `run-${slug(node.id)}-${claimPolicy}`;
   const claimResults: ClaimResult[] = [];
-  const ctx = buildContext(projectRoot, runId, claimPolicy, claimResults);
+  const ctx = buildContext(projectRoot, runId, claimPolicy, claimResults, docRoots);
   const emptyDetail: StepOutcomeDetail = { kind: 'command', exitCode: -1, stdout: '', stderr: '' };
   let lanePath = '';
   const outcome = await runLaneLifecycle(node, ctx, ctx.now(), emptyDetail, async (lane) => {
@@ -492,5 +508,77 @@ describe('mutation evidence: without `produces` the guard above would have faile
     for (const write of TEST_RUN_WRITES) expect(strict.tree).not.toContain(write.relativePath);
     expect([...(strict.claimResults[0]?.outOfClaim ?? [])].sort()).toEqual(expectedPaths);
     expect([...(strict.claimResults[0]?.reverted ?? [])].sort()).toEqual(expectedPaths);
+  });
+
+  // `PLAN-M15.md` P7's own "Mutation evidence": "Write the bundle outside the claim: the
+  // claim-enforcement test reports it reverted."
+  it('implement-story:evidence with `produces` stripped: strict reverts the EvidenceBundle and fails the step', async () => {
+    const real = compiledNode('implement-story', 'evidence');
+    const stripped: StepNode = { ...real, produces: [] };
+    const writes = STEP_FIXTURES['implement-story:evidence'] ?? [];
+    expect(writes.length).toBeGreaterThan(0);
+
+    const strict = await runStep(stripped, writes, 'strict');
+    expect(strict.outcome.status).toBe('failed');
+    expect(strict.outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
+    expect(strict.tree).not.toContain('docs/forge/reports/evidence/EVID-001-story-1.md');
+    expect(strict.claimResults).toEqual([
+      {
+        outOfClaim: ['docs/forge/reports/evidence/EVID-001-story-1.md'],
+        reverted: ['docs/forge/reports/evidence/EVID-001-story-1.md'],
+      },
+    ]);
+  });
+
+  // Every OTHER test in this file (including the one immediately above) compiles and claims against
+  // the shipped DEFAULT `paths.reports` -- the one config every real project starts with, but not the
+  // only one a real project can have. `produces: ['docs/forge/reports/evidence/*-{{storyId}}.md']`
+  // only stays correct under a RECONFIGURED `paths.reports` because `resolveDocsRootPrefix`
+  // (`packages/engine/src/dispatch/outputs.ts`) rewrites its leading `docs/forge/reports` segment to
+  // whatever the project's own configured root is, and `assembleAndWriteEvidenceBundle` independently
+  // reroots its own write under that identical configured root (`reportsRoot`, threaded from
+  // `config.paths.reports` in `bin.ts`) -- two independent computations that must agree. This is the
+  // one test in the file that actually proves they do, not just under the default they'd trivially
+  // agree on by construction.
+  it('implement-story:evidence still lands inside its own claim under a RECONFIGURED paths.reports, not only the shipped default', async () => {
+    const docRoots: DocRoots = { ...DEFAULT_CONFIG.paths, reports: 'evidence-reports' };
+    const real = compiledNode('implement-story', 'evidence');
+    const writes = [
+      { relativePath: 'evidence-reports/evidence/EVID-001-story-1.md', content: '{}\n' },
+    ];
+
+    const strict = await runStep(real, writes, 'strict', docRoots);
+    expect(strict.outcome.status).toBe('succeeded');
+    expect(strict.claimResults.flatMap((result) => result.outOfClaim)).toEqual([]);
+    expect(strict.tree).toContain('evidence-reports/evidence/EVID-001-story-1.md');
+  });
+});
+
+// `specs/22` M15 P7: `packages/cli/src/commands/loop/test/evidence-bundle.ts`'s own `findReviewsThisRun`/
+// `computeStoryCost` depend on a real invariant about how `implement-story.workflow.yaml`'s own steps
+// compile -- that every one of them gets the BARE `${workflowId}:${stepId}` id, with no per-story
+// `itemKey` suffix, because `implement-story` is never a fanout target or subworkflow anywhere in this
+// codebase and so always runs standalone, one story per `forge run`. A gauntlet critic round found an
+// earlier version of `evidence-bundle.ts` (and its own tests) got this wrong in a way that was
+// self-consistent and therefore invisible to unit tests alone: both sides independently assumed the same
+// incorrect three-argument `compileStepId(..., storyId)` form. This is the direct, independent check that
+// would have caught it -- the REAL compiler's own output, not a second copy of the same assumption.
+describe("evidence-bundle.ts's own compileStepId assumption matches the real compiler, independently (specs/22 M15 P7)", () => {
+  it('every step compileStepId is called for in evidence-bundle.ts compiles to the bare, two-argument form -- no itemKey, ever', () => {
+    const storyStepIds = [
+      'plan',
+      'red',
+      'green',
+      'refactor',
+      'self-verify',
+      'review',
+      'document',
+      'done-check',
+      'evidence',
+    ];
+    for (const stepId of storyStepIds) {
+      const node = compiledNode('implement-story', stepId);
+      expect(node.id, `compiled id for step "${stepId}"`).toBe(`implement-story:${stepId}`);
+    }
   });
 });

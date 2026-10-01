@@ -333,12 +333,15 @@ onComplete:
     expect(shippedResult.workflow).toEqual(workedResult.workflow);
   });
 
-  it('implement-story matches 10 §10.6\'s own nine real DSL steps (of its ten normative steps -- "context" is automatic packing, not a step) plus one real addition', () => {
+  it('implement-story matches 10 §10.6\'s own nine real DSL steps (of its ten normative steps -- "context" is automatic packing, not a step) plus two real additions', () => {
     const parsed = parseWorkflow(readWorkflowSource('implement-story'));
     if (!parsed.success) throw new Error('implement-story failed to parse');
     // `PLAN-M14.md` P1/P25 (Q232 decision 13) added `done-check`, between `document` and `commit`: `09` §9.8's
     // `done` list is "what only review and the merge can show", so it runs after review/document, at the lane
     // commit -- not at `self-verify` (step 6), which now runs only the `verify` list (10 §10.6 steps 6, 9).
+    // `specs/22` M15 P7 added `evidence`, between `done-check` and `commit`: it assembles the story's own
+    // `EvidenceBundle` from state only `done-check` has by then produced, and must itself land inside the
+    // lane commit, not after it.
     expect(parsed.workflow.steps.map((step) => step.id)).toEqual([
       'plan',
       'red',
@@ -348,6 +351,7 @@ onComplete:
       'review',
       'document',
       'done-check',
+      'evidence',
       'commit',
       'merge',
     ]);
