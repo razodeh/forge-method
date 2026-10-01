@@ -81,7 +81,7 @@ import path from 'node:path';
 
 import { KNOWN_ADAPTER_MODULES, loadAdapterFactory } from '@forge/adapter-kit/registry';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
-import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID, SYSTEM_CLOCK } from '@forge/core';
+import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID, SYSTEM_CLOCK, type Clock } from '@forge/core';
 import { EXIT_CODES, ForgeError, isForgeError } from '@forge/core/errors';
 import { pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
 import type { ExpressionContext } from '@forge/engine/expr';
@@ -292,10 +292,10 @@ import {
   type ValidateRuleId,
 } from './commands/spec/validate-rules.ts';
 import { isStoryPhase, renderStoryVerify, storyVerify, STORY_PHASES } from './commands/story.ts';
-import { listSpecArtifacts } from './commands/shared.ts';
+import { listSpecArtifacts, loadDoneStories } from './commands/shared.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
 import { ARTIFACT_TYPES, storySchema } from '@forge/schemas';
-import type { ArtifactTypeId } from '@forge/schemas';
+import type { ArtifactTypeId, Story } from '@forge/schemas';
 import { assertCleanWorkingTree } from '@forge/vcs';
 import type { CompileOptions, CompileSources } from '@forge/extensions/compile';
 import { readWorkflowSource } from './commands/run/run.ts';
@@ -1442,28 +1442,83 @@ interface TestOutcomeEntry {
   readonly binding: boolean;
 }
 
-/** `forge test binding --story <id> [--json]` (`specs/22` M15 P4) — the stateless verb wrapping
- * `runBindingCheck` (M15 P3): resolves `--story` to a real Story, refuses a dirty tree before any git
- * work, runs the check, and — only on a genuinely completed run — assembles and writes the real
- * `MutationEvidence` record (`binding-evidence.ts`, M15 P4) a later gate (`PLAN-M15.md` P5) will read.
- *
- * `baseRevision` (what the implementation is reverted BACK TO) is `HEAD~1` — a real, disclosed v1
- * simplification (`PLAN-M15.md` P3's own research found no existing convention for "the commit before
- * this story's implementation landed," and this Mandate's own CLI signature takes no flag to override
- * it): correct for the common case of one story landing as one commit, not for a story whose
- * implementation spans several. `integrationBase` is always `'HEAD'` — the current state, implementation
- * included, is the only state a bare CLI invocation can reasonably mean by "this story's own work." */
-async function runTestBindingCommand(
+/** One story's own binding check, factored out of `runTestBindingCommand` so both its single-story
+ * mode (`--story <id>`) and its discover mode (`specs/22` M15 P5: no `--story`, every `done` story)
+ * share the identical runId/evidence/outcome-mapping logic rather than drifting apart. `runId`
+ * includes `story.id` (not just a timestamp, unlike single-story mode's own pre-P5 format) so
+ * discover mode's concurrent, same-tick calls across several stories can never collide even if
+ * `clock.now()`'s own resolution happened to coincide. */
+async function runOneStoryBinding(
   paths: ProjectPaths,
   projectRoot: string,
-  storyId: string | undefined,
-  json: boolean,
-): Promise<number> {
-  await assertCleanWorkingTree(projectRoot);
-
-  if (storyId === undefined) {
-    throw new ForgeError('RUN-110', { storyId: undefined, reason: 'missing-flag' });
+  reportsRoot: string,
+  story: Story,
+  testCommand: string,
+  ecosystem: 'js' | 'python',
+  clock: Clock,
+): Promise<
+  | {
+      readonly kind: 'completed';
+      readonly storyId: string;
+      readonly bound: readonly string[];
+      readonly nonBinding: readonly string[];
+      readonly tests: readonly TestOutcomeEntry[];
+      readonly restoreVerified: boolean;
+      readonly evidenceId: string;
+    }
+  | { readonly kind: 'skipped' }
+  | { readonly kind: 'problem'; readonly storyId: string; readonly problem: string }
+> {
+  const runId = `test-binding-${story.id}-${clock.now().replace(/[^0-9]/g, '')}`;
+  const result = await runBindingCheck({
+    projectRoot,
+    runId,
+    storyId: story.id,
+    filesExpected: story.files_expected,
+    testCommand,
+    ecosystem,
+    integrationBase: 'HEAD',
+    baseRevision: 'HEAD~1',
+    clock,
+    createTempPath: () => createSystemTempPath('forge-test-binding'),
+  });
+  if (result.outcome === 'no-test-paths') return { kind: 'skipped' };
+  if (result.outcome !== 'completed') {
+    // `baseline-not-green`/`*-tool-error`: a genuine engine problem, never a binding verdict (never
+    // conflated with "every test is non-binding" — no `MutationEvidence` is written for any of these,
+    // matching `runBindingCheck`'s own doc comment: no evidence for a check that never completed).
+    const problem =
+      result.outcome === 'baseline-not-green'
+        ? `${String(result.failing.length)} test(s) already failing before any mutation: ${result.failing.join(', ')}.`
+        : result.message;
+    return { kind: 'problem', storyId: story.id, problem };
   }
+  const nonBinding = result.namedTests.filter((name) => !result.failedUnderMutation.includes(name));
+  const tests: readonly TestOutcomeEntry[] = result.namedTests.map((name) => ({
+    name,
+    binding: result.failedUnderMutation.includes(name),
+  }));
+  const written = await assembleAndWriteMutationEvidence({
+    paths,
+    reportsRoot,
+    storyId: story.id,
+    runId,
+    toolVersions: detectToolVersions(ecosystem),
+    result,
+    clock,
+  });
+  return {
+    kind: 'completed',
+    storyId: story.id,
+    bound: result.failedUnderMutation,
+    nonBinding,
+    tests,
+    restoreVerified: result.restoreVerified,
+    evidenceId: written.id,
+  };
+}
+
+async function resolveStoryById(paths: ProjectPaths, storyId: string): Promise<Story> {
   const specDocs = await listSpecArtifacts(paths, SPECS_ROOT);
   const storyDoc = specDocs.find(
     (doc) => (doc.frontMatter as { readonly id?: unknown }).id === storyId,
@@ -1475,7 +1530,216 @@ async function runTestBindingCommand(
   if (!parsedStory.success) {
     throw new ForgeError('RUN-110', { storyId, reason: 'invalid' });
   }
-  const story = parsedStory.data;
+  return parsedStory.data;
+}
+
+/** `--story <id>` given: `specs/22` M15 P4's own single-story behavior, unchanged byte-for-byte since
+ * that piece's own gauntlet. */
+async function runSingleStoryBindingCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  reportsRoot: string,
+  storyId: string,
+  ecosystem: 'js' | 'python',
+  testCommand: string,
+  clock: Clock,
+  json: boolean,
+): Promise<number> {
+  const story = await resolveStoryById(paths, storyId);
+  const outcome = await runOneStoryBinding(
+    paths,
+    projectRoot,
+    reportsRoot,
+    story,
+    testCommand,
+    ecosystem,
+    clock,
+  );
+  if (outcome.kind === 'skipped') {
+    throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
+  }
+  if (outcome.kind === 'problem') {
+    if (json) {
+      console.log(JSON.stringify({ v: 1, ok: false, problem: outcome.problem }));
+    } else {
+      console.error(`forge test binding: ${outcome.problem}`);
+    }
+    return EXIT_CODES.failure;
+  }
+  // `incomplete` counts every real reason this check does not deserve a pass: a real non-binding test
+  // (one per name) plus a failed restore-verification (`restoreVerified === false` -- the lane's
+  // revert-then-restore round-trip, `specs/22` M15 P3, did not actually land the worktree back where it
+  // started -- counted as 1, since it is a single boolean, not a list). `passed` is the derived, human-
+  // convenient boolean (`incomplete === 0`); `G-Verify.gate.yaml`'s own `failOn` reads `incomplete`
+  // directly, never `passed`/`nonBinding` alone.
+  //
+  // This field, and `G-Verify.gate.yaml`'s own `failOn: 'incomplete > 0'`, replace an earlier version of
+  // this piece's own `failOn: 'length(nonBinding) > 0'` -- both round-1 gauntlet critics (M15 P5)
+  // independently reproduced live that it was a real, separate bug from the `ok`-vs-`passed` rename
+  // below: `length(nonBinding) > 0` reads ONLY `nonBinding`, so a `restoreVerified: false` result with
+  // an otherwise-empty `nonBinding` sailed through the real G-Verify gate as a false PASS, and nothing
+  // else in the real, shipped gate's own check list would have caught it either. `incomplete` is the one
+  // real number that folds every cause of an untrustworthy verdict into the single field `failOn` reads,
+  // matching this family's own established convention (`test:run`'s `failed`, `test:quarantine-cap`'s
+  // `quarantined`) of one bare, comprehensive numeric field per check -- also required by `packages/cli/
+  // test/commands/gate-family-coverage.test.ts`'s own pre-existing, cross-cutting `failOnField()` shape
+  // check (`<field> <op> <number>`), which a `length(...)` expression never satisfied either.
+  //
+  // Named `passed`, never `ok` -- found and fixed during M15 P5's own build, mutation-verifying this
+  // exact piece's own Mandate line ("change failOn to `length(nonBinding) > 5`: the single-tautology
+  // test passes when it must fail"): with the field named `ok`, that mutation test could never
+  // actually demonstrate anything, because `evaluateGate`'s own `failureMarker` (`packages/engine/src/
+  // gates/evaluate.ts`) treats `ok` as a RESERVED word meaning "this command never reached a real
+  // verdict" (the shape a THROWN refusal's own `{v:1, ok:false, error}` envelope uses), for every
+  // `forge` command, not specific to this one. `ok: false` here, even though this result is a real,
+  // completed, reached VERDICT (a non-binding test is a real finding, not a refusal), made
+  // `failureMarker` short-circuit before `G-Verify.gate.yaml`'s own configurable `failOn` ever got a
+  // chance to run -- every `test:binding` threshold was dead on arrival regardless of what it said.
+  // No other `forge test *` JSON verdict in this file carries an `ok` field for exactly this reason
+  // (`test:run`'s own envelope has `failed`/`errors`, never `ok`) -- this was this command's own
+  // deviation from that established convention (M15 P4, before `test:binding` was ever wired into a
+  // real gate), not a new rule P5 invented.
+  const incomplete = outcome.nonBinding.length + (outcome.restoreVerified ? 0 : 1);
+  if (json) {
+    console.log(
+      JSON.stringify({
+        v: 1,
+        passed: incomplete === 0,
+        incomplete,
+        bound: outcome.bound,
+        nonBinding: outcome.nonBinding,
+        // Always `false` in v1: `PLAN-M15.md` splits the real exemption mechanism (F-TEST-8) into its
+        // own later piece (P6), which this piece does not implement. The field is emitted now, already
+        // `false`, so P6 only has to start setting it `true` under real conditions -- never add it as a
+        // new field callers must learn to check for.
+        exempt: false,
+        evidenceId: outcome.evidenceId,
+        restoreVerified: outcome.restoreVerified,
+        tests: outcome.tests,
+      }),
+    );
+  } else {
+    console.log(
+      `forge test binding --story ${storyId}: bound=${String(outcome.bound.length)} ` +
+        `nonBinding=${String(outcome.nonBinding.length)} restoreVerified=${String(outcome.restoreVerified)} ` +
+        `evidence=${outcome.evidenceId}.`,
+    );
+    for (const name of outcome.nonBinding) console.error(`non-binding: ${name}`);
+  }
+  return incomplete === 0 ? EXIT_CODES.success : EXIT_CODES.failure;
+}
+
+/** No `--story`: `specs/22` M15 P5's own discover mode, the shape `G-Verify.gate.yaml`'s own
+ * `test:binding` check (`run: 'forge test binding --json'`, no `--story`) actually invokes — `G-Verify`
+ * is evaluated once per stage, over a branch that can hold many stories at once (`build-stage.
+ * workflow.yaml`'s own `verify` step has no `itemKey`, unlike every per-story step above it), so there
+ * is no single "current story" this mode could mean. Every `done` story (`loadDoneStories`, the
+ * identical "done(+)" scope `story:ac-coverage` already established, `coverage.ts`) is checked,
+ * concurrently (`evaluateGate` itself already runs every deterministic check concurrently with no
+ * declared ordering, `coverage.ts`'s own disclosed Q127 limitation — this mode follows the same
+ * convention rather than inventing a throttle this codebase has no other precedent for). A story whose
+ * own `files_expected` names no test path is silently skipped (nothing to check is not a failure); a
+ * story with zero `done` stories at all vacuously succeeds, the same "nothing to check" stance
+ * `runAcceptanceCriteriaCoverage` already takes for the identical case.
+ *
+ * **Known, disclosed limitation (`SPEC-QUESTIONS.md` Q284 decision 6), beyond the single-story
+ * `baseRevision: 'HEAD~1'` caveat M15 P3/P4 already disclosed:** `runOneStoryBinding` resolves
+ * `'HEAD~1'` fresh for EVERY story this mode checks, against whatever the current tip of history
+ * happens to be — correct only for a story whose own implementation happens to be the single most
+ * recent commit. A real project where several `done` stories' implementations landed in separate,
+ * sequential commits gets a WRONG verdict for every one of them except (at most) the very last: an
+ * earlier story's own `HEAD~1` resolves to some other, unrelated commit, nothing reverts, and that
+ * story appears trivially "bound" by coincidence, not by a real mutation check. Not fixed here — a
+ * real fix needs per-story implementation-landing tracking this milestone has no mechanism for yet. */
+async function runDiscoverModeBindingCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  reportsRoot: string,
+  specsRoot: string,
+  ecosystem: 'js' | 'python',
+  testCommand: string,
+  clock: Clock,
+  json: boolean,
+): Promise<number> {
+  const doneStories = await loadDoneStories(paths, specsRoot);
+  const outcomes = await Promise.all(
+    doneStories.map((story) =>
+      runOneStoryBinding(paths, projectRoot, reportsRoot, story, testCommand, ecosystem, clock),
+    ),
+  );
+  const bound: string[] = [];
+  const nonBinding: string[] = [];
+  const evidenceIds: string[] = [];
+  const problems: string[] = [];
+  let restoreVerified = true;
+  for (const outcome of outcomes) {
+    if (outcome.kind === 'skipped') continue;
+    if (outcome.kind === 'problem') {
+      problems.push(`${outcome.storyId}: ${outcome.problem}`);
+      continue;
+    }
+    bound.push(...outcome.bound.map((name) => `${outcome.storyId}: ${name}`));
+    nonBinding.push(...outcome.nonBinding.map((name) => `${outcome.storyId}: ${name}`));
+    evidenceIds.push(outcome.evidenceId);
+    if (!outcome.restoreVerified) restoreVerified = false;
+  }
+  // Named `passed`, never `ok` -- the identical reason `runSingleStoryBindingCommand`'s own envelope
+  // avoids `ok` (its own doc comment has the full story): `evaluateGate`'s `failureMarker` treats `ok`
+  // as a reserved refusal marker, which would make `G-Verify.gate.yaml`'s own `failOn` dead on arrival
+  // for every real, completed discover-mode run too.
+  //
+  // `incomplete` -- the real field `G-Verify.gate.yaml`'s own `failOn: 'incomplete > 0'` reads, the
+  // identical reasoning `runSingleStoryBindingCommand`'s own doc comment has in full: both round-1
+  // gauntlet critics (M15 P5) independently reproduced live that a `nonBinding`-only `failOn` cannot
+  // see a story whose own check never reached 'completed' at all (folded into `problems` here, never
+  // `nonBinding`) or a `restoreVerified: false` result with an otherwise-empty `nonBinding` -- both sail
+  // through the real G-Verify gate as a false pass with the prior `length(nonBinding) > 0` expression.
+  // `incomplete` folds all three real causes (non-binding tests, a restore-verification failure, and
+  // any story-level problem) into the one comprehensive number this family's own `failOnField()`
+  // convention (`packages/cli/test/commands/gate-family-coverage.test.ts`) expects.
+  const incomplete = nonBinding.length + (restoreVerified ? 0 : 1) + problems.length;
+  if (json) {
+    console.log(
+      JSON.stringify({
+        v: 1,
+        passed: incomplete === 0,
+        incomplete,
+        bound,
+        nonBinding,
+        exempt: false,
+        evidenceIds,
+        restoreVerified,
+        problems,
+      }),
+    );
+  } else {
+    console.log(
+      `forge test binding: checked ${String(doneStories.length)} done stor${doneStories.length === 1 ? 'y' : 'ies'}, ` +
+        `bound=${String(bound.length)} nonBinding=${String(nonBinding.length)} ` +
+        `restoreVerified=${String(restoreVerified)} evidence=[${evidenceIds.join(', ')}].`,
+    );
+    for (const name of nonBinding) console.error(`non-binding: ${name}`);
+    for (const problem of problems) console.error(`problem: ${problem}`);
+  }
+  return incomplete === 0 ? EXIT_CODES.success : EXIT_CODES.failure;
+}
+
+/** `forge test binding [--story <id>] [--json]` (`specs/22` M15 P4, extended by M15 P5): refuses a
+ * dirty tree before any git work, then dispatches to single-story mode (`--story` given, M15 P4,
+ * unchanged) or discover mode (no `--story`, M15 P5 — `G-Verify.gate.yaml`'s own real invocation
+ * shape). `baseRevision` (what the implementation is reverted BACK TO) is `HEAD~1` — a real, disclosed
+ * v1 simplification (`PLAN-M15.md` P3's own research found no existing convention for "the commit
+ * before this story's implementation landed," and this Mandate's own CLI signature takes no flag to
+ * override it): correct for the common case of one story landing as one commit, not for a story whose
+ * implementation spans several. `integrationBase` is always `'HEAD'` — the current state, implementation
+ * included, is the only state a bare CLI invocation can reasonably mean by "this story's own work." */
+async function runTestBindingCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  storyId: string | undefined,
+  json: boolean,
+): Promise<number> {
+  await assertCleanWorkingTree(projectRoot);
 
   const config = await readConfig(paths);
   const detectedEcosystem = await detectEcosystem(paths);
@@ -1487,90 +1751,30 @@ async function runTestBindingCommand(
   if (testCommand === undefined) {
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
   }
-
   const clock = SYSTEM_CLOCK;
-  const runId = `test-binding-${clock.now().replace(/[^0-9]/g, '')}`;
-  const result = await runBindingCheck({
-    projectRoot,
-    runId,
-    storyId,
-    filesExpected: story.files_expected,
-    testCommand,
-    ecosystem,
-    integrationBase: 'HEAD',
-    baseRevision: 'HEAD~1',
-    clock,
-    createTempPath: () => createSystemTempPath('forge-test-binding'),
-  });
 
-  if (result.outcome === 'no-test-paths') {
-    throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
+  if (storyId === undefined) {
+    return runDiscoverModeBindingCommand(
+      paths,
+      projectRoot,
+      config.paths.reports,
+      SPECS_ROOT,
+      ecosystem,
+      testCommand,
+      clock,
+      json,
+    );
   }
-  if (result.outcome !== 'completed') {
-    // `baseline-not-green`/`*-tool-error`: a genuine engine problem, never a binding verdict (never
-    // conflated with "every test is non-binding" — no `MutationEvidence` is written for any of these,
-    // matching `runBindingCheck`'s own doc comment: no evidence for a check that never completed).
-    const problem =
-      result.outcome === 'baseline-not-green'
-        ? `${String(result.failing.length)} test(s) already failing before any mutation: ${result.failing.join(', ')}.`
-        : result.message;
-    if (json) {
-      console.log(JSON.stringify({ v: 1, ok: false, problem }));
-    } else {
-      console.error(`forge test binding: ${problem}`);
-    }
-    return EXIT_CODES.failure;
-  }
-
-  const nonBinding = result.namedTests.filter((name) => !result.failedUnderMutation.includes(name));
-  const tests: readonly TestOutcomeEntry[] = result.namedTests.map((name) => ({
-    name,
-    binding: result.failedUnderMutation.includes(name),
-  }));
-  // `ok` folds two distinct failure causes into one boolean: a real non-binding test (`nonBinding.length
-  // > 0`) and a restore-verification failure (`restoreVerified === false` -- the lane's revert-then-
-  // restore round-trip, `specs/22` M15 P3, did not actually land the worktree back where it started).
-  // v1 deliberately does not give the second cause its own exit code or `ok`-adjacent field: a caller
-  // that cares must read `restoreVerified` directly out of the envelope below, which is always present
-  // for a `completed` result regardless of `ok`.
-  const ok = nonBinding.length === 0 && result.restoreVerified;
-
-  const written = await assembleAndWriteMutationEvidence({
+  return runSingleStoryBindingCommand(
     paths,
-    reportsRoot: config.paths.reports,
+    projectRoot,
+    config.paths.reports,
     storyId,
-    runId,
-    toolVersions: detectToolVersions(ecosystem),
-    result,
+    ecosystem,
+    testCommand,
     clock,
-  });
-
-  if (json) {
-    console.log(
-      JSON.stringify({
-        v: 1,
-        ok,
-        bound: result.failedUnderMutation,
-        nonBinding,
-        // Always `false` in v1: `PLAN-M15.md` splits the real exemption mechanism (F-TEST-8) into its
-        // own later piece (P6), which this piece does not implement. The field is emitted now, already
-        // `false`, so P6 only has to start setting it `true` under real conditions -- never add it as a
-        // new field callers must learn to check for.
-        exempt: false,
-        evidenceId: written.id,
-        restoreVerified: result.restoreVerified,
-        tests,
-      }),
-    );
-  } else {
-    console.log(
-      `forge test binding --story ${storyId}: bound=${String(result.failedUnderMutation.length)} ` +
-        `nonBinding=${String(nonBinding.length)} restoreVerified=${String(result.restoreVerified)} ` +
-        `evidence=${written.id}.`,
-    );
-    for (const name of nonBinding) console.error(`non-binding: ${name}`);
-  }
-  return ok ? EXIT_CODES.success : EXIT_CODES.failure;
+    json,
+  );
 }
 
 const TEST_COVERAGE_RULE_IDS = ['acceptance-criteria', 'ratchet'] as const;

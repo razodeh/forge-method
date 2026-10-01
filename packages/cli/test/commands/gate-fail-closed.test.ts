@@ -49,8 +49,20 @@ const ENV_OVERLAY = { ANTHROPIC_API_KEY: 'sk-ant-test-fixture-not-real' };
 const ENV = { ...process.env, ...ENV_OVERLAY };
 
 /** Command lines the CLI still rejects, and which piece implements each. When a piece wires one, this test fails
- * until the pin is removed: a pin that outlives its reason is as misleading as a missing command. */
-const PINNED_REJECTED: Readonly<Record<string, string>> = {};
+ * until the pin is removed: a pin that outlives its reason is as misleading as a missing command.
+ *
+ * `forge test binding --json` (`G-Verify.gate.yaml`'s own `test:binding` check, `specs/22` M15 P5) is pinned
+ * for a genuinely different reason than every other entry this map has ever held, the identical one
+ * `gate-family-coverage.test.ts`'s own sibling `PINNED_REJECTED` map already discloses: it IS fully wired, not
+ * awaiting a future piece — `freshProject()` here never writes a `package.json` either (a real `forge init`
+ * scaffolds `.forge/`, not application code; its own fallback scaffold has none either), so `detectEcosystem`
+ * can never succeed on this fixture and the refusal (`RUN-111`) is real and permanent for this file's own
+ * project shape, not a placeholder to remove later. A round-2 gauntlet critic (M15 P5) found this file's own,
+ * separate `PINNED_REJECTED` map had been missed when the sibling one in `gate-family-coverage.test.ts` was
+ * first updated for the identical reason. */
+const PINNED_REJECTED: Readonly<Record<string, string>> = {
+  'forge test binding --json': 'M15 P5 (always refused on this fixture: no detectable ecosystem)',
+};
 
 interface ShippedCheck {
   readonly source: string;

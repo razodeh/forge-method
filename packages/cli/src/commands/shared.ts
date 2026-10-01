@@ -11,6 +11,7 @@ import { type ArtifactDocument, readArtifact } from '@forge/core/artifacts';
 import { ForgeError, IdAllocator, SYSTEM_CLOCK, type Clock } from '@forge/core';
 import { listDirEntriesSorted, pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
 import type { KbParsedEntry } from '@forge/kb/schema';
+import { storySchema, type Story } from '@forge/schemas';
 import { TEMPLATE_INDEX, type TemplateArtifactTypeId } from '@forge/templates';
 
 import { resolvePackageRoot } from '../init/package-root.ts';
@@ -76,6 +77,35 @@ export async function listSpecArtifacts(
     }
   }
   return docs;
+}
+
+/** `09` §9.3's own status enum (`draft`/`ready`/`in-progress`/`in-review`/`verified`/`done`/
+ * `blocked`) has nothing after `'done'` except the lateral `'blocked'` state — so `13` §13.1's own
+ * "every AC of every `done` story" (F-TEST-5) and every later piece's own "`done`(+)" phrasing
+ * (`PLAN-M8.md` P6, `PLAN-M15.md` P5) collapse to exactly `status === 'done'`; there is no further,
+ * higher status to include. Originally private to `coverage.ts` (`story:ac-coverage`'s own "every
+ * `done` story" scan); moved here, exported, when M15 P5's own discover-mode `forge test binding`
+ * (no `--story`: `G-Verify.gate.yaml`'s own real invocation shape, stage-scoped, not per-story) needed
+ * the identical scan — a second, independently-written copy is exactly the duplication `specs/22`
+ * M15 P3's own `existsAtRevision` consolidation already paid down once this milestone. */
+export function isDoneStory(story: Story): boolean {
+  return story.status === 'done';
+}
+
+/** Every `done` story under `specsRoot`, front-matter-validated (a document that fails `storySchema`
+ * is silently excluded, not a thrown error — the identical "a non-Story spec document is not this
+ * scan's problem" stance `listSpecArtifacts` itself already takes one level down). */
+export async function loadDoneStories(
+  paths: ProjectPaths,
+  specsRoot: string,
+): Promise<readonly Story[]> {
+  const docs = await listSpecArtifacts(paths, specsRoot);
+  const stories: Story[] = [];
+  for (const doc of docs) {
+    const result = storySchema.safeParse(doc.frontMatter);
+    if (result.success && isDoneStory(result.data)) stories.push(result.data);
+  }
+  return stories;
 }
 
 async function walkFiles(

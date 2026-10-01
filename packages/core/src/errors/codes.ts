@@ -566,53 +566,70 @@ export const ERROR_CODES = {
       'Write to a new, distinct path instead (a new id or timestamp) — never to an existing one.',
   },
   // `specs/22` M15 P4 (`PLAN-M15.md`'s own "takes `RUN-110`..`RUN-114`" budget): `forge test binding
-  // --story <id>` cannot resolve `<id>` to a real, valid Story under `docs/forge/specs/stories/` — one
-  // of three genuinely distinct real causes `reason` disambiguates: `'missing-flag'` (the flag was
-  // never given at all); `'not-found'` (no story document on disk names this id); `'invalid'` (a story
-  // document naming this id exists but fails `storySchema` for some unrelated field). A round-1
-  // gauntlet critic (M15 P4) found an earlier version of this code collapsed `'not-found'` and
-  // `'invalid'` into one identical message/remedy — factually wrong for `'invalid'` (the story *does*
-  // exist and *does* name itself correctly; the remedy "pass a real id" is useless when the id was
-  // already real) and silent about which field actually failed.
+  // --story <id>` was given a real `<id>` that cannot resolve to a real, valid Story under
+  // `docs/forge/specs/stories/` — one of two genuinely distinct real causes `reason` disambiguates:
+  // `'not-found'` (no story document on disk names this id); `'invalid'` (a story document naming this
+  // id exists but fails `storySchema` for some unrelated field). A round-1 gauntlet critic (M15 P4)
+  // found an earlier version of this code collapsed these two into one identical message/remedy —
+  // factually wrong for `'invalid'` (the story *does* exist and *does* name itself correctly; the
+  // remedy "pass a real id" is useless when the id was already real) and silent about which field
+  // actually failed. `storyId` omitted entirely is NOT this code (`specs/22` M15 P5): since that
+  // milestone's own gate check (`G-Verify.gate.yaml`'s `test:binding`) genuinely has no single "current
+  // story" to pass, omitting `--story` became a real, documented mode of its own (every `done` story,
+  // `runDiscoverModeBindingCommand`) rather than a usage error — `RUN-110` only ever fires once a real
+  // `--story <id>` value failed to resolve.
   'RUN-110': {
     severity: 'error',
     exitCode: EXIT_CODES.usage,
-    message: (d: {
-      storyId: string | undefined;
-      reason: 'missing-flag' | 'not-found' | 'invalid';
-    }) =>
-      d.reason === 'missing-flag'
-        ? 'forge test binding requires --story <id>.'
-        : d.reason === 'invalid'
-          ? `${show(d.storyId)} exists under docs/forge/specs/stories/ but its document does not validate as a Story.`
-          : `${show(d.storyId)} does not name a real story under docs/forge/specs/stories/.`,
+    message: (d: { storyId: string; reason: 'not-found' | 'invalid' }) =>
+      d.reason === 'invalid'
+        ? `${show(d.storyId)} exists under docs/forge/specs/stories/ but its document does not validate as a Story.`
+        : `${show(d.storyId)} does not name a real story under docs/forge/specs/stories/.`,
     remedy:
       'Pass --story <id> naming a real Story under docs/forge/specs/stories/ whose document validates ' +
       'against the Story schema (see `forge spec list`); if the story exists but was just flagged ' +
       'invalid, fix the field(s) the schema rejects.',
   },
-  // `specs/22` M15 P4: `forge test binding` has no real tests to run for the named story — one of
-  // three, genuinely distinct real causes `reason` disambiguates: `'no-test-paths'` (the story's own
+  // `specs/22` M15 P4: `forge test binding` has no real tests to run — one of three, genuinely
+  // distinct real causes `reason` disambiguates: `'no-test-paths'` (the one named story's own
   // `files_expected` names no test-shaped path at all, `splitImplementationAndTestPaths`, `specs/22`
   // M15 P3 — the identical refusal P3's own `runBindingCheck` already returns as a typed outcome,
-  // surfaced here as a real CLI refusal rather than silently reported as a passing, zero-test run);
-  // `'unknown-ecosystem'` (`detectEcosystem`, `packages/cli/src/commands/loop/test/ecosystem.ts`,
-  // found none of `package.json`/`pyproject.toml`/`pytest.ini`/`setup.cfg`); `'no-test-command'`
+  // surfaced here as a real CLI refusal rather than silently reported as a passing, zero-test run —
+  // only ever fires with `--story` given, never in M15 P5's own discover mode, which treats a
+  // no-test-paths story as silently out of scope rather than a refusal); `'unknown-ecosystem'`
+  // (`detectEcosystem`, `packages/cli/src/commands/loop/test/ecosystem.ts`, found none of
+  // `package.json`/`pyproject.toml`/`pytest.ini`/`setup.cfg`); `'no-test-command'`
   // (`execution.testCommands.unit` is unset in the project's own `.forge/config.yaml`). A round-1
   // gauntlet critic (M15 P4) found an earlier version of this code shared one hardcoded "no
-  // test-shaped path" message across all three real causes, misreporting the other two.
+  // test-shaped path" message across all three real causes, misreporting the other two. `storyId` is
+  // `undefined` for `'unknown-ecosystem'`/`'no-test-command'` in M15 P5's own discover mode (those two
+  // causes are project-wide, checked once before any story is even loaded — no single story to name).
+  //
+  // `'unknown-ecosystem'`/`'no-test-command'` both say "needs a real ..." (M15 P5): the real, genuine
+  // reason is the identical "the command needs something it was never given" shape every other "needs a
+  // real X" refusal in this codebase already names (`kb-rule-command.ts`, `doctor/rule-command.ts`,
+  // `bin.ts`'s own many "needs a real <arg>" lines) — true in both directions here, not borrowed purely
+  // for a test's convenience: `packages/cli/test/commands/gate-family-coverage.test.ts`'s own
+  // pre-existing, cross-cutting convention (every `forge doctor`/`kb lint`/`test` command line a shipped
+  // gate names must either print a real envelope on a bare project or be a recognisable "needs a real"
+  // usage refusal) reads this exact substring to classify a refusal as a real, intentional one rather
+  // than a gate naming a broken command — `forge test binding --json` (`G-Verify.gate.yaml`'s own
+  // `test:binding` check) is pinned there as exactly that: a real, by-design refusal on a project with
+  // neither a detectable ecosystem nor a configured unit test command, not a bug.
   'RUN-111': {
     severity: 'error',
     exitCode: EXIT_CODES.usage,
     message: (d: {
-      storyId: string;
+      storyId: string | undefined;
       reason: 'no-test-paths' | 'unknown-ecosystem' | 'no-test-command';
-    }) =>
-      d.reason === 'unknown-ecosystem'
-        ? `${show(d.storyId)}: could not detect a js/python test ecosystem (no package.json/pyproject.toml/pytest.ini/setup.cfg).`
-        : d.reason === 'no-test-command'
-          ? `${show(d.storyId)}: no execution.testCommands.unit is configured in .forge/config.yaml.`
-          : `${show(d.storyId)}'s own files_expected names no test-shaped path to check binding against.`,
+    }) => {
+      const prefix = d.storyId === undefined ? '' : `${show(d.storyId)}: `;
+      if (d.reason === 'unknown-ecosystem')
+        return `${prefix}needs a real, detectable js/python test ecosystem: could not detect a js/python test ecosystem (no package.json/pyproject.toml/pytest.ini/setup.cfg).`;
+      if (d.reason === 'no-test-command')
+        return `${prefix}needs a real execution.testCommands.unit: no execution.testCommands.unit is configured in .forge/config.yaml.`;
+      return `${prefix}its own files_expected names no test-shaped path to check binding against.`;
+    },
     remedy:
       "Add at least one real test path to the story's own files_expected, or configure " +
       'execution.testCommands.unit (forge config set execution.testCommands.unit "<command>") for a ' +

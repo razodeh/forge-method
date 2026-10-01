@@ -38,8 +38,18 @@ const LAUNCHER = fileURLToPath(new URL('../../bin/forge.mjs', import.meta.url));
 const CHECKS_DIR = fileURLToPath(new URL('../../../templates/templates/checks/', import.meta.url));
 
 /** Gate command lines the CLI still rejects, and which piece implements each. When a piece wires one, this test
- * fails until the line is removed here: a pin that outlives its reason is as misleading as a missing command. */
-const PINNED_REJECTED: Readonly<Record<string, string>> = {};
+ * fails until the line is removed here: a pin that outlives its reason is as misleading as a missing command.
+ *
+ * `forge test binding --json` (`G-Verify.gate.yaml`'s own `test:binding` check, `specs/22` M15 P5) is pinned
+ * for a genuinely different reason than every other entry this map has ever held: it IS fully wired, not
+ * awaiting a future piece — on `emptyProject()`'s own deliberately bare fixture (no `package.json`, no Python
+ * marker), `detectEcosystem` (`packages/cli/src/commands/loop/test/ecosystem.ts`) can never succeed, so the
+ * refusal (`RUN-111`) is real and permanent for this one fixture shape, not a placeholder to remove later. A
+ * real project with a `package.json` never hits this refusal at all (`gate-integration.test.ts`'s own
+ * `fixtureWithBindingStory`-based tests exercise that path end to end). */
+const PINNED_REJECTED: Readonly<Record<string, string>> = {
+  'forge test binding --json': 'M15 P5 (always refused on this fixture: no detectable ecosystem)',
+};
 
 const FAMILY = /^forge (doctor|kb lint|test)\b/;
 

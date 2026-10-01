@@ -62,9 +62,13 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-function storyFixture(filesExpected: readonly string[]): string {
+function storyFixture(
+  filesExpected: readonly string[],
+  status = 'ready',
+  id = 'STORY-001',
+): string {
   return `---
-id: STORY-001
+id: ${id}
 type: Story
 schemaVersion: 1
 title: Fixture story
@@ -72,7 +76,7 @@ epic: EPIC-001
 capability: CAP-001
 storyType: feature
 size: S
-status: ready
+status: ${status}
 owner_role: developer
 depends_on: []
 blocked_by: []
@@ -112,6 +116,7 @@ async function freshProject(
     readonly skipPackageJson?: boolean;
     readonly skipTestCommand?: boolean;
     readonly testCommandOverride?: string;
+    readonly status?: string;
   } = {},
 ): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-bin-binding-'));
@@ -141,7 +146,7 @@ async function freshProject(
   await mkdir(path.join(dir, 'docs/forge/reports'), { recursive: true });
   await writeFile(
     path.join(dir, 'docs/forge/specs/stories/STORY-001-fixture.md'),
-    storyFixture(options.filesExpected ?? ['impl.js', 'impl.test.js']),
+    storyFixture(options.filesExpected ?? ['impl.js', 'impl.test.js'], options.status),
     'utf8',
   );
 
@@ -187,7 +192,7 @@ describe('forge test binding — a genuinely binding suite', () => {
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
       readonly v: number;
-      readonly ok: boolean;
+      readonly passed: boolean;
       readonly bound: readonly string[];
       readonly nonBinding: readonly string[];
       readonly exempt: boolean;
@@ -195,7 +200,7 @@ describe('forge test binding — a genuinely binding suite', () => {
       readonly tests: readonly { readonly name: string; readonly binding: boolean }[];
     };
     expect(parsed.v).toBe(1);
-    expect(parsed.ok).toBe(true);
+    expect(parsed.passed).toBe(true);
     expect(parsed.bound).toEqual(['adds']);
     expect(parsed.nonBinding).toEqual([]);
     expect(parsed.exempt).toBe(false);
@@ -211,6 +216,91 @@ describe('forge test binding — a genuinely binding suite', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trimEnd().split('\n')).toHaveLength(1);
+  }, 30_000);
+});
+
+describe('forge test binding — a failed restore-verification (specs/22 M15 P5)', () => {
+  it('exits 1, passed:false, incomplete>0, even though nonBinding stays empty -- the exact mechanism round 1/2 were BLOCKING on', async () => {
+    // A round-3 gauntlet critic (M15 P5) found `incomplete`'s own `restoreVerified` contribution
+    // (`runSingleStoryBindingCommand`) had no test anywhere exercising it through the real CLI -- every
+    // existing `restoreVerified: false` test exercised `forge story verify`'s own, structurally
+    // different `checkBinding` function instead. A real (non-mocked), isolated repro: one test that is
+    // BOTH genuinely binding (fails under a real implementation revert) AND, independently, fails again
+    // on its own third invocation within the same lane worktree via a `.gitignore`'d counter surviving
+    // `resetLaneWorktree`'s own `git clean -fd` (skips gitignored paths without `-x`) -- so it fails
+    // under mutation for the real reason (binding, `nonBinding` stays empty) and ALSO fails the
+    // post-restore verification run for an unrelated, worktree-contamination reason, isolating
+    // `restoreVerified`'s own contribution to `incomplete` cleanly from `nonBinding`'s.
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-bin-binding-restore-'));
+    dirs.push(dir);
+    await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+    await execa('git', ['config', 'user.email', 'fixture@example.com'], { cwd: dir });
+    await execa('git', ['config', 'user.name', 'Fixture'], { cwd: dir });
+    await writeFile(path.join(dir, 'package.json'), '{"name":"fixture","private":true}\n', 'utf8');
+    await writeFile(path.join(dir, '.gitignore'), '.sentinel-count\n', 'utf8');
+    const config = {
+      ...DEFAULT_CONFIG,
+      execution: { ...DEFAULT_CONFIG.execution, testCommands: { unit: TEST_COMMAND } },
+    };
+    await mkdir(path.join(dir, '.forge'), { recursive: true });
+    await writeFile(path.join(dir, '.forge', 'config.yaml'), YAML.stringify(config), 'utf8');
+    await mkdir(path.join(dir, 'docs/forge/specs/stories'), { recursive: true });
+    await writeFile(
+      path.join(dir, 'docs/forge/specs/stories/STORY-001-fixture.md'),
+      storyFixture(['impl.js', 'impl.test.js']),
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'base: story exists, no implementation yet'], {
+      cwd: dir,
+    });
+    await writeFile(
+      path.join(dir, 'impl.js'),
+      'export function add(a, b) { return a + b; }\n',
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'impl.test.js'),
+      // `./impl.js` is DYNAMICALLY imported, inside the test body, never at the top of the module:
+      // a static top-level import throws at MODULE-LOAD time once `impl.js` is reverted/missing
+      // during the mutated run, which would skip every line below it -- including the sentinel
+      // write -- for that one invocation, silently shrinking three real invocations (baseline,
+      // mutated, restored) down to two and defeating the whole mechanism (confirmed empirically
+      // while building this fixture: with a static import, the mutated run's sentinel write never
+      // happened, so the restored run only ever saw count=1, not 2, and never failed).
+      "import { existsSync, readFileSync, writeFileSync } from 'node:fs';\n" +
+        "import { test, expect } from 'vitest';\n" +
+        "const COUNT_PATH = './.sentinel-count';\n" +
+        'let count = 0;\n' +
+        "if (existsSync(COUNT_PATH)) count = Number(readFileSync(COUNT_PATH, 'utf8'));\n" +
+        'writeFileSync(COUNT_PATH, String(count + 1));\n' +
+        "test('adds', async () => {\n" +
+        '  expect(count).toBeLessThan(2);\n' +
+        "  const { add } = await import('./impl.js');\n" +
+        '  expect(add(1, 2)).toBe(3);\n' +
+        '});\n',
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'the story: implement add(), with a sentinel'], {
+      cwd: dir,
+    });
+
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir);
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly passed: boolean;
+      readonly incomplete: number;
+      readonly bound: readonly string[];
+      readonly nonBinding: readonly string[];
+      readonly restoreVerified: boolean;
+    };
+    expect(parsed.bound).toEqual(['adds']);
+    expect(parsed.nonBinding).toEqual([]);
+    expect(parsed.restoreVerified).toBe(false);
+    expect(parsed.incomplete).toBeGreaterThan(0);
+    expect(parsed.passed).toBe(false);
   }, 30_000);
 });
 
@@ -242,12 +332,12 @@ describe('forge test binding — a non-binding test', () => {
 
     expect(result.status).not.toBe(0);
     const parsed = JSON.parse(result.stdout) as {
-      readonly ok: boolean;
+      readonly passed: boolean;
       readonly nonBinding: readonly string[];
       readonly evidenceId: string;
       readonly tests: readonly { readonly name: string; readonly binding: boolean }[];
     };
-    expect(parsed.ok).toBe(false);
+    expect(parsed.passed).toBe(false);
     expect(parsed.nonBinding).toEqual(['tautology']);
     expect(parsed.evidenceId).toMatch(/^MUT-\d{3}$/);
     expect(parsed.tests).toEqual([{ name: 'tautology', binding: false }]);
@@ -287,14 +377,176 @@ describe('forge test binding — an unknown story', () => {
     expect(parsed.error.code).toBe('RUN-110');
     expect(result.stderr).not.toContain('at ');
   }, 30_000);
+});
 
-  it('a missing --story flag entirely is also the identical usage error', async () => {
+describe('forge test binding — no --story at all (specs/22 M15 P5: discover mode)', () => {
+  // `--story` omitted entirely is no longer a usage error (M15 P4's own original behavior) -- it is a
+  // real, distinct mode of its own: `G-Verify.gate.yaml`'s own `test:binding` check genuinely has no
+  // single "current story" to pass (`runDiscoverModeBindingCommand`'s own doc comment has the full
+  // reasoning), so omitting the flag now means "check every `done` story," never a refusal.
+  it('vacuously passes with zero done stories (freshProject\'s own default story is "ready", never "done")', async () => {
     const dir = await freshProject();
     const result = run(['test', 'binding', '--json'], dir);
 
-    expect(result.status).toBe(2);
-    const parsed = JSON.parse(result.stdout) as { readonly error: { readonly code: string } };
-    expect(parsed.error.code).toBe('RUN-110');
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly passed: boolean;
+      readonly bound: readonly string[];
+      readonly nonBinding: readonly string[];
+      readonly evidenceIds: readonly string[];
+      readonly restoreVerified: boolean;
+      readonly problems: readonly string[];
+    };
+    expect(parsed.passed).toBe(true);
+    expect(parsed.bound).toEqual([]);
+    expect(parsed.nonBinding).toEqual([]);
+    expect(parsed.evidenceIds).toEqual([]);
+    expect(parsed.restoreVerified).toBe(true);
+    expect(parsed.problems).toEqual([]);
+  }, 30_000);
+
+  it('discovers a real "done" story and checks it for real, story-prefixing every name in the aggregate envelope', async () => {
+    const dir = await freshProject({ status: 'done' });
+    const result = run(['test', 'binding', '--json'], dir);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly passed: boolean;
+      readonly bound: readonly string[];
+      readonly nonBinding: readonly string[];
+      readonly evidenceIds: readonly string[];
+    };
+    expect(parsed.passed).toBe(true);
+    expect(parsed.bound).toEqual(['STORY-001: adds']);
+    expect(parsed.nonBinding).toEqual([]);
+    expect(parsed.evidenceIds).toHaveLength(1);
+    expect(parsed.evidenceIds[0]).toMatch(/^MUT-\d{3}$/);
+  }, 30_000);
+
+  it('silently skips a "done" story whose files_expected names no test path -- never a refusal in discover mode', async () => {
+    const dir = await freshProject({ status: 'done', filesExpected: ['impl.js'] });
+    const result = run(['test', 'binding', '--json'], dir);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly passed: boolean;
+      readonly bound: readonly string[];
+      readonly nonBinding: readonly string[];
+      readonly evidenceIds: readonly string[];
+      readonly problems: readonly string[];
+    };
+    expect(parsed.passed).toBe(true);
+    expect(parsed.bound).toEqual([]);
+    expect(parsed.nonBinding).toEqual([]);
+    expect(parsed.evidenceIds).toEqual([]);
+    expect(parsed.problems).toEqual([]);
+  }, 30_000);
+
+  it('captures a "done" story whose baseline already fails as a story-prefixed problem, without crashing the whole command', async () => {
+    const dir = await freshProject({
+      status: 'done',
+      testBody:
+        "import { test, expect } from 'vitest';\nimport { add } from './impl.js';\ntest('adds', () => { expect(add(1, 2)).toBe(999); });\n",
+    });
+    const result = run(['test', 'binding', '--json'], dir);
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly passed: boolean;
+      readonly problems: readonly string[];
+    };
+    expect(parsed.passed).toBe(false);
+    expect(parsed.problems).toHaveLength(1);
+    expect(parsed.problems[0]).toContain('STORY-001');
+    expect(parsed.problems[0]).toContain('already failing before any mutation');
+  }, 30_000);
+
+  it('discovers and aggregates TWO real "done" stories concurrently, never confusing one story\'s own result for the other\'s', async () => {
+    // A round-1 gauntlet critic (M15 P5) found every discover-mode test used exactly one story,
+    // leaving the piece's own central new mechanism -- scanning every `done` story and running their
+    // binding checks concurrently via Promise.all, unioning the results with story-id prefixes --
+    // completely unexercised beyond the single-story case.
+    //
+    // Built by hand, not via `freshProject` + a later commit: `baseRevision: 'HEAD~1'` (`specs/22` M15
+    // P3/P4's own disclosed v1 simplification) is resolved against the real, SHARED repo history, not
+    // per story -- stacking STORY-002's own commit on top of `freshProject`'s own two (base, then
+    // STORY-001's impl) would make STORY-001's own `HEAD~1` resolve to ITS OWN impl commit, not its
+    // pre-impl base, silently breaking the fixture rather than testing aggregation. Both stories'
+    // implementations land together, in ONE commit, after a single shared "neither story has an
+    // implementation yet" base -- the shape this limitation actually requires for more than one story.
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-bin-binding-multi-'));
+    dirs.push(dir);
+    await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+    await execa('git', ['config', 'user.email', 'fixture@example.com'], { cwd: dir });
+    await execa('git', ['config', 'user.name', 'Fixture'], { cwd: dir });
+    await writeFile(path.join(dir, 'package.json'), '{"name":"fixture","private":true}\n', 'utf8');
+    const config = {
+      ...DEFAULT_CONFIG,
+      execution: { ...DEFAULT_CONFIG.execution, testCommands: { unit: TEST_COMMAND } },
+    };
+    await mkdir(path.join(dir, '.forge'), { recursive: true });
+    await writeFile(path.join(dir, '.forge', 'config.yaml'), YAML.stringify(config), 'utf8');
+    await mkdir(path.join(dir, 'docs/forge/specs/stories'), { recursive: true });
+    await writeFile(
+      path.join(dir, 'docs/forge/specs/stories/STORY-001-fixture.md'),
+      storyFixture(['impl1.js', 'impl1.test.js'], 'done', 'STORY-001'),
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'docs/forge/specs/stories/STORY-002-fixture.md'),
+      storyFixture(['impl2.js', 'impl2.test.js'], 'done', 'STORY-002'),
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa(
+      'git',
+      ['commit', '--quiet', '-m', 'base: both stories exist, neither implemented yet'],
+      {
+        cwd: dir,
+      },
+    );
+    await writeFile(
+      path.join(dir, 'impl1.js'),
+      'export function add(a, b) { return a + b; }\n',
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'impl1.test.js'),
+      "import { test, expect } from 'vitest';\nimport { add } from './impl1.js';\ntest('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'impl2.js'),
+      'export function unused() { return true; }\n',
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'impl2.test.js'),
+      "import { test, expect } from 'vitest';\ntest('neverFails', () => { expect(true).toBe(true); });\n",
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa(
+      'git',
+      ['commit', '--quiet', '-m', 'both stories: one genuinely binding, one not'],
+      {
+        cwd: dir,
+      },
+    );
+
+    const result = run(['test', 'binding', '--json'], dir);
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly passed: boolean;
+      readonly bound: readonly string[];
+      readonly nonBinding: readonly string[];
+      readonly evidenceIds: readonly string[];
+    };
+    expect(parsed.passed).toBe(false);
+    expect(parsed.bound).toEqual(['STORY-001: adds']);
+    expect(parsed.nonBinding).toEqual(['STORY-002: neverFails']);
+    expect(parsed.evidenceIds).toHaveLength(2);
   }, 30_000);
 });
 

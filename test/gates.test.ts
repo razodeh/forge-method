@@ -186,6 +186,8 @@ const PASSING_OUTPUT = JSON.stringify({
   undefined_refs: 0,
   regressions: 0,
   coverage: 100,
+  // `G-Verify.gate.yaml`'s own `test:binding` check (`specs/22` M15 P5): `failOn: 'incomplete > 0'`.
+  incomplete: 0,
 });
 /** The same fields, every one at a value that trips its `failOn`. */
 const FAILING_OUTPUT = JSON.stringify({
@@ -198,6 +200,7 @@ const FAILING_OUTPUT = JSON.stringify({
   undefined_refs: 1,
   regressions: 1,
   coverage: 0,
+  incomplete: 1,
 });
 
 describe('every gate round-trips through the real evaluateGate (M5 P14)', () => {

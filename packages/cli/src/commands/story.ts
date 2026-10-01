@@ -24,6 +24,8 @@
  * | `test:unit`, `:integration`, `:contract`, `:e2e` | that layer's `execution.testCommands` entry, run alone              |
  * | `spec:ac-coverage`                               | each acceptance criterion of THIS story has a passing bound test    |
  * |                                                  | and none has a failing one, in the layers run by this invocation    |
+ * | `test:binding`                                   | `runBindingCheck` (M15 P3), native, scoped to THIS story — no       |
+ * |                                                  | `MutationEvidence` written (`checkBinding`'s own doc comment)       |
  *
  * These are the six `verify`-phase checks in `09` §9.8's own shipped `backend-default` example; the three
  * `done`-phase ones (`review:blocking-findings == 0`, `docs:public-api-documented`,
@@ -72,14 +74,17 @@
  */
 import { lstat } from 'node:fs/promises';
 
-import { isForgeError } from '@forge/core';
+import { isForgeError, SYSTEM_CLOCK } from '@forge/core';
 import { listDirEntriesSorted, type DirEntry, type ProjectPaths } from '@forge/core/fs';
 import { isTestPath, validateTestPath } from '@forge/engine/dispatch';
 import { evaluateDodProfile, readDodProfile, type DodParseResult } from '@forge/methods/dod';
 import { storySchema, type Story } from '@forge/schemas';
+import { getDirtyFiles } from '@forge/vcs';
 import { minimatch } from 'minimatch';
 
 import { listSpecArtifacts } from './shared.ts';
+import { runBindingCheck } from './loop/test/binding.ts';
+import { detectEcosystem } from './loop/test/ecosystem.ts';
 import type { TestOutcome } from './loop/test/reporter.ts';
 import { createSystemTempPath } from './loop/test/system-temp.ts';
 import {
@@ -616,6 +621,107 @@ function checkAcCoverage(story: Story, memory: RunMemory): Resolution {
   return { status: 'fail', message: `${parts.join('; ')} (in the test layers run just now).` };
 }
 
+/** `test:binding` (`specs/22` M15 P5: "`forge story verify` runs it on the same path"): calls
+ * `runBindingCheck` (M15 P3) NATIVELY, in-process, the same way `runLayer`/`runRule`/`checkAcCoverage`
+ * answer every other check kind here — never by shelling out to `forge test binding`. Always scoped to
+ * THIS one story (`ctx` already names exactly which one; unlike `forge test binding`'s own CLI-level
+ * discover mode, M15 P5, there is no ambiguity to resolve here).
+ *
+ * Deliberately writes no `MutationEvidence` artifact, unlike `forge test binding`/`G-Verify.gate.yaml`'s
+ * own `test:binding` check (both M15 P4/P5): `forge story verify` is fast, local, iterative feedback —
+ * every other check here stays side-effect-free (`runLayer`'s own `persistState: false`) — and a real
+ * mutation check is the single most expensive thing this command can run (a scratch worktree plus three
+ * full test passes, not a cheap lint/typecheck invocation or an in-memory AC check). Writing a real,
+ * permanent evidence record on every exploratory `story verify` a developer runs while iterating would
+ * pollute `docs/forge/reports/mutation/` with throwaway records never meant to be read. The real,
+ * permanent evidence gets written when `forge test binding` itself runs for real — standalone, or as
+ * `G-Verify`'s own gate check — not during local self-verification. A disclosed, deliberate asymmetry
+ * (`SPEC-QUESTIONS.md`), not an oversight.
+ *
+ * Refuses as `unverifiable` against a dirty working tree, unlike every sibling check here. A round-1
+ * gauntlet critic (M15 P5) reproduced live that `runBindingCheck`'s own scratch lane is built from
+ * committed `HEAD` (`createLaneWorktree`, a real `git worktree add` from a resolved revision) — it
+ * cannot see an uncommitted edit at all, so a dirty tree silently verdicts on stale, already-committed
+ * code, not the real code sitting on disk the moment `forge story verify` runs. `runLayer`/
+ * `checkAcCoverage` have no equivalent gap because they run the project's own test command directly
+ * against `ctx.projectRoot`'s live working directory, uncommitted changes included. `forge test
+ * binding`'s own CLI verb closes this the stricter way (`assertCleanWorkingTree`, a hard refusal) — that
+ * would be wrong here: `forge story verify` runs mid-iteration, BEFORE a commit, as a matter of course,
+ * so refusing outright on every ordinary invocation would make this check nearly useless for its real
+ * job. `unverifiable`, not `fail`, matches every other "cannot give a trustworthy answer" case this
+ * function already returns. */
+async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Resolution> {
+  const dirtyFiles = await getDirtyFiles(ctx.projectRoot);
+  if (dirtyFiles.length > 0) {
+    return {
+      status: 'unverifiable',
+      message: `the working tree has ${String(dirtyFiles.length)} uncommitted change(s); binding can only check committed HEAD, so the result would describe stale code, not what is on disk now. Commit (or stash) first, then re-run.`,
+    };
+  }
+  const testCommand = ctx.testCommands.unit;
+  if (testCommand === undefined) {
+    return {
+      status: 'unverifiable',
+      message: 'execution.testCommands.unit is not configured, so the binding check cannot run.',
+    };
+  }
+  const ecosystem = await detectEcosystem(ctx.paths);
+  if (ecosystem === 'unknown') {
+    return {
+      status: 'unverifiable',
+      message:
+        'could not detect a js/python test ecosystem (no package.json/pyproject.toml/pytest.ini/setup.cfg), so the binding check cannot run.',
+    };
+  }
+  const runId = `verify-binding-${story.id}-${SYSTEM_CLOCK.now().replace(/[^0-9]/g, '')}`;
+  const result = await runBindingCheck({
+    projectRoot: ctx.projectRoot,
+    runId,
+    storyId: story.id,
+    filesExpected: story.files_expected,
+    testCommand,
+    ecosystem,
+    integrationBase: 'HEAD',
+    baseRevision: 'HEAD~1',
+    clock: SYSTEM_CLOCK,
+    createTempPath: () => createSystemTempPath('forge-story-verify'),
+  });
+  if (result.outcome === 'no-test-paths') {
+    return {
+      status: 'unverifiable',
+      message: `${story.id}'s own files_expected names no test-shaped path to check binding against.`,
+    };
+  }
+  if (result.outcome === 'baseline-not-green') {
+    return {
+      status: 'unverifiable',
+      message: `${String(result.failing.length)} test(s) already failing before any mutation (see test:unit): binding cannot be judged until the baseline is green.`,
+    };
+  }
+  if (result.outcome !== 'completed') {
+    return { status: 'unverifiable', message: `could not run: ${result.message}` };
+  }
+  if (!result.restoreVerified) {
+    return {
+      status: 'fail',
+      message:
+        'the scratch worktree was not fully restored after the binding check -- its own result cannot be trusted.',
+    };
+  }
+  const nonBinding = result.namedTests.filter((name) => !result.failedUnderMutation.includes(name));
+  if (nonBinding.length > 0) {
+    return {
+      status: 'fail',
+      message: `test(s) do not fail when ${story.id}'s own implementation is reverted (not genuinely binding): ${nonBinding.join(', ')}.`,
+    };
+  }
+  return {
+    status: 'pass',
+    message:
+      'every named test fails when the implementation is reverted, and the suite is fully restored afterward.',
+  };
+}
+
 async function resolveCheckId(
   ctx: StoryVerifyContext,
   story: Story,
@@ -628,6 +734,7 @@ async function resolveCheckId(
   const layer = TEST_LAYERS.find((candidate) => key === `test:${candidate}`);
   if (layer !== undefined) return runLayer(ctx, layer, scoped, story, memory);
   if (key === 'spec:ac-coverage') return checkAcCoverage(story, memory);
+  if (key === 'test:binding') return checkBinding(ctx, story);
   return {
     status: 'unverifiable',
     message: `"${id}" has no deterministic implementation in forge story verify, so it is not counted as passing.`,

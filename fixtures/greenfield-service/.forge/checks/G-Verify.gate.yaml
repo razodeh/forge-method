@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=c72165eb9017001e3dba65765a71c39a95b486ba9b391d8cddc584ea15d98144 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=f4cd0d6b99f9ab3fffcb676573fe90c61823d7fbd31d54864907e09f0ee81f9e — edits will be overwritten; use overrides/
 id: G-Verify
 name: Verify gate
 phase: P7
@@ -9,6 +9,10 @@ checks:
       run: 'forge test run --json'
       parser: forge-json
       failOn: 'failed > 0'
+    - id: test:binding
+      run: 'forge test binding --json'
+      parser: forge-json
+      failOn: 'incomplete > 0'
     - id: story:ac-coverage
       run: 'forge test coverage --rule acceptance-criteria --json'
       failOn: 'coverage < 100'

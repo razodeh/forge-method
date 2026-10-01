@@ -12,9 +12,9 @@ import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { pathExists, readTextFile, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
-import { storySchema, type Story } from '@forge/schemas';
+import type { Story } from '@forge/schemas';
 
-import { listSpecArtifacts } from '../../shared.ts';
+import { loadDoneStories } from '../../shared.ts';
 import {
   evaluateRatchet,
   packageTotals,
@@ -154,26 +154,7 @@ async function runDefaultCoverage(ctx: TestCoverageContext): Promise<TestCoverag
  * recent write happened to be, stale or not. Fixing this needs either a declared check-ordering
  * mechanism in the gate schema or a run-id/freshness stamp on the report — both real, cross-cutting
  * changes to `evaluateGate` itself, out of this piece's own scope; not attempted here rather than
- * half-built.
- *
- * `09` §9.3's own status enum (`draft`/`ready`/`in-progress`/`in-review`/`verified`/`done`/
- * `blocked`) has nothing after `'done'` except the lateral `'blocked'` state — so `13` §13.1's own
- * "every AC of every `done` story" (F-TEST-5) and this piece's own "`done`(+)" phrasing
- * (`PLAN-M8.md` P6) collapse to exactly `status === 'done'`; there is no further, higher status to
- * include. */
-function isDoneStory(story: Story): boolean {
-  return story.status === 'done';
-}
-
-async function loadDoneStories(paths: ProjectPaths, specsRoot: string): Promise<readonly Story[]> {
-  const docs = await listSpecArtifacts(paths, specsRoot);
-  const stories: Story[] = [];
-  for (const doc of docs) {
-    const result = storySchema.safeParse(doc.frontMatter);
-    if (result.success && isDoneStory(result.data)) stories.push(result.data);
-  }
-  return stories;
-}
+ * half-built. */
 
 async function runAcceptanceCriteriaCoverage(
   ctx: TestCoverageContext,

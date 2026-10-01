@@ -12,11 +12,15 @@ tests themselves, read-only. Request what you need (`FORGE_REQUEST_CONTEXT:`).
 
 ### Already checked mechanically, so do not redo it
 
-The engine runs `test:run`, `story:ac-coverage`, `test:coverage`, `test:lint`, `test:typecheck`,
-`test:oracle-lint`, `coverage:ratchet` and `test:quarantine-cap`. They prove tests pass, every
-acceptance criterion has a bound test, coverage is above the floor and has not dropped, lint and
-types are clean, banned oracle patterns are absent and the quarantine count is under the cap. They
-cannot tell whether a bound test asserts what the criterion says. That is your job.
+The engine runs `test:run`, `test:binding`, `story:ac-coverage`, `test:coverage`, `test:lint`,
+`test:typecheck`, `test:oracle-lint`, `coverage:ratchet` and `test:quarantine-cap`. They prove tests
+pass, each story's own named tests genuinely fail when its whole implementation is reverted (not
+merely a test that happens to stay green regardless), every acceptance criterion has a bound test,
+coverage is above the floor and has not dropped, lint and types are clean, banned oracle patterns
+are absent and the quarantine count is under the cap. They cannot tell whether a bound test asserts
+what the criterion specifically says — only that some real failure occurs under a full
+implementation revert, which a test can pass mechanically while still exercising the wrong behavior
+for its own criterion. That is your job (VR2).
 
 ### Criteria
 

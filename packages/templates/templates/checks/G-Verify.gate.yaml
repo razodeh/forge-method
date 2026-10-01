@@ -8,6 +8,10 @@ checks:
       run: 'forge test run --json'
       parser: forge-json
       failOn: 'failed > 0'
+    - id: test:binding
+      run: 'forge test binding --json'
+      parser: forge-json
+      failOn: 'incomplete > 0'
     - id: story:ac-coverage
       run: 'forge test coverage --rule acceptance-criteria --json'
       failOn: 'coverage < 100'
