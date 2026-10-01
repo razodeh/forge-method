@@ -28,6 +28,7 @@ import {
   removeOrphanedLaneBranch,
   removeOrphanedWorktreeDirectory,
   resetLaneWorktree,
+  revertPathsToRevision,
   slugifyStepId,
 } from '../src/lanes.ts';
 
@@ -392,6 +393,223 @@ describe('resetLaneWorktree', () => {
       integrationBase: 'HEAD',
     });
     await expect(resetLaneWorktree(handle, 'not-a-real-ref')).rejects.toBeInstanceOf(VcsError);
+  });
+});
+
+// `specs/22` M15 P3's own real need: reverting a story's implementation paths, and only those, inside
+// a scratch lane -- never a whole-tree reset.
+describe('revertPathsToRevision', () => {
+  async function repoWithTwoCommits(): Promise<{ readonly cwd: string; readonly baseSha: string }> {
+    const cwd = await createTempRepo();
+    const { stdout: baseSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd });
+    return { cwd, baseSha: baseSha.trim() };
+  }
+
+  it('reverts a modified, already-tracked file back to its content at the given revision', async () => {
+    const { cwd, baseSha } = await repoWithTwoCommits();
+    await writeFile(path.join(cwd, 'impl.ts'), 'export const x = 1;\n');
+    await execa('git', ['add', 'impl.ts'], { cwd });
+    await execa('git', ['commit', '--quiet', '-m', 'add impl at x=1'], { cwd });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await writeFile(path.join(handle.path, 'impl.ts'), 'export const x = 2;\n');
+    await execa('git', ['add', 'impl.ts'], { cwd: handle.path });
+    await execa('git', ['commit', '--quiet', '-m', 'the story: x=2'], { cwd: handle.path });
+
+    await revertPathsToRevision(handle, baseSha, ['impl.ts']);
+
+    // baseSha is createTempRepo's own empty init commit -- impl.ts did not exist there at all, so the
+    // "reverted" state is "deleted," the file's own correct pre-implementation state.
+    expect(existsSync(path.join(handle.path, 'impl.ts'))).toBe(false);
+  });
+
+  it('reverts a file that existed before the story back to its exact prior content, not deleting it', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, 'impl.ts'), 'export const x = 1; // before the story\n');
+    await execa('git', ['add', 'impl.ts'], { cwd });
+    await execa('git', ['commit', '--quiet', '-m', 'impl exists before the story'], { cwd });
+    const { stdout: beforeStorySha } = await execa('git', ['rev-parse', 'HEAD'], { cwd });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await writeFile(path.join(handle.path, 'impl.ts'), 'export const x = 2; // the story\n');
+    await execa('git', ['add', 'impl.ts'], { cwd: handle.path });
+    await execa('git', ['commit', '--quiet', '-m', 'the story changes impl.ts'], {
+      cwd: handle.path,
+    });
+
+    await revertPathsToRevision(handle, beforeStorySha.trim(), ['impl.ts']);
+
+    await expect(readFile(path.join(handle.path, 'impl.ts'), 'utf8')).resolves.toBe(
+      'export const x = 1; // before the story\n',
+    );
+  });
+
+  it('deletes a path that did not exist yet at the given revision, rather than leaving its current content', async () => {
+    const { cwd, baseSha } = await repoWithTwoCommits();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await writeFile(path.join(handle.path, 'new-file.ts'), 'export const brandNew = true;\n');
+    await execa('git', ['add', 'new-file.ts'], { cwd: handle.path });
+    await execa('git', ['commit', '--quiet', '-m', 'the story adds a new file'], {
+      cwd: handle.path,
+    });
+    expect(existsSync(path.join(handle.path, 'new-file.ts'))).toBe(true);
+
+    await revertPathsToRevision(handle, baseSha, ['new-file.ts']);
+
+    expect(existsSync(path.join(handle.path, 'new-file.ts'))).toBe(false);
+  });
+
+  it('touches only the named paths, leaving every other implementation file in the worktree untouched', async () => {
+    const { cwd, baseSha } = await repoWithTwoCommits();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await writeFile(path.join(handle.path, 'revert-me.ts'), 'export const reverted = true;\n');
+    await writeFile(path.join(handle.path, 'leave-me.ts'), 'export const untouched = true;\n');
+    await execa('git', ['add', 'revert-me.ts', 'leave-me.ts'], { cwd: handle.path });
+    await execa('git', ['commit', '--quiet', '-m', 'the story adds two files'], {
+      cwd: handle.path,
+    });
+
+    await revertPathsToRevision(handle, baseSha, ['revert-me.ts']);
+
+    expect(existsSync(path.join(handle.path, 'revert-me.ts'))).toBe(false);
+    await expect(readFile(path.join(handle.path, 'leave-me.ts'), 'utf8')).resolves.toBe(
+      'export const untouched = true;\n',
+    );
+  });
+
+  it('is scoped to the lane worktree alone -- never touches the main repository', async () => {
+    const { cwd, baseSha } = await repoWithTwoCommits();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await writeFile(path.join(cwd, 'main-only.ts'), 'export const inMainRepoOnly = true;\n');
+    await writeFile(path.join(handle.path, 'main-only.ts'), 'export const inLaneToo = true;\n');
+    await execa('git', ['add', 'main-only.ts'], { cwd: handle.path });
+    await execa('git', ['commit', '--quiet', '-m', 'the story'], { cwd: handle.path });
+
+    await revertPathsToRevision(handle, baseSha, ['main-only.ts']);
+
+    await expect(readFile(path.join(cwd, 'main-only.ts'), 'utf8')).resolves.toBe(
+      'export const inMainRepoOnly = true;\n',
+    );
+  });
+
+  it('rejects a flag-shaped fromRevision rather than silently misinterpreting it as an option', async () => {
+    const { cwd } = await repoWithTwoCommits();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await expect(revertPathsToRevision(handle, '-q', ['impl.ts'])).rejects.toBeInstanceOf(VcsError);
+  });
+
+  it('rejects with a VcsError, not a raw execa error, for a fromRevision that does not resolve to anything', async () => {
+    const { cwd } = await repoWithTwoCommits();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await expect(
+      revertPathsToRevision(handle, 'not-a-real-ref', ['impl.ts']),
+    ).rejects.toBeInstanceOf(VcsError);
+  });
+
+  it('accepts an empty paths array as a real no-op, not an error', async () => {
+    const { cwd, baseSha } = await repoWithTwoCommits();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    await expect(revertPathsToRevision(handle, baseSha, [])).resolves.toBeUndefined();
+  });
+
+  it('does not crash reverting a gitlink path that did not exist before the story (M15 P3 round-1 critic finding)', async () => {
+    // `git cat-file -e <rev>:<path>` genuinely fails for a gitlink entry (mode 160000) that exists at
+    // `rev` -- a gitlink names a commit in the SUBMODULE's own object database, never stored in the
+    // superproject's. A plain `git update-index --add --cacheinfo 160000,<sha>,<path>` creates a real
+    // gitlink tree entry without needing `git submodule add`'s own protocol/`.gitmodules` ceremony --
+    // and, confirmed empirically, without a real on-disk directory either, so this test checks the
+    // INDEX (`git ls-files --stage`), never `existsSync`, which would see nothing either way.
+    const { cwd, baseSha } = await repoWithTwoCommits();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    const fakeSubmoduleSha = '1234567890123456789012345678901234567890';
+    await execa(
+      'git',
+      ['update-index', '--add', '--cacheinfo', `160000,${fakeSubmoduleSha},mysub`],
+      { cwd: handle.path },
+    );
+    await execa('git', ['commit', '--quiet', '-m', 'the story adds a gitlink'], {
+      cwd: handle.path,
+    });
+    const { stdout: beforeStage } = await execa('git', ['ls-files', '--stage', '--', 'mysub'], {
+      cwd: handle.path,
+    });
+    expect(beforeStage).toContain(fakeSubmoduleSha);
+
+    // The real point of this test: `existsAtRevision` correctly reports `mysub` absent at `baseSha`
+    // for a gitlink (not silently misreporting it present, or crashing on the tree-entry shape), and
+    // `revertPathsToRevision` completes without throwing either way.
+    await expect(revertPathsToRevision(handle, baseSha, ['mysub'])).resolves.toBeUndefined();
+  });
+
+  it('a gitlink that existed BEFORE the story is reverted (checked out), not deleted', async () => {
+    const cwd = await createTempRepo();
+    const fakeSubmoduleSha = '1234567890123456789012345678901234567890';
+    await execa(
+      'git',
+      ['update-index', '--add', '--cacheinfo', `160000,${fakeSubmoduleSha},mysub`],
+      { cwd },
+    );
+    await execa('git', ['commit', '--quiet', '-m', 'mysub exists before the story'], { cwd });
+    const { stdout: beforeStorySha } = await execa('git', ['rev-parse', 'HEAD'], { cwd });
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    const updatedSubmoduleSha = 'abcdefabcdefabcdefabcdefabcdefabcdefabcd';
+    await execa(
+      'git',
+      ['update-index', '--add', '--cacheinfo', `160000,${updatedSubmoduleSha},mysub`],
+      { cwd: handle.path },
+    );
+    await execa('git', ['commit', '--quiet', '-m', 'the story updates the submodule pointer'], {
+      cwd: handle.path,
+    });
+
+    await revertPathsToRevision(handle, beforeStorySha.trim(), ['mysub']);
+
+    // `git checkout <rev> -- <path>` stages the reverted content without committing (the identical,
+    // already-established behaviour for an ordinary file too) -- read the INDEX entry
+    // (`git ls-files --stage`), not `HEAD` (which still names the pre-revert, uncommitted-over commit).
+    const { stdout } = await execa('git', ['ls-files', '--stage', '--', 'mysub'], {
+      cwd: handle.path,
+    });
+    expect(stdout).toContain(fakeSubmoduleSha);
+    expect(stdout).not.toContain(updatedSubmoduleSha);
   });
 });
 

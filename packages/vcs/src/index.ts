@@ -67,6 +67,7 @@ export {
   removeOrphanedLaneBranch,
   removeOrphanedWorktreeDirectory,
   resetLaneWorktree,
+  revertPathsToRevision,
   slugifyStepId,
   type LaneHandle,
   type LaneId,

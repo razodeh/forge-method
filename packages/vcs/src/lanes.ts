@@ -15,7 +15,7 @@ import fsp from 'node:fs/promises';
 import { readFile, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 
-import { resolveRevision, wrapGitFailure } from './git.ts';
+import { existsAtRevision, resolveRevision, wrapGitFailure } from './git.ts';
 
 interface SortedDirEntry {
   readonly name: string;
@@ -422,6 +422,48 @@ export async function resetLaneWorktree(handle: LaneHandle, targetCommit: string
     () => execa('git', ['clean', '-fd'], { cwd: handle.path }),
     `cleaning untracked files from lane worktree at "${handle.path}"`,
   );
+}
+
+/**
+ * Reverts exactly `relativePaths` (project-relative, never a glob) inside the lane worktree at
+ * `handle.path` to their content at `fromRevision` — a path that did not exist yet at `fromRevision`
+ * (added since) is deleted from the worktree rather than left at its current content, so the worktree
+ * ends up exactly as if `fromRevision`'s own version of each named path were the only thing that had
+ * ever been written there. Every other file in the worktree, including any OTHER implementation file
+ * not named in `relativePaths`, is left completely untouched — this is a per-path revert, never a
+ * whole-tree `reset`.
+ *
+ * `specs/22` M15 P3's own real use: reverting a story's implementation paths (never its test paths)
+ * inside a scratch lane, so its named tests can be run against the pre-implementation code.
+ *
+ * @throws {VcsError} if `fromRevision` does not resolve, or if any underlying git operation fails.
+ */
+export async function revertPathsToRevision(
+  handle: LaneHandle,
+  fromRevision: string,
+  relativePaths: readonly string[],
+): Promise<void> {
+  const resolved = await resolveRevision(handle.path, fromRevision);
+  for (const relativePath of relativePaths) {
+    const existed = await existsAtRevision(handle.path, resolved, relativePath);
+    if (existed) {
+      await wrapGitFailure(
+        () => execa('git', ['checkout', resolved, '--', relativePath], { cwd: handle.path }),
+        `reverting "${relativePath}" to its content at "${resolved}"`,
+      );
+    } else {
+      // `recursive: true` as well as `force: true`: `relativePath` is not guaranteed to be a plain
+      // file (a newly-added implementation path can itself be a directory of several files) -- `rm`
+      // without `recursive` throws `EISDIR` for a real directory even with `force` set (confirmed
+      // empirically: `force` only suppresses a MISSING path, never a present directory needing the
+      // recursive flag), which would have surfaced as a confusing engine failure rather than the
+      // clean removal this branch exists to perform.
+      await wrapGitFailure(
+        () => rm(path.join(handle.path, relativePath), { recursive: true, force: true }),
+        `removing "${relativePath}" (did not exist at "${resolved}")`,
+      );
+    }
+  }
 }
 
 /** Removes the administrative subdirectory (`<gitDir>/worktrees/<name>/`) for any worktree whose own

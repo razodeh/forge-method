@@ -194,6 +194,37 @@ export async function resolveRevision(cwd: string, ref: string): Promise<string>
   }, `resolving "${ref}" to a commit in "${cwd}"`);
 }
 
+/**
+ * Whether `path` existed at `revision` at all — `git ls-tree <revision> -- <path>` (non-empty stdout
+ * means it exists; `ls-tree` itself exits 0 either way, so absence is read from the output, not an
+ * exit code). Shared across this package rather than duplicated per call site (`claims.ts`'s own
+ * revert-vs-restore decision; `lanes.ts`'s own `revertPathsToRevision`), so the one real correctness
+ * gap this had — fixed here, once — cannot silently reappear at only one of them.
+ *
+ * NOT `git cat-file -e <revision>:<path>`, this function's own first version (and `claims.ts`'s own,
+ * independently-written one): confirmed empirically that `cat-file -e` fails for a submodule/gitlink
+ * entry (tree mode `160000`) that genuinely exists at `revision`, because a gitlink names a commit in
+ * the SUBMODULE's own object database, never stored in the superproject's — a real, reproduced
+ * gauntlet critic finding (M15 P3 round 1), not a hypothetical. `ls-tree` reports every real tree-entry
+ * kind (an ordinary blob, a tree, a gitlink) correctly through the identical "non-empty line means it's
+ * there" read. Routed through `wrapGitFailure`, unlike the two prior private versions this replaces:
+ * `ls-tree` exits 0 for "not found" (confirmed empirically), so the only way this call can now fail is
+ * a genuine git error (a corrupt repo, an unresolvable `revision`) — which must propagate as a real
+ * `VcsError`, not be silently folded into "the path doesn't exist," the identical "never swallow a
+ * real failure" guarantee every other function in this module already gives.
+ */
+export async function existsAtRevision(
+  cwd: string,
+  revision: string,
+  path: string,
+): Promise<boolean> {
+  const { stdout } = await wrapGitFailure(
+    () => execa('git', ['ls-tree', revision, '--', path], { cwd }),
+    `checking whether "${path}" existed at "${revision}"`,
+  );
+  return stdout.trim() !== '';
+}
+
 /** The pre-run snapshot `20` §20.2 point 6 requires: the exact starting SHA and dirty-file list, so a
  * later `forge doctor` can always report exactly what state to return to. */
 export async function snapshotRepoState(cwd: string): Promise<RepoSnapshot> {

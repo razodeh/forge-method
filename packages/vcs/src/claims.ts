@@ -17,7 +17,7 @@ import path from 'node:path';
 import { minimatch } from 'minimatch';
 
 import { VcsError } from './errors.ts';
-import { errorMessage, resolveRevision, wrapGitFailure } from './git.ts';
+import { errorMessage, existsAtRevision, resolveRevision, wrapGitFailure } from './git.ts';
 import type { LaneHandle } from './lanes.ts';
 
 /** Every path that differs between `baseSha` and the lane worktree's *actual current state* — committed,
@@ -43,7 +43,7 @@ import type { LaneHandle } from './lanes.ts';
  *    characters in `--name-only` output (confirmed empirically: a real file named with an accented
  *    character round-trips as the literal 17-character string `"caf\303\251.txt"`, quote marks and all)
  *    — silently corrupting both the glob match below (a legitimate in-claim file misclassified as
- *    out-of-claim) and `enforceClaim`'s own `existsAtRevision` check (a `cat-file -e` lookup for the
+ *    out-of-claim) and `enforceClaim`'s own use of `git.ts`'s shared `existsAtRevision` (a lookup for the
  *    mangled path fails for a reason *other than* "the file is absent," steering a modified pre-existing
  *    file onto the destructive `git rm` branch instead of the restorative `git checkout` one). `-z`
  *    emits raw, unquoted, NUL-separated paths instead — confirmed empirically via `xxd` that the same
@@ -110,27 +110,6 @@ function matchesAnyGlob(file: string, globs: readonly string[]): boolean {
  * everything but `x`. A list that only subtracts is the one shape that cannot be mistaken for the other. */
 function inClaim(file: string, globs: readonly string[], excluded: readonly string[]): boolean {
   return matchesAnyGlob(file, globs) && !matchesAnyGlob(file, excluded);
-}
-
-/** Whether `file` existed at `revision` at all — decides which of `enforceClaim`'s two revert operations
- * applies to it. Any `cat-file -e` failure is treated as "does not exist": `revision` here is always
- * already a resolved sha (never caller-supplied text directly) and `file` is sourced from `diffLaneChanges`,
- * so "the path is absent at this revision" is overwhelmingly the only realistic reason this would fail —
- * the same accepted imprecision `assertGitAvailable` already documents for its own `--version` check, not
- * a new one invented here. This *did* have a second, realistic failure mode until `diffLaneChanges` itself
- * started passing `-z` to `git diff`: a quoted/escaped path (from `core.quotePath`'s default handling of
- * non-ASCII filenames) made this check fail for a modified, pre-existing file for a reason having nothing
- * to do with whether it existed at `revision` — steering it onto the destructive `git rm` branch below
- * instead of the restorative `git checkout` one. Fixed at the source (raw, unquoted paths in, from
- * `diffLaneChanges`), not by adding a second check here, since every caller benefits from the fix once
- * instead of only this one call site. */
-async function existsAtRevision(cwd: string, revision: string, file: string): Promise<boolean> {
-  try {
-    await execa('git', ['cat-file', '-e', `${revision}:${file}`], { cwd });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export interface ClaimEnforcementResult {
