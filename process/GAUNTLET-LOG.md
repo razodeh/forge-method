@@ -19917,3 +19917,184 @@ directly-affected files, with only two environment-sensitive flakes in wholly un
 (confirmed by isolated rerun, both pass cleanly alone).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q285`.
+
+## M15 P7 — `EvidenceBundle` assembly per story
+
+Three full gauntlet rounds, the maximum — all three returned real findings. Round 1 found two BLOCKING
+defects that made the shipped `evidence` step fail or silently lie on essentially every real run. Round 2
+found one MAJOR each from two parallel reviewers (both converging on the same root problem: a doc comment
+falsely claiming a real cost was disclosed when it was not). Round 3 found one floor failure (this piece's
+own fault: `pnpm lint` was never actually run — only bare `eslint`, missing the project's own `prettier
+--check` half) plus two real MAJOR correctness gaps. This is the piece that makes P2's own placeholder
+real: "binding evidence, test results, coverage delta, every `ReviewReport` verdict, gate outcomes,
+exemptions in force, and real cost," assembled and committed inside the story's own claim, beside the
+story.
+
+**What the piece builds.** `forge story evidence <storyId> [--json]` (`packages/cli/src/bin.ts`), a new
+`implement-story.workflow.yaml` command step (`dependsOn: [done-check]`, `commit` now `dependsOn:
+[evidence]`) that assembles and writes a real `EvidenceBundle` (`packages/schemas/src/artifacts/
+evidence-bundle.ts`, now a fully-fielded schema) via `assembleAndWriteEvidenceBundle` (`packages/cli/src/
+commands/loop/test/evidence-bundle.ts`). `verify`/`coverage` are supplied by the caller (re-running
+`storyVerify`/`testCoverage`, the same split `assembleAndWriteMutationEvidence` already establishes);
+`bindingEvidence`/`gates`/`exemptions`/`cost`/`reviews` are gathered directly — directory scans of
+`reports/mutation/`/`reports/gates/`, `loadExemptions`, and the CURRENT run's own event log
+(`@forge/telemetry/events`) for `ArtifactCreated`/`ReviewReport` and `UsageRecorded`. `GATE-516` refuses
+the whole write before anything touches disk when a required kind (a landable review, non-empty `verify`
+checks) is genuinely absent.
+
+**Critic round 1 (two independent, fresh-context critics): both found the SAME two BLOCKING defects
+independently, plus one MAJOR each.**
+
+1. **BLOCKING (both critics).** The first build wrongly assumed `implement-story` is fanned out per story
+   and qualified every `compileStepId` call with the story id as a third `itemKey` argument
+   (`compileStepId('implement-story', 'review', storyId)`). Both critics independently traced the real
+   compiler (`packages/engine/src/plan/compile.ts`) and confirmed `implement-story.workflow.yaml` is NEVER
+   a fanout target or a subworkflow anywhere in this codebase — `build-stage.workflow.yaml` has its own,
+   entirely separate inline per-story fanout steps — so it always runs standalone, one story per `forge
+   run`, and every real compiled step id is the BARE `implement-story:review` form. The qualified id never
+   matched any real, engine-emitted event, so `findReviewsThisRun`/`computeStoryCost` silently returned
+   `[]`/`$0` on every real run — `GATE-516 missing-review` fired even when the review genuinely ran and
+   came back `clear`, and cost was silently always zero. Neither critic's own first-draft tests caught this
+   because the tests seeded their fake event logs with the identical wrong three-argument formula the
+   production code used — both sides independently made the same mistake and therefore agreed with each
+   other.
+2. **BLOCKING (both critics).** The `evidence` step's `produces` glob (`reports/evidence/*-{{storyId}}.md`,
+   the bare registry-path shorthand) never matched the real write path. `resolveStepClaim`'s own
+   `resolveDocsRootPrefix` (`packages/engine/src/dispatch/outputs.ts`) only rewrites a glob that OPENS WITH
+   a FULL shipped default docs root (`docs/forge/reports`, segment-boundary matched); a bare `reports/...`
+   prefix matches none of those roots and passes through completely unrewritten. Under `strict` policy —
+   the realistic production setting — the freshly-committed bundle was reverted by claim enforcement on
+   every real run, precisely the catastrophe the Mandate names explicitly as the must-not-happen case. The
+   claim-coverage test (`test/command-steps-in-claim.test.ts`) didn't catch it because its own stand-in
+   write path used the identical bare-prefix assumption as the production glob — fixture and production
+   code agreed on the same wrong path.
+3. **MAJOR (critic A).** `runStoryEvidenceCommand` only checked `verifyOutcome.kind !== 'verified'`, never
+   `report.passed` — a story whose `done`-phase checks genuinely failed still got a bundle committed with
+   `verify.passed: false`, exit 0, "wrote EVID-00N" printed as success.
+4. **MAJOR (critic B).** `GATE-516`'s `missing-verify` reason was dead code with a factually wrong
+   justifying comment (claimed an alternative outcome shape `storyVerify` never actually produces), and
+   `missing-review`'s own remedy text suggested running `forge story verify ... --phase done` as a fix —
+   that command touches no event log and records no review, so following the remedy does nothing.
+
+**The round-1 fix.** Switched every `compileStepId` call to the real, bare two-argument form (no itemKey)
+throughout `evidence-bundle.ts`, with a new doc comment explaining why `runId` alone already scopes a
+story's own run (confirmed directly against the compiler, not merely asserted). Rewrote the `produces`
+glob to spell out the full default root (`docs/forge/reports/evidence/*-{{storyId}}.md`), fixed the
+dependent `STEP_FIXTURES`/mutation-test paths in `command-steps-in-claim.test.ts` to match, and added a
+NEW, direct test there tying `evidence-bundle.ts`'s own step-id assumption to the real compiler's output —
+the independent check that would have caught the original bug. Added the `report.passed` check to
+`runStoryEvidenceCommand`, reusing `renderStoryVerify`'s own failure rendering. Corrected `GATE-516`'s
+comments/remedy to describe what's actually true and actually fixable. Also proactively closed a gap no
+critic had flagged yet (found by re-reading my own round-1 fix with the same skepticism): no test exercised
+the `produces`-glob fix under a RECONFIGURED `paths.reports`, only the shipped default — added `docRoots`
+threading through `test/command-steps-in-claim.test.ts`'s own harness and a dedicated test proving the fix
+holds under `paths.reports: 'evidence-reports'` too, not only the default every other test in the file
+uses.
+
+**Critic round 2 (two fresh, independent critics): one MAJOR each, converging again.** Both independently
+found that `runStoryEvidenceCommand`'s own doc comment claimed the `evidence` step's double test-run cost
+(it re-runs the ENTIRE `done`-phase verification a second time, immediately after `done-check` already ran
+it) was "disclosed" in `evidence-bundle.ts`'s doc comment — grepped and confirmed no such disclosure exists
+anywhere in that file. The real, reachable consequence: any `done` profile with a `test:*` layer check runs
+the project's real test suite twice per story completion, and since `commit`/`merge` now `dependsOn:
+[evidence]` (not `[done-check]` directly), a test flaky enough to pass at `done-check` and fail on the
+immediate re-run blocks the whole lane even though the identical check legitimately passed moments earlier.
+One critic also independently re-confirmed `missing-verify`'s dead-code-on-CLI-path diagnosis by reading
+`storyVerify`'s real source line by line (`passed = errors === 0`, every empty-checks branch synthesizes a
+single `unverifiable` check first) and found a stale sibling doc comment in `packages/schemas/src/
+artifacts/evidence-bundle.ts` that still described the already-fixed wrong three-argument `compileStepId`
+form — a live hazard: a maintainer "fixing" the real code to match that comment would have reintroduced the
+original blocking defect. The other critic found an unguarded `event.payload as Record<string, unknown>`
+cast in `findReviewsThisRun` with no `typeof/null` guard, unlike the sibling cast in the same file
+(`readFrontMatter`) and the established codebase precedent (`packages/engine/src/resume/reconstruct.ts`) —
+a malformed/corrupted event-log line would crash with a raw `TypeError` instead of degrading to the typed
+`GATE-516` refusal every other malformed-input path in this piece already produces. Also flagged (and
+independently closed before the round finished, visible to the second reviewer as a live edit mid-review):
+no test proved `assembleAndWriteEvidenceBundle` ITSELF (not just the compiled claim glob) writes to the
+correct path under a reconfigured `reportsRoot`.
+
+**The round-2 fix.** Rewrote `runStoryEvidenceCommand`'s own doc comment to honestly disclose the double
+test-run cost and its real flake-amplification consequence, explicitly accepted as "disclosed, not solved"
+for v1 — the identical stance already taken for `gates`/`coverage` scoping, not a new pattern invented to
+excuse this. Fixed the stale sibling doc comment and the dangling `GATE-516 missing-evidence` citation
+(the real reason values are `missing-review`/`missing-verify`). Added the `typeof event.payload !==
+'object' || event.payload === null` guard, mutation-verified (reverting it reproduces the exact predicted
+`TypeError`). Added a dedicated test proving the real write path under `reportsRoot: 'evidence-reports'`.
+Also added a disclosure to `evidenceBundleSchema`'s own `coverage` field doc comment for a THIRD,
+previously-undisclosed scoping gap found independently by a round-2 critic: `coverage.acCoveragePercent`/
+`missingAcIds` come from `testCoverage`'s `rule: 'acceptance-criteria'`, which computes over EVERY `done`
+story project-wide (`runAcceptanceCriteriaCoverage`, unchanged, pre-existing) — the story a bundle is FOR
+is typically not even `done` yet when `evidence` runs, so in practice `coverage` almost always describes
+OTHER stories' acceptance criteria, not this one's. Disclosed with the same honesty already given to
+`gates`, not silently left implied.
+
+**Critic round 3 (final round, two fresh critics): 1 floor failure + 2 MAJOR.**
+
+1. **BLOCKING — floor failure, this piece's own process gap, not a design defect.** `pnpm lint` (`eslint .
+   --max-warnings 0 && prettier --check .`) was never actually run across all three prior rounds — only
+   bare `eslint`, which passed, masking that `prettier --check` failed on 7 of the diff's files the entire
+   time. QUALITY-BAR.md §3 is explicit: a failing floor check is not reviewed, not discussed, and not
+   committed, independent of everything else being correct.
+2. **MAJOR.** `GATE-516`'s required-review check only refused on zero reviews or an UNDEFINED verdict — it
+   accepted a review with verdict `'incomplete'`. Traced independently against the real engine:
+   `swarm-review-step.ts` only fails the review STEP ITSELF for `verdict === 'blocked'`; an `'incomplete'`
+   verdict (an ordinary reviewer-session hiccup, not an adversarial input) lets the step succeed and the
+   `ArtifactCreated` event get emitted normally, so the DAG proceeds through `document` → `done-check` →
+   `evidence` → `commit`. Only at the FINAL `merge` step does `resolveSwarmReviewLanding`
+   (`packages/engine/src/dispatch/steps.ts`) refuse to land it, treating `'incomplete'` exactly like
+   `'blocked'` (`MERGE-REVIEW-INCOMPLETE`; only `'concerns'`/`'clear'` are landable). Net effect: a
+   realistic reviewer hiccup produced a real, COMMITTED `EvidenceBundle` for a story that was always going
+   to be refused at the merge this very bundle is supposed to be evidence for — directly contradicting the
+   doc comment's own stated invariant ("a blocked verdict never reaches a merge," silently omitting
+   `'incomplete'`, which the engine treats identically).
+3. **MAJOR.** `GATE-516`'s `exitCode` was `EXIT_CODES.usage` (2). `missing-review` fires when the argument
+   is perfectly valid and a real precondition (a completed, verdicted review in the CURRENT run's own
+   event log) simply has not happened yet — the identical "run X first, then retry" shape every other
+   `prerequisiteMissing` (5) code in this file already uses (`ENV-004`/`005`, `RUN-052`/`078`/`080`,
+   `CFG-017`/`020`, `VCS-010`'s own "the missing prerequisite is a clean working tree"), not a malformed
+   invocation the way every sibling `GATE-501`–`515` `usage` code genuinely is (a bad `--owner`, an
+   `--expires` past the cap, a resource exhaustion). The piece's OWN test file proved the project already
+   draws exactly this line for this exact command — a missing `.forge/config.yaml` two tests earlier
+   correctly asserts exit 5, while the structurally identical "the thing this command needs hasn't
+   happened yet" condition asserted exit 2.
+
+**The round-3 fix.** Ran the real `pnpm lint` (not a substitute) for the first time, confirmed 7 files
+failed `prettier --check`, fixed with `prettier --write`, re-ran `pnpm typecheck`/full test suite to
+confirm the reformatting changed nothing semantically. Changed `GATE-516`'s required-review check from
+`verdict === undefined` to `verdict !== 'concerns' && verdict !== 'clear'` — matching the engine's own real
+landing logic exactly rather than one literal example from the Mandate's own worked text — with new tests
+for `'incomplete'`, `'blocked'`, and a confirming `'concerns'`-is-accepted case, each mutation-verified.
+Reclassified `GATE-516`'s `exitCode` to `EXIT_CODES.prerequisiteMissing` (5), with a doc comment citing the
+specific sibling codes that establish the convention, and updated the one test that pinned the old value.
+Fixed every doc comment that had repeated the disproven "blocked verdict never reaches a merge" claim.
+
+**Discloses.** `coverage` (`acCoveragePercent`/`missingAcIds`/`ratchetRegressions`) is project-wide, not
+scoped to the story the bundle is for — no story-scoped variant of `runAcceptanceCriteriaCoverage` exists;
+building one is a change to shared coverage machinery `G-Verify`'s own gate check also depends on, out of
+this piece's own Surface, named for a later piece. `gates` is likewise project-wide, a current-state
+snapshot offered as accompanying context, never a claim that any gate evaluated this specific story — no
+gate in the real workflow runs per-story at all. `evidence` re-runs the project's full `done`-phase test
+suite a second time with no cache to avoid it (`done-check` itself persists nothing to read back) — a real
+cost and a real, if narrow, flake-amplification risk, disclosed rather than solved; fixing it properly
+needs `done-check` itself to persist a result, a change to an existing pre-M15 step outside this piece's
+own Surface. `forge story evidence` run standalone, outside any real `forge run`, can never succeed: no
+event log exists to find a review in, and there is no way to "catch up" a missing review after the fact —
+by design, not an oversight, since the Mandate's own framing is "on story completion, assemble and commit"
+as part of the automated workflow, not an ad-hoc human tool. `bindingEvidence` is `[]` for any story that
+never separately ran `forge test binding` (a standalone verb with no step of its own in this workflow) —
+not a failure, an honest absence.
+
+**Verification.** `pnpm typecheck` (21/21), `pnpm lint` (eslint + prettier, run for real this time),
+`pnpm boundaries`, and `node scripts/assert-schema-drift.mjs` all clean on the final, round-3-complete
+state. The full set of directly affected test files (`schemas/evidence-bundle.test.ts` 21,
+`cli/.../evidence-bundle.test.ts` 20, `bin-story-evidence.test.ts` 7, `command-steps-in-claim.test.ts` 39,
+`workflows.test.ts` 45, `build-stage-lane-landing.test.ts` 14, `bin-story-verify.test.ts` 16,
+`append-only-evidence.test.ts` 3, `validate.test.ts` 30, `template.test.ts` 4 — 199 tests across 10 files)
+all pass together, plus the full `packages/engine` test subset most likely to be affected by the new
+workflow step (441 tests, 8 files) and the complete `packages/cli/test/bin.test.ts`/`e2e/init.test.ts`
+(178 tests) confirming the regenerated `EvidenceBundle.md` template fixes the collateral breakage a
+full-suite run first surfaced. Every fix across all three rounds individually mutation-verified against its
+own real defect (revert the fix, confirm the exact predicted failure reproduces, restore, reconfirm green)
+— not merely shown green on unmodified code.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q286`.

@@ -26225,3 +26225,105 @@ disclosures are recorded in full in Decisions 2 and 3 above and in `GAUNTLET-LOG
 entry; not repeated a third time here.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P6`.
+
+## Q286 — M15 P7: `EvidenceBundle` assembly — what "per story" actually means when the underlying
+machinery mostly isn't
+
+**Context.** `PLAN-M15.md` P7's own Mandate names seven evidence kinds an `EvidenceBundle` must collect:
+binding evidence, test results, coverage delta, every `ReviewReport` verdict, gate outcomes, exemptions in
+force, and real cost. The real difficulty was that most of the underlying machinery this piece reads from
+(`testCoverage`, `GateReport`, the shared event log) was never built with "scope this to one story" as a
+concern, because nothing before this piece needed it to be. Three gauntlet rounds, the maximum, with real
+findings in every round; the full round-by-round narrative is in `GAUNTLET-LOG.md`'s own `## M15 P7` entry.
+
+**Decision 1 — `reviews`/`cost` are scoped by `runId` alone, never a per-story qualified step id, because
+`implement-story` only ever runs standalone.** The first build wrongly assumed a fanout (qualifying every
+`compileStepId` call with the story id as a third `itemKey` argument) — both round-1 critics independently
+traced the real compiler and confirmed `implement-story.workflow.yaml` is never a fanout target or a
+subworkflow anywhere in this codebase; `build-stage.workflow.yaml` has its own, entirely separate inline
+per-story fanout steps. One story per `forge run` means `runId`'s own event log already contains only that
+story's events, so the bare `compileStepId('implement-story', stepId)` form is both correct and the only
+one a real run ever emits. The broader lesson, worth recording because it cost a full blocking round: an
+assumption about how the ENGINE compiles/runs a workflow needs to be checked against the engine's own
+source (`compile.ts`'s own top-level `compileStepAtDepth` call, which workflows are ever fanned-out
+targets) before being load-bearing, not inferred from a sibling piece's own fanout pattern
+(`build-stage.workflow.yaml`'s `itemKey: '{{item.id}}'`) that happens to look similar but does not apply
+here.
+
+**Decision 2 — `coverage` and `gates` are both project-wide, not scoped to the story the bundle is FOR,
+and both say so in their own doc comments rather than implying otherwise.** `gates`: no gate in the real
+`implement-story` workflow runs per-story at all (gates are a stage/run-level checkpoint), and
+`GateReport`'s own registered path carries no story reference to scope by even if one were wanted — the
+single most recent `GateReport` per gate name, project-wide, is offered as accompanying context, never a
+claim that any gate evaluated this specific story. `coverage`: `runAcceptanceCriteriaCoverage`
+(`loop/test/coverage.ts`, unchanged by this piece) computes `acCoveragePercent`/`missingAcIds` over EVERY
+`status: 'done'` story in the project — there is no story-scoped variant, and the story a bundle is FOR is
+typically not even `done` yet at the moment `evidence` runs (nothing in `implement-story.workflow.yaml`
+sets it), so in practice `coverage` almost always describes OTHER, already-`done` stories' acceptance
+criteria, not this one's. This second gap was found by a round-2 critic AFTER `gates`' own disclosure had
+already shipped with the correct, honest framing — `coverage` initially shipped with none. A genuinely
+story-scoped AC-coverage signal needs `runAcceptanceCriteriaCoverage` itself to accept a story filter, a
+change to shared coverage machinery `G-Verify`'s own gate check also depends on — out of this piece's own
+Surface (`packages/engine/src/dispatch/outputs.ts`, `packages/kb` writers, the workflow yaml's own
+`produces`), named for a later piece rather than attempted half-built here.
+
+**Decision 3 — `evidence` re-runs the story's own full `done`-phase test suite a second time, with no
+cache to avoid it, disclosed as a real cost rather than solved.** `done-check` (the step immediately
+before `evidence`) already ran the identical `done`-phase verification once; nothing persists that result
+to disk for `evidence` to read back, so `evidence` must re-run it itself to get real `verify` data for the
+bundle. Concretely: any `done` profile naming a `test:*` layer check runs the project's real test suite
+TWICE per story completion, and since `commit`/`merge` now `dependsOn: [evidence]` (not `[done-check]`
+directly), a test flaky enough to pass at `done-check` and fail on the immediate re-run blocks the whole
+lane even though the identical check legitimately passed moments earlier. A round-2 critic found this cost
+was real but UNDISCLOSED — an earlier doc comment claimed it was disclosed elsewhere when it was not
+(grepped and confirmed no such disclosure existed anywhere in the codebase at that point). Fixing it
+properly needs `done-check` itself (an existing, pre-M15 step) to persist a result `evidence` could read
+back instead of re-deriving — a change to a step outside this piece's own Surface, not attempted here
+rather than half-built; named for a later piece, the identical "disclosed, not solved" stance already
+taken for Decision 2's two scoping gaps.
+
+**Decision 4 — `GATE-516`'s required-review check accepts ONLY `concerns`/`clear`, matching the real
+engine's own merge-landing logic exactly, not one literal phrase from the Mandate's own worked example.**
+The Mandate's "Mutation evidence" section gives exactly one worked example ("Omit the review verdict: the
+required-kind test fails"), and the first build's check matched only that literal case (`verdict ===
+undefined`). A round-3 critic traced the real engine independently and found `swarm-review-step.ts` only
+fails the review STEP ITSELF for `verdict === 'blocked'` — an `'incomplete'` verdict (an ordinary
+reviewer-session hiccup) lets the step succeed, the `ArtifactCreated` event get emitted normally, and the
+DAG proceed through `document`/`done-check`/`evidence`/`commit` — while `resolveSwarmReviewLanding`
+(`packages/engine/src/dispatch/steps.ts`) refuses to LAND it at the final `merge` step, treating
+`'incomplete'` exactly like `'blocked'` (`MERGE-REVIEW-INCOMPLETE`; only `concerns`/`clear` are landable).
+Without the fix, a realistic reviewer hiccup could produce a real, COMMITTED `EvidenceBundle` for a story
+that was always going to be refused at the very merge this bundle is supposed to be evidence for. The
+fixed check (`verdict !== 'concerns' && verdict !== 'clear'`) is the general, correct rule the Mandate's
+own single worked example was always implicitly pointing at, not a narrower literal reading of it.
+
+**Decision 5 — `GATE-516`'s `exitCode` is `EXIT_CODES.prerequisiteMissing` (5), not `usage` (2).** Every
+sibling `GATE-5xx` code using `usage` (`GATE-501`–`515`) refuses a genuinely malformed VALUE the caller
+supplied (a bad `--owner`, an `--expires` past the cap, a resource exhaustion). `GATE-516 missing-review`
+is a different shape entirely: the argument (`<storyId>`) is perfectly valid, and the real precondition
+this command depends on (a completed, verdicted review in the CURRENT run's own event log) simply has not
+happened yet — the identical "run X first, then retry" shape every other `prerequisiteMissing` code in
+this file already uses (`ENV-004`/`005`, `RUN-052`/`078`/`080`, `CFG-017`/`020`, `VCS-010`'s own "the
+missing prerequisite is a clean working tree"). A round-3 critic found the piece's own test file already
+proved the project draws exactly this line for this exact command — a missing `.forge/config.yaml` two
+tests earlier correctly asserts exit 5, while this structurally identical "hasn't happened yet" condition
+asserted exit 2. Reclassified to match the project's own established convention, not invented new for this
+piece.
+
+**Decision 6 — `forge story evidence`, run standalone outside any real `forge run`, can never succeed, by
+design.** `reviews`/`cost` are read from the CURRENT run's own event log (`FORGE_RUN_ID`); a hand
+invocation with no real run in progress has no event log to read, so `GATE-516 missing-review` always
+fires. There is no "catch up" remedy — `forge story verify` (the obvious thing to try) touches no event
+log and records no review, so running it first does nothing (a round-2 critic found the original remedy
+text suggested exactly this non-fix; corrected to honestly name the real constraint instead). This is
+accepted, not treated as a gap to close: the Mandate's own framing is "on story completion, assemble and
+commit" as part of the automated workflow, not an ad-hoc human tool a person would reach for mid-story.
+
+**Discloses.** All three "disclosed, not solved" v1 simplifications (`coverage`/`gates` project-wide
+scoping, the double test-run cost) are recorded in full in Decisions 2 and 3 above and in
+`GAUNTLET-LOG.md`'s own `## M15 P7` entry; not repeated a third time here. `bindingEvidence` is `[]` for
+any story that never separately ran `forge test binding` (a standalone verb with no step of its own in
+this workflow) — an honest absence, not a failure, needing no further disclosure beyond its own schema
+doc comment.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P7`.
