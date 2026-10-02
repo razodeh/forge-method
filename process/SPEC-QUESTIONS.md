@@ -26685,3 +26685,142 @@ of cross-cutting consistency check, neither of which a package-scoped sweep or a
 test list will reach on its own.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P9`.
+
+## Q289 — M15 P10: The project disclosure ledger — honesty machinery that found dishonesty in the
+machinery it leans on
+
+**Context.** `PLAN-M15.md` P10's own Mandate is the shortest-sounding piece in the milestone: a
+KB-located ledger, written through "the existing KB writer," readable via `forge kb`, surfaced by
+`forge doctor`. In practice this was the piece where almost every real defect was NOT in the new code this
+piece wrote, but in the seams between this piece and the TWO prior pieces (M15 P6, M15 P9) it has to lean
+on without being allowed to touch their own code. Three full gauntlet rounds, the maximum; the final round
+found a genuine defect the orchestrator fixed directly after the critic round had already closed, since it
+was concrete, cheap, and squarely within this piece's own stated honesty Mandate. Full round-by-round
+narrative: `GAUNTLET-LOG.md`'s own `## M15 P10` entry.
+
+**Decision 1 — "written through the existing KB writer" means the same DISCIPLINE (real ids, real
+provenance, append-only, one document per entry under `kb/`), not a literal call into
+`packages/kb/src/write/writer.ts`'s `KbWriter.write()`.** That writer is hard-coupled to `kbEntrySchema`'s
+own specific shape — 9 fixed subject-domain `section` values, a 4-state `status` with no "resolved"
+concept at all. A disclosure's own open/resolved-with-reason-and-owner lifecycle does not fit that shape
+without a real schema change nobody wants to make to a shared, unrelated type. `Disclosure` is instead a
+NEW registered artifact type, following the exact `collection: true` precedent `Risk`/`Assumption`/
+`OpenQuestion`/`Exemption` already establish — a single shared `kb/disclosures.md` file, the identical
+read-modify-write-under-a-real-lock discipline `Exemption` (M15 P6) already uses for `reports/
+exemptions.md`.
+
+**Decision 2 — concurrency safety was EXTRACTED from M15 P6's own already-3-round-hardened lock, not
+re-derived from scratch, and this choice is directly responsible for this piece needing zero gauntlet
+rounds spent on cross-process correctness itself.** `withCollectionLock` (`packages/cli/src/commands/
+collection-lock.ts`) is a faithful, parameterized lift of `withExemptionsLock`'s own hardened sync-write +
+read-back + age-gated-PID-liveness-reclaim mechanism — every fix that mechanism took three full gauntlet
+rounds to find (silent data loss under real I/O contention, a `resolveState` TOCTOU race, an unsafe
+immediate-empty-lock reclaim, a reclaim's own `ENOENT` race) lives here now, unchanged in substance.
+`exemptions.ts` itself was refactored onto this same shared function, confirmed byte-identical in behavior
+by re-running its own complete, pre-existing test suite. A dedicated empirical investigation (orchestrator,
+before round 1 even started) stress-tested `Disclosure`'s own 20-process concurrency test against
+`Exemption`'s own, side by side, under artificial CPU-hog contention, across ~36 combined rounds: both
+showed statistically indistinguishable intermittent id-loss, confirming the shared lock's own disclosed
+"proven reliable at 20-way concurrency, not formally proven higher" ceiling is inherited unchanged, not a
+new defect this piece introduced — closing what could otherwise have been a long, inconclusive gauntlet
+detour chasing a flake that turned out to be exactly as expected.
+
+**Decision 3 — "an exemption (P6) appears automatically" and "a stopped critic loop (P9) appears
+automatically" are READ-TIME SYNTHESIS, never a write either piece's own code makes.** Neither P6 nor P9
+is in this piece's own Surface list. Both signals are already durable and structured enough to read
+directly: exemptions live in the already-shipped `reports/exemptions.md` (open = not yet expired, the
+identical fail-closed `<=` direction `applyExemptions` already uses); a stopped critic loop is a real,
+committed `StepFailed` event with `payload.code === 'RUN-113'` in a run's own event log — confirmed
+EMPIRICALLY, before writing any code, that `ForgeError.details` (here: `stepId`/`file`/`rounds`/`count`)
+genuinely survives `JSON.stringify` even nested inside a `StepFailureInfo.cause`, so this reads real
+structured data off the event log the same way `forge cost`'s own `listRunIds` already walks every run
+directory, not prose that would need parsing. A stopped-critic-loop row's own "resolved" state is
+deliberately NOT tracked: correlating a later run's own success back to an earlier run's own failed step
+has no shared key this project maintains today — disclosed as honest, ever-growing visibility rather than
+a false claim of automatic resolution.
+
+**Decision 4 — a disclosure is never silently healed by deletion; a corrupt ledger fails the WRITE path
+closed and tells the READ path to keep showing what it still can.** The first version of this piece's own
+write path (`readDisclosuresCandidate`) filtered out any row that failed schema validation before writing
+back — meaning a single corrupt entry was PERMANENTLY, SILENTLY erased the next time anyone used the
+feature as documented, directly disproving the Mandate's own "a disclosure is never deleted." Separately,
+the read path did one whole-document parse, so a single bad row zeroed the ENTIRE returned list, meaning
+`forge doctor`'s own new count could silently report "0 open" with real, valid, unresolved disclosures
+sitting right next to the corrupt one. Fixed with two distinct, deliberately different behaviors for two
+distinct concerns: the WRITE path now refuses the whole write outright (`KB-018 'corrupt'`, naming the bad
+row) rather than ever silently dropping data; the READ path parses PER ROW and reports a `corruptCount`
+rather than ever silently hiding valid data behind one bad neighbor. The remedy text for `KB-018 'corrupt'`
+gives a human the actual recovery step (fix or remove the one bad row by hand, its own front matter is
+plain YAML, then retry) — a real, actionable instruction, not a dead pointer.
+
+**Decision 5 — this exact "one corrupt row poisons the whole document" bug pre-existed in M15 P6's own
+`loadExemptions`, unfixed, until THIS piece made it newly load-bearing for its own Mandate — and it was
+fixed here, not merely disclosed, because the fix was cheap and the bug now directly broke this piece's
+own stated honesty guarantee.** `loadExemptions` had the identical whole-document-parse shape Decision 4
+above had just fixed for disclosures — but `reports/exemptions.md` lives outside the `kb/` tree, so a
+corrupt exemption row had (and, for the write path, still has) NO signal anywhere: no `corruptCount`
+concept, no `forge kb lint` safety net the way a KB-tree file gets for free. Found by a round-2 critic,
+reproduced directly (one valid + one corrupt exemption row → `loadExemptions` silently returned `[]`,
+dropping the valid one too). Fixed by making `loadExemptions` itself per-row-tolerant, mirroring
+`loadDisclosures` exactly, with `DisclosureLedger` now exposing TWO separate, named counts
+(`disclosureCorruptCount`/`exemptionCorruptCount` — deliberately not summed, so a reader knows which real
+file to go fix) rather than one combined, less actionable number. `appendExemption`'s own WRITE path was
+checked and confirmed to already fail closed on this exact condition (a pre-existing, unchanged
+whole-document schema check) — only the READ path needed the fix, kept narrowly scoped to that one
+function plus its own small set of real call sites (`bin.ts`, `story.ts`, `evidence-bundle.ts`,
+`kb-disclosures.ts`), with the complete pre-existing M15 P6 test suite (35 tests) re-run to confirm zero
+regression in already-3-round-gauntleted code. This is the clearest instance in this milestone so far of a
+later piece's own Mandate making a PRE-EXISTING, previously-inert defect in an earlier piece suddenly real
+— the fix belonged here, in the piece that discovered and depends on it, not deferred to a hypothetical
+future piece that might never come.
+
+**Decision 6 — a Unicode "is this blank" check has no complete, general solution, so the fix is an
+honestly-curated, explicitly-incomplete list, found three separate times in the same piece before
+stabilizing.** There is no single Unicode general-category property meaning "renders as a blank glyph" —
+even major platforms address this only with curated, explicit code-point lists, never a clean regex class.
+Round 1 built `isBlank()` with `\p{Cc}\p{Cf}\s`, closing the round's own reproduced zero-width-space vector.
+Round 2's own critic reproduced TWO further real, commonly-abused vectors neither category covers (U+2800
+BRAILLE PATTERN BLANK, U+3164 HANGUL FILLER — the "fake blank username" trick, not contrived edge cases),
+closed by extending the list to 5 verified code points, each individually confirmed real and
+blank-rendering before inclusion, with an explicit doc-comment disclaimer that this closes KNOWN vectors,
+not an exhaustive defense. Round 3's own critic then found the round's own "two other pre-existing copies
+of this gap" scope note had undercounted by one: `forge test exempt --reason`, in the SAME FILE as the
+fix, was itself a third, undisclosed copy of the narrower, pre-extension regex — reachable live through
+the real CLI, and directly relevant to THIS piece since an exemption's own blank `reason` flows straight
+into the disclosure ledger via `synthesizeExemptionEntries`. Fixed directly by the orchestrator (found on
+the final allowed round, fixed rather than escalated, matching this milestone's own established
+precedent for a concrete, cheap, in-Mandate finding surfaced too late for another critic round): that call
+site now shares `isBlank()` directly, and the scope note was corrected to name only the two copies that
+remain genuinely untouched and out-of-Surface (`@forge/engine/gates/waiver.ts`'s `isNonBlank`,
+`packages/cli/src/commands/spec/gate-rules.ts`'s own `isBlank`) — both left unfixed, with this piece's own
+`collection-lock.ts` extraction (Decision 2) named explicitly as the model a future consolidation should
+follow for all remaining copies at once, rather than a fourth independent patch.
+
+**Decision 7 — a synthesized disclosure row backed by a git-ignored, routinely-wiped directory is a real,
+named limitation, not a structural problem this piece takes on.** A stopped-critic-loop row's entire
+evidentiary backing is a `StepFailed`/`RUN-113` event under `.forge/state/runs/`, which `forge init`
+writes into the project's own `.gitignore`, and which this codebase's own `GATE-515` remedy text already
+treats as something operators routinely reach into and delete from (clearing a wedged lock). A plain
+`rm -rf .forge/state` — an entirely ordinary "reset forge"/CI-cache-clear action — silently erases every
+stopped-critic-loop disclosure with zero trace, in real, named tension with "a disclosure is never
+deleted" for exactly this one of the four Mandate-named kinds, with no way today to promote a fragile,
+about-to-be-swept synthesized sighting into a durable, real `Disclosure` document first. Named plainly, in
+the module's own doc comment, with the concrete `rm -rf`/CI-cache-clear scenario spelled out rather than
+left as an abstract gesture — and deliberately NOT given a structural fix (a durable-promotion command),
+since that would be a real scope expansion beyond this piece's own narrow Surface, left for whichever
+future piece actually owns that tradeoff.
+
+**Discloses.** All of the above decisions' own residual gaps are recorded in full in `GAUNTLET-LOG.md`'s
+own `## M15 P10` entry's "Discloses" section; not repeated a third time here — summarized: `isBlank()`'s
+curated list is known-vectors-only (Decision 6); the `.forge/state/` deletion risk for stopped-critic-loop
+rows has no durable-promotion escape hatch (Decision 7); a stopped-critic-loop row has no resolution
+tracking and stays open indefinitely; `appendExemption`'s own corrupt-row write-path behavior (an untyped
+`RangeError`) is a visible, left-as-is asymmetry with `appendDisclosure`'s own typed refusal, pre-existing
+M15 P6 behavior out of this piece's own Surface to fix further; `synthesizeCriticLoopEntries`'s own row id
+can collide across repeated `forge resume` attempts against the same still-exhausted step (low impact,
+these rows are never independently resolved by id); and several test-coverage gaps for already-fixed,
+already-correct behavior (`exemptionCorruptCount`'s own end-to-end coverage, a `sources`-field round-trip
+assertion, a `Disclosure`-side `id-exhausted` test) were left for opportunistic follow-up rather than
+forcing a fourth gauntlet round over coverage alone, per a round-3 critic's own explicit recommendation.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P10`.

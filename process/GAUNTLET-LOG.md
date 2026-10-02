@@ -20509,3 +20509,195 @@ would have made this piece's own central mechanism nonfunctional or run-crashing
 project had they shipped undetected.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q288`.
+
+## M15 P10 — The project disclosure ledger
+
+Three full gauntlet rounds, the maximum — every round found real, independently-reproduced defects, and
+two of the three findings that survived to the final round were actually in code OLDER than this piece
+(M15 P6's own `loadExemptions`, and a third, undisclosed sibling copy of a blank-input check in
+`forge test exempt`) that this piece's own Mandate made newly load-bearing. This is the piece that gives
+user projects FORGE's own honesty discipline: a KB-located `Disclosure` collection artifact
+(`kb/disclosures.md`, the identical shared-collection-file shape `Exemption` already uses), a real
+cross-process-safe writer, and a merged `forge doctor`/`forge kb disclosures` view combining real,
+explicitly-authored disclosures with two kinds synthesized at READ TIME from already-existing sources —
+in-force exemptions (`reports/exemptions.md`, M15 P6) and stopped critic loops (`RUN-113` events, M15 P9)
+— since neither of those pieces' own code is in this piece's Surface to write into.
+
+**What the piece builds.** `packages/schemas/src/artifacts/disclosure.ts` — `kind: 'trade-off'|'known-gap'`
+(the only two kinds ever really WRITTEN as a `Disclosure` document; "an exemption appears automatically"/
+"a stopped critic loop appears automatically" are the two synthesized kinds, below), `summary`/`owner`/
+`sources` (real provenance), `resolved: boolean`/`resolution?: {reason, by, at}`. `packages/cli/src/
+commands/collection-lock.ts` — `withCollectionLock`, EXTRACTED from M15 P6's own `withExemptionsLock` (the
+hardened sync-write+read-back+age-gated-reclaim mechanism that took 3 full gauntlet rounds to get right)
+so this piece's own `kb/disclosures.md` does not re-fight an already-solved hard problem; `exemptions.ts`
+is now a thin wrapper over the same shared function. `packages/cli/src/commands/kb-disclosures.ts` —
+`loadDisclosures`/`appendDisclosure`/`resolveDisclosure` (the real, lock-protected, append-only entries)
+plus `listDisclosureLedger` (the merged view, reading `reports/exemptions.md` directly for in-force
+exemptions and scanning every run's own event log for `StepFailed`/`RUN-113` events — confirmed, before
+building this, that `ForgeError.details` genuinely survives `JSON.stringify` nested inside a
+`StepFailureInfo.cause`, so this reads real structured data, not prose). `forge doctor` gains a
+`severity: 'warning'` check (visible, counted, never blocking) for the combined open-disclosures count;
+`forge kb` gains `disclose`/`disclose resolve`/`disclosures` subcommands. New `KB-018` error code
+(`id-exhausted`/`lock-exhausted`/`not-found`/`already-resolved`/`corrupt`), deliberately mirroring
+`GATE-515`'s own already-3-round-gauntleted four-reason shape and `usage` exit-code classification for
+`Exemption`'s identical write path.
+
+**Critic round 1 (two independent critics): one MAJOR correctness bug plus two MAJOR CLI-boundary
+validation gaps.**
+
+1. **MAJOR (one critic, reproduced twice).** `readDisclosuresCandidate` (the write-path reader) FILTERED
+   OUT any row failing `disclosureSchema.safeParse` before writing back — so a single schema-invalid
+   entry (a hand-edit, a future schema migration without a data migration) was PERMANENTLY, SILENTLY
+   erased the next time anyone ran `forge kb disclose`/`disclose resolve`, exit 0, no warning — directly
+   disproving the Mandate's own "a disclosure is never deleted" and this module's own doc comment claim
+   that the array "can only ever grow or stay the same, never shrink." Compounding this, `loadDisclosures`
+   (the read path) did a WHOLE-DOCUMENT parse, so one bad row zeroed the ENTIRE returned list — in a real
+   CLI repro, `forge doctor`'s own brand-new `disclosures` check silently reported "none open" even with a
+   real, valid, unresolved disclosure sitting right next to the corrupt one. Fixed: the write path now
+   REFUSES the whole write outright (typed `KB-018 'corrupt'`, naming the bad row) rather than silently
+   healing by deletion; the read path now parses PER ROW, returning `{disclosures, corruptCount}` so a
+   valid entry survives a corrupt neighbor, with `forge doctor`/`forge kb disclosures` both surfacing a
+   visible "N entries could not be read" note whenever `corruptCount > 0`.
+2. **MAJOR (the other critic, reproduced live against the real built CLI).** `forge kb disclose` accepted
+   a `--summary`/`--owner` made entirely of invisible Unicode (zero-width space, U+200B) — the EXACT bug
+   class already found and fixed for `forge test exempt`'s own `--reason`/`--owner` during M15 P6, durably
+   recording a meaningless, invisible governance entry. Fixed: a shared, Unicode-aware `isBlank()` helper
+   (reusing the established `\p{Cc}\p{Cf}\s` pattern) now gates both fields.
+3. **MAJOR (same critic).** `forge kb disclose resolve` with a blank `--reason`/`--by` had NO check at
+   all, reaching the schema layer and crashing with a raw, uncaught `RangeError` instead of a clean,
+   typed CLI refusal. Fixed: the same `isBlank()` helper now gates both fields there too.
+4. Also strengthened: the architectural disclosure that a synthesized stopped-critic-loop row's entire
+   evidentiary backing lives under `.forge/state/`, which `forge init` gitignores and which this
+   codebase's own `GATE-515` remedy text already treats as routinely operator-deleted — a plain
+   `rm -rf .forge/state` silently erases every such row with zero trace, in real tension with "a
+   disclosure is never deleted" for exactly this one kind. Named concretely rather than left as a vague
+   gesture; deliberately NOT given a structural fix (a durable-promotion command would be a real scope
+   expansion beyond this piece's own narrow Surface).
+
+**Critic round 2 (two independent critics): one clean pass, one found two more real MAJOR defects — both
+in code this piece leans on but does not itself own.**
+
+1. **MAJOR (reproduced directly).** `loadExemptions` (pre-existing, unmodified M15 P6 code) had the
+   IDENTICAL whole-document-parse corruption bug round 1 had just fixed for `loadDisclosures` — one
+   corrupt exemption row silently zeroed the ENTIRE returned list, with ZERO signal anywhere (unlike the
+   now-fixed `Disclosure` case, `loadExemptions` had no `corruptCount` concept, and `reports/exemptions.md`
+   lives outside the `kb/` tree so it gets no `forge kb lint` safety net either). This bug PRE-DATES this
+   piece, but this piece is the one that made it newly load-bearing by calling it directly to synthesize
+   "an exemption appears automatically" — a core Mandate promise this bug silently broke. Fixed:
+   `loadExemptions` now parses per-row exactly like `loadDisclosures`, returning
+   `{exemptions, corruptCount}`; `DisclosureLedger` exposes TWO separate, named counts
+   (`disclosureCorruptCount`/`exemptionCorruptCount`, deliberately not summed, so a reader knows which
+   file to fix) surfaced by both `forge doctor` and `forge kb disclosures`. `appendExemption`'s own WRITE
+   path was confirmed to already fail closed (a whole-document schema check on write, unchanged) — only
+   the READ path needed the fix. Re-ran the complete, pre-existing M15 P6 `exemptions.test.ts`/
+   `bin-exempt.test.ts` suites (35 tests) to confirm zero regression in this already-3-round-gauntleted
+   code before and after.
+2. **MAJOR (reproduced directly).** The round-1 `isBlank()` fix closed zero-width space but missed two
+   real, commonly-abused "invisible text" vectors neither `Cc`/`Cf`/whitespace covers: U+2800 BRAILLE
+   PATTERN BLANK and U+3164 HANGUL FILLER (both render as a blank glyph in virtually every font — the
+   "fake blank username" trick, not a contrived edge case). Fixed: `isBlank()` extended with a curated,
+   explicitly-disclosed-as-incomplete list of 5 verified blank-rendering code points (adding U+115F/U+1160
+   Hangul fillers and U+FFA0 halfwidth Hangul filler after direct verification each one is real and
+   documented) — the doc comment states plainly this closes known vectors, not an exhaustive defense
+   against every conceivable one, and names the two OTHER pre-existing copies of this same check elsewhere
+   in the codebase (`waiver.ts`, `gate-rules.ts`) as a disclosed, out-of-Surface gap, pointing at
+   `collection-lock.ts`'s own extraction (earlier in this same piece) as the model a future consolidation
+   should follow.
+
+**Critic round 3 (final round, two fresh critics): one found the two most recent fixes correct and
+complete plus a clean overall pass; the other found one more real MAJOR defect the round's own scope note
+had actually undercounted.**
+
+1. **MAJOR (reproduced live through the real built CLI, then reverted — working tree left clean).** The
+   round-2 "scope note" disclosing two OTHER pre-existing copies of the blank-check gap undercounted by
+   one: `forge test exempt`'s own `--reason` check, in the SAME FILE as the fix, was a THIRD, undisclosed
+   copy of the plain `\p{Cc}\p{Cf}\s`-only regex — never updated to the hardened `isBlank()`. An
+   all-BRAILLE-PATTERN-BLANK `--reason` (one of the exact two characters that same round's own fix had
+   JUST closed for `kb disclose`) still durably recorded a meaningless exemption, exit 0 — and that
+   exemption's own blank `reason` flows straight into THIS piece's own ledger via
+   `synthesizeExemptionEntries`, directly undermining the Mandate this piece exists to serve. Fixed
+   (orchestrator, directly, since this was found on the final allowed round): that call site now calls
+   the shared `isBlank()` instead of keeping its own copy; the doc comment's own scope note corrected to
+   name this as a closed THIRD copy, leaving only the two genuinely out-of-Surface ones. Mutation-verified
+   live (reverted to the old regex, confirmed the new test fails with the exact predicted exit-0-instead-
+   of-2, restored, reconfirmed green).
+
+**Discloses.** Every v1 scoping gap is named explicitly in the code's own doc comments
+(`kb-disclosures.ts`'s module-level comment, `isBlank()`'s own comment in `bin.ts`); summarized here, not
+repeated a third time: (1) `isBlank()`'s curated blank-glyph list closes known, verified vectors, not an
+exhaustive defense — the identical gap still exists, un-fixed, in two pre-existing, out-of-Surface copies
+(`@forge/engine/gates/waiver.ts`, `packages/cli/src/commands/spec/gate-rules.ts`); `collection-lock.ts`'s
+own extraction earlier in this piece is the named model for how a future piece should close all remaining
+copies at once, not duplicate a third/fourth time. (2) A synthesized stopped-critic-loop row's entire
+evidentiary backing lives under `.forge/state/`, routinely operator-deleted and never version-controlled
+— a plain `rm -rf .forge/state` silently erases it with zero trace, in real, named tension with "a
+disclosure is never deleted" for this one kind; no durable-promotion mechanism was built, by deliberate
+scope decision. (3) A stopped-critic-loop row has no resolution tracking at all and stays open
+indefinitely once found — correlating a later run's own success back to an earlier run's own failure has
+no shared key this project maintains today; honest ever-growing visibility, not a false claim of automatic
+resolution. (4) `appendExemption`'s own corrupt-row write-path behavior (an untyped `RangeError` on a
+whole-document schema failure) is pre-existing, unchanged M15 P6 behavior, genuinely asymmetric with
+`appendDisclosure`'s own typed `KB-018 'corrupt'` refusal — not a regression, but a visible inconsistency
+between two modules now sharing the identical `collection-lock.ts`, left as-is rather than touching
+already-shipped P6 code beyond the one load-bearing fix (round 2's `loadExemptions` read-path change) this
+piece's own Mandate actually required. (5) `synthesizeCriticLoopEntries`'s own row id
+(`RUN-113:<runId>:<stepId>`) can collide across repeated `forge resume` attempts against the same
+genuinely-still-exhausted step, since `resumeSwarmReviewStep` re-emits a fresh `RUN-113` event each time
+with no dedup; low impact since these rows are never independently resolved by id, not fixed. (6) Several
+test-coverage gaps for already-fixed, already-correct behavior were found and left as opportunistic
+follow-up rather than forcing a fourth gauntlet round over them (per a round-3 critic's own explicit
+recommendation): `exemptionCorruptCount`/`exemptionsCorrupt` has no end-to-end test through the merged
+ledger/CLI output (unlike its sibling `disclosureCorruptCount`, which does); the disclosures round-trip
+test never asserts the `sources` field survives intact; `KB-018 'id-exhausted'` has no test for
+`Disclosure` (the structurally identical `GATE-515 id-exhausted` case does for `Exemption`).
+
+**Verification.** `pnpm typecheck` (21/21), the REAL `pnpm lint` (`eslint . --max-warnings 0 &&
+prettier --check .`), `pnpm boundaries`, and `node scripts/assert-schema-drift.mjs` all clean on the final
+state. The full, final test list — `packages/schemas/test/artifacts/{disclosure,collection-file}.test.ts`,
+`packages/cli/test/commands/{kb-disclosures,kb,bin-kb-disclose}.test.ts`,
+`packages/cli/test/commands/doctor/disclosures.test.ts`,
+`packages/cli/test/commands/loop/test/{exemptions,bin-exempt}.test.ts`, `test/templates.test.ts`,
+`packages/schemas/test/registry/artifact-types.test.ts`, `packages/core/test/errors.test.ts` — 760/760
+pass, including real 20-process and 10-process cross-process concurrency stress tests for both
+`Disclosure` and `Exemption`, re-run clean multiple times across multiple rounds. A broader collateral
+sweep across every touched package's own full test directory (`packages/cli packages/schemas packages/kb`,
+3868 tests) found zero failures. A dedicated investigation (orchestrator, before round 1) confirmed the
+20-way concurrency lock's own intermittent-loss characteristic under genuinely heavy system load is
+identical and symmetric between `Exemption` and `Disclosure` (both built on the same shared
+`withCollectionLock`) — an inherited, already-disclosed M15 P6 reliability ceiling, not a new defect, via
+~36 combined stress-test rounds comparing both mechanisms side by side under artificial CPU-hog
+contention. Every fix across all three rounds individually mutation-verified against its own real defect
+(revert, confirm the exact predicted failure reproduces, restore, reconfirm green) — including, on the
+final round, a defect found and fixed by the orchestrator directly after the critic round had already
+closed, since the finding was concrete, cheap, and squarely within the piece's own stated honesty Mandate.
+
+The orchestrator's own subsequent, complete, untargeted full-suite runs (`node scripts/run-tests.mjs run`,
+no path filter — the identical discipline that caught M15 P7 defects during M15 P8, and a stale
+`build-stage.workflow.yaml` worked-example during M15 P9) took TWO full passes, not one, to reach clean —
+each pass's own fixes surfaced the NEXT hard-coded count a `grep` for the obvious candidates had not yet
+reached. Pass one found three stale registry-size assertions: `packages/core/test/artifacts/
+validate.test.ts` (expected 7 non-document "collection" template stubs, now 8 with `Disclosure.md`
+added), `packages/core/test/artifacts/document.test.ts` (expected 25 `@forge/templates` stub files total,
+now 26), and `test/frameworks.test.ts` (a "sanity check on the shared index module" independently
+asserting `TEMPLATE_INDEX`'s own size, also still 25) — fixed, then a broad, explicit repo-wide `grep` for
+every other `toBe`/`toHaveLength` call near 7/25/26 across every `*.ts` file (not just `packages/*/test`
+and root `test/`) to try to close the rest in one pass; several more candidates were checked and correctly
+RULED OUT as coincidental (technique-file counts, an unrelated 26-prompt-key assertion from an earlier
+milestone's own batch, several ordinary numeric test values). Pass two's own full run still found two
+more, both missed by that same broad grep because they live under `scripts/` and `modules/` respectively,
+directories the grep's own glob never reached: `scripts/schema-drift.test.ts` (hard-coded `schemas.size`
+expectation, 26 → 27) and — the one genuine CONTENT gap, not a test-count fix — `modules/fm-core/
+module.yaml`'s own `provides.artifactTypes` list, which had never been updated to include `Disclosure`
+at all (caught by `test/fm-core-module.test.ts`'s own dynamic comparison against the real
+`TEMPLATE_INDEX`, which correctly needed no number update itself). A third full run after both fixes
+confirmed clean (the only other failure across all three full runs was the identical, already-disclosed
+`Exemption` 20-way concurrency flake and one genuinely unrelated engine test under equally heavy load,
+both reproduced passing cleanly in isolation). The broader lesson, now confirmed a third time this
+milestone: a new registered artifact type needs every test — and every piece of DATA, not just tests —
+asserting or listing the total/complete set of templates/registry entries/collection files/artifact types
+re-checked, not just the registry's own direct test; these counts and lists get hard-coded or duplicated
+independently, by convention, across files in multiple different top-level directories, and neither a
+piece's own prescribed floor, a package-scoped collateral sweep, nor even one single explicit repo-wide
+grep for the obvious numeric candidates is guaranteed to reach every one of them in a single pass.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q289`.
