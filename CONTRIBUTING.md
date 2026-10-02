@@ -89,7 +89,11 @@ These aren't style preferences — they're checked by the floor above, or by ded
   gap).
 - **Tests assert behavior against the spec, not the implementation.** A test should still make sense
   if the implementation were deleted and rewritten differently. Failure paths (aborts, timeouts,
-  malformed input, crashes) are tested, not just the happy path.
+  malformed input, crashes) are tested, not just the happy path. This isn't just a review convention
+  any more: FORGE can now check it mechanically, on any project it builds, via `forge test binding`
+  (revert a story's own implementation, require its named tests to fail) — the discipline this
+  codebase's own history was built under is the same discipline it now ships (see
+  [`docs/method-guide.md`](docs/method-guide.md#evidence-how-forge-proves-a-story-is-actually-done)).
 - **No `TODO`, `FIXME`, stub return, or mocked business logic outside test files.** A genuine,
   disclosed gap is recorded in `SPEC-QUESTIONS.md` and surfaced honestly (a real, named error with a
   remedy — see `USR-003`'s many uses across `packages/cli/src/commands/` for the pattern), not a

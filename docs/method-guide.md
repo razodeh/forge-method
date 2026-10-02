@@ -153,6 +153,46 @@ Every agent session's token usage and (adapter-reported) cost is recorded to a p
 budget; `forge audit` reports gate decisions, tool-ceiling escalations and policy violations across
 the project's whole history. Budgets can abort a run rather than silently overspend.
 
+## Evidence: how FORGE proves a story is actually done
+
+A gate that only checks "does a test exist" can be satisfied by a test that asserts nothing real.
+FORGE closes that gap with a chain of real, checked evidence, each link built to be honestly
+incomplete about what the one before it couldn't guarantee:
+
+- **Binding.** A test is **binding** when it genuinely fails if its own implementation is reverted —
+  the behavioral-binding line (`F-TEST-7`/`F-TEST-8`/`F-TEST-5`) is no longer just a described
+  convention, it's mechanically checked. `forge test binding --story <id>` reverts a story's
+  implementation files (never its test files) inside an isolated scratch worktree, re-runs the named
+  tests, and reports which ones kept passing anyway — those are non-binding, named individually,
+  never silently dropped. `test:binding` is wired onto `G-Verify` as a real deterministic check, and
+  `forge story verify` runs the identical check natively as part of its own `verify` phase. See
+  [`getting-started.md`'s walkthrough](getting-started.md#8-catch-a-non-binding-test) for a real,
+  run-for-real example of a non-binding test being caught and fixed.
+- **Exemptions.** Some tests genuinely can't bind (a thin wrapper around a third-party API, say).
+  `forge test exempt --reason <text> --owner <role> --expires <date>` declares one, for one named
+  test, with a real reason, a real owner, and a real expiry — never a silent pass. A stale (expired,
+  or naming a test that no longer exists) exemption fails the check it was meant to quiet, loudly.
+- **EvidenceBundle.** `forge story evidence` assembles a story's own real evidence — binding
+  results, coverage, review verdicts — into one committed artifact a gate can require. A gate's
+  `evidence:` declaration doesn't just check the artifact exists: it must resolve to a real,
+  committed, schema-valid, non-superseded artifact, or `forge gate approve`/`waive` refuses
+  (`RUN-112`).
+- **The bounded critic loop.** A `swarm-review` workflow step whose verdict comes back `blocked`
+  doesn't fail immediately, and doesn't loop forever — it runs an automatic `review → fix → review`
+  cycle, a real round cap (3 by default, `execution.criticRounds`), stopping and disclosing
+  (`RUN-113`) rather than either extreme if the cap is reached without a clean verdict.
+- **Disclosure.** `forge kb disclose`/`forge kb disclosures` is the project's own honesty ledger —
+  real, authored trade-offs and known gaps, merged automatically with two kinds no one has to
+  remember to record by hand: an in-force exemption, and a critic loop that hit its own round cap.
+  `forge doctor` surfaces the open count.
+- **Measurement.** `forge report [--since <when>] [--json]` projects all of the above into one real
+  scorecard: binding pass rate per story, critic rounds consumed, gate failures before first pass,
+  exemptions opened and expired, real cost per delivered story, and how often a decision artifact
+  was preceded by a real Knowledge Body read. `forge report --baseline` captures a single, committed
+  reference snapshot (with the real git commit it was taken at) so a later milestone can ask "did
+  this actually help" against a real number instead of memory — the scorecard doesn't judge whether
+  a number is good; that's deliberately left to whoever reads it.
+
 ## Where the method stops and customization begins
 
 FORGE draws a hard line: **the user owns flavour, FORGE owns rigour.** Flavour is who the agents

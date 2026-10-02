@@ -109,9 +109,10 @@ For the normative specification the codebase is built against, start with
 
 FORGE is pre-release but functional: everything shown above — init, spec authoring, dry-run
 planning, and, dropping `--dry-run`, real agent runs — already works end-to-end against the real
-CLI. What's not true yet: it hasn't been published to npm, and cross-platform CI
-(Linux/macOS/Windows) is still being hardened. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
-detailed, warts-and-all build history.
+CLI, including the evidence discipline that checks a test genuinely binds to real behavior before a
+story counts as done (`forge test binding`, `forge report`). What's not true yet: it hasn't been
+published to npm, and cross-platform CI (Linux/macOS/Windows) is still being hardened. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for the detailed, warts-and-all build history.
 
 ## Contributing
 

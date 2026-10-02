@@ -82,7 +82,9 @@ regenerates the resolved set instead of failing.
 
 Other useful `init` flags: `--modules web,service` (comma-separated module ids),
 `--preset startup-lean`, `--platform claude-code` (explicit adapter selection instead of
-auto-detected), `--git-init` (also run `git init`).
+auto-detected). `git init` runs by default whenever the directory isn't already a git repo —
+`--git-init` is currently a no-op (there's no flag yet to opt _out_), confirmed directly against the
+real `runInit`/`ensureGit` source rather than assumed from the flag's own name.
 
 ## 3. Look around
 
@@ -190,11 +192,24 @@ which is the correct, by-design behaviour, not an error in this guide.
 ```bash
 forge cost                 # per-run/per-agent/per-model spend and budget status
 forge audit                # gate decisions, tool-ceiling escalations, policy violations
+forge report               # the evidence scorecard -- see section 8 below. Not `forge test report`,
+                           # a different, still-unwired command (section 7).
 forge config get project.name
 forge config set execution.concurrency 4
 forge export markdown-bundle   # bundle the KB + specs as one Markdown document
 forge export html              # ditto, as one HTML document
 forge adr new "Use Postgres"   # docs/forge/kb/decisions/ADR-0001-use-postgres.md
+```
+
+On a fresh project, `forge report` prints real, explicit zeroes — nothing has run yet:
+
+```
+forge report: binding 0/0 (0%)
+  critic loop: 0 round(s) consumed, 0 stop-and-disclose
+  gates: 0/0 clean first pass, 0 rejection(s) total
+  exemptions: 0 opened, 0 expired
+  cost: $0.00 across 0 stor(y/ies)
+  kb reads: 0/0 artifacts preceded by a real KB read (0%)
 ```
 
 ## 7. What's not wired into the CLI yet
@@ -220,6 +235,199 @@ line (each is a disclosed, deliberate scope boundary, not an oversight — see
 If a command above is what you were reaching for, it exists as tested library code but has no CLI
 wiring — check `GAUNTLET-LOG.md` and `SPEC-QUESTIONS.md` for its current status rather than assuming
 it's simply missing.
+
+## 8. Catch a non-binding test
+
+Everything above is deterministic bookkeeping; this section is the one real behavioral guarantee
+FORGE adds on top of it — a test that doesn't actually test anything gets caught, not silently
+trusted. It needs a story with real implementation and test files, so (continuing in this same
+project) write one by hand rather than through a live agent session — `forge test binding` doesn't
+need one; it's a plain, deterministic check against committed files:
+
+```bash
+forge spec new Story "Add two numbers"
+# forge spec new Story: wrote docs/forge/specs/stories/STORY-001-add-two-numbers.md.
+```
+
+Fill in the generated stub's placeholder fields (`epic`, `capability`, `owner_role`,
+`files_expected`, `dod_profile`) — a real project gets these from an already-planned stage; here,
+write `owner_role: backend`, `files_expected: [src/add.js, src/add.test.js]`,
+`dod_profile: default`. `forge test binding` itself (what this walkthrough runs below) doesn't read
+`dod_profile` at all — it's `forge story verify`'s own `verify` phase that does, so a real project
+also needs a Definition-of-Done profile naming `test:binding` for that command, not this one
+(`docs/forge/kb/engineering/dod-profiles.yaml`):
+
+```yaml
+profiles:
+  default:
+    ready: []
+    verify:
+      - { check: test:binding }
+    done: []
+```
+
+`test:binding`'s own result parser expects vitest's `--reporter=json` on stdout — vitest 5's own
+default JSON reporter writes to a file instead, which breaks the parse
+(`vitest produced unparseable output`). Install vitest 4 (`pnpm add -D vitest@^4`), and point
+`execution.testCommands.unit` at an **absolute** path, since the check runs inside an isolated
+scratch worktree with no installed `node_modules` of its own (`npx` is refused outright — it fetches
+a package by name, which the check's own no-network-no-install guard exists specifically to
+prevent):
+
+```bash
+forge config set execution.testCommands.unit "$(pwd)/node_modules/.bin/vitest run"
+```
+
+`forge test binding` refuses outright on a dirty working tree (`VCS-010` — its scratch worktree is
+built from `HEAD`, so an uncommitted edit would silently verdict on stale code). Everything above
+this point — `forge init`'s own scaffold, the new story file, `dod-profiles.yaml`, the
+`execution.testCommands.unit` edit to `.forge/config.yaml`, `pnpm add`'s `package.json`/lockfile —
+is still uncommitted. Commit it now, as its own commit, separate from the implementation you're
+about to write below (two commits, not one — `forge test binding` reverts the single commit
+immediately before the one it checks, so keeping the scaffold and the implementation apart is what
+makes that revert land exactly on `src/`, not on everything else too). `pnpm add` doesn't gitignore
+`node_modules/` for you, so exclude it explicitly first — committing it would otherwise silently
+work, just with several thousand needless files in the repo's history:
+
+```bash
+echo 'node_modules/' >> .gitignore
+git add -A && git commit -m "scaffold: init, story, DoD profile, test runner config"
+```
+
+Now write the implementation and a test that _looks_ like it covers it but doesn't call it at all:
+
+```js
+// src/add.js
+export function add(a, b) {
+  return a + b;
+}
+```
+
+```js
+// src/add.test.js
+import { describe, it, expect } from 'vitest';
+
+describe('add', () => {
+  it('returns a number', () => {
+    expect(typeof 2).toBe('number');
+  });
+});
+```
+
+Commit both together, then run the check:
+
+```bash
+git add src/ && git commit -m "implement add() with a test"
+forge test binding --story STORY-001
+```
+
+```
+forge test binding --story STORY-001: bound=0 nonBinding=1 restoreVerified=true evidence=MUT-001.
+non-binding: add returns a number
+```
+
+Exit code 1. The test passed before the revert, and kept passing after — it never calls `add` at
+all, so it can't tell a correct implementation from a missing one. `evidence=MUT-001` names a real
+`MutationEvidence` artifact the check just wrote (`docs/forge/reports/mutation/`, not yet committed
+— that happens below): the test by name, the real commit range reverted, `restoreVerified: true`
+(the worktree came back clean). This is also what `test:binding` reports to `G-Verify`, and what
+`forge story verify` reports natively.
+
+**One real caveat to know before fixing this**: `baseRevision` (what the implementation is reverted
+back to) is a disclosed, fixed `HEAD~1` — not "whatever commit introduced this story's files." If
+anything else gets committed between implementing a story and checking it, `HEAD~1` no longer
+reverts the implementation at all, and the check becomes a no-op that always reports non-binding
+regardless of how good the test actually is (this guide hit exactly that confusion while writing
+this section — committing the evidence file as its own commit before fixing the test moved `HEAD~1`
+onto a commit that already had the real implementation, making the very next check's own "revert"
+silently do nothing — and is disclosing it rather than hiding it). The practical fix: fix the test
+and stage the evidence file together, then amend them both into the SAME commit that introduced
+`src/` — never a separate commit on top of it — so that commit stays immediately `HEAD~1` away from
+the next check:
+
+```js
+// src/add.test.js
+import { describe, it, expect } from 'vitest';
+import { add } from './add.js';
+
+describe('add', () => {
+  it('returns the sum of its two arguments', () => {
+    expect(add(2, 3)).toBe(5);
+  });
+});
+```
+
+```bash
+git add src/add.test.js docs/forge/reports/mutation/ && git commit --amend --no-edit
+forge test binding --story STORY-001
+```
+
+```
+forge test binding --story STORY-001: bound=1 nonBinding=0 restoreVerified=true evidence=MUT-002.
+```
+
+Exit code 0. Reverting `add.js` now genuinely removes the function the fixed test imports and calls,
+so the test fails under the revert exactly as it should, and passes again once the worktree is
+restored. `evidence=MUT-002`, not `MUT-001` again: amending a commit replaces its content, not its
+own evidence file's own already-assigned id — ids are sequential per project, never reused, even for
+a commit that got amended.
+
+**The other path**, had the test genuinely been unable to bind (a thin wrapper around a third-party
+SDK, say, not this one — fixing a test that's merely weak, like above, is always the right call):
+declare an exemption instead of leaving it to fail the gate forever. Tried against the ORIGINAL,
+still-non-binding test (`forge test exempt` refuses outright to exempt a test that already binds —
+"you may not pre-emptively exempt a test that already binds" — so this only works before the fix
+above, not after):
+
+```bash
+forge test exempt STORY-001 "add returns a number" --reason "placeholder assertion, no real coverage yet" --owner backend --expires 2026-12-31
+```
+
+```
+forge test exempt STORY-001 add returns a number: recorded EXEMPT-001 (expires 2026-12-31).
+```
+
+An exemption needs a reason, an owner and a real expiry — a stale one (expired, or naming a test
+that no longer exists) fails `test:binding` loudly, naming itself, rather than silently expiring
+into a quiet pass. Re-running `forge test binding --story STORY-001` now exits 0
+(`bound=0 nonBinding=0` — the one non-binding test is covered, not hidden), and the exemption shows
+up automatically, with no separate step to remember it:
+
+```bash
+forge kb disclosures
+```
+
+```
+open (synthesized) exemption EXEMPT-001 (backend): STORY-001: add returns a number: placeholder assertion, no real coverage yet
+```
+
+Either path — fix it (this guide's own project, above) or exempt it, honestly — is meant to show up
+in the project's own scorecard. Run it now and it doesn't, and that's itself worth disclosing
+honestly rather than quietly editing around:
+
+```bash
+forge report
+```
+
+```
+forge report: binding 0/0 (0%)
+  critic loop: 0 round(s) consumed, 0 stop-and-disclose
+  gates: 0/0 clean first pass, 0 rejection(s) total
+  exemptions: 0 opened, 0 expired
+  cost: $0.00 across 0 stor(y/ies)
+  kb reads: 0/0 artifacts preceded by a real KB read (0%)
+```
+
+Still all zeroes, confirmed by actually re-running it, not assumed. `forge report`'s own binding and
+exemption counts both come from real telemetry (`specs/22` M15 P11) emitted only when a real
+`FORGE_RUN_ID` is set in the environment — a real `forge run`, or a gate check running as a workflow
+step. A bare `forge test binding`/`forge test exempt` invoked by hand at a shell, exactly as this
+guide just did, sets none, so neither command leaves anything for `forge report` to project. The
+disclosures listing above still shows the exemption, because it reads `reports/exemptions.md`
+directly — a durable, committed file, not an event log entry — so it has no such gap. This is a
+real, disclosed scope boundary of `forge report`, not a bug in this guide's own steps: see
+`docs/method-guide.md`'s own Measurement section, and `SPEC-QUESTIONS.md` Q291 for the full
+reasoning.
 
 ## Where to go next
 
