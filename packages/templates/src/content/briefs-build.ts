@@ -29,6 +29,7 @@
  *   - prepare-store-submission
  *   - draft-contract
  *   - write-contract-tests
+ *   - fix-review-findings
  *
  * @see specs/22 M13
  * @see PLAN-M13.md P2b
@@ -56,4 +57,9 @@ export const BUILD_BRIEFS: Readonly<Record<string, string>> = {
   'prepare-store-submission': 'templates/briefs/prepare-store-submission.md',
   'draft-contract': 'templates/briefs/draft-contract.md',
   'write-contract-tests': 'templates/briefs/write-contract-tests.md',
+  // `specs/22` M15 P9: the bounded critic loop's own automatic fix session, loaded by `runFixRound`
+  // (`@forge/engine/interaction/swarm-review-step.ts`) and combined with the current round's own
+  // findings as plain `taskText`. Found missing from this index by a round-3 gauntlet critic, which
+  // meant the fix round could never actually run in any real, shipped project (RUN-079 at load time).
+  'fix-review-findings': 'templates/briefs/fix-review-findings.md',
 };

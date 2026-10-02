@@ -96,6 +96,26 @@ export interface AgentStep extends WorkflowStepBase {
    * YAML. `17` §17.2's own `adopt`/`migrate` steps that read an existing, FORGE-did-not-write codebase
    * are the two shipped workflows that declare this today (`20` §20.5 point 6). */
   readonly taint?: 'external' | undefined;
+  /** `specs/22` M15 P9: who runs the automatic fix session a `swarm-review` step's own bounded critic
+   * loop dispatches on a `blocked` verdict (`execution.criticRounds`) — a DIFFERENT agent from `agent`
+   * above, enforced structurally, not by convention alone (`10` §10.6's own reviewer/implementer
+   * separation, `CFG-501`'s own compile-time half of F-REVIEW-2: a reviewer may not approve, and here
+   * must not even be asked to fix, a change it authored) -- `plan/compile.ts`'s own
+   * `checkFixAgentSeparation` refuses a workflow whose RESOLVED `fixAgent` equals its RESOLVED `agent` at
+   * compile time (layer one of this codebase's own "computed once, enforced twice" shape;
+   * `runSwarmReviewStep`'s own runtime guard, `RUN-116`, is layer two, for a hand-built `StepNode` that
+   * bypasses the compiler). `agent`-kind, `mode: 'swarm-review'` only: no other mode or step kind has a
+   * fix round to run.
+   *
+   * Absent, with `execution.criticRounds` configured (`> 0`): NOT the same "zero rounds, `RUN-108` on the
+   * first blocked verdict" fallback `ExecuteStepContext.criticRounds`'s own doc comment describes for a
+   * step with no looping configured at all -- confirmed directly, by reproduction, that this is instead
+   * `RUN-115` ("this swarm-review step has no fixAgent, so a blocked verdict cannot be auto-fixed"): the
+   * loop IS engaged (round 0's own triggering review already ran), it just has nothing to dispatch a fix
+   * session as. `RUN-108` is reserved for the genuinely different case: `execution.criticRounds` itself
+   * absent or `0`, so the loop was never engaged at all. An earlier version of this comment conflated the
+   * two, found and corrected by a round-2 gauntlet critic. */
+  readonly fixAgent?: string | undefined;
 }
 
 export interface CommandStep extends WorkflowStepBase {

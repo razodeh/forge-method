@@ -42,11 +42,13 @@ import { ForgeError } from '@forge/core/errors';
 import type { ExpressionContext } from '@forge/engine/expr';
 import {
   buildStageRunContext,
+  compilePlan,
   compileRunPlan,
   orderedStageStories,
   resolveWorkflowVars,
   SEPARATED_ROLES,
   workflowReadsStageCollections,
+  type StepNode,
 } from '@forge/engine/plan';
 import { parseWorkflow, type Workflow } from '@forge/engine/workflow';
 
@@ -392,7 +394,20 @@ function alias(
  * printed issues) reports it, as before, since a broken workflow is not a missing input. A workflow that does
  * compile is checked for `10` §10.6's separations: a story owned by `sdet` or `reviewer` would run its tests, or
  * its review, and its implementation under one role (`RUN-091`; the stage plan says the same for `build-stage`), and
- * that the owner is an implementation role at all (`RUN-097`, `PLAN-M13.md` P36). */
+ * that the owner is an implementation role at all (`RUN-097`, `PLAN-M13.md` P36).
+ *
+ * `specs/22` M15 P9: a `fix-agent-equals-reviewer` compile failure (`checkFixAgentSeparation`, run as its
+ * own stage inside `compileRunPlan`, AFTER `compilePlan` itself already succeeded and handed back a full
+ * node list -- `compile.ts`'s own doc comment has the full reasoning) is special-cased here the identical
+ * way `compileStageRunPlan` (`@forge/engine/plan/stage-plan.ts`) already does for `build-stage`'s own
+ * fanout case: nodes are re-derived via a bare `compilePlan` call so THIS function's own, more specific
+ * `RUN-091`/`RUN-097` checks still get a chance to name the real root cause (an owner role that IS the
+ * reviewer, which is exactly what makes `fixAgent: '{{ownerRole}}'` resolve to the same agent as the
+ * reviewer in the first place) instead of leaving only the generic compile-failure message visible. Found
+ * by a round-3 gauntlet critic's own broader collateral sweep: the stage-plan fix closed this exact masking
+ * shape for `build-stage.workflow.yaml`'s own fanout-over-stories path, but `implement-story.workflow.yaml`
+ * compiles through THIS standalone, non-stage path instead, which nobody had re-checked for the identical
+ * bug until a real CLI integration test (`packages/cli/test/bin-owner-role.test.ts`) caught it. */
 function assertPlannable(
   workflow: Workflow,
   workflowId: string,
@@ -402,34 +417,43 @@ function assertPlannable(
   externalKbIds: ReadonlySet<string> | undefined,
 ): void {
   const compiled = compileRunPlan(workflow, context, { taint: { externalKbIds } });
+  let nodes: readonly StepNode[] | undefined;
+  if (compiled.success) {
+    nodes = compiled.nodes;
+  } else if (compiled.issues.some((issue) => issue.code === 'fix-agent-equals-reviewer')) {
+    const bare = compilePlan(workflow, context, { taint: { externalKbIds } });
+    if (bare.success) nodes = bare.nodes;
+  }
+  if (nodes !== undefined) {
+    const owner = context['ownerRole'];
+    if (typeof owner === 'string') {
+      const role = owner.trim().toLowerCase();
+      if (SEPARATED_ROLES.has(role)) {
+        const running = nodes.filter(
+          (node) => node.kind === 'agent' && String(node.agent).trim().toLowerCase() === role,
+        );
+        if (running.length >= 2) {
+          throw new ForgeError('RUN-091', {
+            workflowId,
+            role: owner,
+            steps: running.map((node) => node.id).join(', '),
+          });
+        }
+      }
+      // Every owner must be an implementation role (`PLAN-M13.md` P36): the steps that run as it write the story's source.
+      const problem = ownerRoleProblem(owner, implementationRoles);
+      if (problem !== undefined) {
+        throw new ForgeError('RUN-097', {
+          storyId: oneLine(typeof storyId === 'string' ? storyId : workflowId),
+          detail: oneLine(problem),
+        });
+      }
+    }
+  }
   if (!compiled.success) {
     const unsupplied = referencedRunInputs(workflow).filter(
       (name) => !Object.hasOwn(context, name),
     );
     if (unsupplied.length > 0) refuseMissing(workflowId, unsupplied);
-    return;
-  }
-  const owner = context['ownerRole'];
-  if (typeof owner !== 'string') return;
-  const role = owner.trim().toLowerCase();
-  if (SEPARATED_ROLES.has(role)) {
-    const running = compiled.nodes.filter(
-      (node) => node.kind === 'agent' && String(node.agent).trim().toLowerCase() === role,
-    );
-    if (running.length >= 2) {
-      throw new ForgeError('RUN-091', {
-        workflowId,
-        role: owner,
-        steps: running.map((node) => node.id).join(', '),
-      });
-    }
-  }
-  // Every owner must be an implementation role (`PLAN-M13.md` P36): the steps that run as it write the story's source.
-  const problem = ownerRoleProblem(owner, implementationRoles);
-  if (problem !== undefined) {
-    throw new ForgeError('RUN-097', {
-      storyId: oneLine(typeof storyId === 'string' ? storyId : workflowId),
-      detail: oneLine(problem),
-    });
   }
 }

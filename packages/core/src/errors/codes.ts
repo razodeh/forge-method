@@ -685,6 +685,80 @@ export const ERROR_CODES = {
       'Commit a real, non-superseded artifact of the declared type (and, for a Type(id) reference, ' +
       'that exact id) before approving or waiving this gate.',
   },
+  // `specs/22` M15 P9: the build process's own loop -- `review` -> (findings) -> `fix` -> `review`,
+  // bounded by `execution.criticRounds` (default 3, `packages/schemas/src/config/defaults.ts`). A
+  // `blocked` verdict the loop will not (or cannot) retry is NOT retried automatically by `06` §6.8's own
+  // retry machinery either (`classifyFailure`'s own `case 'output':` maps this `policy`, the identical
+  // never-auto-retried class `RUN-108` already is, for the identical reason: the report is fine and
+  // valid, the review genuinely did not converge) -- this is a DISTINCT code from `RUN-108`, not a reuse
+  // of it, because `RUN-108` means `execution.criticRounds` itself is absent/0 for this project -- the
+  // loop was never CONFIGURED to run at all (`swarm-review-step.ts`'s own doc comment has the full
+  // reasoning), while `RUN-113` means it WAS configured and engaged but could not safely continue --
+  // either because its configured round cap ran out (a real fix was attempted at least once and the
+  // verdict still did not converge) OR because its configured budget ran out, which can happen at `rounds:
+  // 0` if round 0's own perspectives alone already exhaust it before a first fix is ever dispatched (an
+  // earlier version of this comment and of this code's own message overclaimed "a fix was already
+  // attempted" unconditionally, which a round-1 gauntlet critic found is false for that zero-rounds case).
+  // `rounds` also lets `resumeSwarmReviewStep` (`swarm-review-step.ts`) tell this code from `RUN-108` after
+  // a crash, by reading the committed report's own `rounds` front-matter field back (`review-report.ts`'s
+  // `parseReviewRounds`) -- before that field existed, resume had no way to make this distinction at all
+  // and always (wrongly) applied `RUN-108`, found independently by two round-1 gauntlet critics.
+  'RUN-113': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { stepId: string; file: string; rounds: number; count: number }) =>
+      d.rounds > 0
+        ? `Step ${show(d.stepId)}'s review, ${show(d.file)}, is still blocked after ${show(d.rounds)} round(s) of fix-and-re-review: ${show(d.count)} blocking finding(s) survived.`
+        : `Step ${show(d.stepId)}'s review, ${show(d.file)}, is still blocked: its own budget (execution.criticRounds's configured cap) was already exhausted before a first fix-and-re-review round could run, and ${show(d.count)} blocking finding(s) survived.`,
+    remedy:
+      'Fix what the committed report still names as blocking by hand, then run the workflow again -- ' +
+      'the automatic fix-and-re-review loop already engaged and could not safely continue (either its ' +
+      'configured round cap or its configured budget was exhausted); `forge resume` re-applies this same ' +
+      'rule from the already-committed report with no new sessions.',
+  },
+  // `specs/22` M15 P9: a `swarm-review` step declares no `fixAgent` at all, but this project's own
+  // `execution.criticRounds` is configured `> 0` (the default is 3, so this fires for ANY such step
+  // unless a project explicitly opts out with `criticRounds: 0`) -- the bounded critic loop has somewhere
+  // to loop TO on a `blocked` verdict (a round cap it could spend) but nothing to dispatch AS the fix,
+  // so it cannot do the one thing `execution.criticRounds` configures it to do. A genuinely distinct
+  // shape from `RUN-039` (reused for this by an earlier version of this code, found and corrected by a
+  // round-1 gauntlet critic): `RUN-039`'s own canned message/remedy ("Step X has kind Y, which the engine
+  // does not run" / "remove the subworkflow step") is about an unsupported STEP KIND entirely, and reads
+  // as actively misleading for a perfectly valid `agent`/`swarm-review` step that is merely missing one
+  // optional field -- `remedy` is a plain string on this codebase's own error contract (never a function
+  // of the detail bag, `forge-error.ts`), so RUN-039's own fixed remedy text could not be made accurate
+  // for this case without becoming wrong for every one of its other, real call sites instead. This
+  // regressed the real, pre-existing, shipped `build-stage.workflow.yaml` (its own `review` step declared
+  // no `fixAgent` before this piece ever existed) on every real run the moment `criticRounds` defaulted to
+  // 3 -- fixed in that workflow directly (it now declares `fixAgent` too), but this code remains the
+  // correct, honest refusal for any OTHER workflow (a project's own, a future one) that hits the same gap.
+  'RUN-115': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string }) =>
+      `Step ${show(d.stepId)} is a swarm-review step with no declared "fixAgent", but this project's own execution.criticRounds is configured to automatically fix and re-review a blocked verdict.`,
+    remedy:
+      'Set "fixAgent" on this step to the agent that should fix a blocked review (never the reviewer ' +
+      'itself), or set "execution.criticRounds: 0" to disable automatic fix-and-re-review looping for ' +
+      'this project.',
+  },
+  // `specs/22` M15 P9, `10` §10.6 / `CFG-501`'s own separation-of-duties guarantee: layer TWO of this
+  // codebase's own established "computed once, enforced twice" defense-in-depth shape (`GATE-511`/
+  // `RUN-112`'s own precedent) for the identical self-fix refusal `plan/compile.ts`'s own
+  // `fix-agent-equals-reviewer` compile issue already enforces for a real, compiled workflow -- this is
+  // `runSwarmReviewStep`'s (`@forge/engine/interaction`) own direct runtime guard, reached by any caller
+  // that builds a `StepNode` by hand and bypasses the compiler entirely (a test fixture, a future direct
+  // API consumer), so the reviewer/fix separation is never a property only the ONE path that happens to
+  // run `compilePlan` first can rely on.
+  'RUN-116': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { stepId: string; agentId: string }) =>
+      `Step ${show(d.stepId)}'s own "fixAgent" (${show(d.agentId)}) is the same agent as its "agent" -- a reviewer may not fix the review it just wrote.`,
+    remedy:
+      'Set "fixAgent" to a different agent than "agent" on this step, such as the story\'s own ' +
+      'implementer role, before running this step.',
+  },
   // `06` §6.2's own rule 5 (`PLAN-M5.md` P11's own `detectCycles`, operating on a compiled `StepNode[]`).
   // A lower-level utility, unlike `@forge/engine/plan`'s own `compilePlan`/`expandFanout` (which never
   // throw): `detectCycles` throws this for the one input shape no realistic compiled plan gets remotely

@@ -33,7 +33,7 @@ import { ForgeError } from '@forge/core/errors';
 
 import type { ExpressionContext } from '../expr/index.ts';
 import type { Workflow } from '../workflow/index.ts';
-import { compilePlan, type CompilePlanOptions } from './compile.ts';
+import { checkFixAgentSeparation, compilePlan, type CompilePlanOptions } from './compile.ts';
 import { applyDeclaredStoryOrder } from './story-order.ts';
 import { computeCriticalPath } from './critical-path.ts';
 import { detectCycles, renderCycleAsMermaid } from './cycles.ts';
@@ -60,6 +60,17 @@ export function compileRunPlan(
 ): RunPlanResult {
   const compiled = compilePlan(workflow, context, options);
   if (!compiled.success) return compiled;
+
+  // `specs/22` M15 P9: its own pipeline stage, not inside `compilePlan`/`buildLeafNode` -- see
+  // `checkFixAgentSeparation`'s own doc comment (`compile.ts`) for why: `compilePlan` itself must still
+  // succeed and hand back a full node list even when this fires, so a caller like `compileStageRunPlan`
+  // can still run its own, more specific `separationFindings` check against those same nodes. Run first,
+  // before the dependency/overlap/cycle stages below -- the identical "stop at the first stage that
+  // fails" reasoning this function's own doc comment already states, so a self-fix issue is never buried
+  // under cascading cycle-detection noise from a graph this problem already makes meaningless to analyse
+  // further.
+  const fixAgentIssues = checkFixAgentSeparation(compiled.nodes);
+  if (fixAgentIssues.length > 0) return { success: false, issues: fixAgentIssues };
 
   // `stage.stories[*].depends_on` (`09` §9.3): a story starts after the ones it depends on end, whether or not
   // their file claims overlap (`PLAN-M13.md` P21). A no-op for a context without stage stories.

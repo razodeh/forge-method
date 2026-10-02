@@ -177,6 +177,11 @@ export interface StepNode {
   readonly interactionMode?: string | undefined;
   /** `'agent'` only, present only when non-empty: the review perspectives of a `swarm-review` step. */
   readonly perspectives?: readonly string[] | undefined;
+  /** `specs/22` M15 P9: `AgentStep.fixAgent`'s own doc comment (`workflow/types.ts`) has the full
+   * reasoning — the agent `runSwarmReviewStep`'s own bounded critic loop dispatches a fix session as,
+   * compiled through the identical template-resolution `agent` above already goes through. `'agent'`
+   * only, `mode: 'swarm-review'` only. */
+  readonly fixAgent?: AgentId | undefined;
   /** `'command'` only. */
   readonly run?: string | undefined;
   /** `'gate'` only — the gate id to evaluate. */

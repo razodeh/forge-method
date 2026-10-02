@@ -135,6 +135,12 @@ const PROMPT_POLICY_CODES: ReadonlySet<string> = new Set([
   'RUN-079',
   'RUN-080',
   'RUN-081',
+  // `specs/22` M15 P9: a `swarm-review` step declares no `fixAgent` but `execution.criticRounds` is
+  // configured `> 0` -- the same workflow fails identically on every retry until a human edits it.
+  'RUN-115',
+  // `specs/22` M15 P9: a `swarm-review` step's own `fixAgent` is the same agent as its `agent` -- the
+  // same workflow fails identically on every retry until a human edits it.
+  'RUN-116',
   'CFG-003',
   'CFG-004',
   'CFG-053',
@@ -189,6 +195,18 @@ export function classifyFailure(outcome: StepOutcome): FailureClass {
       // `implement-story.workflow.yaml`'s own `review` step declares `retryOn: [validation]`; classifying
       // this `policy` instead is what keeps that retry from firing on a blocked review.
       if (failure.code === 'RUN-108') return 'policy';
+      // `RUN-113` (`specs/22` M15 P9): a swarm-review step's own bounded critic loop genuinely ran
+      // `execution.criticRounds` fix-and-re-review cycles and the verdict is STILL `blocked` -- the
+      // identical "the report is valid, re-running the identical session over the identical diff fails
+      // identically" reasoning `RUN-108` already has just above, now for the loop-exhausted case instead
+      // of the never-looped one. `implement-story.workflow.yaml`'s own `review` step declares
+      // `retryOn: [validation]`; without this line `RUN-113` would fall through to `validation` below and
+      // that retry WOULD fire, re-running the entire exhausted loop (a fresh round 0 plus up to
+      // `execution.criticRounds` more fix/re-review cycles) before finally escalating on the second
+      // identical failure -- exactly the "loops past exhaustion" failure mode `specs/22` M15 P9's own
+      // Mandate explicitly forbids, just reached through the retry layer instead of this step's own
+      // internal loop. Found by a round-1 gauntlet critic who reproduced the fall-through directly.
+      if (failure.code === 'RUN-113') return 'policy';
       // A declared output that is absent or fails its schema is `06` §6.8's own `validation` example
       // ("output failed schema/contract"), whichever of the two it was: `onFailure`/`retry` then apply as
       // for any other step failure. (Retrying a session that could not write is futile when the cause is

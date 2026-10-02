@@ -167,6 +167,10 @@
           ],
           "type": "string"
         },
+        "criticRounds": {
+          "minimum": 0,
+          "type": "integer"
+        },
         "integrationBranch": {
           "minLength": 1,
           "type": "string"

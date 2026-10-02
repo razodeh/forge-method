@@ -198,7 +198,7 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
   // `PLAN-M14.md` P21 added one more `produces` entry to `freeze-contracts` itself:
   // `docs/forge/kb/architecture/version-skew.yaml`, the version-skew declaration `G-Integration`'s own
   // `version:skew` check reads (`briefs/freeze-contracts.md`'s new "Declarations the gate reads" section).
-  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211), freeze-contracts' produces (Q216, M14 P21), implement's `!{{item.test_paths}}` exclusion (Q225) and the rca escalation's reproduction-test globs (M14 P13, Q216)", () => {
+  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211), freeze-contracts' produces (Q216, M14 P21), implement's `!{{item.test_paths}}` exclusion (Q225), the rca escalation's reproduction-test globs (M14 P13, Q216), and review's own fixAgent/produces for the bounded critic loop (specs/22 M15 P9, Q288)", () => {
     const worked = `
 id: build-stage
 name: Implement a stage
@@ -283,8 +283,10 @@ steps:
       agent: reviewer
       mode: swarm-review
       perspectives: [ design, security, testing, performance ]
+      fixAgent: "{{item.owner_role}}"
       inputs: [ diff:lane, "artifact:Story({{item.id}})" ]
       outputs: [ { type: ReviewReport } ]
+      produces: [ "{{item.files_expected}}", "!{{item.test_paths}}" ]
 
   - id: merge
     kind: merge

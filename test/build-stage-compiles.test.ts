@@ -218,6 +218,29 @@ describe('the shipped build-stage compiles to a step plan', () => {
     );
   });
 
+  // `specs/22` M15 P9: `review`'s own `produces` (added so its bounded critic loop's fix session is
+  // claim-enforced, `implement-story.workflow.yaml`'s identical change) once made it participate in THIS
+  // cross-story claim-overlap mechanism too -- closing a real dependency cycle for exactly this shape
+  // (two overlapping-file stories), confirmed directly by a round-2 gauntlet critic reproducing it
+  // against the real shipped file. `dependencies.ts`'s `buildClaimIntervalMap` now excludes every
+  // `interactionMode: 'swarm-review'` node from this mechanism entirely (it already inherits every
+  // ordering guarantee it needs transitively, through its own same-story `dependsOn: implement` edge
+  // plus this file's own whole-chain story-ordering pass) -- this plan must still compile at all (`ok`),
+  // and review's own claim must still exist (for its own lane-level enforcement) without creating a
+  // cross-story edge the way `implement`'s identical-shaped claim correctly still does.
+  it("a review step never gains a cross-story claim-overlap edge, even though its own produces is as broad as implement's (specs/22 M15 P9, the dependency-cycle regression)", () => {
+    const p = plan([story('STORY-002', [], ['src/a/x.ts']), story('STORY-001', [], ['src/a/**'])]);
+    expect(p.ok).toBe(true);
+    expect(node(p, 'review:STORY-001').produces).toEqual(['src/a/**']);
+    expect(node(p, 'review:STORY-002').produces).toEqual(['src/a/x.ts']);
+    expect(
+      p.stepOverlaps.some((o) => o.stepIdA.includes(':review:') || o.stepIdB.includes(':review:')),
+    ).toBe(false);
+    // The fix session's own writes are still claim-enforced: `review`'s produces, though excluded from
+    // cross-story ordering, is untouched for `runLaneLifecycle`'s own, separate per-step claim check.
+    expect(edges(p)['review:STORY-001']).toEqual(['implement:STORY-001']);
+  });
+
   it('review is a per-story step: one reviewer node per story, each fed only its own implement', () => {
     const p = plan([story('STORY-001', [], ['src/a/**']), story('STORY-002', [], ['src/b/**'])]);
     const reviews = p.nodes.filter((n) => n.id.startsWith(`${P}review:`));

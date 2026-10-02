@@ -568,6 +568,19 @@ export interface ExecuteStepContext {
    * Omitted, such a lane is integrated with no checks (`PLAN-M13.md` P38, `SPEC-QUESTIONS.md` Q226). */
   readonly mergeChecks?:
     { readonly pre?: string | undefined; readonly post?: string | undefined } | undefined;
+  /** `execution.criticRounds` (`specs/22` M15 P9): the maximum automatic fix-and-re-review rounds
+   * `runSwarmReviewStep` (`@forge/engine/interaction`) runs on a `blocked` verdict before giving up
+   * (`RUN-113`). Omitted (every bare test fixture, and any caller built before this piece existed) means
+   * ZERO rounds -- a `blocked` verdict fails immediately with the pre-existing `RUN-108`, byte-identical
+   * to this context's own behaviour before P9, never a silent 3-round default inside the engine itself.
+   * The real "3 by default" (`DEFAULT_CONFIG.execution.criticRounds`) is applied once, by
+   * `buildRunEngineContext` (`@forge/cli/commands/run/context.ts`) reading the project's own resolved
+   * config -- the identical "a sensible literal default lives at the config-reading edge, not baked into
+   * the bare engine primitive" shape `docRoots`/`techniquesRoot` already take, chosen here specifically so
+   * every EXISTING `swarm-review-step.test.ts` fixture (none of which sets this field) keeps hitting
+   * `RUN-108` on a first blocked verdict exactly as before, rather than needing every one of them
+   * rewritten to script 3 rounds of unscripted fix/re-review sessions it was never about testing. */
+  readonly criticRounds?: number | undefined;
   /** Project-relative directory of the materialised, flat technique library `.forge/techniques/`
    * (`PLAN-M14.md` P29, `forge init`/`forge upgrade`'s own `writeRegenerableContent`) --
    * `@forge/engine/interaction/session.ts`'s own `loadSteelManTechnique` reads a `tradeoff` session's

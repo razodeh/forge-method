@@ -609,13 +609,19 @@ function buildLeafNode(
       return [...env.externalKbIds].some((known) => globsOverlap(pattern, known));
     });
 
+  // `specs/22` M15 P9: hoisted into a local so the `fixAgent` self-fix check below compares against the
+  // SAME resolved identity `node.agent` carries, rather than re-resolving `agentStep.agent` a second time
+  // -- the identical "two opportunities to silently drift apart" reasoning `resolvedInputs`'s own comment
+  // above already gives for not re-resolving a template twice.
+  const resolvedAgent =
+    agentStep !== undefined
+      ? toAgentId(safeResolveTemplate(agentStep.agent, context, issues, compiledId))
+      : undefined;
+
   const node: StepNode = {
     id: compiledId,
     kind: step.kind,
-    agent:
-      agentStep !== undefined
-        ? toAgentId(safeResolveTemplate(agentStep.agent, context, issues, compiledId))
-        : undefined,
+    agent: resolvedAgent,
     // `AgentStep.brief` is a `briefs/*.md` file path; `SessionStep.question` is the literal, already-
     // framed question text `runSessionStep`'s own FRAME phase reads straight off this same compiled
     // field (`SessionStep`'s own doc comment has the full reasoning) — two different authored fields,
@@ -653,6 +659,14 @@ function buildLeafNode(
     ...(agentStep?.perspectives === undefined || agentStep.perspectives.length === 0
       ? {}
       : { perspectives: agentStep.perspectives }),
+    // `specs/22` M15 P9: compiled the identical way `agent` above is -- a template reference
+    // (`'{{ownerRole}}'`) resolved against this step's own real `context`, never carried as a raw,
+    // unresolved placeholder.
+    ...(agentStep?.fixAgent === undefined
+      ? {}
+      : {
+          fixAgent: toAgentId(safeResolveTemplate(agentStep.fixAgent, context, issues, compiledId)),
+        }),
     // `20` §20.5 point 3 / `15` §15.5.4, `PLAN-M14.md` P27/P30: the workflow author's own
     // `AgentStep.taint` OR this step's own derived taint (computed just above), present only when at
     // least one of the two holds -- matching `gateEvidence`/`interactionMode`/`perspectives` immediately
@@ -677,7 +691,57 @@ function buildLeafNode(
     when: sessionStep?.when,
   };
 
+  // `specs/22` M15 P9, `10` §10.6 / `CFG-501`'s own separation-of-duties guarantee: a swarm-review step
+  // whose RESOLVED `fixAgent` is the same agent as its RESOLVED `agent` would have the reviewer fix its
+  // own flagged code. Checked by `checkFixAgentSeparation` below -- NOT here, at this single leaf's own
+  // compile time, even though `resolvedAgent` is already in scope to compare against. A round-2 gauntlet
+  // critic found that checking it here made this ONE node's own compile issue unconditionally fail
+  // `compilePlan` itself (`CompileIssue` has no severity; "every one is unconditionally blocking," this
+  // file's own `CompileResult` doc comment) -- which, for `build-stage.workflow.yaml`'s own per-story
+  // fanout, meant `compileStageRunPlan`'s own, MORE SPECIFIC, pre-existing `owner-role-breaks-separation`
+  // check (`stage-plan.ts`'s `separationFindings`, which needs a FULLY compiled node list to run at all)
+  // never got the chance to run and name the real problem (the story's `owner_role` itself being a
+  // protected role) -- a generic `step-plan-unavailable` WARNING masked the specific ERROR, and `ok`
+  // flipped to `true`. Moved to its own later pipeline stage (`checkFixAgentSeparation`, run from
+  // `compileRunPlan`, `run-plan.ts`) so `compilePlan` itself still succeeds and hands back a full node
+  // list any caller -- including `compileStageRunPlan`, which now runs `separationFindings` from that
+  // same list regardless of whether the LATER, whole-plan pipeline also succeeds -- can inspect, while
+  // `compileRunPlan`'s own overall result (what `implement-story.workflow.yaml`'s own non-stage, standalone
+  // compilation depends on for this exact protection) still correctly fails end to end.
   return { nodes: [node], exitIds: [compiledId], issues, groupIds: [] };
+}
+
+/** `specs/22` M15 P9: every `fixAgent`/`agent` pair across a FULLY compiled node list (both already
+ * resolved past any `'{{...}}'` template -- comparing RAW authored strings would both false-refuse the
+ * real shipped `agent: '{{ownerRole}}'`/`fixAgent: '{{ownerRole}}'` case (identical raw text, different
+ * real agents once `ownerRole` and the reviewer's own id differ) and fail to catch two DIFFERENT template
+ * expressions that happen to resolve to the SAME real agent id) that would have the reviewer fix the
+ * review it just wrote -- the exact self-review `CFG-501` exists to forbid, just for a role pair that
+ * invariant's own `checkSelfReview` (`@forge/extensions/invariants/separation.ts`) structurally cannot
+ * see (it operates on the project's own static producer/reviewer role-assignment graph, never on a
+ * workflow's own per-step `agent`/`fixAgent` field pair). Found by a round-1 gauntlet critic who confirmed
+ * nothing anywhere actually enforced this, despite `AgentStep.fixAgent`'s own doc comment (`workflow/
+ * types.ts`) claiming it was prevented "by construction." This is layer one of this codebase's own
+ * established "computed once, enforced twice" defense-in-depth shape (`GATE-511`/`RUN-112`'s own
+ * precedent); layer two is the runtime guard inside `runSwarmReviewStep` itself
+ * (`@forge/engine/interaction`), which refuses the identical condition for a hand-built `StepNode` that
+ * bypasses this compiler entirely. Run as its own pipeline stage (`run-plan.ts`'s `compileRunPlan`),
+ * separate from `compilePlan` itself -- see the doc comment on `buildLeafNode`'s own former check, just
+ * above, for why. */
+export function checkFixAgentSeparation(nodes: readonly StepNode[]): readonly CompileIssue[] {
+  const issues: CompileIssue[] = [];
+  for (const node of nodes) {
+    if (node.fixAgent !== undefined && node.fixAgent === node.agent) {
+      issues.push(
+        issue(
+          'fix-agent-equals-reviewer',
+          `Step "${node.id}" declares "fixAgent: ${node.fixAgent}", the same agent as its own "agent" -- a reviewer may not fix the review it just wrote (10 §10.6, CFG-501's own separation-of-duties guarantee). Set "fixAgent" to a different agent, such as the story's own implementer role.`,
+          node.id,
+        ),
+      );
+    }
+  }
+  return issues;
 }
 
 function compileFanout(

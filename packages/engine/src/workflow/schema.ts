@@ -110,6 +110,8 @@ const agentStepSchema = z
     // string, so an author's typo (`taint: External`) is a real, located schema error, not a silently
     // accepted no-op (`PLAN-M14.md` P27).
     taint: z.literal('external').optional(),
+    // `specs/22` M15 P9: `AgentStep.fixAgent`'s own doc comment (`types.ts`) has the full reasoning.
+    fixAgent: nonBlank().optional(),
   })
   .strict();
 

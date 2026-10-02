@@ -120,11 +120,24 @@ steps:
       agent: reviewer
       mode: swarm-review
       perspectives: [design, security, testing, performance]
+      # specs/22 M15 P9: the same implementer role `implement` above already runs as, never the reviewer
+      # itself (10 §10.6's own reviewer/implementer separation) -- the bounded critic loop's own automatic
+      # fix session on a blocked verdict.
+      fixAgent: '{{item.owner_role}}'
       inputs: ['diff:lane', 'artifact:Story({{item.id}})']
       outputs: [{ type: ReviewReport }]
-      # A merged `blocked` verdict fails this step with RUN-108 (PLAN-M14.md P14, SPEC-QUESTIONS.md Q232
-      # decision 7); it declares no `retry` of its own, so a blocked review escalates the same way any
-      # other unretried step failure here does.
+      # specs/22 M15 P9: a blocked round now runs its own automatic fix-and-re-review loop (bounded by
+      # execution.criticRounds, RUN-113 on exhaustion) INSIDE this one step's own lane before it ever ends
+      # -- the fix session's own changes land in this SAME lane, so the claim below also carries the
+      # story's own file claim (identical to `implement` above), not only the ReviewReport the mode itself
+      # already implies.
+      produces: ['{{item.files_expected}}', '!{{item.test_paths}}']
+      # A merged `blocked` verdict that survives every configured round fails this step with RUN-113
+      # (PLAN-M14.md P14, specs/22 M15 P9, SPEC-QUESTIONS.md Q232 decision 7); it declares no `retry` of
+      # its own, so an exhausted loop escalates the same way any other unretried step failure here does.
+      # `execution.criticRounds` not configured at all (an older project) means zero automatic rounds: the
+      # FIRST blocked verdict fails immediately with the pre-existing RUN-108, byte-identical to this
+      # step's own behaviour before P9.
 
   - id: merge
     kind: merge

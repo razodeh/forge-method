@@ -159,7 +159,25 @@ export function globsOverlap(a: string, b: string): boolean {
 export function buildClaimIntervalMap(nodes: readonly StepNode[]): ClaimIntervalMap {
   const overlaps: ClaimOverlap[] = [];
   for (const [index, a] of nodes.entries()) {
+    // `specs/22` M15 P9: a `swarm-review` step's own `produces` (when non-empty at all -- every such step
+    // had NONE before this piece) exists SOLELY so its own bounded critic loop's fix session is claim-
+    // enforced at the LANE level (`runLaneLifecycle`'s own check against `withReviewReportOutput(node)`,
+    // `@forge/engine/interaction/swarm-review-step.ts`) -- never as a real cross-item resource-conflict
+    // signal the way `implement`/`green`/`refactor`'s own identical-shaped `produces` genuinely is. Found
+    // by a round-2 gauntlet critic who confirmed this directly, by reproducing a real dependency cycle in
+    // the shipped `build-stage.workflow.yaml`: a review step already transitively inherits every cross-item
+    // ordering guarantee it needs through its own EXPLICIT `dependsOn: [implement:<id>]` edge (same story)
+    // plus this file's own stage-level story-ordering pass (`story-order.ts`'s `applyDeclaredStoryOrder`,
+    // which already serialises two stories whose files overlap at the WHOLE-CHAIN level) -- a review step's
+    // own fine-grained participation in THIS finer-grained, per-step mechanism is pure, redundant
+    // duplication of an ordering decision already made elsewhere, and (once its own claim is as broad as
+    // the story's implementer's) can land in the OPPOSITE direction from the whole-chain decision already
+    // made, closing a cycle no pre-P9 workflow could ever reach (no `swarm-review` step ever had a non-empty
+    // `produces` before). Excluded from this ONE mechanism only -- `node.produces` itself is untouched, and
+    // the lane-level claim check above still reads it normally.
+    if (a.interactionMode === 'swarm-review') continue;
     for (const b of nodes.slice(index + 1)) {
+      if (b.interactionMode === 'swarm-review') continue;
       for (const globA of a.produces) {
         for (const globB of b.produces) {
           if (globsOverlap(globA, globB)) {

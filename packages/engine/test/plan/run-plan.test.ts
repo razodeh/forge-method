@@ -22,6 +22,34 @@ function agentStep(overrides: Partial<AgentStep> & { readonly id: string }): Age
 }
 
 describe('compileRunPlan — full pipeline', () => {
+  // `specs/22` M15 P9: `checkFixAgentSeparation` runs as its own pipeline stage here, right after
+  // `compilePlan` succeeds and before the dependency/overlap/cycle stages -- `compilePlan` ALONE
+  // succeeds for this input (`compile.test.ts` has that proof directly), but `compileRunPlan`'s own
+  // overall, end-to-end result must still fail: this is the real protection `implement-story.
+  // workflow.yaml`'s own standalone compilation (never routed through `compileStageRunPlan`'s own
+  // `separationFindings` recovery) actually depends on.
+  it('specs/22 M15 P9: refuses, end to end, a swarm-review step whose fixAgent equals its own agent -- even though compilePlan alone would succeed', () => {
+    const wf = workflow([
+      agentStep({
+        id: 'review',
+        agent: 'reviewer',
+        mode: 'swarm-review',
+        perspectives: ['design'],
+        fixAgent: 'reviewer',
+      }),
+    ]);
+    const result = compileRunPlan(wf, {});
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({ code: 'fix-agent-equals-reviewer', stepId: 'w:review' }),
+      );
+      // Stops here -- never reaches the dependency/cycle stages (`run-plan.ts`'s own "first stage that
+      // fails" reasoning), so no OTHER issue code (a cycle, an overlap) rides along.
+      expect(result.issues).toHaveLength(1);
+    }
+  });
+
   it('propagates a P10-level compile failure unchanged (stops before ever reaching later stages)', () => {
     const wf = workflow([{ kind: 'checkpoint' }]);
     const result = compileRunPlan(wf, {});

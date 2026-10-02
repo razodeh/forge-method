@@ -195,6 +195,21 @@ const executionSchema = z
     testRoots: z.array(z.string().min(1)).optional(),
     // Optional, unlike `testCommands`: a `.forge/config.yaml` written before P38 has no such key and must stay valid.
     mergeChecks: mergeChecksSchema.optional(),
+    // `specs/22` M15 P9: how many automatic fix-and-re-review rounds a `swarm-review` step runs before
+    // giving up (`RUN-113`) on a verdict that stays `blocked`. Optional, the identical "a
+    // `.forge/config.yaml` written before this piece existed has no such key and must stay valid" reason
+    // `mergeChecks`/`testRoots` already are -- `DEFAULT_CONFIG.execution.criticRounds` (3) is the real
+    // default a project that never sets this gets, not "no looping at all" (unlike `mergeChecks`'s own
+    // "unset: no checks"). `0` (not `.positive()`) is deliberately ALLOWED and distinct from leaving this
+    // unset: it is the one real, explicit opt-out for a project whose own workflows declare a
+    // `swarm-review` step with no sensible `fixAgent` to dispatch (an older or third-party workflow this
+    // milestone's own shipped ones are not the only example of) -- `context.ts`'s own `?? 3` only ever
+    // falls back on `undefined`/`null`, never on a real, explicit `0`, so this is the one way a project
+    // can genuinely disable automatic looping rather than merely accepting whatever the default happens
+    // to be. A round-1 gauntlet critic found the pre-`.nonnegative()` version of this schema made that
+    // opt-out literally impossible to configure, regressing `build-stage.workflow.yaml`'s own pre-P9
+    // review step (no `fixAgent`) on every real run, not merely a theoretical gap.
+    criticRounds: z.number().int().nonnegative().optional(),
   })
   .strict();
 

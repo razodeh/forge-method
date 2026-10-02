@@ -72,7 +72,20 @@ async function project(): Promise<TestProject> {
   await writeFile(path.join(base.dir, WORKFLOWS_ROOT, `${WORKFLOW_ID}.workflow.yaml`), WORKFLOW);
   await execa('git', ['add', '-A'], { cwd: base.dir });
   await execa('git', ['commit', '--quiet', '-m', 'review workflow'], { cwd: base.dir });
-  return base;
+  return {
+    ...base,
+    // `specs/22` M15 P9: this file's own entire subject (per its own top-of-file doc comment) is a
+    // `swarm-review` step's `ReviewReport` persistence mechanics -- `mode`/`perspectives` surviving
+    // compilation, the engine writing the report, the output check, the merge queue -- none of it about
+    // P9's own bounded critic loop, which this fixture's own `WORKFLOW` string declares no `fixAgent`
+    // for. `execution.criticRounds` defaults to 3 now (`DEFAULT_CONFIG`, inherited here since
+    // `createTestProject` spreads it and this file never overrode it), which would otherwise route a
+    // blocked verdict into the loop's own `RUN-115` ("no fixAgent declared") refusal instead of the
+    // pre-P9 `RUN-108` this file's own test asserts on -- a round-2 gauntlet critic found this exact
+    // regression. Disabled here, for every test in this file, rather than adding a `fixAgent` this file
+    // was never about exercising.
+    config: { ...base.config, execution: { ...base.config.execution, criticRounds: 0 } },
+  };
 }
 
 /** A fake adapter that remembers every request it was sent. */

@@ -360,6 +360,16 @@ export interface ReviewFrontMatterInput {
   /** The engine clock, epoch milliseconds. */
   readonly nowMs: number;
   readonly verdict: ReviewVerdict;
+  /** `specs/22` M15 P9: how many fix-and-re-review rounds the bounded critic loop had consumed by the
+   * time THIS report was written -- `0` for round 0's own triggering review (including every pre-P9
+   * caller, and the `execution.criticRounds <= 0` "never loops" branch, both of which have no round
+   * concept at all), `N` for the report that round N's own re-review produced. Written back as its own
+   * key for the identical "a caller that only has the committed file (resume, a later merge step) can
+   * read it without re-deriving anything" reason `verdict` just below already is -- `resumeSwarmReviewStep`
+   * (`swarm-review-step.ts`) reads this to tell a never-looped `blocked` report (`RUN-108`) from a
+   * genuinely-exhausted one (`RUN-113`) after a crash leaves nothing else to distinguish them by (a
+   * round-1 gauntlet critic found resume had no way to tell these apart at all before this field existed). */
+  readonly rounds: number;
 }
 
 /** The front matter object (`18` §18.6 base fields, `reviewReportSchema`): engine values only. */
@@ -381,6 +391,7 @@ export function reviewFrontMatter(input: ReviewFrontMatterInput): Record<string,
     // computed, written back as its own key so a caller that only has the committed file (resume, a later
     // merge step) can read it without re-deriving anything from the body's rendered prose.
     verdict: input.verdict,
+    rounds: input.rounds,
     changelog: [
       {
         revision: 1,
@@ -419,6 +430,16 @@ export function parseReviewVerdict(
   return typeof verdict === 'string' && REVIEW_VERDICTS.has(verdict)
     ? (verdict as ReviewVerdict)
     : undefined;
+}
+
+/** `specs/22` M15 P9: `0` for a report with no `rounds` key at all (every report written before this
+ * piece, or by the `execution.criticRounds <= 0` "never loops" branch) or one whose value is not a
+ * non-negative integer (a hand-edited or otherwise malformed report) -- the identical "treat anything
+ * not affirmatively a real value as the safe, never-looped default" stance `parseReviewVerdict` above
+ * already takes, so a malformed or pre-P9 report is never misread as a genuinely-exhausted loop. */
+export function parseReviewRounds(frontMatter: Record<string, unknown>): number {
+  const { rounds } = frontMatter;
+  return typeof rounds === 'number' && Number.isInteger(rounds) && rounds >= 0 ? rounds : 0;
 }
 
 /**

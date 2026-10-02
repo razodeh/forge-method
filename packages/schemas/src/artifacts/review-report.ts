@@ -29,6 +29,10 @@ export const reviewReportSchema = baseFrontMatterShape
   .extend({
     type: z.literal('ReviewReport'),
     verdict: z.enum(['blocked', 'incomplete', 'concerns', 'clear']).optional(),
+    // `specs/22` M15 P9: how many bounded-critic-loop fix-and-re-review rounds had run by the time this
+    // report was written (`0` for round 0's own triggering review). Optional, the identical "every report
+    // this engine wrote before this piece has no such key" reason `verdict` above already is.
+    rounds: z.number().int().nonnegative().optional(),
   })
   .strict()
   .superRefine(checkIdMatchesRegisteredType);

@@ -49,6 +49,10 @@
       "exclusiveMinimum": 0,
       "type": "integer"
     },
+    "rounds": {
+      "minimum": 0,
+      "type": "integer"
+    },
     "run": {
       "minLength": 1,
       "type": "string"

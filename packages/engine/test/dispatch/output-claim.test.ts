@@ -388,6 +388,34 @@ describe('produces itself follows a relocated docs root too, not only the regist
     expect(committed).not.toContain('lib/stray.ts');
   });
 
+  it("specs/22 M15 P9: a node that inherits a ReviewReport output claims the entire ReviewReport namespace wildcard, which a narrow produces alone never would -- what a round-1 gauntlet critic flagged about the bounded critic loop's own fix-session dispatch (runFixRound, swarm-review-step.ts), which used to spread the real review step's own outputs onto its synthetic fix node unchanged. This is a declared-shape correctness pin, not a live-exploit regression test: traced directly, neither real resolveStepClaim call site in this codebase is ever given that synthetic node today (the real, governing claim for the whole lane comes from the OUTER node runLaneLifecycle is called with), so clearing it costs nothing and keeps the declared shape honest, but does not itself change observable behaviour in the current call path -- see swarm-review-step.ts's own doc comment on this exact field for the full trace.", () => {
+    const narrowProduces = ['fix-*.txt'];
+    const withInheritedOutputs = resolveStepClaim(
+      { kind: 'agent', outputs: [{ type: 'ReviewReport' }], produces: narrowProduces },
+      DEFAULT_ROOTS,
+      'strict',
+    );
+    // The real registered ReviewReport path (`sessions/reviews/{id}.md`) turns into a wildcard glob
+    // covering the ENTIRE namespace, not one specific id -- an ordinary write-capable session with this
+    // claim could write (and have kept) ANY file under it, not only the one real report the engine itself
+    // writes.
+    expect(withInheritedOutputs.globs).toEqual(
+      expect.arrayContaining([expect.stringContaining('sessions/reviews')]),
+    );
+    // The fix: `runFixRound`'s own synthetic node clears `outputs` entirely (`swarm-review-step.ts`), so
+    // its own claim comes ONLY from `produces` -- the identical scope a real `green`/`refactor`-shaped
+    // step (which declares no `outputs` at all) already has.
+    const withClearedOutputs = resolveStepClaim(
+      { kind: 'agent', outputs: [], produces: narrowProduces },
+      DEFAULT_ROOTS,
+      'strict',
+    );
+    expect(withClearedOutputs.globs).toEqual(narrowProduces);
+    expect(withClearedOutputs.globs).not.toEqual(
+      expect.arrayContaining([expect.stringContaining('sessions/reviews')]),
+    );
+  });
+
   it('is the identity transform for every shipped default-layout produces glob: DEFAULT_ROOTS resolves to itself (no rewrite, no drop, no escape)', () => {
     for (const produces of [
       ['docs/forge/kb/glossary.md'],

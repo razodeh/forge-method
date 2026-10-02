@@ -11,7 +11,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ExpressionContext } from '../../src/expr/index.ts';
-import { compilePlan, compileStepId, expandFanout } from '../../src/plan/compile.ts';
+import {
+  checkFixAgentSeparation,
+  compilePlan,
+  compileStepId,
+  expandFanout,
+} from '../../src/plan/compile.ts';
 import type { CompileIssue, StepNode } from '../../src/plan/types.ts';
 import type {
   AgentStep,
@@ -174,6 +179,99 @@ describe('compilePlan -- input-derived taint (PLAN-M14.md P30, 20 §20.5 point 3
     expect(issues).toContainEqual(
       expect.objectContaining({ code: 'insecure-fetch-input-scheme', stepId: 'w:a' }),
     );
+  });
+
+  // `specs/22` M15 P9: `compilePlan` ITSELF no longer refuses a swarm-review step whose `fixAgent` equals
+  // its `agent` -- a round-2 gauntlet critic found that checking it at this single leaf's own compile
+  // time made `compileStageRunPlan`'s own, more specific `owner-role-breaks-separation` check impossible
+  // to ever run (it needs a FULLY compiled node list, which a failed `compilePlan` never hands back),
+  // masking the real diagnosis behind a generic "step plan unavailable" warning. The check moved to its
+  // own function, `checkFixAgentSeparation`, run over a full node list as `compileRunPlan`'s own later
+  // pipeline stage (`run-plan.test.ts` has the end-to-end proof that `compileRunPlan` itself still
+  // correctly refuses this) -- `compilePlan` alone now succeeds for this exact input, confirmed below.
+  it('specs/22 M15 P9: compilePlan alone succeeds even when a swarm-review step declares fixAgent equal to its own agent -- the self-fix check is a separate, later pipeline stage, not part of this function', () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          agentStep({
+            id: 'review',
+            agent: 'reviewer',
+            mode: 'swarm-review',
+            perspectives: ['design'],
+            fixAgent: 'reviewer',
+          }),
+        ]),
+        {},
+      ),
+    );
+    expect(findNode(nodes, 'w:review').fixAgent).toBe('reviewer');
+  });
+
+  describe('checkFixAgentSeparation (specs/22 M15 P9)', () => {
+    it('refuses a swarm-review step whose RESOLVED fixAgent equals its RESOLVED agent -- a round-1 gauntlet critic found nothing anywhere enforced the reviewer/fix separation CFG-501 exists for', () => {
+      const nodes = expectOk(
+        compilePlan(
+          workflow([
+            agentStep({
+              id: 'review',
+              agent: 'reviewer',
+              mode: 'swarm-review',
+              perspectives: ['design'],
+              fixAgent: 'reviewer',
+            }),
+          ]),
+          {},
+        ),
+      );
+      expect(checkFixAgentSeparation(nodes)).toContainEqual(
+        expect.objectContaining({ code: 'fix-agent-equals-reviewer', stepId: 'w:review' }),
+      );
+    });
+
+    it('a swarm-review step whose fixAgent resolves (via different template expressions) to a DIFFERENT real agent than its reviewer compiles cleanly -- the check compares resolved identities, not raw template text', () => {
+      const nodes = expectOk(
+        compilePlan(
+          workflow([
+            agentStep({
+              id: 'review',
+              agent: 'reviewer',
+              mode: 'swarm-review',
+              perspectives: ['design'],
+              fixAgent: 'implementer',
+            }),
+          ]),
+          {},
+        ),
+      );
+      expect(findNode(nodes, 'w:review').fixAgent).toBe('implementer');
+      expect(checkFixAgentSeparation(nodes)).toEqual([]);
+    });
+
+    // `specs/22` M15 P9: the REAL case this resolved-identity comparison protects that a raw-string
+    // compare would miss -- TWO DIFFERENT raw expressions (a literal `agent: reviewer` and a template
+    // `fixAgent: '{{alias}}'`) that happen to resolve to the SAME real agent id. A round-2 gauntlet critic
+    // found the sibling test above never actually exercised template resolution (both its literal strings
+    // were already different, proving nothing about resolution specifically) -- this one does.
+    it('catches a self-fix even when agent and fixAgent are spelled DIFFERENTLY but resolve to the SAME real agent', () => {
+      const nodes = expectOk(
+        compilePlan(
+          workflow([
+            agentStep({
+              id: 'review',
+              agent: 'reviewer',
+              mode: 'swarm-review',
+              perspectives: ['design'],
+              fixAgent: '{{item.alias}}',
+            }),
+          ]),
+          { item: { alias: 'reviewer' } },
+        ),
+      );
+      expect(findNode(nodes, 'w:review').fixAgent).toBe('reviewer');
+      expect(checkFixAgentSeparation(nodes)).toContainEqual(
+        expect.objectContaining({ code: 'fix-agent-equals-reviewer', stepId: 'w:review' }),
+      );
+    });
   });
 
   it('an externalKbIds hit taints: a declared kb: input naming an id the caller marks external provenance', () => {

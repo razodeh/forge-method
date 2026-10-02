@@ -40,6 +40,9 @@ const SAMPLE_DETAILS = {
   // `VCS-010`/`BUD-003`/`RUN-085` (`PLAN-M13.md` P12): a dirty working tree; an admission refusal by a
   // budget cap (`stepId`, `cap`, `spent` are declared elsewhere in this table); a failed run's diagnosis.
   count: 2,
+  // `RUN-113` (`specs/22` M15 P9): how many fix-and-re-review rounds the bounded critic loop consumed
+  // before it gave up.
+  rounds: 3,
   files: 'run.err, run.out',
   reservation: '$3.00',
   remaining: '$1.50',

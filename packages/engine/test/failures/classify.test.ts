@@ -127,6 +127,15 @@ describe('classifyFailure', () => {
     });
   });
 
+  describe('prompt-sourced failures', () => {
+    it("RUN-115 (specs/22 M15 P9: a swarm-review step with execution.criticRounds > 0 but no declared fixAgent) classifies as 'policy': the same workflow fails identically on every retry until a human edits it", () => {
+      const result = classifyFailure(
+        outcome({ failure: { source: 'prompt', code: 'RUN-115', message: 'x' } }),
+      );
+      expect(result).toBe('policy');
+    });
+  });
+
   describe('output-sourced failures', () => {
     it("RUN-108 (a swarm-review step's merged verdict is blocked, PLAN-M14.md P14) classifies as 'policy': a retry over the same diff fails identically", () => {
       const result = classifyFailure(
@@ -140,6 +149,13 @@ describe('classifyFailure', () => {
         outcome({ failure: { source: 'output', code: 'RUN-083', message: 'x' } }),
       );
       expect(result).toBe('validation');
+    });
+
+    it("RUN-113 (specs/22 M15 P9: a swarm-review step's bounded critic loop exhausted its round/budget cap still blocked) classifies as 'policy', the identical reason RUN-108 does -- a round-1 gauntlet critic found an earlier version of this file let RUN-113 fall through to 'validation', which would let `retryOn: [validation]` re-run the entire exhausted loop instead of escalating", () => {
+      const result = classifyFailure(
+        outcome({ failure: { source: 'output', code: 'RUN-113', message: 'x' } }),
+      );
+      expect(result).toBe('policy');
     });
   });
 

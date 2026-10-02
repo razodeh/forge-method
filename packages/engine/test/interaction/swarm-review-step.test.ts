@@ -1884,3 +1884,666 @@ describe('a review stacked on the lane it reviews reads that lane (PLAN-M13.md P
     }
   });
 });
+
+// `specs/22` M15 P9: the bounded critic loop -- review -> (findings) -> fix -> review, bounded by
+// `execution.criticRounds` (`ctx.criticRounds` at this layer). `ctx.criticRounds` absent/0 (every test
+// above this point) is covered already: it is byte-identical to pre-P9 behaviour (RUN-108, no looping).
+// Everything below sets `criticRounds` explicitly and exercises the NEW loop.
+describe('the bounded critic loop (specs/22 M15 P9)', () => {
+  const FIX_AGENT = 'implementer';
+
+  /** `reviewer` stays read-only, exactly as every other describe block in this file assumes; any OTHER
+   * requested agent id (the fix agent) gets the ordinary write-capable fixture `createFixtureAssembly`'s
+   * own default already is -- `reviewerAssembly` above hard-codes read-only for every id, which would
+   * make the fix session's own write attempt silently refused. */
+  function loopAssembly(projectRoot: string) {
+    return createFixtureAssembly(projectRoot, {
+      loadAgent: (agentId) =>
+        Promise.resolve(
+          agentId === 'reviewer'
+            ? fixtureAgent(agentId, {
+                tools: {
+                  read: true,
+                  write: false,
+                  network: false,
+                  git_commit: 'docs-only',
+                  deploy: false,
+                },
+              })
+            : fixtureAgent(agentId),
+        ),
+    });
+  }
+
+  function loopNode(overrides: Partial<StepNode> = {}): StepNode {
+    // `produces: ['*']` mimics the real shipped workflow's own widened claim
+    // (`implement-story.workflow.yaml`'s `review` step now declares `{{run.filesExpected}}` alongside its
+    // `ReviewReport` output, `specs/22` M15 P9) -- this hand-built fixture bypasses the real YAML/compiler
+    // entirely, so without an explicit `produces` here, a fix session's own file write is reverted as
+    // out-of-claim (`RUN-104`) under this suite's own `strict` claim policy, the identical real failure a
+    // workflow author forgetting to widen `review`'s own `produces` would hit in production.
+    return reviewNode('wf:review', {
+      fixAgent: toAgentId(FIX_AGENT),
+      produces: ['*'],
+      ...overrides,
+    });
+  }
+
+  /** Scripts the next `startSession` call whose `stepId` matches `stepId` with `script` -- each call to
+   * this function reserves the NEXT real "turn" for that `stepId`, independent of how many separate
+   * calls to this function register it, since `FakePlatformAdapter.script`'s own "first-registered,
+   * first-matched, like an ordinary route list" semantics give EVERY registered route a fixed response,
+   * never a response that is itself a function of how many times its own route has already matched.
+   * Two counters, both keyed by `(adapter, stepId)`: `registered` fixes THIS route's own turn number at
+   * REGISTRATION time (so calling this function several times, interleaved with other stepIds, still
+   * assigns turns 0, 1, 2... in the order they were scripted); `consumed` tracks, at CALL time, how many
+   * real requests for this stepId have already matched some earlier-registered route -- only the one
+   * route whose own fixed turn equals the current live `consumed` count ever returns true, and it alone
+   * advances `consumed` when it does. A call past the number of turns ever scripted for a stepId matches
+   * no route at all and falls through to the adapter's own minimal default, never silently reuses the
+   * last one. */
+  const registeredTurns = new WeakMap<FakePlatformAdapter, Map<string, number>>();
+  const consumedTurns = new WeakMap<FakePlatformAdapter, Map<string, number>>();
+  function scriptNext(
+    adapter: FakePlatformAdapter,
+    stepId: string,
+    script: {
+      readonly text?: readonly string[];
+      readonly structured?: unknown;
+      readonly costUsd?: number;
+      readonly writeFiles?: readonly { readonly relativePath: string; readonly content: string }[];
+    },
+  ): void {
+    let registered = registeredTurns.get(adapter);
+    if (registered === undefined) {
+      registered = new Map();
+      registeredTurns.set(adapter, registered);
+    }
+    const myTurn = registered.get(stepId) ?? 0;
+    registered.set(stepId, myTurn + 1);
+    let consumed = consumedTurns.get(adapter);
+    if (consumed === undefined) {
+      consumed = new Map();
+      consumedTurns.set(adapter, consumed);
+    }
+    const consumedForAdapter = consumed;
+    adapter.script((request) => {
+      if (request.stepId !== stepId) return false;
+      const current = consumedForAdapter.get(stepId) ?? 0;
+      if (current !== myTurn) return false;
+      consumedForAdapter.set(stepId, current + 1);
+      return true;
+    }, script);
+  }
+
+  /** Every perspective's own request for round `round` (0-based: round 0 is the triggering review,
+   * round 1+ are re-reviews), scripted with `verdict`. */
+  function scriptRound(
+    adapter: FakePlatformAdapter,
+    round: number,
+    verdict: 'clean' | 'blocked',
+  ): void {
+    const blocking = {
+      findings: [{ summary: 'sqli', severity: 'blocking' }],
+      checked: ['queries'],
+    };
+    for (const perspective of PERSPECTIVES) {
+      const structured = verdict === 'blocked' && perspective === 'security' ? blocking : CLEAN;
+      scriptNext(adapter, `wf:review:review:${perspective}`, {
+        text: [`${perspective} round ${String(round)}`],
+        structured,
+      });
+    }
+  }
+
+  function fixScript(round: number): void {
+    // No dedicated matching needed beyond the fix node's own bare stepId (`runAgentWork` uses `node.id`
+    // directly, with no per-round suffix): registered once per round via `scriptNext`, so round 1's fix
+    // and round 2's fix (if the scenario needs one) get their own, distinct scripted response in order.
+    scriptNext(fixAdapterFor, 'wf:review', {
+      text: [`fix round ${String(round)}`],
+      writeFiles: [
+        { relativePath: `fix-round-${String(round)}.txt`, content: `round ${String(round)}\n` },
+      ],
+    });
+  }
+  // `fixScript`'s own closure needs the adapter; set once per test, read by every `fixScript` call in it.
+  let fixAdapterFor: FakePlatformAdapter;
+
+  it("specs/22 M15 P9, RUN-116: a fixAgent equal to the reviewer agent is refused at runtime, before any session ever dispatches -- layer two of the defense-in-depth shape plan/compile.ts's own compile-time check is layer one of (a round-1 gauntlet critic found neither layer existed)", async () => {
+    const projectRoot = await createTempRepo('loop-self-fix-refused');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, assembly: loopAssembly(projectRoot) }),
+      criticRounds: 3,
+    };
+
+    await expect(
+      executeStep(loopNode({ fixAgent: toAgentId('reviewer') }), ctx), // same as `agent: reviewer`
+    ).rejects.toMatchObject({ code: 'RUN-116' });
+    // No session of any kind was ever dispatched (not even round 0's own perspectives): refused
+    // immediately, before `resolveLaneBase`/`dispatchAgentStep` ever runs -- only `StepStarted` appears.
+    const types = (await eventsOf(projectRoot, 'run-test')).map((event) => event.type);
+    expect(types).toEqual(['StepStarted']);
+  });
+
+  it('a finding fixed in round 1 ends the loop at 1: the step succeeds, and the committed report is the FIXED one', async () => {
+    const projectRoot = await createTempRepo('loop-fixed-round-1');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    scriptRound(adapter, 0, 'blocked');
+    scriptRound(adapter, 1, 'clean');
+    fixScript(1);
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, assembly: loopAssembly(projectRoot) }),
+      criticRounds: 3,
+    };
+
+    const outcome = await executeStep(loopNode(), ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    const branch = laneBranchName(ctx.runId, 'wf:review');
+    const text = await showOnBranch(projectRoot, branch, `${REVIEWS_DIR}/REVIEW-001.md`);
+    expect(text).toMatch(/^verdict: clear$/m);
+    // Exactly one report, overwritten in place across rounds -- not one REVIEW-NNN per round.
+    expect(await filesOnBranch(projectRoot, branch)).toEqual(
+      expect.arrayContaining([`${REVIEWS_DIR}/REVIEW-001.md`]),
+    );
+    expect(
+      (await filesOnBranch(projectRoot, branch)).filter((file) => file.startsWith(REVIEWS_DIR)),
+    ).toHaveLength(1);
+    // The fix session's own write really landed in the SAME lane the report was committed on.
+    expect(await filesOnBranch(projectRoot, branch)).toEqual(
+      expect.arrayContaining(['fix-round-1.txt']),
+    );
+    const types = (await eventsOf(projectRoot, 'run-test')).map((event) => event.type);
+    expect(types).toContain('ArtifactCreated');
+    expect(types).not.toContain('StepFailed');
+    const progress = (await eventsOf(projectRoot, 'run-test')).filter(
+      (event) => event.type === 'StepProgress',
+    );
+    expect(progress.map((event) => (event.payload as { round: number }).round)).toEqual([0, 1]);
+    expect(progress.map((event) => (event.payload as { verdict: string }).verdict)).toEqual([
+      'blocked',
+      'clear',
+    ]);
+  });
+
+  it('a finding surviving every configured round stops, discloses with RUN-113 (not RUN-108), and registers no lane', async () => {
+    const projectRoot = await createTempRepo('loop-exhausted');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    scriptRound(adapter, 0, 'blocked');
+    fixScript(1);
+    scriptRound(adapter, 1, 'blocked');
+    fixScript(2);
+    scriptRound(adapter, 2, 'blocked');
+    fixScript(3);
+    scriptRound(adapter, 3, 'blocked');
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, assembly: loopAssembly(projectRoot) }),
+      criticRounds: 3,
+    };
+
+    const outcome = await executeStep(loopNode(), ctx);
+
+    const failure = failureOf(outcome);
+    expect(failure.code).toBe('RUN-113');
+    expect(failure.message).toContain('3 round');
+    expect(failure.message).toContain('1 blocking');
+    expect(ctx.laneRegistry.has('wf:review')).toBe(false);
+    const types = (await eventsOf(projectRoot, 'run-test')).map((event) => event.type);
+    expect(types).not.toContain('ArtifactCreated');
+    expect(types).toContain('StepFailed');
+    expect(types).toContain('LaneReady');
+    const progress = (await eventsOf(projectRoot, 'run-test')).filter(
+      (event) => event.type === 'StepProgress',
+    );
+    expect(progress.map((event) => (event.payload as { round: number }).round)).toEqual([
+      0, 1, 2, 3,
+    ]);
+    expect(
+      progress.every((event) => (event.payload as { verdict: string }).verdict === 'blocked'),
+    ).toBe(true);
+  });
+
+  it("specs/22 M15 P9: a stray fix-session write into the ReviewReport namespace never survives, end to end -- a round-1 gauntlet critic found an earlier version of runFixRound's own synthetic node inherited the real review step's own ReviewReport output claim (a wildcard glob), which `packages/engine/test/dispatch/output-claim.test.ts`'s own dedicated unit test proves is now cleared; this is the end-to-end confirmation that whatever the fix session attempts there still never lands committed, caught here by the P7 output-validation check that runs over the whole lane regardless (the forged content is not a real ReviewReport)", async () => {
+    const projectRoot = await createTempRepo('loop-fix-claim-scope');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    scriptRound(adapter, 0, 'blocked');
+    scriptRound(adapter, 1, 'clean');
+    // Not `fixScript(1)`: that helper only writes a legitimate, in-claim file. This fix session ALSO
+    // attempts a stray write matching the ReviewReport wildcard glob -- the engine-only path the real
+    // review step's own `outputs: [{type: 'ReviewReport'}]` claims, which an earlier version of
+    // `runFixRound` let the fix session inherit.
+    adapter.script((request) => request.stepId === 'wf:review', {
+      text: ['fix round 1'],
+      writeFiles: [
+        { relativePath: 'fix-round-1.txt', content: 'round 1\n' },
+        { relativePath: `${REVIEWS_DIR}/REVIEW-999.md`, content: 'forged review report\n' },
+      ],
+    });
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, assembly: loopAssembly(projectRoot) }),
+      criticRounds: 3,
+    };
+    // Narrowed from `loopNode()`'s own default `produces: ['*']` (a wildcard that would make EVERY path
+    // in-claim regardless of `outputs`) to just the one legitimate file the fix session is meant to write.
+    const node: StepNode = { ...loopNode(), produces: ['fix-*.txt'] };
+
+    const outcome = await executeStep(node, ctx);
+
+    // The stray write never survives committed -- caught here by the outer P7 output-validation check
+    // (`RUN-083`, since the forged content fails `ReviewReport`'s own schema), which runs over the whole
+    // lane via the review step's own declared `ReviewReport` output REGARDLESS of what the fix session's
+    // own (now-cleared) claim covers. That outer check is a real backstop for this specific
+    // malformed-content scenario, but it is not what `fixNode`'s own cleared `outputs` changes -- the
+    // dedicated `resolveStepClaim` unit test in `output-claim.test.ts` is what directly proves THAT.
+    const failure = failureOf(outcome);
+    expect(failure.code).toBe('RUN-083');
+    // The lane carrying the forged file is never registered for merge: it can never reach the
+    // integration branch regardless of what its own, abandoned commit history still holds.
+    expect(ctx.laneRegistry.has('wf:review')).toBe(false);
+  });
+
+  it('specs/22 M15 P9: a crash between the exhausted loop\'s own commit and its StepFailed being recorded resumes as RUN-113, not RUN-108, with zero new sessions -- a round-1 gauntlet critic found resume had no way to tell these apart before the committed report\'s own "rounds" front-matter field existed', async () => {
+    const projectRoot = await createTempRepo('loop-exhausted-resume');
+    const runId = 'run-resume-exhausted';
+    const step = loopNode();
+    const first = new FakePlatformAdapter();
+    fixAdapterFor = first;
+    scriptRound(first, 0, 'blocked');
+    fixScript(1);
+    scriptRound(first, 1, 'blocked');
+    const now = createTestClock();
+    const realTelemetry = createTelemetryFacade(projectRoot, runId, now);
+    // The process dies after the exhausted loop's own final report + fix commit, before the step's own
+    // failure outcome is durably recorded -- the identical injection point the pre-existing RUN-108 resume
+    // test above uses.
+    const crashing = {
+      ...createTestContext({
+        projectRoot,
+        adapter: first,
+        runId,
+        now,
+        telemetry: {
+          emit: (event) =>
+            event.type === 'LaneReady'
+              ? Promise.reject(new Error('simulated crash'))
+              : realTelemetry.emit(event),
+        },
+        assembly: loopAssembly(projectRoot),
+      }),
+      criticRounds: 1, // exhausts after exactly round 1 -- the smallest real exhaustion, fastest to script
+    };
+    await expect(executeStep(step, crashing)).rejects.toThrow('simulated crash');
+
+    const second = new FakePlatformAdapter();
+    const secondRequests = requestsOf(second);
+    const resumed = {
+      ...createTestContext({
+        projectRoot,
+        adapter: second,
+        runId,
+        assembly: loopAssembly(projectRoot),
+      }),
+      criticRounds: 1,
+    };
+    const state = await resumeRun(runId, {
+      ...resumed,
+      steps: new Map([[step.id, step]]),
+    });
+
+    expect(state.stepStatuses.get('wf:review')).toBe('failed');
+    // Zero sessions: no perspective, no fix, ran again.
+    expect(secondRequests).toEqual([]);
+    expect(resumed.laneRegistry.has('wf:review')).toBe(false);
+    const types = (await eventsOf(projectRoot, runId)).map((event) => event.type);
+    const failedEvents = (await eventsOf(projectRoot, runId)).filter(
+      (event) => event.type === 'StepFailed',
+    );
+    expect(failedEvents).toHaveLength(1);
+    expect((failedEvents[0]?.payload as { code?: string } | undefined)?.code).toBe('RUN-113');
+    expect(types).not.toContain('StepSucceeded');
+    expect(types).not.toContain('ArtifactCreated');
+  });
+
+  it('the round cap is honoured at 1: a finding surviving round 1 stops immediately with RUN-113, not RUN-108', async () => {
+    const projectRoot = await createTempRepo('loop-cap-one');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    scriptRound(adapter, 0, 'blocked');
+    fixScript(1);
+    scriptRound(adapter, 1, 'blocked');
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, assembly: loopAssembly(projectRoot) }),
+      criticRounds: 1,
+    };
+
+    const outcome = await executeStep(loopNode(), ctx);
+
+    const failure = failureOf(outcome);
+    expect(failure.code).toBe('RUN-113');
+    expect(failure.message).toContain('1 round');
+  });
+
+  it("the round-2 reviewer prompt contains round 1's structured findings but never a prior session's own raw reasoning text", async () => {
+    const projectRoot = await createTempRepo('loop-fresh-context');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    const round1ReasoningMarker = 'ROUND-1-RAW-REASONING-MARKER-not-structured';
+    scriptNext(adapter, 'wf:review:review:security', {
+      text: [round1ReasoningMarker],
+      structured: { findings: [{ summary: 'sqli', severity: 'blocking' }], checked: ['queries'] },
+    });
+    for (const perspective of PERSPECTIVES.filter((name) => name !== 'security')) {
+      scriptNext(adapter, `wf:review:review:${perspective}`, {
+        text: [`${perspective} round 0`],
+        structured: CLEAN,
+      });
+    }
+    scriptRound(adapter, 1, 'clean');
+    fixScript(1);
+    const requests = requestsOf(adapter);
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, assembly: loopAssembly(projectRoot) }),
+      criticRounds: 3,
+    };
+
+    expect((await executeStep(loopNode(), ctx)).status).toBe('succeeded');
+
+    // The SECOND real adapter call for each perspective's own stepId is round 2's own re-review (the
+    // first is round 1's triggering review) -- `.filter(...).indexOf(request) === 1` picks exactly that
+    // one out of `requests`' own full, in-order call history.
+    const allRound2Perspectives = requests.filter(
+      (request) =>
+        request.stepId.startsWith('wf:review:review:') &&
+        requests.filter((r) => r.stepId === request.stepId).indexOf(request) === 1,
+    );
+    expect(allRound2Perspectives.length).toBe(PERSPECTIVES.length);
+    for (const request of allRound2Perspectives) {
+      // Contains the prior round's structured findings (the summary text verbatim).
+      expect(request.systemPrompt.text).toContain('sqli');
+      // Never the prior round's own raw session text -- that was never captured into the report at all.
+      expect(request.systemPrompt.text).not.toContain(round1ReasoningMarker);
+      expect(request.prompt).not.toContain(round1ReasoningMarker);
+    }
+  });
+
+  it('budget exhausted entirely at round 0 (before a first fix is ever attempted) still stops the loop with RUN-113, "0 round(s)" -- not RUN-108, and not an overspend', async () => {
+    const projectRoot = await createTempRepo('loop-budget-round-0');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    // Every scripted session in this suite reports zero cost by default (`FakePlatformAdapter`'s own
+    // minimal default usage) -- a real budget-exhaustion repro needs a session that reports a REAL,
+    // non-zero cost the loop's own running total can actually exceed against a tiny cap. Only `security`
+    // reports one ($1, matching the step's own $1 `maxCostUsd` override below exactly): the other three
+    // perspectives report none, so the exhaustion is attributable to this one real, scripted spend, not
+    // an accumulation across several. Registered directly (not via `scriptRound`, whose own blanket
+    // registration for every perspective would otherwise win first and mask this one's `costUsd`).
+    adapter.script((request) => request.stepId === 'wf:review:review:security', {
+      text: ['security round 0'],
+      structured: { findings: [{ summary: 'sqli', severity: 'blocking' }], checked: ['queries'] },
+      costUsd: 1,
+    });
+    for (const perspective of PERSPECTIVES.filter((name) => name !== 'security')) {
+      adapter.script((request) => request.stepId === `wf:review:review:${perspective}`, {
+        text: [`${perspective} round 0`],
+        structured: CLEAN,
+      });
+    }
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, assembly: loopAssembly(projectRoot) }),
+      criticRounds: 3,
+    };
+    const node: StepNode = { ...loopNode(), limits: { ...loopNode().limits, maxCostUsd: 1 } };
+
+    const outcome = await executeStep(node, ctx);
+
+    // Round 0 alone already spent the step's entire declared budget (one perspective reported $1 of a
+    // $1 total cap) -- the loop must stop here, exactly like round-cap exhaustion (RUN-113, zero rounds
+    // consumed: no fix was ever attempted), never silently skip the fix or overspend trying it anyway.
+    // The message deliberately reads differently for this zero-rounds case (`codes.ts`'s own `RUN-113`
+    // doc comment has the full reasoning: an earlier version's message/comment overclaimed "a fix was
+    // already attempted" unconditionally, which is false here).
+    const failure = failureOf(outcome);
+    expect(failure.code).toBe('RUN-113');
+    expect(failure.message).toContain('budget');
+    expect(failure.message).toContain('before a first fix-and-re-review round could run');
+    const progress = (await eventsOf(projectRoot, 'run-test')).filter(
+      (event) => event.type === 'StepProgress',
+    );
+    // Only round 0's own triggering review ran -- no fix, no re-review.
+    expect(progress.map((event) => (event.payload as { round: number }).round)).toEqual([0]);
+  });
+
+  it('specs/22 M15 P9: a crash after round-0 budget exhaustion (rounds: 0 in the committed report) still resumes as RUN-113, never RUN-108 -- a round-2 gauntlet critic found rounds alone cannot tell this apart from a never-configured-to-loop step, since round-cap exhaustion can never itself produce rounds: 0', async () => {
+    const projectRoot = await createTempRepo('loop-budget-round-0-resume');
+    const runId = 'run-resume-budget-0';
+    const node: StepNode = { ...loopNode(), limits: { ...loopNode().limits, maxCostUsd: 1 } };
+    const first = new FakePlatformAdapter();
+    fixAdapterFor = first;
+    first.script((request) => request.stepId === 'wf:review:review:security', {
+      text: ['security round 0'],
+      structured: { findings: [{ summary: 'sqli', severity: 'blocking' }], checked: ['queries'] },
+      costUsd: 1,
+    });
+    for (const perspective of PERSPECTIVES.filter((name) => name !== 'security')) {
+      first.script((request) => request.stepId === `wf:review:review:${perspective}`, {
+        text: [`${perspective} round 0`],
+        structured: CLEAN,
+      });
+    }
+    const now = createTestClock();
+    const realTelemetry = createTelemetryFacade(projectRoot, runId, now);
+    // The process dies after round 0's own report commits (already exhausted: no fix was ever going to be
+    // affordable), before the step's own failure outcome is durably recorded -- the identical injection
+    // point the exhausted-at-round-1 resume test above uses.
+    const crashing = {
+      ...createTestContext({
+        projectRoot,
+        adapter: first,
+        runId,
+        now,
+        telemetry: {
+          emit: (event) =>
+            event.type === 'LaneReady'
+              ? Promise.reject(new Error('simulated crash'))
+              : realTelemetry.emit(event),
+        },
+        assembly: loopAssembly(projectRoot),
+      }),
+      criticRounds: 3,
+    };
+    await expect(executeStep(node, crashing)).rejects.toThrow('simulated crash');
+
+    const second = new FakePlatformAdapter();
+    const secondRequests = requestsOf(second);
+    const resumed = {
+      ...createTestContext({
+        projectRoot,
+        adapter: second,
+        runId,
+        assembly: loopAssembly(projectRoot),
+      }),
+      criticRounds: 3,
+    };
+    const state = await resumeRun(runId, { ...resumed, steps: new Map([[node.id, node]]) });
+
+    expect(state.stepStatuses.get('wf:review')).toBe('failed');
+    expect(secondRequests).toEqual([]); // zero new sessions
+    const failedEvents = (await eventsOf(projectRoot, runId)).filter(
+      (event) => event.type === 'StepFailed',
+    );
+    expect(failedEvents).toHaveLength(1);
+    expect((failedEvents[0]?.payload as { code?: string } | undefined)?.code).toBe('RUN-113');
+  });
+
+  it('specs/22 M15 P9: resume still correctly returns RUN-108, not RUN-113, for an ordinary never-configured-to-loop blocked step (ctx.criticRounds absent) -- confirming the round-0-budget fix above did not widen RUN-113 to also fire here', async () => {
+    const projectRoot = await createTempRepo('loop-resume-run-108-unaffected');
+    const runId = 'run-resume-108';
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId === 'wf:review:review:design', {
+      text: ['blocked'],
+      structured: { findings: [{ summary: 'sqli', severity: 'blocking' }], checked: ['queries'] },
+    });
+    const node = reviewNode('wf:review', { perspectives: ['design'] });
+    const now = createTestClock();
+    const realTelemetry = createTelemetryFacade(projectRoot, runId, now);
+    const crashing = {
+      ...createTestContext({
+        projectRoot,
+        adapter,
+        runId,
+        now,
+        telemetry: {
+          emit: (event) =>
+            event.type === 'LaneReady'
+              ? Promise.reject(new Error('simulated crash'))
+              : realTelemetry.emit(event),
+        },
+      }),
+      // No `criticRounds` set at all -- the bare-engine default (absent/0), exactly as every pre-P9 caller.
+    };
+    await expect(executeStep(node, crashing)).rejects.toThrow('simulated crash');
+
+    const second = new FakePlatformAdapter();
+    const resumed = createTestContext({ projectRoot, adapter: second, runId });
+    const state = await resumeRun(runId, { ...resumed, steps: new Map([[node.id, node]]) });
+
+    expect(state.stepStatuses.get('wf:review')).toBe('failed');
+    const failedEvents = (await eventsOf(projectRoot, runId)).filter(
+      (event) => event.type === 'StepFailed',
+    );
+    expect(failedEvents).toHaveLength(1);
+    expect((failedEvents[0]?.payload as { code?: string } | undefined)?.code).toBe('RUN-108');
+  });
+
+  it('budget caps still bound the loop MID-LOOP: a maxCostUsd that affords round 0 plus a full round-1 fix-and-re-review, but not a second round, stops the loop after round 1 rather than overspending into round 2 -- a round-1 gauntlet critic found an earlier version of this test only ever exhausted the budget at round 0, never proving the cap interrupts a loop already in progress', async () => {
+    const projectRoot = await createTempRepo('loop-budget-mid-loop');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    // Round 0: free (every perspective's default cost is $0), security finds a blocker.
+    scriptRound(adapter, 0, 'blocked');
+    // Round 1's fix: a real, non-zero cost ($1).
+    scriptNext(fixAdapterFor, 'wf:review', {
+      text: ['fix round 1'],
+      costUsd: 1,
+      writeFiles: [{ relativePath: 'fix-round-1.txt', content: 'round 1\n' }],
+    });
+    // Round 1's re-review: still blocked (the fix did not resolve it), and `security` reports another
+    // real, non-zero cost ($1) -- cumulative spend after round 1 is exactly $2, the step's own full
+    // `maxCostUsd` below, affordable in total but leaving nothing for a second round's own fix+re-review.
+    adapter.script((request) => request.stepId === 'wf:review:review:security', {
+      text: ['security round 1'],
+      structured: { findings: [{ summary: 'sqli', severity: 'blocking' }], checked: ['queries'] },
+      costUsd: 1,
+    });
+    for (const perspective of PERSPECTIVES.filter((name) => name !== 'security')) {
+      adapter.script((request) => request.stepId === `wf:review:review:${perspective}`, {
+        text: [`${perspective} round 1`],
+        structured: CLEAN,
+      });
+    }
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, assembly: loopAssembly(projectRoot) }),
+      criticRounds: 3,
+    };
+    const node: StepNode = { ...loopNode(), limits: { ...loopNode().limits, maxCostUsd: 2 } };
+
+    const outcome = await executeStep(node, ctx);
+
+    // Round 1's own fix-and-re-review genuinely ran (unlike the round-0-only case above) -- the loop
+    // stops AFTER it, not before, because the cumulative spend ($2) now meets the cap, never silently
+    // starting a second round it cannot afford.
+    const failure = failureOf(outcome);
+    expect(failure.code).toBe('RUN-113');
+    expect(failure.message).toContain('1 round');
+    const progress = (await eventsOf(projectRoot, 'run-test')).filter(
+      (event) => event.type === 'StepProgress',
+    );
+    // Round 0's triggering review AND round 1's own re-review both ran; no round 2 was ever attempted.
+    expect(progress.map((event) => (event.payload as { round: number }).round)).toEqual([0, 1]);
+    expect(progress.map((event) => (event.payload as { verdict: string }).verdict)).toEqual([
+      'blocked',
+      'blocked',
+    ]);
+  });
+
+  // `specs/22` M15 P9: round 0's own perspective-dispatch has a comprehensive try/catch (the top of
+  // `runSwarmReviewStep`) converting a raw adapter throw into a typed failure -- confirmed by the
+  // pre-existing "a perspective that writes a stray file and then throws..." test elsewhere in this
+  // file. `rereviewInLane` (round 1+'s own re-review) had no equivalent handling at all: a round-3
+  // gauntlet critic reproduced directly that a thrown adapter error here crashed the whole run
+  // (`executeStep` REJECTING) instead of resolving to a typed `{status: 'failed', ...}`, violating this
+  // very function's own documented "every failure is a typed StepOutcome" contract. These two tests
+  // prove the fix: both call sites the critic named (`rereviewInLane`'s own `dispatchAgentStep` call,
+  // and `runFixRound`'s own `briefText = await ctx.assembly.loadContent(...)` call) now resolve
+  // cleanly instead of rejecting.
+  it('a round-1 re-review perspective that throws resolves to a typed failure, not an uncaught rejection (mutation: remove the new try/catch and this test fails with a rejection, not an assertion)', async () => {
+    const projectRoot = await createTempRepo('loop-rereview-throws');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    scriptRound(adapter, 0, 'blocked');
+    fixScript(1);
+    // Round 1's own re-review: `security`'s SECOND real call (round 0 already consumed its first,
+    // scripted turn above) throws instead of resolving -- a raw adapter crash, not a graceful
+    // `{ok: false}` session result.
+    let securityCalls = 0;
+    const originalStart = adapter.startSession.bind(adapter);
+    adapter.startSession = (request) => {
+      if (request.stepId === 'wf:review:review:security') {
+        securityCalls += 1;
+        if (securityCalls === 2)
+          return Promise.reject(new Error('simulated round-1 adapter crash'));
+      }
+      return originalStart(request);
+    };
+    const ctx = {
+      ...createTestContext({ projectRoot, adapter, assembly: loopAssembly(projectRoot) }),
+      criticRounds: 3,
+    };
+
+    const outcome = await executeStep(loopNode(), ctx);
+
+    const failure = failureOf(outcome);
+    expect(failure.source).toBe('adapter');
+    expect(failure.message).toContain('simulated round-1 adapter crash');
+    expect(failure.message).toContain('round 1');
+    const types = (await eventsOf(projectRoot, 'run-test')).map((event) => event.type);
+    expect(types).toContain('AdapterError');
+    expect(types).not.toContain('ArtifactCreated');
+  });
+
+  it("a fix round whose own brief cannot be loaded resolves to a typed RUN-079-shaped failure, not an uncaught rejection (the exact real-world scenario a round-3 gauntlet critic found: briefs/fix-review-findings.md was missing from the content index until this piece's own final fix, so this was a genuinely live failure mode on every real project)", async () => {
+    const projectRoot = await createTempRepo('loop-fix-brief-missing');
+    const adapter = new FakePlatformAdapter();
+    fixAdapterFor = adapter;
+    scriptRound(adapter, 0, 'blocked');
+    const assembly = loopAssembly(projectRoot);
+    const ctx = {
+      ...createTestContext({
+        projectRoot,
+        adapter,
+        assembly: {
+          ...assembly,
+          loadContent: (ref: string) =>
+            ref === 'briefs/fix-review-findings.md'
+              ? Promise.reject(new Error('simulated: brief not found'))
+              : assembly.loadContent(ref),
+        },
+      }),
+      criticRounds: 3,
+    };
+
+    const outcome = await executeStep(loopNode(), ctx);
+
+    const failure = failureOf(outcome);
+    expect(failure.source).toBe('prompt');
+    expect(failure.message).toContain('simulated: brief not found');
+    const types = (await eventsOf(projectRoot, 'run-test')).map((event) => event.type);
+    expect(types).not.toContain('ArtifactCreated');
+  });
+});

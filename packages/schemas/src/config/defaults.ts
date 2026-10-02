@@ -57,6 +57,9 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     // (`isTestPath`), not a default list of directories to fill in.
     testRoots: undefined,
     mergeChecks: {},
+    // `specs/22` M15 P9: the documented default for how many automatic fix-and-re-review rounds
+    // `implement-story`'s own `review` step runs before giving up (`RUN-113`).
+    criticRounds: 3,
   },
   // `PLAN-M14.md` P16, `SPEC-QUESTIONS.md` Q232 decision 10: 90 days is the documented default cap on
   // how far past its own grant a waiver's `--expires` may fall.

@@ -58,7 +58,7 @@ import type { Workflow, WorkflowStep } from '../workflow/index.ts';
 import { claimFixedPrefix, prefixesNest } from './claim-overlap.ts';
 import { computeCriticalPath } from './critical-path.ts';
 import { renderCycleAsMermaid } from './cycles.ts';
-import type { CompilePlanTaintOptions } from './compile.ts';
+import { compilePlan, type CompilePlanTaintOptions } from './compile.ts';
 import { compileRunPlan } from './run-plan.ts';
 import { storyChains, type StoryChain } from './story-order.ts';
 import type { ClaimOverlap, CriticalPathResult, StepNode } from './types.ts';
@@ -749,6 +749,26 @@ export function compileStageRunPlan(
         ),
       );
     } else if (!compiled.success) {
+      // `specs/22` M15 P9: a `fix-agent-equals-reviewer` failure (`checkFixAgentSeparation`, `compile.ts`)
+      // means `compileRunPlan`'s own overall result carries no nodes -- but `compilePlan` ALONE (the
+      // earlier, lower-level stage that check now runs after, `run-plan.ts`'s own doc comment has the
+      // full reasoning) still succeeds and builds them, since nothing about story-level separation lives
+      // in that bare per-leaf compile at all. Re-derived here, directly, so THIS function's own, more
+      // specific `separationFindings` (below) still gets a chance to name the real root cause -- a
+      // story's own `owner_role` being a protected role, which is what actually MAKES `fixAgent` resolve
+      // to the same agent as `agent` for a `build-stage`-style per-story `fixAgent: '{{item.owner_role}}'`
+      // -- rather than leaving only the generic `step-plan-unavailable` warning below, which (being a
+      // warning, not an error) would otherwise leave `ok: true` for a plan a round-2 gauntlet critic
+      // confirmed is genuinely broken. A failure for any OTHER reason recovers no nodes here (`undefined`),
+      // exactly as before this piece -- this recovery is deliberately narrow, not a general "always retry
+      // compilePlan alone on any failure" fallback.
+      if (compiled.issues.some((issue) => issue.code === 'fix-agent-equals-reviewer')) {
+        const bare = compilePlan(workflow, context, { taint: options.taint });
+        if (bare.success) {
+          const chains = storyChains(bare.nodes, workflow.id, new Set(unique.map((s) => s.id)));
+          findings.push(...separationFindings(unique, chains, workflow.id));
+        }
+      }
       findings.push(
         finding(
           'step-plan-unavailable',

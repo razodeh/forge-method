@@ -57,6 +57,7 @@ function file(reviews: readonly PerspectiveReview[]): {
       agentId: INPUT.agentId,
       nowMs: Date.UTC(2026, 8, 20),
       verdict: content.verdict,
+      rounds: 0,
     }),
     content.body,
   );
@@ -212,6 +213,7 @@ describe('the verdict binds (PLAN-M14.md P14, SPEC-QUESTIONS.md Q232 decision 7)
         agentId: 'reviewer',
         nowMs: Date.UTC(2026, 8, 20),
         verdict,
+        rounds: 0,
       });
       expect(reviewReportSchema.safeParse(front).success, verdict).toBe(true);
     }
@@ -225,6 +227,7 @@ describe('the verdict binds (PLAN-M14.md P14, SPEC-QUESTIONS.md Q232 decision 7)
       agentId: 'reviewer',
       nowMs: Date.UTC(2026, 8, 20),
       verdict: 'clear',
+      rounds: 0,
     });
     const result = reviewReportSchema.safeParse({ ...front, verdict: 'approved' });
     expect(result.success).toBe(false);
@@ -238,6 +241,7 @@ describe('the verdict binds (PLAN-M14.md P14, SPEC-QUESTIONS.md Q232 decision 7)
       agentId: 'reviewer',
       nowMs: Date.UTC(2026, 8, 20),
       verdict: 'clear',
+      rounds: 0,
     });
     const withoutVerdict: Record<string, unknown> = { ...front };
     delete withoutVerdict['verdict'];

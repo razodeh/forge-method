@@ -712,6 +712,12 @@ export async function buildRunEngineContext(
     // lane the engine integrates on its own has the configured check set (`PLAN-M13.md` P38, `06` §6.5).
     testCommands: input.config.execution.testCommands,
     mergeChecks: input.config.execution.mergeChecks,
+    // `specs/22` M15 P9: the one real call site that turns "unset at the bare engine-context layer means
+    // zero rounds" into the project's own configured value, defaulting to `DEFAULT_CONFIG.execution.
+    // criticRounds` (3) -- `ExecuteStepContext.criticRounds`'s own doc comment has the fuller reasoning
+    // for why the engine-level default is 0 (none), not 3, and this is the one place that gap closes for
+    // every real `forge run`.
+    criticRounds: input.config.execution.criticRounds ?? 3,
     model,
     tools: DEFAULT_TOOLS,
     assembly: createPromptAssemblyContext({
