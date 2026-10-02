@@ -27026,3 +27026,69 @@ discipline (`pnpm typecheck`/`pnpm lint`/targeted test runs) would have caught i
 this specific file or the full untargeted suite.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P12`.
+
+---
+
+## Q292 — M15 P13: documenting the evidence model — a walkthrough that was only "run while writing"
+for a project that wasn't actually fresh
+
+**Context.** `PLAN-M15.md` P13's own Mandate: `docs/method-guide.md` gains the evidence model
+(binding, bundles, exemptions, disclosure); `docs/getting-started.md` gains a real, run-for-real
+walkthrough of a non-binding test being caught and fixed; `CONTRIBUTING.md` points at the symmetry.
+"Every command shown is executed while writing, per this repo's existing documentation rule" — the
+identical discipline `## M12 P7` (`GAUNTLET-LOG.md`) already established and gauntleted for this exact
+pair of files. One gauntlet round, two independent critics, both finding the identical real defect via
+the identical method that precedent calls for: actually re-running the walkthrough, not reading it.
+Full round narrative: `GAUNTLET-LOG.md`'s own `## M15 P13` entry.
+
+**Decision 1 — `forge test binding`'s own dirty-tree refusal (`VCS-010`) is real, deliberate, and
+correct; the walkthrough's own git-command sequence was the thing wrong, not the check.** The check
+builds its scratch worktree from the committed `HEAD`, so an uncommitted edit anywhere in the project
+would let it silently verify stale code — refusing outright instead is the right behavior, matching
+every other binding-check-adjacent refusal this milestone already built (M15 P6's exemption-declaration
+refusals, M15 P8's `RUN-112`). The walkthrough's own original `git add src/ && git commit` instruction
+only ever committed `src/`, leaving `forge init`'s own scaffold, the new story file,
+`dod-profiles.yaml`, and the `execution.testCommands.unit` config edit all genuinely uncommitted at the
+exact moment the doc told a reader to run the check for the first time — invisible to the piece's own
+author (whose own working scratch project evidently wasn't built with the same literal, from-scratch
+rigor the doc instructs a reader to use), caught only by a fresh critic reproducing the doc's own
+literal instructions from a genuinely empty directory. Fixed by inserting an explicit, separate
+"commit the scaffold" step before the implementation is ever written, so the reader ends up with the
+two-commit structure (scaffold, then implementation) the check's own `HEAD~1`-based revert logic
+actually needs.
+
+**Decision 2 — a second, compounding failure mode (an unresolvable `HEAD~1` on a single-commit repo)
+is naturally avoided by the same fix, and is disclosed rather than separately patched around.** A
+reader who worked around the first refusal the "obvious" way (one combined `git add -A && git commit`
+instead of two separate commits) would then hit a raw, unfriendly git subprocess crash
+(`git rev-parse --verify 'HEAD~1'` on a repo with no second-to-last commit) rather than the doc's own
+claimed output. Both critics independently confirmed this is a real, if less likely, failure mode, and
+both confirmed the two-commit fix above avoids it entirely as a side effect — no separate code change
+or disclosure-only patch was needed once the real root cause (one commit covering both scaffold and
+implementation) was fixed at its source.
+
+**Decision 3 — `node_modules/` is a real, disclosed, out-of-Surface gap in `forge init`'s own generated
+`.gitignore`, not something this piece fixes.** `forge init` writes a real `.gitignore` excluding
+`.forge/config.local.yaml`, `.forge/overrides.local/`, `.forge/secrets.local.yaml`, and
+`.forge/state/` — but not `node_modules/`. A reader following the new "commit the scaffold" step
+without first excluding it would commit several thousand dependency files into their project's git
+history. The walkthrough now instructs excluding it explicitly, as a one-line `echo >> .gitignore`,
+rather than this piece reaching into `packages/cli/src/init/` (genuinely outside a documentation
+piece's own Surface) to fix the template itself — named here for whichever future piece next touches
+`forge init`'s scaffold.
+
+**Decision 4 — every other claim in all four files was independently, exhaustively verified accurate
+by both critics, several character-for-character, not merely plausible.** `docs/method-guide.md`'s
+entire new "Evidence" section was audited line by line against the real `GAUNTLET-LOG.md` `## M15 P6`
+through `## M15 P12` entries and the real, current source for each cited command/flag/error code
+(`RUN-112`, `RUN-113`, `execution.criticRounds`'s real default of 3, `forge kb disclosures`' real
+synthesis logic) — no inaccuracies found in any of its six sub-points. Every quoted command output in
+`getting-started.md`'s new §8 (including the exemption path, the stale-exemption refusal, and
+`forge report`'s all-zero scorecard both before and after real activity) was reproduced live,
+character-for-character, across two independent critics and a third, final orchestrator re-run in a
+genuinely fresh project. The two disclosed caveats already in the doc (`forge report`'s
+`FORGE_RUN_ID`-gating, `baseRevision`'s fixed `HEAD~1`) were independently re-verified against the real
+source, not trusted from the doc's own citation of itself. This is the same standard `## Q190`/`## M12
+P7` already set for this exact pair of files — re-confirmed, not relaxed, for this piece.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P13`.

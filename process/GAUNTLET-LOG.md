@@ -20903,3 +20903,67 @@ Floor (`pnpm typecheck`, `pnpm lint`, `pnpm boundaries`) and the full targeted s
 every fix, independently confirmed by both round-2 critics and again by the orchestrator.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q291`.
+
+---
+
+## M15 P13 — Documentation: what evidence means and why a gate refused you
+
+One gauntlet round, two independent critics, both converging on the exact same real BLOCKING finding
+and independently verifying the exact same fix — the cleanest possible shape for a "send back" verdict
+to take. Documentation-only piece: `docs/method-guide.md` gains a new "Evidence" section (binding,
+exemptions, EvidenceBundle, the bounded critic loop, disclosure, measurement); `docs/getting-started.md`
+gains a new §8, a full run-for-real walkthrough of catching and fixing a non-binding test;
+`CONTRIBUTING.md` gets a short addition connecting its own pre-existing "tests assert behavior, not
+implementation" convention to the now-mechanically-enforced `forge test binding` check; `README.md`'s
+status line gets one honest clause. This is the piece that makes M15's own central discipline — a test
+that doesn't actually test anything gets caught, not silently trusted — legible to a human reader for
+the first time, not just to the CLI.
+
+**Both critics independently re-ran the entire §8 walkthrough, literally, in multiple genuinely fresh
+scratch projects — this repository's own already-established precedent for reviewing this exact pair of
+docs (`## M12 P7`, above), applied again here.** Both found the walkthrough's own centerpiece sequence
+does not complete as literally written: `forge test binding` genuinely refuses (`VCS-010`, a real,
+undisclosed dirty-tree guard) the moment a reader follows the doc's own `git add src/ && git commit`
+instruction, since nothing before that point ever committed the `forge init` scaffold, the new story
+file, `dod-profiles.yaml`, or the `execution.testCommands.unit` config edit — all still sitting
+uncommitted. A reader who "fixes" this the obvious way (one combined `git add -A && git commit`) then
+hits a second, compounding crash: `baseRevision`'s own disclosed `HEAD~1` default has no commit to
+resolve to at all on a repo whose first-ever commit is also its only one, producing a raw, unfriendly
+git subprocess error instead of the claimed `bound=0 nonBinding=1 ...` output. Both critics independently
+verified the real fix live: commit the scaffold as its OWN, separate commit, before writing `src/`, so
+the implementation lands in a genuinely second commit with a real, resolvable `HEAD~1` — confirmed to
+reproduce every downstream claimed output byte-for-byte once applied.
+
+**Fixed directly** (both critics' own already-verified fix, applied exactly, then independently
+re-verified a third time by the orchestrator end to end in one more fresh scratch project — real, fresh
+`forge init`, every command in §8 re-run literally, output diffed against the doc character for
+character, both `bound=0 nonBinding=1 ... evidence=MUT-001` and the post-fix `bound=1 nonBinding=0 ...
+evidence=MUT-002` matched exactly): a new explicit step inserted between the `execution.testCommands.unit`
+setup and the implementation-writing step, committing everything accumulated so far as its own commit
+(with `node_modules/` gitignored first — `forge init`'s own generated `.gitignore` does not exclude it,
+a real, disclosed, out-of-Surface gap in the init template a reader following §8 would otherwise hit for
+the first time). Also fixed, same pass, from the critics' own NON-BLOCKING findings: a wording-ahead-of-
+sequence line claiming `evidence=MUT-001`'s artifact was already committed when it isn't yet at that
+point in the walkthrough; an imprecise framing of `dod-profiles.yaml` as a prerequisite for the command
+§8 actually runs (`forge test binding`, which never reads `dod_profile` at all) rather than for the one
+it doesn't (`forge story verify`'s own `verify` phase); a one-column comment-alignment slip in §6's new
+`forge report` entry.
+
+**Everything else both critics checked — independently, exhaustively, mostly by live re-execution
+rather than by reading — came back clean, several claims confirmed character-for-character:** every
+other quoted command output in §8 (the exemption path, the stale-exemption refusal, `forge kb
+disclosures`' own synthesized-entry format, `forge report`'s all-zero scorecard, both before and after
+real binding/exemption activity); the `--git-init` no-op correction and the vitest 4-vs-5 JSON-reporter
+incompatibility (both independently reproduced live); the `npx` network-fetch refusal; the disclosed
+`FORGE_RUN_ID`-gating and `baseRevision: HEAD~1` caveats (both independently re-verified against the real
+source, not just the doc's own citation); `docs/method-guide.md`'s entire new "Evidence" section, audited
+line by line against the real M15 P2 through P12 `GAUNTLET-LOG.md` entries and source, with no
+inaccuracies found in any of its six sub-points; every cross-link; `CONTRIBUTING.md`'s addition (verified
+against the real, current text it extends, not misquoted); `README.md`'s new clause (honest, doesn't
+overclaim). `npx prettier --check` on all four files: clean, before and after the fix.
+
+Deliberately not touched, flagged by both critics as real but out of this piece's own Surface: §2's
+existing "`forge init`: wrote 166 files" line has drifted (a real project now writes 319) — pre-existing,
+unrelated to anything P13 edited, not a regression this piece introduces.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q292`.
