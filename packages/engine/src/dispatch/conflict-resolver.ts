@@ -87,7 +87,7 @@ import { readEvents } from '@forge/telemetry/events';
 import { attributedSpend, projectLedger } from '@forge/telemetry/ledger';
 import { VcsError } from '@forge/vcs';
 
-import type { StepNode } from '../plan/index.ts';
+import { deriveStoryId, type StepNode } from '../plan/index.ts';
 import { assembleAgentSession, promptRecordDirName } from './assemble.ts';
 import { writeResultRecord } from './result-record.ts';
 import { sanitizeUsageNumber } from './steps.ts';
@@ -424,6 +424,9 @@ async function runResolverSession(
   description: MergeConflictDescription,
   remainingUsd: number,
 ): Promise<SessionResult | undefined> {
+  // `specs/22` M15 P11: computed once, reused below on the `UsageRecorded` payload -- see
+  // `deriveStoryId`'s own doc comment.
+  const storyId = deriveStoryId(node);
   const taskText = await buildTaskText(ctx, node, description);
   // `20` §20.5 point 3: the conflict diff/content is another lane's (or integration's) own output --
   // untrusted. Forcing taint here (never reading it off `node.taint`, which may be unset) is what makes
@@ -542,6 +545,7 @@ async function runResolverSession(
       costUsd: session.usage.costUsd === undefined ? 0 : sanitizeUsageNumber(session.usage.costUsd),
       estimated: true,
       durationMs: sanitizeUsageNumber(session.durationMs),
+      ...(storyId === undefined ? {} : { storyId }),
     },
   });
   return session;

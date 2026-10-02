@@ -240,6 +240,82 @@ describe('runAgentStep', () => {
     expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 
+  // `specs/22` M15 P11: `UsageRecorded.payload.storyId`, read off `node.runInputs` by `deriveStoryId`.
+  it('carries payload.storyId on UsageRecorded when the step declares a storyId run input (implement-story.workflow.yaml own shape)', async () => {
+    const projectRoot = await createTempRepo('agent-usage-story-declared');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['done'],
+      writeFiles: [{ relativePath: 'a.txt', content: 'x\n' }],
+    });
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-usage-story' });
+    const stepNode = node({
+      id: 'implement-story:plan',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'do work',
+      produces: ['a.txt'],
+      runInputs: { storyId: 'STORY-007' },
+    });
+
+    await executeStep(stepNode, ctx);
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-usage-story')) events.push(event);
+    const usage = events.find((event) => event.type === 'UsageRecorded');
+    expect(usage?.payload).toMatchObject({ storyId: 'STORY-007' });
+  });
+
+  it("carries payload.storyId on UsageRecorded when the step's own fanout item names one (build-stage.workflow.yaml own shape)", async () => {
+    const projectRoot = await createTempRepo('agent-usage-story-item');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['done'],
+      writeFiles: [{ relativePath: 'a.txt', content: 'x\n' }],
+    });
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-usage-item' });
+    const stepNode = node({
+      id: 'build-stage:implement:STORY-008',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'do work',
+      produces: ['a.txt'],
+      runInputs: { item: { id: 'STORY-008', owner_role: 'engineer' } },
+    });
+
+    await executeStep(stepNode, ctx);
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-usage-item')) events.push(event);
+    const usage = events.find((event) => event.type === 'UsageRecorded');
+    expect(usage?.payload).toMatchObject({ storyId: 'STORY-008' });
+  });
+
+  it('omits payload.storyId on UsageRecorded for a step scoped to no particular story', async () => {
+    const projectRoot = await createTempRepo('agent-usage-no-story');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['done'],
+      writeFiles: [{ relativePath: 'a.txt', content: 'x\n' }],
+    });
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-usage-none' });
+    const stepNode = node({
+      id: 'build-stage:freeze-contracts',
+      kind: 'agent',
+      agent: toAgentId('architect'),
+      brief: 'do work',
+      produces: ['a.txt'],
+    });
+
+    await executeStep(stepNode, ctx);
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-usage-none')) events.push(event);
+    const usage = events.find((event) => event.type === 'UsageRecorded');
+    expect(usage).toBeDefined();
+    expect(usage?.payload).not.toHaveProperty('storyId');
+  });
+
   // `PLAN-M14.md` P19: `approve.ts`'s own same-run conflict check (`GATE-511`) reads exactly these two
   // fields off this event -- `agentId` (the top-level field, `telemetry/src/events.ts:104`) and
   // `payload.gateEvidence` (the compiled `StepNode.gateEvidence`).

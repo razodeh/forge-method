@@ -225,9 +225,12 @@ export interface TelemetryFacade {
  * P44's own `FORGE_REQUEST_CONTEXT:` expansion loop (`context-expansion.ts`'s own
  * `ContextRequestEventPayload`) uses `{kind: 'context-request', query, served, reason?, sessionId?}` --
  * a new fact riding on an existing event type's own untyped `payload`, never a new `EventType` of its
- * own, the same precedent the first shape already set; `@forge/engine/resume`'s own `reconstructRunState`
- * reads only a `sessionId` string field off whichever shape it finds, so the two coexist without either
- * needing to know about the other. Every optional field spells out `| undefined`
+ * own, the same precedent the first shape already set; a THIRD shape, `specs/22` M15 P11's own
+ * `{kind: 'kb-read', source: 'static', ids}` (`assemble.ts`'s own `persist`), records which real KB
+ * entries a session's own prompt packed, for a later piece to correlate against the decision artifact
+ * (if any) that session went on to produce. `@forge/engine/resume`'s own `reconstructRunState`
+ * reads only a `sessionId` string field off whichever shape it finds, so all three coexist without any
+ * of them needing to know about the others. Every optional field spells out `| undefined`
  * explicitly, not just `?:` alone — required under this project's own `exactOptionalPropertyTypes`
  * whenever a caller (`steps.ts`) passes an already-optional upstream value (`StepNode.agent?: AgentId`)
  * straight through, rather than only ever omitting the key outright. */

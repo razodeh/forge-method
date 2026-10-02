@@ -31,7 +31,7 @@ import { minimatch } from 'minimatch';
 
 import { recordChecks } from '../gates/index.ts';
 import { parseReviewVerdict, type ReviewVerdict } from '../interaction/review-report.ts';
-import { mergeLandingScope, upstreamOf, type StepNode } from '../plan/index.ts';
+import { deriveStoryId, mergeLandingScope, upstreamOf, type StepNode } from '../plan/index.ts';
 import { assertGateApprovalAllowed } from '../security/taint-guard.ts';
 import {
   promptRecordDirName,
@@ -877,6 +877,10 @@ export async function runAgentWork(
   // `session.usage`. `estimated: true` unconditionally: `07` §7.3's own "adapter-reported figures are
   // client-side estimates, never presented as an invoice" applies to every real adapter this codebase
   // can construct today, not a caller-decided flag this module has any basis to vary.
+  // `specs/22` M15 P11: `storyId`, when `deriveStoryId` can read one off this step's own `runInputs` --
+  // computed once here, not left for every future reader to re-derive (and potentially disagree on) by
+  // re-parsing `node.id`'s own compiled `itemKey` segment. See `deriveStoryId`'s own doc comment.
+  const storyId = deriveStoryId(node);
   for (const leg of legs) {
     await ctx.telemetry.emit({
       type: 'UsageRecorded',
@@ -891,6 +895,7 @@ export async function runAgentWork(
         costUsd: leg.usage.costUsd === undefined ? 0 : sanitizeUsageNumber(leg.usage.costUsd),
         estimated: true,
         durationMs: sanitizeUsageNumber(leg.durationMs),
+        ...(storyId === undefined ? {} : { storyId }),
       },
     });
   }

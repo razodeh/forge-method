@@ -72,12 +72,13 @@ describe('doctor disclosures', () => {
     const project = await createTestProject();
     const { appendExemption } = await import('../../../src/commands/loop/test/exemptions.ts');
     const { SYSTEM_CLOCK } = await import('@forge/core');
-    await appendExemption(project.paths, project.config.paths.reports, SYSTEM_CLOCK, {
-      testId: 'STORY-001: timing-guard',
-      reason: 'r',
-      owner: 'alice',
-      expiry: '2099-01-01',
-    });
+    await appendExemption(
+      project.paths,
+      project.config.paths.reports,
+      SYSTEM_CLOCK,
+      { testId: 'STORY-001: timing-guard', reason: 'r', owner: 'alice', expiry: '2099-01-01' },
+      { projectRoot: project.dir, runId: undefined },
+    );
 
     const { check } = await disclosuresCheck(project);
 
@@ -175,12 +176,18 @@ describe('doctor disclosures', () => {
       by: 'architect',
     });
     const { SYSTEM_CLOCK } = await import('@forge/core');
-    await appendExemption(project.paths, project.config.paths.reports, SYSTEM_CLOCK, {
-      testId: 'STORY-001: timing-guard',
-      reason: 'a real wall-clock timing guard',
-      owner: 'alice',
-      expiry: '2099-01-01',
-    });
+    await appendExemption(
+      project.paths,
+      project.config.paths.reports,
+      SYSTEM_CLOCK,
+      {
+        testId: 'STORY-001: timing-guard',
+        reason: 'a real wall-clock timing guard',
+        owner: 'alice',
+        expiry: '2099-01-01',
+      },
+      { projectRoot: project.dir, runId: undefined },
+    );
     const cause = new ForgeError('RUN-113', {
       stepId: 'wf:review',
       file: 'x.md',

@@ -39,6 +39,7 @@ const TEST_COMMAND = `${process.execPath} ${resolveRealVitestEntry()} run --root
 function run(
   args: readonly string[],
   cwd: string,
+  env?: Readonly<Record<string, string>>,
 ): { readonly status: number; readonly stdout: string; readonly stderr: string } {
   try {
     const stdout = execFileSync(process.execPath, [LAUNCHER, ...args, '-C', cwd], {
@@ -46,6 +47,7 @@ function run(
       timeout: 30_000,
       maxBuffer: 16 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
+      ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
     });
     return { status: 0, stdout, stderr: '' };
   } catch (error) {
@@ -352,6 +354,69 @@ describe('forge test exempt — a valid exemption', () => {
     const text = await readFile(path.join(dir, 'docs/forge/reports/exemptions.md'), 'utf8');
     expect(text).toContain('testId: "STORY-001: tautology"');
     expect(text).toContain('owner: alice');
+  }, 60_000);
+});
+
+// `specs/22` M15 P11 metric 4a: the real CLI wiring, end to end through a genuine subprocess.
+describe('forge test exempt — telemetry (specs/22 M15 P11)', () => {
+  it('a real FORGE_RUN_ID in the environment reaches a real CheckRun {kind: "exemption-declared"} event on disk', async () => {
+    const dir = await freshProject();
+
+    const exempt = run(
+      [
+        'test',
+        'exempt',
+        'STORY-001',
+        'tautology',
+        '--reason',
+        'A pure tautology, never touches impl.js.',
+        '--owner',
+        'alice',
+        '--expires',
+        isoDate(30),
+        '--json',
+      ],
+      dir,
+      { FORGE_RUN_ID: 'run-cli-exempt' },
+    );
+    expect(exempt.status).toBe(0);
+    const { id } = JSON.parse(exempt.stdout) as { readonly id: string };
+
+    const { readEvents } = await import('@forge/telemetry/events');
+    const events = [];
+    for await (const event of readEvents(dir, 'run-cli-exempt')) events.push(event);
+    const checkRuns = events.filter((event) => event.type === 'CheckRun');
+    expect(checkRuns).toHaveLength(1);
+    expect(checkRuns[0]?.payload).toMatchObject({
+      kind: 'exemption-declared',
+      exemptionId: id,
+      testId: 'STORY-001: tautology',
+      owner: 'alice',
+    });
+  }, 60_000);
+
+  it('no FORGE_RUN_ID at all (the ordinary, standalone human invocation): no run directory is ever created', async () => {
+    const dir = await freshProject();
+
+    const exempt = run(
+      [
+        'test',
+        'exempt',
+        'STORY-001',
+        'tautology',
+        '--reason',
+        'A pure tautology, never touches impl.js.',
+        '--owner',
+        'alice',
+        '--expires',
+        isoDate(30),
+      ],
+      dir,
+    );
+    expect(exempt.status).toBe(0);
+
+    const { pathExists, ProjectPaths } = await import('@forge/core/fs');
+    expect(await pathExists(new ProjectPaths(dir).resolveState('runs'))).toBe(false);
   }, 60_000);
 });
 

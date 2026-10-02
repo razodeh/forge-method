@@ -419,18 +419,30 @@ describe('assembleAndWriteEvidenceBundle — the other kinds, each legitimately 
     const runId = 'run-1';
     await writeReviewEvent(projectRoot, runId, 'clear');
     const clock = fakeClock();
-    const mine = await appendExemption(paths, 'docs/forge/reports', clock, {
-      testId: qualifiedTestId('STORY-014', 'flaky under mutation'),
-      reason: 'genuinely cannot be mutation-bound',
-      owner: 'alice',
-      expiry: '2099-01-01',
-    });
-    await appendExemption(paths, 'docs/forge/reports', clock, {
-      testId: qualifiedTestId('STORY-OTHER', 'a different story'),
-      reason: 'genuinely cannot be mutation-bound',
-      owner: 'bob',
-      expiry: '2099-01-01',
-    });
+    const mine = await appendExemption(
+      paths,
+      'docs/forge/reports',
+      clock,
+      {
+        testId: qualifiedTestId('STORY-014', 'flaky under mutation'),
+        reason: 'genuinely cannot be mutation-bound',
+        owner: 'alice',
+        expiry: '2099-01-01',
+      },
+      { projectRoot, runId: undefined },
+    );
+    await appendExemption(
+      paths,
+      'docs/forge/reports',
+      clock,
+      {
+        testId: qualifiedTestId('STORY-OTHER', 'a different story'),
+        reason: 'genuinely cannot be mutation-bound',
+        owner: 'bob',
+        expiry: '2099-01-01',
+      },
+      { projectRoot, runId: undefined },
+    );
 
     const written = await assembleAndWriteEvidenceBundle(
       baseInput(paths, projectRoot, 'STORY-014', runId),

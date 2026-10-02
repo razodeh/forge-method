@@ -84,6 +84,7 @@ import { minimatch } from 'minimatch';
 
 import { listSpecArtifacts } from './shared.ts';
 import { runBindingCheck } from './loop/test/binding.ts';
+import { emitBindingCheckTelemetry } from './loop/test/check-telemetry.ts';
 import { detectEcosystem } from './loop/test/ecosystem.ts';
 import {
   applyExemptions,
@@ -185,6 +186,11 @@ export interface StoryVerifyContext {
    * full, not narrowed to just that one case, because narrowing it here would silently stop mattering the
    * moment a later piece makes the first gate `testRoots`-aware too. */
   readonly testRoots?: readonly string[] | undefined;
+  /** `process.env[FORGE_RUN_ID]` at the CLI boundary (`@forge/core`'s own session marker), the identical
+   * `specs/22` M15 P7 `AssembleEvidenceBundleInput.runId` precedent — `undefined` for a hand run outside
+   * any real `forge run`, in which case `checkBinding`'s own `specs/22` M15 P11 telemetry (metrics 1 and
+   * 4b) emits nothing: there is no event log to write into. */
+  readonly runId?: string | undefined;
 }
 
 interface Resolution {
@@ -730,6 +736,21 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
     exemptions,
     SYSTEM_CLOCK.now().slice(0, 10),
   );
+  // `specs/22` M15 P11 metrics 1 and 4b: the real, ground-truth numbers, regardless of whether an
+  // exemption problem below then makes the overall check outcome 'fail' -- `bin.ts`'s own
+  // `runOneStoryBinding` emits at the identical point, for the identical reason (that function's own
+  // doc comment has the fuller reasoning).
+  await emitBindingCheckTelemetry({
+    projectRoot: ctx.projectRoot,
+    runId: ctx.runId,
+    clock: SYSTEM_CLOCK,
+    storyId: story.id,
+    testsNamed: result.namedTests.length,
+    bound: result.failedUnderMutation.length,
+    nonBinding: rawNonBinding.length,
+    exempted: rawNonBinding.length - application.nonBinding.length,
+    expiredExemptionIds: application.expiredExemptions.map((exemption) => exemption.id),
+  });
   const exemptionProblems = describeExemptionProblems(application);
   if (exemptionProblems.length > 0) {
     return { status: 'fail', message: exemptionProblems.join(' ') };

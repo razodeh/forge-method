@@ -243,6 +243,37 @@ export interface StepNode {
   readonly taint?: 'external' | undefined;
 }
 
+function nonBlankStringId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+/** `specs/22` M15 P11: which story a `StepNode` belongs to, read off `StepNode.runInputs` alone — no
+ * registry of known step ids to keep in sync (the fragile shape `evidence-bundle.ts`'s own
+ * `STORY_STEP_IDS` already is for its one, narrower, `implement-story`-only purpose; see that file's
+ * own doc comment for why that list cannot cover `build-stage.workflow.yaml`'s fanout steps at all).
+ * Two real, independently-sufficient sources, checked in this order:
+ *
+ * 1. A fanout's own per-item `item` (`runInputsField`, `compile.ts`): `build-stage.workflow.yaml`'s
+ *    `generate-tests`/`implement`/`review` steps each fan out `over: 'stage.stories'` with
+ *    `itemKey: '{{item.id}}'`, so `item` is the real story object and `item.id` is its real id.
+ * 2. A declared `storyId` workflow input (`runInputsField` again): `implement-story.workflow.yaml`
+ *    declares `storyId` as a required input, so every one of its steps carries the real story id as
+ *    `runInputs.storyId` directly, with no fanout involved at all.
+ *
+ * `undefined` for a step that is neither — `freeze-contracts`, `standup`, `merge`, `verify`, and every
+ * other step that is not scoped to one story. Pure and total: never throws, never needs the KB or a
+ * live run to answer, since `runInputs` is already fully resolved at compile time. */
+export function deriveStoryId(node: StepNode): string | undefined {
+  const runInputs = node.runInputs;
+  if (runInputs === undefined) return undefined;
+  const item = runInputs['item'];
+  if (typeof item === 'object' && item !== null) {
+    const fromItem = nonBlankStringId((item as Record<string, unknown>)['id']);
+    if (fromItem !== undefined) return fromItem;
+  }
+  return nonBlankStringId(runInputs['storyId']);
+}
+
 /** One problem `compilePlan`/`expandFanout` found. Unlike `@forge/engine/workflow`'s own `ValidationIssue`
  * (which can be `warning`-severity, since a warning does not prevent `validateWorkflow` from finishing),
  * every `CompileIssue` is unconditionally blocking — there is no "plan, partially compiled, with

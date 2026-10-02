@@ -1176,6 +1176,178 @@ describe('M13 P5 -- review round 2: error classes, persistence, block [6] and di
     ]);
   });
 
+  // `specs/22` M15 P11: the static half of "KB reads preceding each decision artifact" -- a `SessionEvent`
+  // (`kind: 'kb-read'`) naming every real KB entry this session's own prompt actually packed.
+  function kbWithOneEntry(id: string): KbAccess {
+    return {
+      ...emptyKbAccess(),
+      backend: { ...emptyKbAccess().backend, search: () => [{ id, score: 9 }] },
+      tree: {
+        errors: [],
+        entries: [
+          {
+            path: `${id}.md`,
+            kind: 'kb-entry',
+            value: { id, body: 'content', updated: '2026-01-01' },
+          },
+        ] as never,
+      },
+    };
+  }
+
+  it("emits SessionEvent {kind:'kb-read', source:'static', ids} naming every real KB entry this session's prompt packed", async () => {
+    const root = await createProject('kb-read');
+    await installShippedAgent(root, 'reviewer');
+    await writeProjectFile(root, '.forge/briefs/swarm-review.md', 'brief');
+    const adapter = new CapturingAdapter();
+    adapter.script(() => true, { text: ['ok'] });
+    const base = realAssembly(root, configWith(BALANCED_AND_MAX));
+    const kb = kbWithOneEntry('KB-REAL');
+    const ctx = createTestContext({
+      projectRoot: root,
+      adapter,
+      assembly: { ...base, openKb: () => Promise.resolve(kb) },
+    });
+    await executeStep(
+      node({
+        id: 'wf:review',
+        kind: 'agent',
+        agent: toAgentId('reviewer'),
+        brief: 'briefs/swarm-review.md',
+      }),
+      ctx,
+    );
+    const { readEvents } = await import('@forge/telemetry/events');
+    const kbReads: unknown[] = [];
+    for await (const event of readEvents(root, ctx.runId)) {
+      if (
+        event.type === 'SessionEvent' &&
+        (event.payload as { kind?: unknown }).kind === 'kb-read'
+      ) {
+        kbReads.push(event.payload);
+      }
+    }
+    expect(kbReads).toEqual([{ kind: 'kb-read', source: 'static', ids: ['KB-REAL'] }]);
+  });
+
+  it('emits no kb-read event at all for a session whose own pack read zero KB entries', async () => {
+    const root = await createProject('kb-read-none');
+    await installShippedAgent(root, 'reviewer');
+    await writeProjectFile(root, '.forge/briefs/swarm-review.md', 'brief');
+    const adapter = new CapturingAdapter();
+    adapter.script(() => true, { text: ['ok'] });
+    const base = realAssembly(root, configWith(BALANCED_AND_MAX));
+    const ctx = createTestContext({
+      projectRoot: root,
+      adapter,
+      assembly: { ...base, openKb: () => Promise.resolve(emptyKbAccess()) },
+    });
+    await executeStep(
+      node({
+        id: 'wf:review',
+        kind: 'agent',
+        agent: toAgentId('reviewer'),
+        brief: 'briefs/swarm-review.md',
+      }),
+      ctx,
+    );
+    const { readEvents } = await import('@forge/telemetry/events');
+    const kbReads: unknown[] = [];
+    for await (const event of readEvents(root, ctx.runId)) {
+      if (
+        event.type === 'SessionEvent' &&
+        (event.payload as { kind?: unknown }).kind === 'kb-read'
+      ) {
+        kbReads.push(event.payload);
+      }
+    }
+    expect(kbReads).toEqual([]);
+  });
+
+  // Mutation evidence (`PLAN-M15.md` P11's own named mutation, "exactly once per occurrence"):
+  // emission lives in `persist` (called once per REAL, about-to-dispatch session attempt), not in
+  // `compileSession`'s own return (which also runs for a session that is merely assembled and
+  // inspected -- a dry-run plan check, or a test like this one -- and never actually dispatched). A
+  // session assembled but never persisted is not a real occurrence at all.
+  it('assembling a session without ever calling persist() emits no kb-read event -- compiling is not an occurrence, dispatching is', async () => {
+    const root = await createProject('kb-read-no-persist');
+    await installShippedAgent(root, 'reviewer');
+    await writeProjectFile(root, '.forge/briefs/swarm-review.md', 'brief');
+    const base = realAssembly(root, configWith(BALANCED_AND_MAX));
+    const kb = kbWithOneEntry('KB-REAL');
+    const ctx = createTestContext({
+      projectRoot: root,
+      adapter: new CapturingAdapter(),
+      assembly: { ...base, openKb: () => Promise.resolve(kb) },
+    });
+
+    await assembleAgentSession({
+      node: node({
+        id: 'wf:review',
+        kind: 'agent',
+        agent: toAgentId('reviewer'),
+        brief: 'briefs/swarm-review.md',
+      }),
+      ctx,
+    });
+    // Deliberately never calling `.persist()`.
+
+    const { readEvents } = await import('@forge/telemetry/events');
+    const kbReads: unknown[] = [];
+    for await (const event of readEvents(root, ctx.runId)) {
+      if (
+        event.type === 'SessionEvent' &&
+        (event.payload as { kind?: unknown }).kind === 'kb-read'
+      ) {
+        kbReads.push(event.payload);
+      }
+    }
+    expect(kbReads).toEqual([]);
+  });
+
+  // Mutation evidence (`PLAN-M15.md` P11's own named mutation): "emit per-attempt instead of
+  // per-occurrence: the exactly-once test fails" -- a reroll is a genuine SECOND real attempt (a fresh
+  // session that reads the KB again), so it correctly gets its OWN independent event, never deduplicated
+  // against the first attempt's.
+  it('a reroll of the same step (runAgentWork, fresh session) emits a second, independent kb-read event -- once per real attempt, never deduplicated across the whole step', async () => {
+    const root = await createProject('kb-read-reroll');
+    await installShippedAgent(root, 'reviewer');
+    await writeProjectFile(root, '.forge/briefs/swarm-review.md', 'brief text');
+    const adapter = new CapturingAdapter();
+    adapter.script(() => true, { text: ['ok'] });
+    const base = realAssembly(root, configWith(BALANCED_AND_MAX));
+    const kb = kbWithOneEntry('KB-REAL');
+    const ctx: ExecuteStepContext = createTestContext({
+      projectRoot: root,
+      adapter,
+      assembly: { ...base, openKb: () => Promise.resolve(kb) },
+    });
+    const step = node({
+      id: 'wf:review',
+      kind: 'agent',
+      agent: toAgentId('reviewer'),
+      brief: 'briefs/swarm-review.md',
+    });
+    const lane = { laneId: 'lane-x', path: root, branch: 'main' };
+    await runAgentWork(step, ctx, lane, 'HEAD', { kind: 'start' });
+    await runAgentWork(step, ctx, lane, 'HEAD', { kind: 'start' });
+
+    const { readEvents } = await import('@forge/telemetry/events');
+    const kbReads: unknown[] = [];
+    for await (const event of readEvents(root, ctx.runId)) {
+      if (
+        event.type === 'SessionEvent' &&
+        (event.payload as { kind?: unknown }).kind === 'kb-read'
+      ) {
+        kbReads.push(event.payload);
+      }
+    }
+    expect(kbReads).toEqual([
+      { kind: 'kb-read', source: 'static', ids: ['KB-REAL'] },
+      { kind: 'kb-read', source: 'static', ids: ['KB-REAL'] },
+    ]);
+  });
+
   it('a panel synthesis step that receives peer output is marked tainted (context.json external content), and a --question that names prompts/x.md stays prose', async () => {
     const { dispatchAgentStep } = await import('../../src/interaction/dispatch-agent-step.ts');
     const root = await createProject('synthesis-taint');

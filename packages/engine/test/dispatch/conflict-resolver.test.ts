@@ -394,6 +394,32 @@ describe('createAgentConflictResolver -- (b)+(c) session and verification', () =
       code: 'MERGE-RESOLVER-BUDGET',
     });
   });
+
+  // `specs/22` M15 P11: a resolver session's own UsageRecorded carries the LANE's own storyId too
+  // (`deriveStoryId(node)`, the identical node `stepId` above already reads).
+  it('carries payload.storyId on UsageRecorded when the lane step itself names one', async () => {
+    const worktreePath = await conflictWorktree('usage-story');
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId.endsWith(':resolve-conflict'), {
+      text: ['fixed'],
+      writeFiles: [{ relativePath: 'same.txt', content: 'merged\n' }],
+    });
+    const stepNode = baseNode({
+      id: 'build-stage:implement:STORY-009',
+      kind: 'agent',
+      runInputs: { item: { id: 'STORY-009' } },
+    });
+    const projectRoot = await freshProjectRoot('x');
+    const base = createTestContext({ projectRoot, adapter, runId: 'run-usage-story' });
+    const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[stepNode.id, stepNode]]) };
+    const resolver = createAgentConflictResolver(ctx);
+
+    expect(await resolver(describeConflict(worktreePath, stepNode.id))).toBe('resolved');
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-usage-story')) events.push(event);
+    const usage = events.find((event) => event.type === 'UsageRecorded');
+    expect(usage?.payload).toMatchObject({ storyId: 'STORY-009' });
+  });
 });
 
 describe('createAgentConflictResolver -- end to end through the real merge queue (executeStep)', () => {

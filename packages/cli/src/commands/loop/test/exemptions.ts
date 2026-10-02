@@ -48,6 +48,7 @@ import {
 import * as YAML from 'yaml';
 
 import { withCollectionLock } from '../../collection-lock.ts';
+import { emitExemptionDeclaredTelemetry } from './check-telemetry.ts';
 
 const EXEMPTIONS_RELATIVE_PATH = 'exemptions.md';
 
@@ -192,15 +193,22 @@ export interface AppendExemptionInput {
  * (the CLI layer's own job too, `GATE-515` `'exempts-a-binding-test'`) -- those two refusals are the
  * CLI layer's job. The one policy check this function DOES make itself, because it is inherent to the
  * id it allocates, not a property of the caller's own input: `nextExemptionId`'s own `GATE-515`
- * `'id-exhausted'` refusal. */
+ * `'id-exhausted'` refusal.
+ *
+ * `telemetry` (`specs/22` M15 P11 metric 4a): fired once this write genuinely commits, never before
+ * -- a refused or failed declaration records no event for an exemption that was never actually
+ * durable. `undefined` `runId` (no real `forge run` in progress, the common case: this command has
+ * exactly one real caller, `forge test exempt`, which no shipped workflow ever runs as a step) emits
+ * nothing, the identical `FORGE_RUN_ID`-gated stance `check-telemetry.ts`'s own doc comment explains. */
 export async function appendExemption(
   paths: ProjectPaths,
   reportsRoot: string,
   clock: Clock,
   input: AppendExemptionInput,
+  telemetry: { readonly projectRoot: string; readonly runId: string | undefined },
 ): Promise<string> {
   const relativePath = exemptionsPath(reportsRoot);
-  return withExemptionsLock(paths, clock, async () => {
+  const id = await withExemptionsLock(paths, clock, async () => {
     const existing = await readFrontMatter(paths, relativePath);
     const priorExemptions: readonly unknown[] = Array.isArray(existing?.['exemptions'])
       ? existing['exemptions']
@@ -246,6 +254,16 @@ export async function appendExemption(
     );
     return id;
   });
+  await emitExemptionDeclaredTelemetry({
+    projectRoot: telemetry.projectRoot,
+    runId: telemetry.runId,
+    clock,
+    exemptionId: id,
+    testId: input.testId,
+    owner: input.owner,
+    expiry: input.expiry,
+  });
+  return id;
 }
 
 export interface ExemptionApplication {

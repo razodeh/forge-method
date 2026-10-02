@@ -249,12 +249,18 @@ describe('a corrupt kb/disclosures.md (one valid row, one schema-invalid row)', 
 describe('listDisclosureLedger — an exemption (P6) and a stopped critic loop (P9) each appear automatically', () => {
   it('a real, currently-in-force exemption (reports/exemptions.md) appears as an open, synthesized row, with no Disclosure document written for it', async () => {
     const paths = await freshProject();
-    await appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-      testId: 'STORY-001: timing-guard',
-      reason: 'a real wall-clock timing guard, never mutation-bindable',
-      owner: 'alice',
-      expiry: '2026-12-01',
-    });
+    await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      {
+        testId: 'STORY-001: timing-guard',
+        reason: 'a real wall-clock timing guard, never mutation-bindable',
+        owner: 'alice',
+        expiry: '2026-12-01',
+      },
+      { projectRoot: paths.resolveWithin('.'), runId: undefined },
+    );
 
     const ledger = await listDisclosureLedger({
       paths,
@@ -275,12 +281,13 @@ describe('listDisclosureLedger — an exemption (P6) and a stopped critic loop (
 
   it('an EXPIRED exemption no longer appears as open', async () => {
     const paths = await freshProject();
-    await appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-      testId: 'STORY-001: timing-guard',
-      reason: 'r',
-      owner: 'alice',
-      expiry: '2026-01-01',
-    });
+    await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      { testId: 'STORY-001: timing-guard', reason: 'r', owner: 'alice', expiry: '2026-01-01' },
+      { projectRoot: paths.resolveWithin('.'), runId: undefined },
+    );
     const ledger = await listDisclosureLedger({
       paths,
       projectRoot: paths.resolveWithin('.'),
@@ -357,12 +364,13 @@ describe('listDisclosureLedger — an exemption (P6) and a stopped critic loop (
       owner: 'alice',
       sources: [{ kind: 'human', ref: 'x' }],
     });
-    await appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-      testId: 'STORY-001: timing-guard',
-      reason: 'r',
-      owner: 'alice',
-      expiry: '2026-12-01',
-    });
+    await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      { testId: 'STORY-001: timing-guard', reason: 'r', owner: 'alice', expiry: '2026-12-01' },
+      { projectRoot, runId: undefined },
+    );
     const { ForgeError } = await import('@forge/core/errors');
     const cause = new ForgeError('RUN-113', {
       stepId: 'wf:review',

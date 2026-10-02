@@ -31,10 +31,13 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-async function freshProject(): Promise<ProjectPaths> {
+async function freshProject(): Promise<{
+  readonly paths: ProjectPaths;
+  readonly projectRoot: string;
+}> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-exemptions-'));
   dirs.push(dir);
-  return new ProjectPaths(dir);
+  return { paths: new ProjectPaths(dir), projectRoot: dir };
 }
 
 function fakeClock(now = '2026-09-30T12:00:00.000Z'): Clock {
@@ -49,20 +52,26 @@ describe('qualifiedTestId', () => {
 
 describe('loadExemptions', () => {
   it('reads [] for a project that has never run `forge test exempt`', async () => {
-    const paths = await freshProject();
+    const { paths } = await freshProject();
     const result = await loadExemptions(paths, 'docs/forge/reports');
     expect(result.exemptions).toEqual([]);
     expect(result.corruptCount).toBe(0);
   });
 
   it('reads back exactly what appendExemption wrote', async () => {
-    const paths = await freshProject();
-    await appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-      testId: 'STORY-001: timing-guard',
-      reason: 'a real wall-clock timing guard, never mutation-bindable',
-      owner: 'alice',
-      expiry: '2026-12-01',
-    });
+    const { paths, projectRoot } = await freshProject();
+    await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      {
+        testId: 'STORY-001: timing-guard',
+        reason: 'a real wall-clock timing guard, never mutation-bindable',
+        owner: 'alice',
+        expiry: '2026-12-01',
+      },
+      { projectRoot, runId: undefined },
+    );
 
     const { exemptions, corruptCount } = await loadExemptions(paths, 'docs/forge/reports');
 
@@ -78,7 +87,7 @@ describe('loadExemptions', () => {
   });
 
   it('tolerates a schema-invalid row: the valid sibling survives and the corruption is counted, never silently zeroing the whole read (specs/22 M15 P10, round-2 gauntlet critic)', async () => {
-    const paths = await freshProject();
+    const { paths } = await freshProject();
     const reportsDir = paths.resolveWithin('docs/forge/reports');
     await mkdir(reportsDir, { recursive: true });
     const seed = {
@@ -119,19 +128,31 @@ describe('loadExemptions', () => {
 
 describe('appendExemption', () => {
   it('allocates sequential ids scoped to the collection file, not the shared project IdAllocator', async () => {
-    const paths = await freshProject();
-    const first = await appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-      testId: 'STORY-001: a',
-      reason: 'r',
-      owner: 'alice',
-      expiry: '2026-12-01',
-    });
-    const second = await appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-      testId: 'STORY-001: b',
-      reason: 'r',
-      owner: 'alice',
-      expiry: '2026-12-01',
-    });
+    const { paths, projectRoot } = await freshProject();
+    const first = await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      {
+        testId: 'STORY-001: a',
+        reason: 'r',
+        owner: 'alice',
+        expiry: '2026-12-01',
+      },
+      { projectRoot, runId: undefined },
+    );
+    const second = await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      {
+        testId: 'STORY-001: b',
+        reason: 'r',
+        owner: 'alice',
+        expiry: '2026-12-01',
+      },
+      { projectRoot, runId: undefined },
+    );
 
     expect(first).toBe('EXEMPT-001');
     expect(second).toBe('EXEMPT-002');
@@ -149,7 +170,7 @@ describe('appendExemption', () => {
   }
 
   it('reclaims a lock naming a real, genuinely dead pid, without waiting out the retry budget', async () => {
-    const paths = await freshProject();
+    const { paths, projectRoot } = await freshProject();
     const child = spawn('node', ['-e', 'process.exit(0)']);
     const deadPid = child.pid;
     expect(deadPid).toBeDefined();
@@ -159,12 +180,18 @@ describe('appendExemption', () => {
     await writeFile(lockFilePath(paths), String(deadPid), 'utf8');
 
     const start = Date.now();
-    const id = await appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-      testId: 'STORY-001: a',
-      reason: 'r',
-      owner: 'alice',
-      expiry: '2026-12-01',
-    });
+    const id = await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      {
+        testId: 'STORY-001: a',
+        reason: 'r',
+        owner: 'alice',
+        expiry: '2026-12-01',
+      },
+      { projectRoot, runId: undefined },
+    );
     // Reclaimed near-instantly (well under the ~5s full retry budget), not merely "eventually" --
     // proves the dead-pid branch fires on its own first check, not as a side effect of some other
     // path's own timeout.
@@ -173,7 +200,7 @@ describe('appendExemption', () => {
   });
 
   it('does NOT reclaim a lock naming a real, currently-alive pid (this process itself)', async () => {
-    const paths = await freshProject();
+    const { paths, projectRoot } = await freshProject();
     await mkdir(path.dirname(lockFilePath(paths)), { recursive: true });
     await writeFile(lockFilePath(paths), String(process.pid), 'utf8');
 
@@ -182,17 +209,23 @@ describe('appendExemption', () => {
     // typed GATE-515 'lock-exhausted' reason, never a bare Error and never a silent, incorrect
     // reclaim-and-proceed.
     await expect(
-      appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-        testId: 'STORY-001: a',
-        reason: 'r',
-        owner: 'alice',
-        expiry: '2026-12-01',
-      }),
+      appendExemption(
+        paths,
+        'docs/forge/reports',
+        fakeClock(),
+        {
+          testId: 'STORY-001: a',
+          reason: 'r',
+          owner: 'alice',
+          expiry: '2026-12-01',
+        },
+        { projectRoot, runId: undefined },
+      ),
     ).rejects.toMatchObject({ code: 'GATE-515' });
   }, 15_000);
 
   it('does not reclaim a RECENT empty/unwritten lock file -- waits, then exhausts via GATE-515 lock-exhausted, never a silent reclaim-too-early', async () => {
-    const paths = await freshProject();
+    const { paths, projectRoot } = await freshProject();
     await mkdir(path.dirname(lockFilePath(paths)), { recursive: true });
     // Empty content: the real, ordinary shape of another process's own `writeFileSync(path, pid, {
     // flag: 'wx' })` call that has created the file but has not (yet) had its content observed by
@@ -205,12 +238,18 @@ describe('appendExemption', () => {
     // exhausting its retry budget, never by a premature, incorrect reclaim-and-proceed.
     const frozenNow = new Date().toISOString();
     await expect(
-      appendExemption(paths, 'docs/forge/reports', fakeClock(frozenNow), {
-        testId: 'STORY-001: a',
-        reason: 'r',
-        owner: 'alice',
-        expiry: '2026-12-01',
-      }),
+      appendExemption(
+        paths,
+        'docs/forge/reports',
+        fakeClock(frozenNow),
+        {
+          testId: 'STORY-001: a',
+          reason: 'r',
+          owner: 'alice',
+          expiry: '2026-12-01',
+        },
+        { projectRoot, runId: undefined },
+      ),
     ).rejects.toMatchObject({ code: 'GATE-515' });
     // The empty lock file itself must still be there -- a correct "waited, then gave up" outcome
     // never deletes a lock it could not prove was actually its own to clear.
@@ -219,7 +258,7 @@ describe('appendExemption', () => {
   }, 15_000);
 
   it('reclaims an OLD empty/unwritten lock file once it is older than STALE_EMPTY_LOCK_MS', async () => {
-    const paths = await freshProject();
+    const { paths, projectRoot } = await freshProject();
     await mkdir(path.dirname(lockFilePath(paths)), { recursive: true });
     await writeFile(lockFilePath(paths), '', 'utf8');
 
@@ -229,12 +268,18 @@ describe('appendExemption', () => {
     // waits.
     const farFuture = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     const start = Date.now();
-    const id = await appendExemption(paths, 'docs/forge/reports', fakeClock(farFuture), {
-      testId: 'STORY-001: a',
-      reason: 'r',
-      owner: 'alice',
-      expiry: '2026-12-01',
-    });
+    const id = await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(farFuture),
+      {
+        testId: 'STORY-001: a',
+        reason: 'r',
+        owner: 'alice',
+        expiry: '2026-12-01',
+      },
+      { projectRoot, runId: undefined },
+    );
     expect(Date.now() - start).toBeLessThan(1000);
     expect(id).toBe('EXEMPT-001');
   });
@@ -246,15 +291,21 @@ describe('appendExemption', () => {
     // block below (real, separate `node` processes, released together via a shared gate file) is what
     // actually proves that; this test stays because an in-process regression (e.g. a lock that only
     // serializes some call shapes) is still worth catching cheaply, without the subprocess cost.
-    const paths = await freshProject();
+    const { paths, projectRoot } = await freshProject();
     const ids = await Promise.all(
       Array.from({ length: 10 }, (_unused, index) =>
-        appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-          testId: `STORY-001: test-${String(index)}`,
-          reason: 'r',
-          owner: 'alice',
-          expiry: '2026-12-01',
-        }),
+        appendExemption(
+          paths,
+          'docs/forge/reports',
+          fakeClock(),
+          {
+            testId: `STORY-001: test-${String(index)}`,
+            reason: 'r',
+            owner: 'alice',
+            expiry: '2026-12-01',
+          },
+          { projectRoot, runId: undefined },
+        ),
       ),
     );
 
@@ -267,7 +318,7 @@ describe('appendExemption', () => {
     // each its own lock-acquire + full read-modify-write -- correct but needlessly slow for a fixture
     // this function's own real work never has to build) -- only the real 1000th call under test goes
     // through `appendExemption` itself.
-    const paths = await freshProject();
+    const { paths, projectRoot } = await freshProject();
     const reportsDir = paths.resolveWithin('docs/forge/reports');
     await mkdir(reportsDir, { recursive: true });
     const exemptions = Array.from({ length: 999 }, (_unused, index) => ({
@@ -298,31 +349,137 @@ describe('appendExemption', () => {
     expect((await loadExemptions(paths, 'docs/forge/reports')).exemptions).toHaveLength(999);
 
     await expect(
-      appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-        testId: 'STORY-001: test-1000',
-        reason: 'r',
-        owner: 'alice',
-        expiry: '2026-12-01',
-      }),
+      appendExemption(
+        paths,
+        'docs/forge/reports',
+        fakeClock(),
+        {
+          testId: 'STORY-001: test-1000',
+          reason: 'r',
+          owner: 'alice',
+          expiry: '2026-12-01',
+        },
+        { projectRoot, runId: undefined },
+      ),
     ).rejects.toMatchObject({ code: 'GATE-515' });
     // Refused, not a corrupting partial write: the 999 already-recorded entries are untouched.
     expect((await loadExemptions(paths, 'docs/forge/reports')).exemptions).toHaveLength(999);
   });
 
   it('writes a real, schema-valid ExemptionsFile document', async () => {
-    const paths = await freshProject();
-    await appendExemption(paths, 'docs/forge/reports', fakeClock(), {
-      testId: 'STORY-001: a',
-      reason: 'r',
-      owner: 'alice',
-      expiry: '2026-12-01',
-    });
+    const { paths, projectRoot } = await freshProject();
+    await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      {
+        testId: 'STORY-001: a',
+        reason: 'r',
+        owner: 'alice',
+        expiry: '2026-12-01',
+      },
+      { projectRoot, runId: undefined },
+    );
 
     const text = await readFile(paths.resolveWithin('docs/forge/reports/exemptions.md'), 'utf8');
     const frontMatterText = text.split('---\n')[1] ?? '';
     const YAML = await import('yaml');
     const parsed = exemptionsFileSchema.safeParse(YAML.parse(frontMatterText));
     expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true);
+  });
+});
+
+// `specs/22` M15 P11 metric 4a: "exemptions opened" -- real telemetry, real `appendEvent`, against the
+// real event log (never the `ctx.telemetry` facade: this is CLI-layer code, with no `ExecuteStepContext`
+// of its own, the identical reason `gate-commands.ts`'s own `emitGateEvent` calls `appendEvent` directly).
+describe('appendExemption telemetry (specs/22 M15 P11)', () => {
+  it('emits a CheckRun {kind: "exemption-declared"} event when a real FORGE_RUN_ID is in progress', async () => {
+    const { paths, projectRoot } = await freshProject();
+    const id = await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      { testId: 'STORY-001: a', reason: 'r', owner: 'alice', expiry: '2026-12-01' },
+      { projectRoot, runId: 'run-exempt' },
+    );
+
+    const { readEvents } = await import('@forge/telemetry/events');
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-exempt')) events.push(event);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'CheckRun',
+      runId: 'run-exempt',
+      payload: {
+        kind: 'exemption-declared',
+        exemptionId: id,
+        testId: 'STORY-001: a',
+        owner: 'alice',
+        expiry: '2026-12-01',
+      },
+    });
+  });
+
+  it('emits nothing at all for a standalone invocation with no real FORGE_RUN_ID -- there is no event log to write into', async () => {
+    const { paths, projectRoot } = await freshProject();
+    await appendExemption(
+      paths,
+      'docs/forge/reports',
+      fakeClock(),
+      { testId: 'STORY-001: a', reason: 'r', owner: 'alice', expiry: '2026-12-01' },
+      { projectRoot, runId: undefined },
+    );
+
+    const { pathExists } = await import('@forge/core/fs');
+    // No run directory was ever created for this project at all -- not merely an empty one.
+    expect(await pathExists(paths.resolveState('runs'))).toBe(false);
+  });
+
+  // Mutation evidence: a refused declaration (GATE-515 id-exhausted here) must not leave a phantom
+  // "exemption-declared" event for an exemption that was never actually durable.
+  it('emits nothing when the declaration itself is refused (GATE-515 id-exhausted)', async () => {
+    const { paths, projectRoot } = await freshProject();
+    const reportsDir = paths.resolveWithin('docs/forge/reports');
+    await mkdir(reportsDir, { recursive: true });
+    const exemptions999 = Array.from({ length: 999 }, (_unused, index) => ({
+      id: `EXEMPT-${String(index + 1).padStart(3, '0')}`,
+      testId: `STORY-001: test-${String(index + 1)}`,
+      reason: 'r',
+      owner: 'alice',
+      expiry: '2026-12-01',
+    }));
+    const seed = {
+      type: 'Exemption' as const,
+      schemaVersion: 1,
+      title: 'Exemption register',
+      status: 'active',
+      created: '2026-09-30',
+      updated: '2026-09-30',
+      revision: 1,
+      author: 'alice',
+      changelog: [],
+      exemptions: exemptions999,
+    };
+    await writeFile(
+      path.join(reportsDir, 'exemptions.md'),
+      `---\n${YAML.stringify(seed)}---\n`,
+      'utf8',
+    );
+
+    await expect(
+      appendExemption(
+        paths,
+        'docs/forge/reports',
+        fakeClock(),
+        { testId: 'STORY-001: test-1000', reason: 'r', owner: 'alice', expiry: '2026-12-01' },
+        { projectRoot, runId: 'run-refused' },
+      ),
+    ).rejects.toMatchObject({ code: 'GATE-515' });
+
+    const { readEvents } = await import('@forge/telemetry/events');
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-refused')) events.push(event);
+    expect(events).toEqual([]);
   });
 });
 
@@ -380,7 +537,7 @@ const id = await appendExemption(paths, 'docs/forge/reports', { now: () => new D
   reason: 'r',
   owner: 'alice',
   expiry: '2026-12-01',
-});
+}, { projectRoot: dir, runId: undefined });
 process.stdout.write(JSON.stringify({ index, id }));
 `;
   await writeFile(workerPath, source, 'utf8');
@@ -388,7 +545,7 @@ process.stdout.write(JSON.stringify({ index, id }));
 
 describe('appendExemption — real cross-process concurrency', () => {
   it('20 real, separate OS processes, released together, all survive with 20 distinct ids', async () => {
-    const paths = await freshProject();
+    const { paths } = await freshProject();
     await mkdir(path.join(REPO_ROOT, '.forge-test-scratch'), { recursive: true });
     const workerDir = await mkdtemp(path.join(REPO_ROOT, '.forge-test-scratch', 'race-'));
     dirs.push(workerDir);

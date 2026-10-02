@@ -224,6 +224,7 @@ import { templateValidateAll } from './commands/template.ts';
 import { test as runTestRefusal } from './commands/loop/test.ts';
 import { runBindingCheck, type BindingCheckCompleted } from './commands/loop/test/binding.ts';
 import { assembleAndWriteMutationEvidence } from './commands/loop/test/binding-evidence.ts';
+import { emitBindingCheckTelemetry } from './commands/loop/test/check-telemetry.ts';
 import {
   appendExemption,
   applyExemptions,
@@ -1542,6 +1543,11 @@ async function runOneStoryBinding(
   ecosystem: 'js' | 'python',
   clock: Clock,
   exemptions: readonly Exemption[],
+  // `specs/22` M15 P11: the REAL `FORGE_RUN_ID` (telemetry only) -- deliberately NOT named `runId`,
+  // which below already means `raw.runId`, `runRawBindingCheck`'s own throwaway lane-naming id
+  // (`test-binding-${story.id}-...`) that `assembleAndWriteMutationEvidence` records; the two are
+  // unrelated and must not collide under one name.
+  telemetryRunId: string | undefined,
 ): Promise<
   | {
       readonly kind: 'completed';
@@ -1566,6 +1572,22 @@ async function runOneStoryBinding(
     exemptions,
     clock.now().slice(0, 10),
   );
+  // `specs/22` M15 P11 metrics 1 and 4b: the real, ground-truth numbers this check just computed,
+  // regardless of whether an exemption problem below then makes the overall CLI outcome a soft
+  // 'problem' -- a story's real binding behaviour is real whether or not its exemption bookkeeping is
+  // currently tidy, and undercounting it here would hide exactly the cases a later falsification effort
+  // most needs to see.
+  await emitBindingCheckTelemetry({
+    projectRoot,
+    runId: telemetryRunId,
+    clock,
+    storyId: story.id,
+    testsNamed: result.namedTests.length,
+    bound: result.failedUnderMutation.length,
+    nonBinding: rawNonBinding.length,
+    exempted: rawNonBinding.length - application.nonBinding.length,
+    expiredExemptionIds: application.expiredExemptions.map((exemption) => exemption.id),
+  });
   const exemptionProblems = describeExemptionProblems(application);
   if (exemptionProblems.length > 0) {
     return { kind: 'problem', storyId: story.id, problem: exemptionProblems.join(' ') };
@@ -1623,6 +1645,7 @@ async function runSingleStoryBindingCommand(
   clock: Clock,
   exemptions: readonly Exemption[],
   json: boolean,
+  runId: string | undefined,
 ): Promise<number> {
   const story = await resolveStoryById(paths, storyId);
   const outcome = await runOneStoryBinding(
@@ -1634,6 +1657,7 @@ async function runSingleStoryBindingCommand(
     ecosystem,
     clock,
     exemptions,
+    runId,
   );
   if (outcome.kind === 'skipped') {
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
@@ -1742,6 +1766,7 @@ async function runDiscoverModeBindingCommand(
   clock: Clock,
   exemptions: readonly Exemption[],
   json: boolean,
+  runId: string | undefined,
 ): Promise<number> {
   const doneStories = await loadDoneStories(paths, specsRoot);
   const outcomes = await Promise.all(
@@ -1755,6 +1780,7 @@ async function runDiscoverModeBindingCommand(
         ecosystem,
         clock,
         exemptions,
+        runId,
       ),
     ),
   );
@@ -1852,6 +1878,10 @@ async function runTestBindingCommand(
   // is reported; this binding-check path's own existing contract (M15 P4/P5) predates that signal and
   // does not need it to behave correctly for the exemptions it CAN read.
   const { exemptions } = await loadExemptions(paths, config.paths.reports);
+  // `specs/22` M15 P11: read once, at the CLI boundary (`gateCommandMarker`'s own identical pattern) --
+  // `undefined` for a bare human invocation, real when this runs as `G-Verify`'s own `test:binding` check
+  // (`buildRunEngineContext`'s own `gateEnv` carries it) or inside a `forge story verify` command step.
+  const runId = realEnvSnapshot()[FORGE_RUN_ID];
 
   if (storyId === undefined) {
     return runDiscoverModeBindingCommand(
@@ -1864,6 +1894,7 @@ async function runTestBindingCommand(
       clock,
       exemptions,
       json,
+      runId,
     );
   }
   return runSingleStoryBindingCommand(
@@ -1876,6 +1907,7 @@ async function runTestBindingCommand(
     clock,
     exemptions,
     json,
+    runId,
   );
 }
 
@@ -2034,12 +2066,13 @@ async function runTestExemptCommand(
   }
 
   const qualified = qualifiedTestId(storyId, testId);
-  const id = await appendExemption(paths, config.paths.reports, clock, {
-    testId: qualified,
-    reason,
-    owner,
-    expiry: expiresAt,
-  });
+  const id = await appendExemption(
+    paths,
+    config.paths.reports,
+    clock,
+    { testId: qualified, reason, owner, expiry: expiresAt },
+    { projectRoot, runId: realEnvSnapshot()[FORGE_RUN_ID] },
+  );
   console.log(
     json
       ? JSON.stringify({ v: 1, recorded: true, id, testId: qualified })
@@ -4135,6 +4168,7 @@ async function runStoryCommand(
       testCommands: config.execution.testCommands,
       flakeConfig: config.quality.flake,
       testRoots: config.execution.testRoots,
+      runId: realEnvSnapshot()[FORGE_RUN_ID],
     },
     storyId,
     phaseFlag ?? 'verify',
@@ -4198,6 +4232,7 @@ async function runStoryEvidenceCommand(
       testCommands: config.execution.testCommands,
       flakeConfig: config.quality.flake,
       testRoots: config.execution.testRoots,
+      runId: realEnvSnapshot()[FORGE_RUN_ID],
     },
     storyId,
     'done',

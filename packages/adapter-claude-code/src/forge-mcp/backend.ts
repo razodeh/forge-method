@@ -10,6 +10,21 @@
  * (wherever the real edge exists) supplies the real implementation. `server.ts` (this same directory)
  * is what actually calls these methods once wired into a real MCP server.
  *
+ * **Disclosed gap (`specs/22` M15 P11):** `kbSearch`/`kbGet`'s real, dynamic KB reads are entirely
+ * untelemetered today, and were NOT instrumented by P11 — not because of the `@forge/kb`/`@forge/agents`
+ * boundary above (`telemetry` IS a legal edge for this package, confirmed against the same graph file;
+ * a real implementation could call `@forge/telemetry/events`' own `appendEvent` directly, the identical
+ * `SessionEvent {kind: 'kb-read', source: 'dynamic', ids}` shape `assemble.ts`'s own `persist` already
+ * emits for the STATIC half of this same metric, `@forge/engine/dispatch`), but because confirmed
+ * directly (grep, this whole codebase) that `ForgeMcpBackend` has **zero real implementations anywhere**
+ * — `forgeMcpBackend` (`adapter.ts`'s own constructor option) is always `undefined` in every real `forge
+ * run` today, so these two methods cannot be called by any real agent session at all yet, independent of
+ * telemetry. Instrumenting a tool-call path with no real caller would be speculative, untestable-against-
+ * reality code — P11's own Mandate is to measure something real. Whichever later piece supplies the
+ * first real backend MUST also emit this event from `kbSearch`/`kbGet` (or from whatever real facade
+ * wraps them) for the Mandate's own central claim (KB reads preceding a decision artifact) to be
+ * measured completely; until then this is an honest, known, out-of-Surface gap, not a silent omission.
+ *
  * Five of the nine tools have a real, already-established equivalent in `@forge/adapter-kit`'s own
  * `ParsedControlToken` union (the `FORGE_*` token-parsing fallback `07` §7.3 says this MCP path "MUST
  * be preferred" over, not a second, independently-designed mechanism) — their parameter shapes here

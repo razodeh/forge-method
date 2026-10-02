@@ -52,6 +52,7 @@ export {
   type StoryOverlap,
 } from './stage-plan.ts';
 export {
+  deriveStoryId,
   toAgentId,
   type AgentId,
   type ArtifactRef,

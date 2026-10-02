@@ -74,7 +74,7 @@ import type {
   StepOutcome,
   StepOutcomeDetail,
 } from '../dispatch/types.ts';
-import type { StepNode } from '../plan/index.ts';
+import { deriveStoryId, type StepNode } from '../plan/index.ts';
 import { dispatchAgentStep } from './dispatch-agent-step.ts';
 import {
   buildReviewReport,
@@ -274,6 +274,7 @@ async function recordUsage(
   model: string,
   session: InteractionParticipant,
 ): Promise<void> {
+  const storyId = deriveStoryId(node);
   await ctx.telemetry.emit({
     type: 'UsageRecorded',
     stepId: node.id,
@@ -291,6 +292,7 @@ async function recordUsage(
       estimated: true,
       durationMs: sanitizeUsageNumber(session.session.durationMs),
       role: session.role,
+      ...(storyId === undefined ? {} : { storyId }),
     },
   });
 }

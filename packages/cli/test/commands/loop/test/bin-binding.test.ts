@@ -38,6 +38,7 @@ const TEST_COMMAND = `${process.execPath} ${resolveRealVitestEntry()} run --root
 function run(
   args: readonly string[],
   cwd: string,
+  env?: Readonly<Record<string, string>>,
 ): { readonly status: number; readonly stdout: string; readonly stderr: string } {
   try {
     const stdout = execFileSync(process.execPath, [LAUNCHER, ...args, '-C', cwd], {
@@ -45,6 +46,7 @@ function run(
       timeout: 30_000,
       maxBuffer: 16 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
+      ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
     });
     return { status: 0, stdout, stderr: '' };
   } catch (error) {
@@ -216,6 +218,42 @@ describe('forge test binding — a genuinely binding suite', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout.trimEnd().split('\n')).toHaveLength(1);
+  }, 30_000);
+});
+
+// `specs/22` M15 P11 metric 1: the real CLI wiring, end to end through a genuine subprocess -- a real
+// FORGE_RUN_ID in the child's own env reaches `runOneStoryBinding`'s own telemetry emission.
+describe('forge test binding — telemetry (specs/22 M15 P11)', () => {
+  it('a real FORGE_RUN_ID in the environment reaches a real CheckRun {kind: "binding"} event on disk', async () => {
+    const dir = await freshProject();
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir, {
+      FORGE_RUN_ID: 'run-cli-binding',
+    });
+
+    expect(result.status).toBe(0);
+    const { readEvents } = await import('@forge/telemetry/events');
+    const events = [];
+    for await (const event of readEvents(dir, 'run-cli-binding')) events.push(event);
+    const checkRuns = events.filter((event) => event.type === 'CheckRun');
+    expect(checkRuns).toHaveLength(1);
+    expect(checkRuns[0]?.payload).toMatchObject({
+      kind: 'binding',
+      storyId: 'STORY-001',
+      testsNamed: 1,
+      bound: 1,
+      nonBinding: 0,
+      exempted: 0,
+    });
+  }, 30_000);
+
+  it('no FORGE_RUN_ID at all (the ordinary, standalone human invocation): no run directory is ever created', async () => {
+    const dir = await freshProject();
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir);
+
+    expect(result.status).toBe(0);
+    const { pathExists } = await import('@forge/core/fs');
+    const { ProjectPaths } = await import('@forge/core/fs');
+    expect(await pathExists(new ProjectPaths(dir).resolveState('runs'))).toBe(false);
   }, 30_000);
 });
 

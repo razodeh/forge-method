@@ -202,6 +202,34 @@ describe('a swarm-review step persists its ReviewReport through a lane, and the 
     expect((await ctx.assembly.loadAgent('reviewer')).tools.write).toBe(false);
   });
 
+  // `specs/22` M15 P11: every perspective's own UsageRecorded carries the review step's own storyId,
+  // when its (fanout-compiled) `runInputs.item.id` names one -- `review` in `build-stage.workflow.yaml`
+  // is itself a per-story fanout step.
+  it("every perspective's UsageRecorded carries payload.storyId when the step's own fanout item names one", async () => {
+    const projectRoot = await createTempRepo('usage-story');
+    const adapter = new FakePlatformAdapter();
+    scriptPerspectives(adapter, 'wf:review', cleanPerspectives());
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      assembly: reviewerAssembly(projectRoot),
+    });
+
+    const outcome = await executeStep(
+      reviewNode('wf:review', { runInputs: { item: { id: 'STORY-011' } } }),
+      ctx,
+    );
+
+    expect(outcome.status).toBe('succeeded');
+    const usageEvents = (await eventsOf(projectRoot, 'run-test')).filter(
+      (event) => event.type === 'UsageRecorded',
+    );
+    expect(usageEvents).toHaveLength(PERSPECTIVES.length);
+    for (const event of usageEvents) {
+      expect(event.payload).toMatchObject({ storyId: 'STORY-011' });
+    }
+  });
+
   it('every perspective session carries the FORGE run/step/agent marker (@forge/core/session-marker, PLAN-M14.md P4): FORGE_RUN_ID === the run, FORGE_STEP_ID === its own stepId, FORGE_AGENT_ID === the reviewing agent', async () => {
     const projectRoot = await createTempRepo('marker');
     const adapter = new FakePlatformAdapter();

@@ -260,12 +260,13 @@ describe('kbDisclose / kbDiscloseResolve / kbDisclosures (specs/22 M15 P10)', ()
     const project = await createTestProject();
     const { appendExemption } = await import('../../src/commands/loop/test/exemptions.ts');
     const { SYSTEM_CLOCK } = await import('@forge/core');
-    await appendExemption(project.paths, 'docs/forge/reports', SYSTEM_CLOCK, {
-      testId: 'STORY-001: timing-guard',
-      reason: 'r',
-      owner: 'alice',
-      expiry: '2099-01-01',
-    });
+    await appendExemption(
+      project.paths,
+      'docs/forge/reports',
+      SYSTEM_CLOCK,
+      { testId: 'STORY-001: timing-guard', reason: 'r', owner: 'alice', expiry: '2099-01-01' },
+      { projectRoot: project.dir, runId: undefined },
+    );
     // `ctx(project)` above never sets `reportsRoot` -- the same unset shape every pre-existing test in
     // this file already uses for every OTHER context field this piece did not touch.
     const ledger = await kbDisclosures(ctx(project));

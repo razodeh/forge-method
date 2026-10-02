@@ -233,6 +233,7 @@ describe('forge story verify — test:binding (specs/22 M15 P5)', () => {
         owner: 'alice',
         expiry: '2099-01-01',
       },
+      { projectRoot: ctx.projectRoot, runId: undefined },
     );
     // `checkBinding` reverts to `HEAD~1`, like `forge test binding` itself -- amended onto the
     // implementation commit (not a separate commit on top of it) so `HEAD~1` still resolves to the
@@ -278,6 +279,7 @@ describe('forge story verify — test:binding (specs/22 M15 P5)', () => {
         owner: 'alice',
         expiry: '2020-01-01',
       },
+      { projectRoot: ctx.projectRoot, runId: undefined },
     );
     await execa('git', ['add', '-A'], { cwd: ctx.projectRoot });
     await execa('git', ['commit', '--amend', '--no-edit', '--quiet'], { cwd: ctx.projectRoot });
@@ -438,5 +440,87 @@ describe('forge story verify — test:binding (specs/22 M15 P5)', () => {
     const check = outcome.report.checks.find((c) => c.check === 'test:binding');
     expect(check?.status).toBe('unverifiable');
     expect(check?.message).toContain('could not detect a js/python test ecosystem');
+  }, 30_000);
+});
+
+// `specs/22` M15 P11 metrics 1 and 4b: `checkBinding`'s own real telemetry, gated on `ctx.runId`.
+describe('forge story verify — test:binding telemetry (specs/22 M15 P11)', () => {
+  it('emits CheckRun {kind: "binding"} with the real pass-rate numbers when ctx.runId names a real run', async () => {
+    const { ctx, dir } = await freshProject();
+
+    await storyVerify({ ...ctx, runId: 'run-story-verify' }, 'STORY-001');
+
+    const { readEvents } = await import('@forge/telemetry/events');
+    const events = [];
+    for await (const event of readEvents(dir, 'run-story-verify')) events.push(event);
+    const checkRuns = events.filter((event) => event.type === 'CheckRun');
+    expect(checkRuns).toHaveLength(1);
+    expect(checkRuns[0]?.payload).toMatchObject({
+      kind: 'binding',
+      storyId: 'STORY-001',
+      testsNamed: 1,
+      bound: 1,
+      nonBinding: 0,
+      exempted: 0,
+    });
+    expect(checkRuns[0]?.payload).not.toHaveProperty('expiredExemptionIds');
+  }, 30_000);
+
+  it('emits no CheckRun event at all when ctx.runId is unset -- no real run, no event log to write into', async () => {
+    const { ctx } = await freshProject();
+
+    await storyVerify(ctx, 'STORY-001');
+
+    const { pathExists } = await import('@forge/core/fs');
+    expect(await pathExists(ctx.paths.resolveState('runs'))).toBe(false);
+  }, 30_000);
+
+  it('bundles expiredExemptionIds onto the same event when this check discovers a stale exemption (metric 4b)', async () => {
+    const { ctx, dir } = await freshProject({
+      filesExpected: ['impl.js', 'tautology.test.js'],
+      skipImpl: true,
+    });
+    await writeFile(
+      path.join(dir, 'impl.js'),
+      'export function add(a, b) { return a + b; }\n',
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'tautology.test.js'),
+      "import { test, expect } from 'vitest';\ntest('tautology', () => { expect(true).toBe(true); });\n",
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'the story: a genuinely unrelated test file'], {
+      cwd: dir,
+    });
+    await appendExemption(
+      ctx.paths,
+      ctx.reportsRoot,
+      { now: () => new Date().toISOString() },
+      {
+        testId: 'STORY-001: tautology',
+        reason: 'A pure tautology, never touches impl.js.',
+        owner: 'alice',
+        expiry: '2020-01-01',
+      },
+      { projectRoot: dir, runId: undefined },
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--amend', '--no-edit', '--quiet'], { cwd: dir });
+
+    await storyVerify({ ...ctx, runId: 'run-expired' }, 'STORY-001');
+
+    const { readEvents } = await import('@forge/telemetry/events');
+    const events = [];
+    for await (const event of readEvents(dir, 'run-expired')) events.push(event);
+    const checkRuns = events.filter((event) => event.type === 'CheckRun');
+    expect(checkRuns).toHaveLength(1);
+    expect(checkRuns[0]?.payload).toMatchObject({
+      kind: 'binding',
+      storyId: 'STORY-001',
+    });
+    const payload = checkRuns[0]?.payload as { readonly expiredExemptionIds?: readonly string[] };
+    expect(payload.expiredExemptionIds).toEqual(['EXEMPT-001']);
   }, 30_000);
 });

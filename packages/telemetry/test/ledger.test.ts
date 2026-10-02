@@ -86,6 +86,20 @@ describe('projectLedger', () => {
     expect(entries).toEqual([ledgerEntry()]);
   });
 
+  // `specs/22` M15 P11: `UsageRecordedPayload.storyId` is a real, pinned-shape additive field --
+  // present on the payload this function reads, absent from `LedgerEntry` (real cost-per-story
+  // PROJECTION is `PLAN-M15.md` P12's own job, not this function's). The identical "closed-shape
+  // validation never rejects an extra field" precedent `role` (swarm-review's own perspective payload)
+  // already establishes, not a new exception.
+  it('a payload that also carries storyId still projects correctly, and storyId is not on the LedgerEntry', async () => {
+    const entries = await projectLedger(
+      asAsyncIterable([usageEvent({ payload: usagePayload({ storyId: 'STORY-014' }) })]),
+    );
+
+    expect(entries).toEqual([ledgerEntry()]);
+    expect(entries[0]).not.toHaveProperty('storyId');
+  });
+
   it('skips every non-UsageRecorded event, including other Cost-group events', async () => {
     const entries = await projectLedger(
       asAsyncIterable([

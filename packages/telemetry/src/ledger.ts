@@ -55,6 +55,18 @@ export interface UsageRecordedPayload {
   readonly costUsd: number;
   readonly estimated: boolean;
   readonly durationMs: number;
+  /** `specs/22` M15 P11: which story this spend belongs to, when the step it ran on is scoped to one
+   * (`@forge/engine/plan`'s own `deriveStoryId`) — absent for a step scoped to no particular story
+   * (`freeze-contracts`, `standup`, a resolver session on a non-story lane, ...), never a present-but-
+   * empty string. Not read by `toLedgerEntry`/`LedgerEntry` below: real cost-per-story PROJECTION
+   * (summing this field across a run) is a later piece's job (`PLAN-M15.md` P12), not this module's —
+   * this field only pins that the real number this piece's own Mandate asks for has somewhere stable to
+   * live, emitted once, at the one real place each `UsageRecorded` event is already written, rather than
+   * left for every future reader to re-derive (and potentially disagree on) from `stepId`'s own compiled
+   * `itemKey` segment. `role` (`swarm-review-step.ts`'s own perspective payload, below `estimated` on a
+   * real, shipped event already) is the identical "additive field beyond this type's own closed shape"
+   * precedent — `isUsageRecordedPayload` validates only the fields above, never rejects an extra one. */
+  readonly storyId?: string;
 }
 
 /** A bare `typeof x === 'number'` accepts `NaN`, `Infinity`, and negative values — confirmed empirically

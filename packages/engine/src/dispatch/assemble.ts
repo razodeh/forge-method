@@ -799,6 +799,38 @@ async function compileSession(input: AssembleInput): Promise<AssembledSession> {
       )}\n`,
     );
     await writePromptRecord(ctx.runId, dirName, compiled, deps.paths);
+    // `specs/22` M15 P11: the static half of "KB reads preceding each decision artifact" -- every
+    // individually-addressable KB entry this session's own prompt actually packed (`pack.manifest.ids`:
+    // declared inputs AND auto-retrieved "relevant KB," `build-context-pack.ts`'s own `manifest.ids`
+    // doc comment -- a narrower `declared.resolvedIds` alone would silently miss every auto-retrieved
+    // entry). Disclosed gap: `pack.pinnedCore`'s four KB-derived fields (`glossary`/`constraints`/
+    // `adrIndex`/`codingStandards`) are injected into every real session's prompt alongside these ids,
+    // but never appear in `manifest.ids` at all -- `build-context-pack.ts`'s own `ContextPackManifest`
+    // design (`PLAN-M3.md` P9/`SPEC-QUESTIONS.md` Q54, pre-existing, not this piece's own call) has no
+    // per-entry id for an aggregated summary to report. Not a P11 omission to fix: there is nothing here
+    // for this event to name individually, and `pinnedCore` is identical across every session regardless
+    // of the specific decision, so it is a weaker per-decision signal than what `ids` actually tracks. A
+    // future P12 reader should treat this list as "every addressable entry," not "every KB byte read."
+    // Emitted here, inside `persist`, not at compile time: `persist`'s own doc comment already
+    // establishes this runs "immediately before [the dispatcher] hands the session to the adapter," so a
+    // session that is merely compiled (a dry-run plan check) and never actually dispatched emits nothing
+    // -- exactly once per real session attempt, the same guarantee `context.json`'s own write above
+    // already has, and the reason a retried step emits again (a retry is a genuine new real attempt that
+    // reads the KB again, not a duplicate of the same occurrence). `kind: 'kb-read'` on `SessionEvent`:
+    // a new fact riding on an existing, already-polymorphic event type's own untyped `payload`, never a
+    // new `EventType` of its own, the identical precedent `dispatch/types.ts`'s own `NewDispatchEvent`
+    // doc comment already documents for `{sessionId}` and `PLAN-M14.md` P44's own `{kind:
+    // 'context-request', ...}`. Omitted entirely (not emitted with an empty `ids: []`) when this
+    // session's own pack read no KB entry at all -- "a run with no [KB reads] emits none," the identical
+    // discipline this piece's own Mandate asks of every metric here.
+    if (pack.manifest.ids.length > 0) {
+      await ctx.telemetry.emit({
+        type: 'SessionEvent',
+        stepId: stepKey,
+        agentId: agent.id,
+        payload: { kind: 'kb-read', source: 'static', ids: pack.manifest.ids },
+      });
+    }
   };
 
   return {
