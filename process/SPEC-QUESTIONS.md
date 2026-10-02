@@ -26824,3 +26824,100 @@ assertion, a `Disclosure`-side `id-exhausted` test) were left for opportunistic 
 forcing a fourth gauntlet round over coverage alone, per a round-3 critic's own explicit recommendation.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P10`.
+
+---
+
+## Q290 — M15 P11: Measurement, from day one — specifying the ruler before the thing it measures
+improves
+
+**Context.** `PLAN-M15.md` P11's own Mandate asks for six real telemetry metrics, emitted with a stable
+shape, that a LATER milestone will use to try to falsify FORGE's own value claim. The Mandate is
+deliberately emission-only — no projection, no report command, no judgment about whether the numbers are
+good — and names its own mutation evidence directly: drop the KB-read metric and the central-claim test
+must fail; emit per-attempt instead of per-occurrence and the exactly-once test must fail. One gauntlet
+round, two independent critics, zero BLOCKING findings from either. Full round-by-round narrative:
+`GAUNTLET-LOG.md`'s own `## M15 P11` entry.
+
+**Decision 1 — two of the six metrics needed zero new code, and the piece's own first job was confirming
+that directly rather than trusting an earlier research pass's own verdict.** Critic rounds consumed plus
+stop-and-disclose occurrences were already fully emitted by M15 P9's own `StepProgress{kind:
+'critic-round'}` and terminal `RUN-113` `StepFailed` events — that code's own comment literally says it
+was built "read by a later piece (P11) to measure." Gate failures before first pass, per gate/check, were
+already fully emitted by `runGateStep`'s own `GateEvaluated{gateId, checks}`, on every evaluation attempt,
+predating this milestone entirely. Both critics independently re-verified these claims against the real
+source rather than accepting them on faith — confirming them is precisely why this piece adds nothing for
+either metric, not an oversight.
+
+**Decision 2 — real cost per story needed a new, workflow-agnostic derivation, not an extension of M15
+P7's own narrower one.** `evidence-bundle.ts`'s `STORY_STEP_IDS` is a fixed list of `implement-story`'s
+own known step ids — correct for that one workflow, but structurally unable to name a story inside
+`build-stage.workflow.yaml`'s own fanout, where many steps share one compiled shape across many different
+real stories. The new `deriveStoryId(node: StepNode)` (`packages/engine/src/plan/types.ts`) instead reads
+the real story id straight off whichever of two already-resolved `runInputs` shapes a compiled step
+actually has — `item.id` for a fanout, `storyId` for a declared input — with no registry of known step
+ids to keep in sync as workflows change. One critic independently grepped every real `*.workflow.yaml`
+in the repository and confirmed this is exhaustive against every real fanout shape that exists today, and
+confirmed `implement-story.workflow.yaml`'s own `kind: merge` step (which also happens to have a field
+named `storyId` for an unrelated reason) does not produce a false positive. Wired as a purely additive
+`storyId?: string` field on `UsageRecordedPayload` — real cost-per-story SUMMATION across a run's events
+is explicitly left to P12, the same "emission now, projection later" discipline the whole Mandate asks of
+every metric here.
+
+**Decision 3 — KB reads preceding a decision artifact: the static half was built in full, the dynamic
+half was investigated and honestly disclosed, not assumed or silently skipped.** `assemble.ts`'s own
+`persist()` now emits `SessionEvent{kind:'kb-read', source:'static', ids: pack.manifest.ids}` for every
+real dispatched session that packed at least one addressable KB entry — `pack.manifest.ids` is the real,
+individually-addressable set (declared inputs plus auto-retrieved "relevant KB"), not the narrower
+`declared.resolvedIds` alone, which would silently miss every auto-retrieved entry. Disclosed, not
+fixed, in the same doc comment (a round-1 critic finding, below): `pack.pinnedCore`'s four KB-derived
+fields are injected into every session identically regardless of the specific decision and have no
+per-entry id to report at all, by a pre-existing type design (`M3 P9`, `Q54`) this piece has no reason to
+change — a weaker, duplicate-across-every-session signal than what `manifest.ids` actually tracks, not a
+gap worth closing here. The dynamic half — `forge_kb_search`/`forge_kb_get` MCP tool calls — was
+investigated directly before deciding anything: confirmed by exhaustive grep that `ForgeMcpBackend` has
+zero real implementations anywhere in this codebase, so neither method can be called by any real agent
+session today, independent of telemetry. Instrumenting a call path with no real caller would be
+speculative, untestable-against-reality code, which this Mandate's own "measure something real" framing
+argues against. Disclosed instead, in `forge-mcp/backend.ts`'s own doc comment, with the exact event
+shape (`source: 'dynamic'`, otherwise identical) a future real backend implementation must emit for this
+metric's own central claim to be measured completely — an honest, known, out-of-Surface gap, not a
+silent omission, the identical discipline M15 P10's own disclosure-ledger piece already established for
+this milestone.
+
+**Decision 4 — binding pass rate and exemptions opened/expired reuse `CheckRun`, the one genuinely
+reserved, never-emitted `EventType`, rather than stretching `StepProgress`/`SessionEvent` or inventing a
+new type.** Both of those two existing "a new fact riding on an existing event type's own untyped
+payload" precedents (`StepProgress{kind:'critic-round'}`, M15 P9; `SessionEvent{kind:'context-request'}`,
+M14 P44; and this same piece's own new `{kind:'kb-read'}`) are scoped to a dispatched STEP's or a
+SESSION's own lifecycle — a binding check or an exemption declaration is neither. `18` §18.4's own
+"Custom" group reserves `CheckRun`/`DiagramGenerated`/`DriftDetected` with no further documented
+elaboration beyond their bare names, and grep confirmed `CheckRun` had never been constructed by anything
+in this codebase before this piece, and both of its two pre-existing exhaustive-switch consumers
+(`resume/reconstruct.ts`, `tui/run-read-model.ts`) already treat it as a payload-shape-agnostic no-op —
+so reusing it here cannot break either. Flagged by the build itself as its single most judgment-call-heavy
+decision; both independent critics scrutinized it directly and found it sound, not a reach.
+
+**Decision 5 — both new `check-telemetry.ts` emit functions are gated on a real `FORGE_RUN_ID`, matching
+M15 P7's own already-established stance, not inventing a second convention.** `forge test exempt`/`forge
+test binding` run both as real workflow steps (with a real run id in their own process env) AND as bare,
+bare-shell human invocations with none — and `ForgeEvent.runId` is not optional on the type, so there is
+structurally nowhere else for an event to live without one. Both functions simply emit nothing for the
+standalone case, the identical "no event log to read/write" stance `PLAN-M15.md` P7's own
+`assembleAndWriteEvidenceBundle` already takes for `cost`/`reviews`, rather than inventing a run-less
+event log.
+
+**Round-1 findings, both accepted and fixed; two further findings accepted as correct-as-is with no fix
+needed — full detail in `GAUNTLET-LOG.md`'s own `## M15 P11` entry:** (1) the `pinnedCore` overclaim in
+`assemble.ts`'s own doc comment (Decision 3, above) — reworded, gap disclosed explicitly; (2) a real,
+narrow asymmetry where a telemetry-write fault on `check-telemetry.ts`'s own second, independent write
+could make an already-durably-committed real operation surface as a failure, or silently lose one metric
+sample on a crash in that window — disclosed explicitly, citing `run/gate-commands.ts`'s own
+`emitGateEvent` as the identical, already-shipped, unaddressed precedent, rather than inventing a
+divergent swallow-and-log path solely for these two new call sites; (3) `check-telemetry.ts`'s own
+`{valuePatterns: SECRET_PATTERNS}`-only redaction call, verified to match the one true established
+pattern every real `appendEvent` call site in this codebase already uses — no fix needed; (4) no single
+integration test names "a whole run with zero stories emits zero occurrences of every metric together" —
+left as-is, already covered piecemeal and guaranteed by construction, and adding one would be redundant
+coverage this project's own anti-premature-abstraction discipline argues against.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P11`.

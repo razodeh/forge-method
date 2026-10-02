@@ -20701,3 +20701,100 @@ piece's own prescribed floor, a package-scoped collateral sweep, nor even one si
 grep for the obvious numeric candidates is guaranteed to reach every one of them in a single pass.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q289`.
+
+---
+
+## M15 P11 — Measurement, from day one
+
+One gauntlet round, two independent critics, zero BLOCKING findings from either — the cleanest piece
+this milestone. Both verdicts were "ship" (one "ship as-is," one "ship with minor follow-ups"); every
+non-blocking finding either critic raised was reproduced/verified independently by the other, by me, or
+both before I accepted it. This is the piece that makes FORGE's own value claim falsifiable by a later
+milestone: six metrics the Mandate names — binding pass rate and non-binding test count per story, critic
+rounds consumed plus stop-and-disclose occurrences, gate failures before first pass per gate/check,
+exemptions opened/expired, real cost per delivered story, and KB reads preceding each decision artifact —
+emitted as real telemetry with a stable shape, specified before the thing they measure improves.
+Emission only; projection/reporting is the next, unbuilt piece (P12).
+
+**What the piece builds.** Two of the six metrics needed zero new code, confirmed by direct source
+reading rather than assumed from an earlier research pass: critic rounds/stop-and-disclose
+(`swarm-review-step.ts`'s own `StepProgress{kind:'critic-round'}` plus `RUN-113`, M15 P9) and gate
+failures per gate/check (`steps.ts`'s own `GateEvaluated{gateId, checks}` on every evaluation attempt,
+pre-dating this milestone). For real cost per story, a new, workflow-agnostic `deriveStoryId(node:
+StepNode)` (`packages/engine/src/plan/types.ts`) reads the real story id straight off a compiled step's
+own already-resolved `runInputs` — `runInputs.item.id` for a fanout (`build-stage.workflow.yaml`) or
+`runInputs.storyId` for a declared input (`implement-story.workflow.yaml`) — rather than extending M15
+P7's own `evidence-bundle.ts` `STORY_STEP_IDS`, a fixed list hard-coupled to `implement-story` alone that
+structurally cannot cover a fanout. Wired into all three real `UsageRecorded` emission sites
+(`dispatch/steps.ts`, `dispatch/conflict-resolver.ts`, `interaction/swarm-review-step.ts`) via a new,
+additive `storyId?: string` field on `UsageRecordedPayload`. For KB reads, `dispatch/assemble.ts`'s own
+`persist()` now emits `SessionEvent{kind:'kb-read', source:'static', ids: pack.manifest.ids}` — the
+complete set of individually-addressable KB entries (declared inputs plus auto-retrieved) a session's
+real prompt packed, emitted exactly where `persist()` already runs (immediately before dispatch, so a
+merely-compiled, never-dispatched session emits nothing). The dynamic half of this same metric
+(`forge_kb_search`/`forge_kb_get` MCP tool calls) was investigated directly, not assumed: confirmed by
+exhaustive grep that `ForgeMcpBackend` has zero real implementations anywhere in this codebase today —
+not a package-boundary problem (`telemetry` is a legal edge for `adapter-claude-code`), just no real
+caller yet — and disclosed, not silently skipped, via a doc comment in `forge-mcp/backend.ts` naming the
+exact event shape a future real backend must emit. For binding pass rate and exemptions opened/expired,
+a new `packages/cli/src/commands/loop/test/check-telemetry.ts` emits a new `CheckRun` event (`18` §18.4's
+own "Custom" group, genuinely reserved and never emitted anywhere before this piece, confirmed by grep)
+with `kind: 'binding'`/`kind: 'exemption-declared'` payloads, both gated on a real `FORGE_RUN_ID` being
+present — the identical stance M15 P7's own `assembleAndWriteEvidenceBundle` already takes for a
+standalone invocation with no real run's event log to write into. Wired into `story.ts`'s `checkBinding`,
+`bin.ts`'s `runOneStoryBinding`, and `exemptions.ts`'s `appendExemption` (which grew a new, required 5th
+`{projectRoot, runId}` parameter at its one real call site).
+
+**Critic round 1 (two independent critics): zero BLOCKING, four NON-BLOCKING findings, two accepted and
+fixed directly, two accepted as correct-as-is.**
+
+1. **NON-BLOCKING, fixed.** `assemble.ts`'s own new doc comment claimed `pack.manifest.ids` was "the
+   real, complete set of KB entries this session's own prompt actually packed." One critic verified this
+   directly against `build-context-pack.ts` and found it genuinely overclaims: `pack.pinnedCore`'s four
+   KB-derived fields (`glossary`/`constraints`/`adrIndex`/`codingStandards`) are injected into every real
+   session's prompt alongside `manifest.ids`, but — by that type's own pre-existing design (M3 P9,
+   Q54) — never appear in it at all, since an aggregated summary has no per-entry id to report. Given
+   this metric is framed as testing the KB's own "central claim," the silent gap plus the word "complete"
+   was a real, if narrow, overclaim. Fixed by rewording the doc comment ("every individually-addressable
+   KB entry," not "complete") and adding an explicit disclosed-gap note explaining why `pinnedCore` can't
+   be named here, mirroring how `forge-mcp/backend.ts`'s own dynamic-KB-read gap was already disclosed.
+2. **NON-BLOCKING, fixed.** Both critics independently flagged variants of the same real asymmetry:
+   `check-telemetry.ts`'s two emit functions run strictly AFTER the real work they describe has already
+   durably committed (`appendExemption`'s write, `checkBinding`'s result computation) — so a genuine I/O
+   fault on this second, independent write could make an already-successful real operation surface as a
+   thrown failure to its caller, or (a crash in that narrow window) silently lose just that one metric
+   sample while leaving the real state fully intact. Investigated before fixing: this is not a new risk
+   this piece introduces — `run/gate-commands.ts`'s own `emitGateEvent`, called the identical way after
+   `gateApprove`/`gateReject`/`gateWaive`'s own real state already changed, already has the exact same
+   shape, unaddressed, shipped. Fixed by disclosing it explicitly in `check-telemetry.ts`'s own doc
+   comment, citing that precedent, rather than inventing a special swallow-and-log path for only these two
+   new call sites that would make them behave inconsistently with every other CLI-layer telemetry
+   emission in this codebase.
+3. **NON-BLOCKING, accepted as-is, no fix needed.** `check-telemetry.ts` passes `{valuePatterns:
+   SECRET_PATTERNS}` to `appendEvent` and nothing else. One critic checked every real `appendEvent` call
+   site in the codebase (the production `TelemetryFacade`, and `emitGateEvent` itself, the explicitly
+   cited precedent) and confirmed both do the same and nothing more — `redactPatterns`/`knownSecrets` are
+   not wired into any real call site anywhere today. This piece matches the one true established pattern
+   exactly; not a miss.
+4. **NON-BLOCKING, accepted as-is, no fix needed.** No single integration test names "a whole run with
+   zero stories emits zero occurrences of every metric, together" as one property — it is covered
+   piecemeal (per-metric "no `FORGE_RUN_ID`"/"zero KB entries" tests) and logically guaranteed by
+   construction (each emission is gated on a real per-story/per-session call site that simply never fires
+   with no stories). Left as-is: cheap to add, not required by the Mandate's own stated test, and adding
+   it would be the kind of redundant-but-harmless test this project's own "no half-finished
+   implementations, no premature abstraction" discipline argues against when the property already has
+   real coverage.
+
+Everything else both critics checked — independently, not by trusting either the build's own report or
+each other — came back genuinely correct: `deriveStoryId`'s exhaustiveness against every real `over:`
+fanout in the repository today; the single real `appendExemption` call site and all three real
+`UsageRecorded` sites correctly updated with no stragglers; the dynamic-KB-read disclosure's own
+underlying claim (grep-confirmed, not assumed); `CheckRun`'s reuse being safe against both of its two
+pre-existing exhaustive-switch consumers; and one critic independently reproducing, live, the build's own
+claimed mutation-evidence result for metric 1 (reverting `emitBindingCheckTelemetry` to a no-op, confirming
+the exact two predicted test failures, restoring, reconfirming green) — a genuine, not fabricated, result.
+
+Floor (`pnpm typecheck`, `pnpm lint`, `pnpm boundaries`) and every targeted test file for every touched
+package passed clean, independently, for both critics and again after the two doc-comment fixes above.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q290`.
