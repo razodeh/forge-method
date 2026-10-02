@@ -26500,3 +26500,188 @@ commentary elsewhere calls the canonical way a gate step gets approved; both `ev
 were equally inert on this path before this piece landed.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P8`.
+
+## Q288 — M15 P9: The bounded critic loop — a workflow-level loop with no DAG of its own, and what three
+rounds of fixing it taught about fixes that create new regressions
+
+**Context.** `PLAN-M15.md` P9's own Mandate is short: `review → (findings) → fix → review`, bounded by
+`execution.criticRounds` (default 3), stopping and disclosing (`RUN-113`) rather than looping forever or
+passing silently. The real difficulty was structural before it was behavioral: the compiled DAG forbids
+cycles, so this loop could not exist as workflow steps at all — it had to live entirely inside one
+compiled step's own runtime. Three full gauntlet rounds, the maximum; rounds 2 and 3 each found genuine
+regressions the PRIOR round's own fix introduced in already-shipped, unrelated workflows — not merely
+local defects in this piece's own new code. Full round-by-round narrative: `GAUNTLET-LOG.md`'s own
+`## M15 P9` entry.
+
+**Decision 1 — the loop lives entirely inside `runSwarmReviewStep`'s own runtime, never as new DAG
+nodes.** Confirmed directly before writing a line of implementation: `StepNodeRetryPolicy`
+(`plan/types.ts`) only re-runs a single step on a classified failure, never a multi-step sequence, and
+`plan/cycles.ts`'s own `detectCycles` forbids a cyclic compiled plan outright. A literal `review → fix →
+review` DAG edge is structurally impossible. The Mandate's own Surface text ("the loop wiring — the only
+engine change in this milestone, and it is a workflow-level loop, not new orchestration surface") already
+pointed at this; confirmed, not assumed. One lane is created once (by the pre-existing `runLaneLifecycle`);
+inside its own `runWork` callback, a `for(;;)` loop overwrites a SINGLE `ReviewReport` in place per round
+(same id across rounds, via a new `renderAndWriteReport` split out of the pre-existing `writeReport`) —
+never one file per round, since the step's own `outputs: [{type: ReviewReport}]` declaration and the P7
+output check both expect exactly one committed report per step.
+
+**Decision 2 — `execution.criticRounds` defaults to `3` at the project-config layer, but the BARE ENGINE
+CONTEXT defaults to `0` (no looping at all).** `ExecuteStepContext.criticRounds` is optional and, when
+absent (every test fixture and caller built before this piece existed), means zero rounds — a `blocked`
+verdict fails immediately with the pre-existing `RUN-108`, byte-identical to this step's own behavior
+before P9. The real "3 by default" is applied exactly once, at `buildRunEngineContext`
+(`packages/cli/src/commands/run/context.ts`), reading the project's own resolved config — the identical
+"a sensible literal default lives at the config-reading edge, not baked into the bare engine primitive"
+shape `docRoots`/`techniquesRoot` already use. This kept every pre-existing engine-level test passing
+unmodified, but — as round 1's own BLOCKING finding 2 and round 2's own three further findings all
+trace back to — it also meant every REAL run, everywhere, immediately started looping by default the
+moment this piece landed, surfacing every place a `swarm-review` step existed without yet having a
+`fixAgent` declared. `execution.criticRounds: 0` was made a real, explicit, schema-level opt-out
+(`.positive()` → `.int().nonnegative()`) specifically because of this.
+
+**Decision 3 — "fresh-context" is structural, not filtered.** The round-2+ reviewer's own brief is set to
+the PRIOR round's own committed, STRUCTURED `ReviewReport` text (`perspective`/`findings: [{summary,
+severity}]`/`checked` — `buildReviewReport`'s own pre-existing shape) — never a perspective's own raw
+session output, which was never captured into that document in the first place. This satisfies "contains
+the findings" (explicitly, via the brief) and implicitly "the fix" (the reviewer is looking at the LIVE,
+POST-FIX lane via the unchanged `diff:lane` input) without ever carrying round N-1's own reasoning,
+because there is structurally nothing of that reasoning in the one artifact round N's reviewer is ever
+shown. No filtering logic was needed or written; the guarantee follows from what `buildReviewReport`
+already did before this piece existed.
+
+**Decision 4 — `RUN-113` (loop exhausted) is a DISTINCT code from `RUN-108` (never looped), disambiguated
+on resume via a new `rounds` field in the `ReviewReport`'s own front matter, not the event log.** `RUN-108`
+means `execution.criticRounds` was absent/zero for this run — looping was never configured or engaged at
+all. `RUN-113` means looping genuinely ran and genuinely did not converge. `resumeSwarmReviewStep` already
+reads the committed report's own front matter (for `verdict`) and reads NOTHING else (no event log query)
+— extending that same front matter with a `rounds: number`, written on every round, let resume tell the
+two cases apart with no new I/O. One real, non-obvious edge case took TWO further rounds to fully close:
+`rounds === 0` is ALSO the value written when round 0's own perspectives exhaust the budget before any fix
+is ever attempted — a genuinely-exhausted loop that never got past round 0 looks, on the committed
+report alone, identical to a step that was never configured to loop at all. Closed by also consulting
+`ctx.criticRounds` at resume time: round-cap exhaustion can never itself produce `rounds: 0` when
+`maxRounds > 0` (the loop increments `roundsConsumed` before ever looping back to write a new report), so
+`rounds === 0` plus `(ctx.criticRounds ?? 0) > 0` unambiguously means the budget-exhausted-at-round-0 case.
+Disclosed, not fixed: this still assumes a project's own `execution.criticRounds` is unchanged between the
+crash and the `forge resume` call — a hand-edited config in that exact window could still pick the wrong
+code; low real-world likelihood, no event-log cross-check was added to close it fully.
+
+**Decision 5 — budget is enforced as the REMAINING amount, re-divided every round, never the step's full
+nominal `maxCostUsd` repeatedly.** The pre-existing round-0 perspectives already divided `maxCostUsd` by
+`perspectives.length` ("so N perspectives cannot spend N times what the step declared"). An early version
+of the fix session and the re-review both instead received the FULL nominal budget on every round,
+meaning a single round's fix-plus-re-review could together spend close to 2x the declared cap before the
+next round's own gate ever ran. Fixed by threading a live `remainingUsd = maxCostUsd - spentUsd` into both
+dispatches, recomputed after every sub-spend. A real, "mid-loop" test (not merely "the budget is already
+gone before round 0 even finishes," the weaker variant an earlier test accidentally only proved) confirms
+the cap genuinely interrupts a loop already in progress, between rounds, not only at the very start.
+
+**Decision 6 — `fixAgent === agent` is refused with this codebase's own established "computed once,
+enforced twice" defense-in-depth shape: a compile-time check AND a runtime guard, neither reusing the
+pre-existing `CFG-501`.** `CFG-501`/`checkSelfReview` structurally only ever compares a reviewer against a
+diff's original AUTHOR — it has no way to see a workflow's own `fixAgent` field at all, so it could never
+have caught this regardless of how it was invoked. A NEW compile-time check (`fix-agent-equals-reviewer`,
+`plan/compile.ts`) compares the two fields' RESOLVED, post-template identities — not raw strings, which
+would both false-refuse the real shipped `agent: '{{ownerRole}}'`/`fixAgent: '{{ownerRole}}'` case (same
+raw text, different real agents) AND miss the inverse real risk (different raw expressions resolving to
+the SAME real agent). A runtime guard (`RUN-116`) inside `runSwarmReviewStep` itself catches the identical
+condition for a hand-built `StepNode` that bypasses the compiler entirely, mirroring `GATE-511`/`RUN-112`'s
+own precedent for why a pure, independently-callable decision function must not trust a caller's own
+upstream validation alone.
+
+**Decision 7 — the new compile-time self-fix check must never mask a pre-existing, more specific
+separation check, and this took real pipeline restructuring to get right, not a one-line reorder.** The
+first version of the self-fix check lived inside `compilePlan`'s own per-leaf builder, so firing it made
+`compilePlan` itself report zero nodes — which meant `compileStageRunPlan`'s own, much more specific
+`owner-role-breaks-separation` check (which needs a full node list to run at all) never got a chance to
+fire for the exact case BOTH checks would catch (a story's own `ownerRole` being the reviewer role, which
+is what makes `fixAgent: '{{item.owner_role}}'` resolve to the same agent as `agent` in the first place) —
+downgrading a specific, actionable, `severity: 'error'` finding into a generic `stepPlan: unavailable`
+WARNING, with `ok` incorrectly flipping to `true`. Fixed by moving the self-fix check into its own stage
+inside `compileRunPlan` itself (after `compilePlan` succeeds and hands back real nodes, before the
+dependency/cycle stages), and having BOTH real call sites that need the more specific check —
+`compileStageRunPlan` (`build-stage`'s own fanout path) AND `assertPlannable`
+(`packages/cli/src/commands/run/expression-context.ts`, `implement-story`'s own standalone path) — recover
+nodes via one narrow, explicitly-scoped `compilePlan` call specifically when the ONLY relevant failure is
+`fix-agent-equals-reviewer`, then re-run their own more specific checks against those nodes. The second
+call site was not found by either round-2 critic (who both reasonably focused on `build-stage`, where the
+regression was first reproduced) — it was found only by the fix cycle's own proactive, broader collateral
+sweep across every touched package's full test directory, confirming a real CLI integration test
+(`packages/cli/test/bin-owner-role.test.ts`) had the identical latent bug.
+
+**Decision 8 — widening a `swarm-review` step's own `produces` claim (so a fix session's writes are
+claim-enforced rather than reverted) must be excluded from cross-item ordering, not merely added to it.**
+This is the single most consequential fix of the whole piece. Giving `review` a `produces` claim shaped
+identically to `implement`'s own achieved the intended goal (fix-session writes now survive claim
+enforcement) but ALSO, for the first time ever (no pre-P9 `swarm-review` step had a non-empty `produces`),
+made it participate in `plan/dependencies.ts`'s cross-item claim-overlap auto-ordering — purely redundant
+with an ordering guarantee the stage's own whole-chain story-ordering pass (`story-order.ts`) already
+provides independently, and, once redundant, capable of landing in the OPPOSITE direction from that
+already-made decision, closing a real dependency cycle for the entirely ordinary scenario of two stories
+in one stage touching overlapping files. Fixed at the root: `buildClaimIntervalMap` now excludes every
+`interactionMode: 'swarm-review'` node from this one mechanism specifically — the claim itself, and the
+lane-level enforcement that actually makes fix-session writes survive, are untouched. Verified, not
+assumed, that the whole-chain ordering pass genuinely still provides the same safety property on its own
+before accepting this fix — excluding review from the WRONG mechanism, without first confirming an
+orthogonal one already covers the same safety invariant, would have silently reopened the exact race
+condition (two lanes concurrently writing overlapping files) the auto-ordering mechanism exists to
+prevent.
+
+**Decision 9 — a newly-added shipped content file is only real once it is registered where the
+init/upgrade pipeline actually looks, and the unit test suite's own fakes can hide this completely.** The
+new fix-session brief (`briefs/fix-review-findings.md`) was never added to `@forge/templates`'s
+`BRIEF_INDEX` — the ONLY mechanism `forge init`/`forge upgrade` ever use to copy a brief into a real
+project's own `.forge/briefs/` directory, with no fallback to the shipped package content at load time.
+This meant the fix round — the entire piece's own central mechanism — could not run in any real, shipped
+project at all, for the full span of two complete gauntlet rounds, invisible to all 66+ tests in the
+dedicated test file because its own `loadContent` test fake matches any `briefs/*.md` reference
+unconditionally and never touches the real index. Found only on the FINAL allowed gauntlet round, by a
+critic who specifically ran the one pre-existing invariant test (`packages/agents/test/prompt/
+content-index.test.ts`) built to catch exactly this class of gap — a test outside this piece's own
+prescribed floor/test list, and outside `pnpm typecheck`/`lint`/`boundaries`/`schema-drift` too. Fixed by
+registering it in `BUILD_BRIEFS`. The broader lesson, worth carrying forward: a new piece that ships a new
+CONTENT file (a brief, a template, a check) — not just new code — needs its own registration verified
+against the real index/registry mechanism, not just against a test suite's own necessarily-permissive
+fakes; a unit test fake that matches "any `briefs/*.md` path" is exactly as blind to an unregistered real
+file as a human skimming the diff would be.
+
+**Decision 10 — "every failure is a typed `StepOutcome`" is a per-call-site guarantee, not a property of
+the function as a whole, and adding new call sites means re-earning it at each one.** Round 0's own
+pre-existing code honors this promise with a comprehensive try/catch around every point that could throw
+(agent loading, model resolution, `dispatchAgentStep`) — explicitly converting `TelemetryError`,
+`isAssemblyRefusal`, and a bare adapter crash into a typed, resolved `StepOutcome.failure`, never letting
+an exception propagate. The two NEW round-1+ dispatch call sites this piece added (`rereviewInLane`'s own
+re-review dispatch; `runFixRound`'s own brief-loading, whose existing catch merely RE-THREW rather than
+converting) had no equivalent handling — an uncaught throw from either would crash the entire run, not
+just fail this one step, found only on the final gauntlet round by a critic who reproduced it live twice
+(a raw adapter throw on a round-1+ perspective; the exact missing-brief scenario Decision 9 above
+describes, which was a genuinely live failure mode until that fix landed). Fixed by mirroring round 0's
+own exact catch shape at both new call sites. The lesson: an established, tested, documented invariant
+("every failure is typed") does not automatically extend to new code added inside the same function —
+each new await-of-something-that-can-throw needs the SAME handling re-applied, explicitly, not inherited
+by proximity to code that already has it.
+
+**Discloses.** All of the above decisions' own residual gaps are recorded in full in
+`GAUNTLET-LOG.md`'s own `## M15 P9` entry's "Discloses" section; not repeated a third time here —
+summarized: resume's `rounds`-plus-`ctx.criticRounds` disambiguation assumes config stability across a
+crash/resume window (Decision 4); `fixNode`'s cleared `outputs: []` is confirmed-harmless-today insurance,
+not a closed exploit, since `ToolGrant.write` has no path-scoped enforcement to widen yet; `RUN-108`'s own
+pre-existing remedy (M14 P14) still doesn't mention `execution.criticRounds` as an option, out of this
+piece's own Surface; the fix brief's own closing heading slightly overstates what gets appended to it
+(the whole rendered report, not a filtered blocking-only excerpt) — harmless.
+
+**Decision 11 — a change to an EXISTING shipped file needs every test asserting that file's own exact
+shape re-checked, not only the piece's own prescribed test list or a `packages/*`-scoped collateral
+sweep.** Found only in the orchestrator's own final, complete, untargeted full-suite run after all three
+gauntlet rounds had already closed (the same discipline that caught two pre-existing M15 P7 defects during
+M15 P8's own build): `test/workflows.test.ts`, a repo-root test OUTSIDE every package's own test tree,
+hand-encodes a literal "worked example" of `build-stage.workflow.yaml`'s own expected parsed shape and
+asserts the real shipped file matches it exactly — this piece's own `fixAgent`/`produces` additions to
+that shipped file had never been reflected in the embedded example. Fixed by updating it and extending the
+test's own title, matching its established convention of naming every prior decision it accounts for.
+Paired with Decision 9's lesson about a NEW content file needing its registration checked against the real
+mechanism: together, a piece that either adds a new shipped file or edits an existing one needs both kinds
+of cross-cutting consistency check, neither of which a package-scoped sweep or a narrow, piece-specific
+test list will reach on its own.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P9`.

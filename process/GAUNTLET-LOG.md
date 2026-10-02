@@ -20266,3 +20266,246 @@ independently-reproduced-twice verification (once by the builder, once by a roun
 removing it reproduces exactly the Mandate's own named mutation ("the missing-evidence test passes").
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q287`.
+
+## M15 P9 — The bounded critic loop, shipped
+
+Three full gauntlet rounds, the maximum — every round returned real findings, and the SECOND and THIRD
+rounds each found genuine, concretely-reproduced regressions in already-shipped, unrelated workflows and
+test suites, not just defects local to this piece's own new code. This is the piece that automates `10`
+§10.6's own "blocking findings loop back to the implementer" step: a `swarm-review` step's `blocked`
+verdict no longer fails immediately — it now runs a bounded `review → fix → review` loop (default 3
+rounds, `execution.criticRounds`), stopping and disclosing (`RUN-113`) only once the cap is genuinely
+exhausted. The compiled DAG forbids cycles, so this could not be built as new workflow steps; the whole
+loop lives inside `runSwarmReviewStep`'s own runtime (`packages/engine/src/interaction/
+swarm-review-step.ts`), wrapping one lane, created once, with a `for(;;)` loop that overwrites a single
+`ReviewReport` in place per round rather than allocating one per round.
+
+**What the piece builds.** A new `AgentStep.fixAgent`/`StepNode.fixAgent` (compiled through the identical
+template-resolution `agent` already goes through) names a DIFFERENT agent — never the reviewer — who runs
+an automatic fix session on a `blocked` verdict, writing directly into the review step's own already-
+created lane (`runAgentWork`, not `runAgentStep` — the lane already exists). A fresh re-review then runs
+inside that same lane (`cwd: lane.path`), briefed with the PRIOR round's own committed, structured
+`ReviewReport` text (never a perspective's own raw reasoning, which was never captured into that document
+to begin with) — satisfying "fresh-context" by construction, not by filtering. New `execution.criticRounds`
+config (optional, default 3, resolved once at `packages/cli/src/commands/run/context.ts`'s
+`buildRunEngineContext`; the bare engine context defaults to 0/unset so every pre-existing test fixture
+and caller is byte-identical to pre-P9 behavior). New `RUN-113` (the loop genuinely ran and genuinely
+didn't converge — distinct from the pre-existing `RUN-108`, which means looping was never configured or
+engaged at all), `RUN-115` (a swarm-review step has no `fixAgent` but the project's own `criticRounds > 0`
+anyway — a dedicated code, not the unrelated `RUN-039` an earlier version mistakenly reused), and `RUN-116`
+(the runtime half of the self-fix guard, below). A `rounds` field threaded into the `ReviewReport`'s own
+front matter on every round lets `resumeSwarmReviewStep` tell "never looped" from "looped and exhausted"
+apart after a crash, with zero new sessions.
+
+**Critic round 1 (two independent critics): zero/one BLOCKING-tier plus several MAJOR, both converging on
+the same unenforced separation-of-duties gap.**
+
+1. **BLOCKING (critic A, reproduced directly).** `classifyFailure` never special-cased `RUN-113` — it fell
+   through to `'validation'`, so `retryOn: [validation]` would RETRY an exhausted critic loop (re-running
+   an entire fresh round 0 plus up to `maxRounds` more fix/re-review cycles) before finally escalating on
+   the second identical failure — directly contradicting the Mandate's own "does not loop further" text and
+   the shipped workflow's own comment claiming otherwise. Fixed: `RUN-113` (and `RUN-115`) added to the
+   `policy`-classified set beside `RUN-108`.
+2. **BLOCKING (critic A, reproduced directly).** `build-stage.workflow.yaml`'s own PRE-EXISTING `review`
+   fanout step had no `fixAgent` — but `buildRunEngineContext` now unconditionally resolves `criticRounds`
+   to `3` for every real run, and the schema's `.positive()` forbade a project from configuring its way
+   back to `0`. Every real `forge run build-stage` therefore hit the new loop branch on any blocked
+   verdict, refusing with a nonsensical, misleading `RUN-039` (about unsupported step KINDS, entirely
+   unrelated) instead of the old, correct `RUN-108`. Fixed (first pass): gave the step a real
+   `fixAgent: '{{item.owner_role}}'` (this workflow's own fanout-variable analogue of `implement-story`'s
+   `'{{ownerRole}}'`), widened its own `produces` the identical way, made `execution.criticRounds: 0` a
+   real schema-level opt-out (`.positive()` → `.int().nonnegative()`), and minted `RUN-115` to replace the
+   `RUN-039` misuse. (This first-pass fix itself introduced two NEW regressions — see round 2.)
+3. **BLOCKING (both critics, converging independently).** `resumeSwarmReviewStep` was never updated for
+   the loop — it unconditionally applied `RUN-108` to any committed `blocked` report, with no way to tell
+   "never looped" from "looped and genuinely exhausted" apart, making `RUN-113`'s own shipped remedy text's
+   claim ("`forge resume` re-applies this same rule") literally false. Fixed (first pass): a `rounds`
+   field written into the `ReviewReport`'s own front matter every round, read back by resume to pick
+   `RUN-108` (rounds = 0) vs `RUN-113` (rounds > 0). (Round 2 found this first pass was still incomplete
+   for one specific sub-case.)
+4. **MAJOR (critic A, reproduced directly).** The fix session's own budget was NOT divided — it got the
+   step's full, undivided `maxCostUsd` as its own ceiling (unlike every perspective dispatch, which always
+   divides by `perspectives.length`), so a single round's fix-plus-re-review could together spend close to
+   2x the nominal budget before the next round's own gate ever got a chance to stop anything. Fixed: both
+   the fix session and the re-review now receive the REMAINING budget (`maxCostUsd - spentUsd`,
+   recomputed after each sub-spend), not the original nominal amount.
+5. **MAJOR (critic A, reproduced directly).** `RUN-113`'s own doc comment claimed "looping genuinely ran"
+   but the code could report it with `rounds: 0` when round 0's own perspectives alone exhausted the
+   budget before any fix was ever attempted — self-contradicting. Fixed: kept one code for both
+   exhaustion reasons (round-cap and budget-cap), reworded the doc comments/message to stop overclaiming
+   rather than splitting into a third code.
+6. **BLOCKING (critic B) / separately reported as MINOR doc-comment inaccuracy (critic A) — a real,
+   unenforced separation-of-duties gap, confirmed by both.** `fixAgent === agent` (the reviewer fixing its
+   own flagged code) was never refused anywhere, despite `AgentStep.fixAgent`'s own doc comment explicitly
+   and falsely claiming this was prevented "by construction" via the pre-existing `CFG-501`/
+   `checkSelfReview` invariant — which structurally only ever compares a reviewer against a diff's original
+   AUTHOR, never against a workflow's own `fixAgent` field, and was therefore blind to this new field
+   entirely. Fixed (first pass): a compile-time check (`fix-agent-equals-reviewer`, comparing RESOLVED,
+   post-template identities, never raw strings — correctly NOT false-refusing the real shipped
+   `agent: '{{ownerRole}}'`/`fixAgent: '{{ownerRole}}'` case where the same raw text resolves to two
+   DIFFERENT real agents) plus a runtime guard (`RUN-116`) inside `runSwarmReviewStep` itself, mirroring
+   this codebase's own established "computed once, enforced twice" shape (`GATE-511`/`RUN-112`'s own
+   precedent). (This first-pass fix itself introduced a THIRD regression — see round 2.)
+7. **MAJOR (critic B, reproduced directly, then HONESTLY self-revised during the fix cycle).** The fix
+   session's synthetic node inherited the real review step's own `outputs: [{type: 'ReviewReport'}]`,
+   which `resolveStepClaim` turns into a WILDCARD glob over the entire `ReviewReport` namespace — broader
+   than any ordinary write step (`green`/`refactor`, which declare no `outputs` at all) ever gets. The
+   fix-cycle's own builder traced this further than the original finding and found the real governing
+   claim enforcement for the whole lane never actually depended on this field in the one real call path
+   that matters, downgrading the practical severity — but still cleared `outputs: []` on the synthetic
+   node as a correctness fix (the node genuinely does not produce a `ReviewReport`, so declaring it did was
+   simply false), disclosed honestly as "cheap insurance, not a closed exploit" rather than silently
+   re-claiming the original severity.
+
+**Critic round 2 (two independent critics): one found the round-1 fixes themselves were correct but
+surfaced one real MAJOR refinement; the other did a broader collateral-regression sweep across
+PRE-EXISTING, unrelated test suites and found real, reproduced breakage the first critic's narrower,
+line-by-line re-verification could not have caught.**
+
+1. **BLOCKING (critic B, reproduced by actually compiling the real shipped workflow with two overlapping
+   stories).** Round 1's own fix for finding 2 — widening `build-stage.workflow.yaml`'s `review` step's
+   `produces` to mirror `implement`'s own — created a REAL dependency cycle for the ordinary scenario of
+   two stories in one stage touching overlapping files: `generate-tests:STORY-002 -> review:STORY-001 ->
+   implement:STORY-002 -> generate-tests:STORY-002`. 7 tests failed in two PRE-EXISTING files this piece
+   never otherwise touched (`test/build-stage-compiles.test.ts`, `packages/cli/test/bin-run-plan.test.ts`).
+   Root cause: giving `review` a `produces` claim shaped identically to `implement`'s own made it
+   participate in `packages/engine/src/plan/dependencies.ts`'s cross-item claim-overlap auto-ordering for
+   the FIRST time ever (no pre-P9 `swarm-review` step ever had a non-empty `produces`), which is pure,
+   redundant duplication of an ordering decision the stage's own whole-chain story-ordering pass
+   (`story-order.ts`) already makes independently — and, once redundant, could land in the opposite
+   direction from that already-made decision, closing a cycle. Fixed at the root, not patched around:
+   `buildClaimIntervalMap` now excludes every `interactionMode: 'swarm-review'` node from this ONE
+   mechanism — `node.produces` itself, and the lane-level claim check that actually enforces it, are
+   untouched. Verified (not merely asserted) that the whole-chain story-ordering pass genuinely still
+   provides the same safety property independently, so this exclusion does not reopen the original race
+   the auto-ordering mechanism exists to prevent.
+2. **BLOCKING (critic B, reproduced directly).** Round 1's own new compile-time self-fix check
+   (`fix-agent-equals-reviewer`) MASKED a pre-existing, more specific, higher-severity
+   `owner-role-breaks-separation` check (`stage-plan.ts`): when a story's `ownerRole` IS `'reviewer'` —
+   exactly the case that OLDER check exists to catch — `build-stage.workflow.yaml`'s new
+   `fixAgent: '{{item.owner_role}}'` also resolves to `'reviewer'`, firing the NEW per-step check first, at
+   a lower compile layer, downgrading the whole plan to a generic `stepPlan: unavailable` WARNING and
+   flipping `ok` to `true` — hiding the original, more actionable error. Fixed with real pipeline
+   restructuring, not a one-line patch: `checkFixAgentSeparation` now runs as its own stage inside
+   `compileRunPlan` (after `compilePlan` succeeds and hands back real nodes, before dependency/cycle
+   stages), and `compileStageRunPlan` now recovers those nodes via a direct, narrow `compilePlan` call
+   specifically when the failure is `fix-agent-equals-reviewer`, re-running `separationFindings` against
+   them so the real, specific, `severity: 'error'` finding surfaces and `ok` correctly flips back to
+   `false` — verified directly, not assumed, including that double-compiling is safe (both functions are
+   pure over their inputs, no counters or mutation) and that an UNRELATED `fixAgent === agent` typo (not a
+   real owner-role separation issue) correctly still surfaces only the generic warning, not a false
+   `separationFindings` hit.
+3. **BLOCKING (critic B, reproduced directly).** A PRE-EXISTING CLI integration test's own inline fixture
+   workflow (`packages/cli/test/commands/run/swarm-review-report.test.ts`, no `fixAgent`) started getting
+   `RUN-115` instead of its originally-asserted `RUN-108`, since `criticRounds` now defaults to `3`
+   globally. Not a defect in the new behavior (RUN-115 is the correct, intended outcome for a
+   `fixAgent`-less step once looping is enabled by default) — fixed by having that test's own fixture
+   project set `execution.criticRounds: 0`, restoring its original, narrower intent (testing
+   `ReviewReport` persistence mechanics via the `RUN-108` path) without coupling it to this piece's own new
+   behavior it was never about.
+4. **MAJOR (critic A, reproduced by combining two already-existing test-scripting patterns that had never
+   been combined).** Round 1's own `rounds`-field resume fix was still incomplete for one specific case:
+   `rounds === 0` is ambiguous between "never configured to loop" (`RUN-108`) and "configured, but round
+   0's own budget was exhausted before any fix was ever attempted" (`RUN-113`) — `resumeSwarmReviewStep`
+   never consulted `ctx.criticRounds` to disambiguate. Fixed: when `rounds === 0` and verdict is `blocked`,
+   also check `(ctx.criticRounds ?? 0) > 0` — structurally, round-cap exhaustion can never itself produce
+   `rounds: 0` when `maxRounds > 0`, so this correctly identifies the budget-exhausted-at-round-0 case.
+5. **MINOR (both critics, independently).** Three doc comments were factually inaccurate about the very
+   fixes they were describing — `AgentStep.fixAgent`'s own comment claimed a missing `fixAgent` always
+   means `RUN-108` "regardless of `execution.criticRounds`" (false: it's `RUN-115` once rounds are
+   configured); the compile-time check's own illustrative example described a logically impossible
+   scenario (the same template resolved against the same context cannot resolve to two different agents);
+   and the `fixNode`/claim comment claimed a call site was never reached that direct tracing showed IS
+   reached (the REAL, narrower reason it's harmless is different and more fragile than originally stated).
+   All three corrected to state the actual, verified truth.
+
+**Critic round 3 (final round, two fresh critics): each found one independent, concretely-reproduced
+BLOCKING defect neither prior round had surfaced — both in genuinely new territory two rounds of
+narrowly-scoped fixes had not yet reached.**
+
+1. **BLOCKING (critic A, reproduced by running the one existing invariant test built to catch exactly
+   this).** The new fix-session brief, `packages/templates/templates/briefs/fix-review-findings.md`, was
+   never registered in `@forge/templates`'s `BRIEF_INDEX` — meaning `forge init`/`forge upgrade` would
+   NEVER copy it into any real project, and `loadContent` has no fallback to the shipped package content.
+   **The central mechanism of this entire piece's Mandate — the automatic fix round — could not run in any
+   real, shipped project at all**, masked completely by the unit test suite's own `loadContent` fake, which
+   matches any `briefs/*.md` reference unconditionally. Fixed: registered in `BUILD_BRIEFS`
+   (`packages/templates/src/content/briefs-build.ts`), confirmed via the real invariant test.
+2. **BLOCKING (critic B, reproduced live — added and ran two temporary tests, confirmed uncaught
+   rejections, reverted).** `runSwarmReviewStep`'s own doc comment promises every failure is a typed
+   `StepOutcome`, "as for any agent step" — a guarantee round 0's own code honors with a comprehensive
+   try/catch, but the two NEW round-1+ dispatch call sites this piece added (`rereviewInLane`'s
+   `dispatchAgentStep` call; `runFixRound`'s brief-loading, whose existing `catch` just RE-THREW rather
+   than converting to a typed outcome) had no equivalent handling at all. A raw adapter throw, or a
+   missing/unreadable brief (a genuinely live scenario until finding 1 above was fixed), would CRASH THE
+   ENTIRE RUN rather than failing this one step cleanly. Fixed: both call sites now mirror round 0's own
+   established catch shape exactly (`TelemetryError` re-thrown; `isAssemblyRefusal`/`RUN-056` → a typed
+   refusal failure; anything else → an `AdapterError` event plus a typed adapter failure), mutation-
+   verified live (the fix removed, the new tests reproduce genuine uncaught rejections exactly as the
+   critic found, restored, reconfirmed green).
+
+**Found and fixed proactively, beyond what either round-3 critic asked for:** the fix cycle's own builder
+ran a broader collateral sweep (`packages/engine packages/cli packages/agents packages/templates
+packages/schemas`, 7082 tests) and found the IDENTICAL masking bug round 2's finding 2 fixed for
+`build-stage.workflow.yaml`'s own fanout/stage-plan compile path ALSO existed, unfixed, in
+`implement-story.workflow.yaml`'s own separate, standalone (non-stage) compile path
+(`packages/cli/src/commands/run/expression-context.ts`'s `assertPlannable`) — nobody had re-checked that
+second path for the same shape of bug. Fixed with the identical recovery pattern (re-derive nodes via a
+bare `compilePlan` call when the only failure is `fix-agent-equals-reviewer`, so the real `RUN-091`/
+`RUN-097` owner-role-separation checks still get a chance to fire), mutation-verified live.
+
+**Found and fixed in the orchestrator's own final, independent full-suite verification, after all three
+critic rounds had already closed:** `test/workflows.test.ts` (repo-root `test/`, outside every package's
+own `test/` directory and therefore outside both the prescribed floor list and the fix cycle's own
+`packages/*` collateral sweep) hand-encodes a literal "worked example" of `build-stage.workflow.yaml`'s
+own expected parsed shape, asserting the real shipped file matches it exactly — a cross-cutting
+consistency check this piece's own round of `fixAgent`/`produces` additions to the shipped file had not
+touched. Fixed by adding the identical two fields to the embedded worked example and extending the test's
+own title to name this piece's addition, matching the file's own established convention of listing every
+prior decision it accounts for. The broader lesson, worth stating plainly alongside Decision 9's "a new
+content file needs its registration checked against the real mechanism, not just a test fake": a change to
+an EXISTING shipped file also needs every test asserting that file's own exact shape re-checked,
+specifically including repo-root tests outside every package's own test tree — neither the prescribed
+floor list nor a `packages/*`-scoped collateral sweep, however broad, will reach them.
+
+**Discloses.** `resumeSwarmReviewStep`'s own `rounds === 0`-plus-`ctx.criticRounds`-based disambiguation
+assumes the project's own `execution.criticRounds` config is unchanged between the crash and the resume —
+a `.forge/config.yaml` hand-edited to add/change `criticRounds` in that narrow window could make resume
+pick the wrong code; low real-world likelihood (requires a manual mid-crash-recovery config edit), not
+fixed. `fixNode`'s own cleared `outputs: []` is confirmed to reach `resolveStepClaim` today (an earlier
+version of this exact comment overclaimed it never did) but has no observable effect in the one real call
+path that matters, since `ToolGrant.write` is a plain boolean with no path-scoped enforcement to widen —
+kept anyway as an honest declared shape, with an explicit forward note that this spot would silently
+reactivate if claim consumption ever grows path-scoped write enforcement. `RUN-108`'s own remedy (pre-
+existing, M14 P14, not introduced here) does not mention `execution.criticRounds` as an option at all,
+unlike `RUN-113`/`RUN-115`'s remedies — out of this piece's own Surface, not fixed. `briefs/
+fix-review-findings.md`'s own closing heading ("This round's blocking findings") slightly overpromises
+what `runFixRound` actually appends (the entire rendered report, not a filtered blocking-only list) —
+harmless, not fixed.
+
+**Verification.** `pnpm typecheck` (21/21), the REAL `pnpm lint` (`eslint . --max-warnings 0 &&
+prettier --check .`), `pnpm boundaries`, and `node scripts/assert-schema-drift.mjs` all clean on the final
+state. The full, final prescribed test list — `test/build-stage-compiles.test.ts`,
+`packages/cli/test/{bin-run-plan,bin-owner-role,commands/run/swarm-review-report}.test.ts`,
+`packages/engine/test/plan/{compile,run-plan}.test.ts`, `packages/engine/test/interaction/
+{swarm-review-step,review-report}.test.ts`, `packages/engine/test/{failures/classify,dispatch/
+output-claim}.test.ts`, `packages/core/test/errors.test.ts`, `packages/agents/test/prompt/
+content-index.test.ts` — 871/871 pass. A broader collateral sweep across every touched package's own full
+test directory (`packages/engine packages/cli packages/agents packages/templates packages/schemas`, 7082
+tests) found only two failures, both in files with zero relation to this piece, both reproduced as
+pre-existing resource-contention flakes by re-running them alone (235/235 pass in isolation) — the
+identical `confined-command.test.ts` flake class already documented elsewhere in this milestone's own
+history. The orchestrator's own subsequent, complete, untargeted full-suite run (`node scripts/
+run-tests.mjs run`, no path filter — the same discipline that caught two pre-existing M15 P7 defects
+during M15 P8) found one further real, genuine failure neither the critics nor the fix cycle's own
+`packages/*`-scoped sweep could have reached: `test/workflows.test.ts` (repo-root `test/`, outside every
+package's own test tree), whose hand-encoded "worked example" of `build-stage.workflow.yaml` had not been
+updated for this piece's own `fixAgent`/`produces` additions to the real shipped file — fixed by updating
+the embedded worked example to match. A second full run after that fix confirmed clean. Every fix across
+all three rounds individually mutation-verified against its own real defect
+(revert, confirm the exact predicted failure reproduces — several as genuine uncaught rejections, not mere
+assertion failures — restore, reconfirm green), including two defects (round 3's both findings) that
+would have made this piece's own central mechanism nonfunctional or run-crashing in any real, shipped
+project had they shipped undetected.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q288`.
