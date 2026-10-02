@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "pattern": "^DISC-\\d{3}(-\\d+)?$",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "trade-off",
+        "known-gap"
+      ],
+      "type": "string"
+    },
+    "owner": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "resolution": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date",
+          "type": "string"
+        },
+        "by": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "by",
+        "at"
+      ],
+      "type": "object"
+    },
+    "resolved": {
+      "type": "boolean"
+    },
+    "sources": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "decision",
+              "human",
+              "code",
+              "external"
+            ],
+            "type": "string"
+          },
+          "ref": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "summary": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "summary",
+    "owner",
+    "sources",
+    "resolved"
+  ],
+  "type": "object"
+}

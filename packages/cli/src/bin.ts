@@ -152,6 +152,9 @@ import {
 import { helpRecommendNext, type HelpCommandContext } from './commands/help.ts';
 import {
   kbDiff,
+  kbDisclose,
+  kbDiscloseResolve,
+  kbDisclosures,
   kbGraph,
   kbLint,
   kbList,
@@ -304,8 +307,8 @@ import { isStoryPhase, renderStoryVerify, storyVerify, STORY_PHASES } from './co
 import { assembleAndWriteEvidenceBundle } from './commands/loop/test/evidence-bundle.ts';
 import { listSpecArtifacts, loadDoneStories } from './commands/shared.ts';
 import { parseGlobalFlags } from './entry/parse-global-flags.ts';
-import { ARTIFACT_TYPES, storySchema } from '@forge/schemas';
-import type { ArtifactTypeId, Exemption, Story } from '@forge/schemas';
+import { ARTIFACT_TYPES, artifactSourceSchema, storySchema } from '@forge/schemas';
+import type { ArtifactSource, ArtifactTypeId, Exemption, Story } from '@forge/schemas';
 import { assertCleanWorkingTree } from '@forge/vcs';
 import type { CompileOptions, CompileSources } from '@forge/extensions/compile';
 import { readWorkflowSource } from './commands/run/run.ts';
@@ -1844,7 +1847,11 @@ async function runTestBindingCommand(
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
   }
   const clock = SYSTEM_CLOCK;
-  const exemptions = await loadExemptions(paths, config.paths.reports);
+  // `corruptCount` is not surfaced here -- `forge kb disclosures`/`forge doctor`'s own disclosures
+  // check (`kb-disclosures.ts`) is this project's one real place a corrupt `reports/exemptions.md` row
+  // is reported; this binding-check path's own existing contract (M15 P4/P5) predates that signal and
+  // does not need it to behave correctly for the exemptions it CAN read.
+  const { exemptions } = await loadExemptions(paths, config.paths.reports);
 
   if (storyId === undefined) {
     return runDiscoverModeBindingCommand(
@@ -1962,15 +1969,19 @@ async function runTestExemptCommand(
     );
     return EXIT_CODES.usage;
   }
-  // A blank `--reason` -- stripped the identical Unicode-aware way `@forge/engine/gates/waiver.ts`'s
-  // own private `isNonBlank` already strips a waiver's `reason`/`owner` (`\p{Cc}`/`\p{Cf}`/ordinary
-  // whitespace), not a plain `.trim()`: a round-1 gauntlet critic reproduced live that `.trim()` alone
-  // accepts a `--reason` made entirely of zero-width spaces (U+200B) as "non-blank," durably recording
-  // an invisible, meaningless governance entry that satisfies `exemptionSchema`'s own `z.string()
-  // .min(1)` by length while conveying nothing -- the exact gap `isNonBlank` was already built to
-  // close for the sibling `reason`/`owner` fields of a waiver. That helper is not exported, so this is
-  // the identical regex, not a second design.
-  if (reason.replace(/[\p{Cc}\p{Cf}\s]/gu, '').length === 0) {
+  // A blank `--reason` -- `isBlank()` (below in this file), the identical Unicode-aware check `kb
+  // disclose`'s own `--summary`/`--owner`/`--reason`/`--by` already use: a round-1 gauntlet critic
+  // reproduced live that `.trim()` alone accepts a `--reason` made entirely of zero-width spaces
+  // (U+200B) as "non-blank," durably recording an invisible, meaningless governance entry that
+  // satisfies `exemptionSchema`'s own `z.string().min(1)` by length while conveying nothing. This exact
+  // call site used its own, separate copy of the plain `\p{Cc}\p{Cf}\s` regex (never the WIDER,
+  // curated-blank-glyph-aware `isBlank()`, added later by `specs/22` M15 P10 for its own `kb disclose`
+  // commands) until a round-3 M15 P10 gauntlet critic reproduced live that `forge test exempt --reason`
+  // still accepted an all-BRAILLE-PATTERN-BLANK (U+2800) reason -- one of the exact two characters that
+  // same round's own fix had JUST closed for `kb disclose`, reaching this file's own third, undisclosed
+  // sibling copy. `isBlank()`'s own doc comment now names this as a THIRD copy it closes, alongside the
+  // two still-untouched, out-of-Surface copies in `@forge/engine/gates/waiver.ts`/`spec/gate-rules.ts`.
+  if (isBlank(reason)) {
     console.error('forge: "test exempt" needs a real, non-blank --reason.');
     return EXIT_CODES.usage;
   }
@@ -2787,6 +2798,8 @@ const KB_SUBCOMMANDS = [
   'open',
   'graph',
   'verify',
+  'disclosures',
+  'disclose',
 ] as const;
 
 async function buildKbContext(paths: ProjectPaths): Promise<KbCommandContext> {
@@ -2797,11 +2810,83 @@ async function buildKbContext(paths: ProjectPaths): Promise<KbCommandContext> {
     specsRoot: SPECS_ROOT,
     level: config.project.level,
     env: realEnvSnapshot(),
+    reportsRoot: config.paths.reports,
   };
 }
 
 const KB_GRAPH_FLAGS = { '--hops': true } as const;
 const KB_LINT_FLAGS = { '--rule': true } as const;
+const KB_DISCLOSE_FLAGS = {
+  '--kind': true,
+  '--summary': true,
+  '--owner': true,
+  '--source': true,
+} as const;
+const KB_DISCLOSE_RESOLVE_FLAGS = { '--reason': true, '--by': true } as const;
+
+/** `--source <kind>:<ref>` (`forge kb disclose`'s own one-source-per-call simplification -- a
+ * repeated flag's own `parseCommandFlags` only ever keeps the LAST value, so this command does not
+ * support more than one `--source`; nothing in the Mandate asks for it, and a disclosure genuinely
+ * needing several can always name the rest in its own `--summary` prose). Validated against the real
+ * `artifactSourceSchema` rather than a hand-rolled kind check, so the two can never silently drift. */
+function parseDiscloseSource(raw: string): ArtifactSource {
+  const sep = raw.indexOf(':');
+  if (sep === -1) throw new ForgeError('USR-002', { flag: '--source', value: raw });
+  const candidate = { kind: raw.slice(0, sep), ref: raw.slice(sep + 1) };
+  const parsed = artifactSourceSchema.safeParse(candidate);
+  if (!parsed.success) throw new ForgeError('USR-002', { flag: '--source', value: raw });
+  return parsed.data;
+}
+
+/** The identical Unicode-aware "blank" check `runTestExemptCommand`'s own `--reason` check already uses
+ * (`\p{Cc}`/`\p{Cf}` -- invisible control/format characters, including a zero-width space -- plus
+ * ordinary whitespace, never a plain `.trim()`): a round-1 M15 P10 gauntlet critic reproduced live that
+ * `kb disclose`'s own `.trim() === ''` checks for `--summary`/`--owner` accepted a value made entirely
+ * of zero-width spaces (U+200B) as "non-blank," durably recording an invisible, meaningless governance
+ * entry -- the exact gap this piece's own doc comments claimed (incorrectly, at the time) were already
+ * closed by "mirroring `test exempt`'s already-gauntleted shape." Applied here to every one of `kb
+ * disclose`/`kb disclose resolve`'s own free-text fields (`--summary`/`--owner`/`--reason`/`--by`), not
+ * only the one field the original `test exempt` fix covered. `@forge/engine/gates/waiver.ts`'s own
+ * private `isNonBlank` is the same check again, for a waiver's `reason`/`owner`; not exported, so this
+ * is the third copy of the identical regex, not a fourth, independent design.
+ *
+ * A round-2 critic went further and independently reproduced that `\p{Cc}\p{Cf}\s` alone still admits
+ * two REAL, well-documented "renders as a blank glyph in virtually every font" characters neither
+ * category covers: U+2800 BRAILLE PATTERN BLANK (`So`) and U+3164 HANGUL FILLER (`Lo`) -- both genuine,
+ * commonly-abused "invisible text" vectors (the "fake blank username" trick), not contrived edge cases.
+ * There is no single Unicode general-category property that cleanly means "renders blank" -- this is a
+ * known, hard problem even major platforms only ever address with a curated, explicit list of specific
+ * code points, never a clean regex class. Extended below with that same kind of explicit list: the two
+ * the critic verified directly, plus three siblings from the identical Hangul-filler family verified
+ * here the same way (real Unicode name, real blank-glyph rendering, not guessed): U+115F HANGUL
+ * CHOSEONG FILLER, U+1160 HANGUL JUNGSEONG FILLER, U+FFA0 HALFWIDTH HANGUL FILLER. This closes the
+ * SPECIFIC, known vectors verified so far -- it is NOT, and does not claim to be, an exhaustive defense
+ * against every conceivable blank-rendering code point that might exist or be discovered later
+ * (disclosed, not solved, the same honesty this codebase already applies elsewhere rather than
+ * overclaiming a general solution to a problem that structurally has none).
+ *
+ * `forge test exempt --reason`, in THIS SAME FILE, used to be a fourth, undisclosed copy of the plain
+ * `\p{Cc}\p{Cf}\s`-only check -- found and closed by a round-3 M15 P10 gauntlet critic, who reproduced
+ * live that an all-BRAILLE-PATTERN-BLANK `--reason` still durably recorded a meaningless exemption
+ * (whose own blank `reason` field then flows straight into this piece's own disclosure ledger via
+ * `synthesizeExemptionEntries`) even after THIS function had already closed the identical character for
+ * `kb disclose`. That call site now calls `isBlank()` directly instead of keeping its own copy.
+ *
+ * Scope note, not fixed here: the IDENTICAL gap (missing this same explicit blank-glyph list) still
+ * exists in two OTHER copies of this check (`@forge/engine/gates/waiver.ts`'s `isNonBlank`,
+ * `packages/cli/src/commands/spec/gate-rules.ts`'s own `isBlank`) -- both pre-existing, already-shipped
+ * M13/M14-era code outside this piece's own Surface, not touched here. This module's own
+ * `collection-lock.ts` is the recent, established precedent for how a future piece should actually
+ * close this for all remaining copies at once: extracted, not duplicated again, the same way that
+ * module pulled `withExemptionsLock`'s hardened logic out from under `exemptions.ts` specifically so a
+ * second caller (`kb-disclosures.ts`) would not have to re-fight an already-solved hard problem. */
+const BLANK_RENDERING_CODE_POINTS = /[⠀ㅤᅟᅠﾠ]/gu;
+
+function isBlank(value: string): boolean {
+  return (
+    value.replace(/[\p{Cc}\p{Cf}\s]/gu, '').replace(BLANK_RENDERING_CODE_POINTS, '').length === 0
+  );
+}
 
 async function runKbCommand(
   paths: ProjectPaths,
@@ -2975,6 +3060,103 @@ async function runKbCommand(
             'forge kb verify: no real, verifiable entries.',
     );
     return failing.length > 0 ? EXIT_CODES.failure : EXIT_CODES.success;
+  }
+  if (sub === 'disclosures') {
+    assertNoArgs(rest);
+    const ledger = sanitizeDeep(await kbDisclosures(ctx));
+    const openCount = ledger.entries.filter((entry) => entry.open).length;
+    // `specs/22` M15 P10's own round-1 gauntlet critic found an earlier version silently reported a
+    // clean "none open" for a `kb/disclosures.md` that actually held real, unresolved rows next to a
+    // schema-invalid one; a round-2 critic found the identical bug one file over, in `reports/
+    // exemptions.md`. Both corrupt counts (`kb-disclosures.ts`'s own `DisclosureLedger` doc comment)
+    // are shown explicitly, NAMED by which real file to fix, whenever either is nonzero -- so "0 open"
+    // can never again be read as "nothing to see" when the real answer is "some of one of these files
+    // could not be read at all."
+    const corruptNote =
+      (ledger.disclosureCorruptCount > 0
+        ? ` (${String(ledger.disclosureCorruptCount)} entr${ledger.disclosureCorruptCount === 1 ? 'y' : 'ies'} in kb/disclosures.md could not be read -- see \`forge kb lint\`.)`
+        : '') +
+      (ledger.exemptionCorruptCount > 0
+        ? ` (${String(ledger.exemptionCorruptCount)} entr${ledger.exemptionCorruptCount === 1 ? 'y' : 'ies'} in reports/exemptions.md could not be read.)`
+        : '');
+    console.log(
+      json
+        ? JSON.stringify({
+            v: 1,
+            open: openCount,
+            disclosuresCorrupt: ledger.disclosureCorruptCount,
+            exemptionsCorrupt: ledger.exemptionCorruptCount,
+            entries: ledger.entries,
+          })
+        : (ledger.entries
+            .map(
+              (entry) =>
+                `${entry.open ? 'open' : 'resolved'} ${entry.synthesized ? '(synthesized) ' : ''}${entry.kind} ${entry.id} (${entry.owner}): ${entry.summary}`,
+            )
+            .join('\n') || 'forge kb disclosures: none recorded.') + corruptNote,
+    );
+    return EXIT_CODES.success;
+  }
+  if (sub === 'disclose') {
+    if (rest[0] === 'resolve') {
+      const { values, positionals } = parseCommandFlags(rest.slice(1), KB_DISCLOSE_RESOLVE_FLAGS);
+      const [id] = positionals;
+      const reason = values.get('--reason');
+      const by = values.get('--by');
+      if (id === undefined || positionals.length > 1) {
+        console.error('forge: "kb disclose resolve" needs a real <id>.');
+        return EXIT_CODES.usage;
+      }
+      if (reason === undefined || by === undefined) {
+        console.error('forge: "kb disclose resolve" needs --reason <text> --by <identifier>.');
+        return EXIT_CODES.usage;
+      }
+      if (isBlank(reason)) {
+        console.error('forge: "kb disclose resolve" needs a real, non-blank --reason.');
+        return EXIT_CODES.usage;
+      }
+      if (isBlank(by)) {
+        console.error('forge: "kb disclose resolve" needs a real, non-blank --by.');
+        return EXIT_CODES.usage;
+      }
+      await kbDiscloseResolve(ctx, { id, reason, by });
+      console.log(
+        json
+          ? JSON.stringify({ v: 1, resolved: true, id })
+          : `forge kb disclose resolve: ${id} resolved.`,
+      );
+      return EXIT_CODES.success;
+    }
+    const { values, positionals } = parseCommandFlags(rest, KB_DISCLOSE_FLAGS);
+    assertNoArgs(positionals);
+    const kind = values.get('--kind');
+    const summary = values.get('--summary');
+    const owner = values.get('--owner');
+    const sourceRaw = values.get('--source');
+    if (kind !== 'trade-off' && kind !== 'known-gap') {
+      console.error('forge: "kb disclose" needs --kind <trade-off|known-gap>.');
+      return EXIT_CODES.usage;
+    }
+    if (summary === undefined || isBlank(summary)) {
+      console.error('forge: "kb disclose" needs a real, non-blank --summary <text>.');
+      return EXIT_CODES.usage;
+    }
+    if (owner === undefined || isBlank(owner)) {
+      console.error('forge: "kb disclose" needs a real, non-blank --owner <identifier>.');
+      return EXIT_CODES.usage;
+    }
+    if (sourceRaw === undefined) {
+      console.error(
+        'forge: "kb disclose" needs a real --source <kind>:<ref> (decision/human/code/external).',
+      );
+      return EXIT_CODES.usage;
+    }
+    const source = parseDiscloseSource(sourceRaw);
+    const id = await kbDisclose(ctx, { kind, summary, owner, sources: [source] });
+    console.log(
+      json ? JSON.stringify({ v: 1, recorded: true, id }) : `forge kb disclose: recorded ${id}.`,
+    );
+    return EXIT_CODES.success;
   }
 
   console.error(`forge: "kb ${sub ?? ''}" needs a real subcommand (${KB_SUBCOMMANDS.join('|')}).`);

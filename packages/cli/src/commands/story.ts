@@ -721,7 +721,9 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
   const rawNonBinding = result.namedTests.filter(
     (name) => !result.failedUnderMutation.includes(name),
   );
-  const exemptions = await loadExemptions(ctx.paths, ctx.reportsRoot);
+  // `corruptCount` not surfaced here for the identical reason `bin.ts`'s own binding-check call site
+  // isn't: this story-verification path's own existing contract predates that signal.
+  const { exemptions } = await loadExemptions(ctx.paths, ctx.reportsRoot);
   const application = applyExemptions(
     story.id,
     rawNonBinding,

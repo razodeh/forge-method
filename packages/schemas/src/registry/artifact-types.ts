@@ -164,14 +164,25 @@ const RAW_ARTIFACT_TYPES = [
     idWidth: 3,
     collection: true,
   },
+  // `specs/22` M15 P10: the project's own disclosure ledger -- one shared, collection-type file, the
+  // identical shape `Exemption` just above already is, for the identical "an ever-growing register,
+  // never one document per entry" reason (`disclosure.ts`'s own doc comment has the fuller Mandate
+  // reasoning for why only `trade-off`/`known-gap` are ever really written here).
+  {
+    id: 'Disclosure',
+    idPrefix: 'DISC',
+    pathTemplate: 'kb/disclosures.md',
+    idWidth: 3,
+    collection: true,
+  },
 ] as const;
 
-/** The 25 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
- * `MutationEvidence`, `EvidenceBundle` and `Exemption`, each added post-v1.0 -- see this array's own
- * trailing entries for the full record). `Disclosure` (`specs/18` §18.7, `PLAN-M15.md` P10) is spec-
- * registered but not yet code-registered here: its own code registration is P10's job, when the
- * disclosure ledger it names is actually built (`SPEC-QUESTIONS.md` Q280's Decision 6) -- a deliberate,
- * disclosed asymmetry, not an oversight. */
+/** The 26 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
+ * `MutationEvidence`, `EvidenceBundle`, `Exemption` and `Disclosure`, each added post-v1.0 -- see this
+ * array's own trailing entries for the full record). `Disclosure` (`specs/22` M15 P10) is now
+ * code-registered here, alongside the real disclosure ledger it names (`kb-disclosures.ts`,
+ * `@forge/cli`) -- the earlier "spec-registered but not yet code-registered" asymmetry this comment
+ * once described is resolved as of this piece. */
 export type ArtifactTypeId = (typeof RAW_ARTIFACT_TYPES)[number]['id'];
 
 /**

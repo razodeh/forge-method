@@ -13,6 +13,7 @@ import {
   dataModelSchema,
   defectSchema,
   diagramSchema,
+  disclosureSchema,
   environmentSchema,
   epicSchema,
   evidenceBundleSchema,
@@ -75,6 +76,7 @@ const SCHEMA_BY_TYPE: Record<ArtifactTypeId, z.ZodTypeAny> = {
   MutationEvidence: mutationEvidenceSchema,
   EvidenceBundle: evidenceBundleSchema,
   Exemption: exemptionSchema,
+  Disclosure: disclosureSchema,
 };
 
 /** The real registry: every type's real schema and its real `requiredSections`. */

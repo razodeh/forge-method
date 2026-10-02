@@ -19,15 +19,25 @@ export {
   openQuestionsFileSchema,
   environmentsFileSchema,
   exemptionsFileSchema,
+  disclosuresFileSchema,
   type RisksFile,
   type AssumptionsFile,
   type OpenQuestionsFile,
   type EnvironmentsFile,
   type ExemptionsFile,
+  type DisclosuresFile,
 } from './collection-file.ts';
 export { dataModelSchema, type DataModel } from './data-model.ts';
 export { defectSchema, SEVERITIES, type Defect } from './defect.ts';
 export { diagramSchema, DIAGRAM_NOTATIONS, type Diagram } from './diagram.ts';
+export {
+  disclosureSchema,
+  disclosureResolutionSchema,
+  DISCLOSURE_KINDS,
+  type Disclosure,
+  type DisclosureKind,
+  type DisclosureResolution,
+} from './disclosure.ts';
 export { environmentSchema, type Environment } from './environment.ts';
 export { epicSchema, type Epic } from './epic.ts';
 export { exemptionSchema, type Exemption } from './exemption.ts';

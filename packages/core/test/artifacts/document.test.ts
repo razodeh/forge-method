@@ -25,8 +25,8 @@ const templateFiles = readdirSync(templatesDir)
   .sort();
 
 describe('ArtifactDocument.parse — round-trip corpus', () => {
-  it('found all 25 @forge/templates stubs to test against', () => {
-    expect(templateFiles).toHaveLength(25);
+  it('found all 26 @forge/templates stubs to test against', () => {
+    expect(templateFiles).toHaveLength(26);
   });
 
   it.each(templateFiles)('%s round-trips byte-for-byte with no edits', (fileName) => {

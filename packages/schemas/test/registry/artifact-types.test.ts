@@ -135,12 +135,20 @@ const SPEC_TABLE: readonly Omit<ArtifactTypeDefinition, 'requiredSections'>[] = 
     idWidth: 3,
     collection: true,
   },
+  // Added post-v1.0 (`specs/22` M15, `PLAN-M15.md` P10) -- see `artifact-types.ts`'s own trailing entry.
+  {
+    id: 'Disclosure',
+    idPrefix: 'DISC',
+    pathTemplate: 'kb/disclosures.md',
+    idWidth: 3,
+    collection: true,
+  },
 ];
 
 describe('specs/18 §18.7 — the registry table', () => {
-  it('has exactly 25 types (21 original + ReviewReport, MutationEvidence, EvidenceBundle, Exemption, each added post-v1.0)', () => {
-    expect(SPEC_TABLE).toHaveLength(25);
-    expect(ARTIFACT_TYPES).toHaveLength(25);
+  it('has exactly 26 types (21 original + ReviewReport, MutationEvidence, EvidenceBundle, Exemption, Disclosure, each added post-v1.0)', () => {
+    expect(SPEC_TABLE).toHaveLength(26);
+    expect(ARTIFACT_TYPES).toHaveLength(26);
   });
 
   it('matches the spec table row-for-row, in order', () => {
@@ -234,7 +242,7 @@ describe('specs/18 §18.7 — the registry table', () => {
     ]);
   });
 
-  it('marks exactly the seven collection types the spec table declares plus Exemption (post-v1.0 M15 P6)', () => {
+  it('marks exactly the seven collection types the spec table declares plus Exemption and Disclosure (post-v1.0 M15 P6/P10)', () => {
     const collections = ARTIFACT_TYPES.filter((type) => type.collection === true).map(
       (type) => type.id,
     );
@@ -247,6 +255,7 @@ describe('specs/18 §18.7 — the registry table', () => {
         'Environment',
         'HandoffRecord',
         'Exemption',
+        'Disclosure',
       ].sort(),
     );
   });
@@ -322,6 +331,7 @@ describe('registryTail (P33)', () => {
     ReviewReport: 'reviews/REVIEW-*.md',
     MutationEvidence: 'mutation/*-*.md',
     EvidenceBundle: 'evidence/EVID-*-*.md',
+    Disclosure: 'kb/disclosures.md',
   };
 
   it('enumerates every registered type (a floor against a vacuous pass)', () => {
@@ -348,6 +358,7 @@ describe('registryTail (P33)', () => {
       'OpenQuestion',
       'Waiver',
       'Exemption',
+      'Disclosure',
       'SessionRecord',
       'HandoffRecord',
     ]);

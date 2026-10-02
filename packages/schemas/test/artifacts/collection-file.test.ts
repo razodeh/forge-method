@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assumptionsFileSchema,
+  disclosuresFileSchema,
   environmentsFileSchema,
   openQuestionsFileSchema,
   risksFileSchema,
@@ -52,6 +53,17 @@ function validAssumption(id: string): Record<string, unknown> {
 
 function validOpenQuestion(id: string): Record<string, unknown> {
   return { id, question: 'Do we need a separate package for shared domain types?', status: 'open' };
+}
+
+function validDisclosure(id: string): Record<string, unknown> {
+  return {
+    id,
+    kind: 'trade-off',
+    summary: 'coverage is project-wide, not scoped to the story the bundle is for',
+    owner: 'architect',
+    sources: [{ kind: 'decision', ref: 'ADR-0011' }],
+    resolved: false,
+  };
 }
 
 function validEnvironment(id: string): Record<string, unknown> {
@@ -148,6 +160,26 @@ describe('environmentsFileSchema', () => {
       ...baseFileFields(),
       type: 'Environment',
       environments: [validEnvironment('ENV-001'), validEnvironment('ENV-002')],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('disclosuresFileSchema', () => {
+  it('accepts a populated register with more than one entry', () => {
+    const result = disclosuresFileSchema.safeParse({
+      ...baseFileFields(),
+      type: 'Disclosure',
+      disclosures: [validDisclosure('DISC-001'), validDisclosure('DISC-002')],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an empty register (no disclosures recorded yet)', () => {
+    const result = disclosuresFileSchema.safeParse({
+      ...baseFileFields(),
+      type: 'Disclosure',
+      disclosures: [],
     });
     expect(result.success).toBe(true);
   });

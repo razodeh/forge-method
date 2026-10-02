@@ -274,7 +274,9 @@ async function findExemptionIdsInForce(
   reportsRoot: string,
   storyId: string,
 ): Promise<readonly string[]> {
-  const all = await loadExemptions(paths, reportsRoot);
+  // `corruptCount` not surfaced here for the identical reason `bin.ts`'s own binding-check call site
+  // isn't: this assembly path's own existing contract predates that signal.
+  const { exemptions: all } = await loadExemptions(paths, reportsRoot);
   const prefix = `${storyId}: `;
   return all
     .filter((exemption) => exemption.testId.startsWith(prefix))

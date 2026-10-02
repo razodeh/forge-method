@@ -135,12 +135,12 @@ export async function readArtifactTemplate(type: TemplateArtifactTypeId): Promis
 }
 
 /** The id/title/kind every `KbParsedEntry` variant carries, read uniformly regardless of which of
- * `parseKbTree`'s nine kinds a given file parsed as. Every one of the nine schemas extends
+ * `parseKbTree`'s ten kinds a given file parsed as. Every one of the ten schemas extends
  * `baseFrontMatterShape` (`id`/`title`) except `kb-entry` (its own `id`/`title` fields, same names,
- * different id pattern) and the four `collection: true` register files (`risks-file`/
- * `assumptions-file`/`open-questions-file`/`environments-file`), which have no single id/title of
- * their own — a whole file of many items, not one item — so those four report a synthetic id (their
- * own path) rather than a fabricated title.
+ * different id pattern) and the five `collection: true` register files (`risks-file`/
+ * `assumptions-file`/`open-questions-file`/`environments-file`/`disclosures-file`, `specs/22` M15 P10),
+ * which have no single id/title of their own — a whole file of many items, not one item — so those
+ * five report a synthetic id (their own path) rather than a fabricated title.
  */
 export interface KbEntrySummary {
   readonly id: string;
@@ -175,5 +175,7 @@ export function summarize(entry: KbParsedEntry, kbRoot: string): KbEntrySummary 
       return { id: path, title: 'Open Questions', kind: entry.kind, path };
     case 'environments-file':
       return { id: path, title: 'Environments', kind: entry.kind, path };
+    case 'disclosures-file':
+      return { id: path, title: 'Disclosures', kind: entry.kind, path };
   }
 }

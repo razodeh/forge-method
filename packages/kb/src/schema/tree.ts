@@ -21,6 +21,7 @@ import {
   adrSchema,
   assumptionsFileSchema,
   diagramSchema,
+  disclosuresFileSchema,
   environmentsFileSchema,
   openQuestionsFileSchema,
   risksFileSchema,
@@ -28,6 +29,7 @@ import {
   type ADR,
   type AssumptionsFile,
   type Diagram,
+  type DisclosuresFile,
   type EnvironmentsFile,
   type OpenQuestionsFile,
   type RisksFile,
@@ -77,6 +79,7 @@ export type KbParsedEntry =
     }
   | { readonly path: string; readonly kind: 'environments-file'; readonly value: EnvironmentsFile }
   | { readonly path: string; readonly kind: 'components-file'; readonly value: ComponentsFile }
+  | { readonly path: string; readonly kind: 'disclosures-file'; readonly value: DisclosuresFile }
   | { readonly path: string; readonly kind: 'kb-entry'; readonly value: KbEntry };
 
 export interface KbTree {
@@ -104,6 +107,7 @@ type FileKind =
   | 'open-questions-file'
   | 'environments-file'
   | 'components-file'
+  | 'disclosures-file'
   | 'kb-entry'
   | 'skip';
 
@@ -125,6 +129,13 @@ function classifyFile(relativePath: string): FileKind {
   if (relativePath === 'open-questions.md') return 'open-questions-file';
   if (relativePath === 'delivery/environments.md') return 'environments-file';
   if (relativePath === 'architecture/components.md') return 'components-file';
+  // `specs/22` M15 P10: `kb/disclosures.md`, the identical root-level collection-file shape
+  // `risks.md`/`assumptions.md`/`open-questions.md` already are -- without this, every one of this
+  // piece's own `DISC-###` entries would be force-validated against `kbEntrySchema` instead
+  // (`classifyFile`'s own fallthrough), failing on every field that schema has and `disclosureSchema`
+  // does not (`section`/`confidence`/`review_by`/...), the identical gap `Q50`'s own four register
+  // files were added here specifically to close.
+  if (relativePath === 'disclosures.md') return 'disclosures-file';
   return 'kb-entry';
 }
 
@@ -189,6 +200,12 @@ async function parseOneFile(
         path: relativePath,
         kind: 'components-file',
         value: componentsFileSchema.parse(frontMatter),
+      };
+    case 'disclosures-file':
+      return {
+        path: relativePath,
+        kind: 'disclosures-file',
+        value: disclosuresFileSchema.parse(frontMatter),
       };
     case 'kb-entry': {
       // Cast, not a runtime check: `ArtifactDocument.frontMatter`'s getter (`parseFrontMatterYaml`)

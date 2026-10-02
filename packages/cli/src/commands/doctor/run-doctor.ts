@@ -4,11 +4,12 @@
  * @see specs/03 §3.7
  * @see PLAN-M6.md C6
  */
-import { renderCause } from '@forge/core';
+import { renderCause, SYSTEM_CLOCK } from '@forge/core';
 import type { ProjectPaths } from '@forge/core/fs';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
 import type { ForgeConfig } from '@forge/schemas/config';
 
+import { listDisclosureLedger } from '../kb-disclosures.ts';
 import { kbSync } from '../kb.ts';
 import {
   checkDiskSpace,
@@ -96,6 +97,62 @@ async function checkWorkflowClaims(paths: ProjectPaths): Promise<DoctorCheck> {
   };
 }
 
+/** `specs/22` M15 P10's own Mandate: "surfaced by `forge doctor` as a count so it cannot rot unseen."
+ * `warning`-only, never `severity: 'hard'`, the identical stance `checkWorkflowClaims` just above
+ * already takes for a different, equally non-build-blocking count: an open disclosure is not a bug to
+ * fix before `forge doctor` lets a project proceed -- it is the Mandate's own stated POINT (an HONEST,
+ * visible trade-off/gap/exemption/stopped-loop is not a failure state), so this check's own `ok`
+ * never flips `false` on a nonzero count, only its own message does. */
+async function checkDisclosures(ctx: DoctorOptions): Promise<DoctorCheck> {
+  let open: number;
+  let disclosureCorruptCount: number;
+  let exemptionCorruptCount: number;
+  try {
+    const ledger = await listDisclosureLedger({
+      paths: ctx.paths,
+      projectRoot: ctx.projectRoot,
+      kbRoot: ctx.config.paths.kb,
+      reportsRoot: ctx.config.paths.reports,
+      now: new Date(SYSTEM_CLOCK.now()),
+    });
+    open = ledger.entries.filter((entry) => entry.open).length;
+    disclosureCorruptCount = ledger.disclosureCorruptCount;
+    exemptionCorruptCount = ledger.exemptionCorruptCount;
+  } catch (cause) {
+    // The identical "a check that cannot determine state reports an honest failure, never crashes or
+    // silently passes" stance `checkWorkflowClaims` just above already takes for its own parse errors.
+    return {
+      id: 'disclosures',
+      ok: false,
+      severity: 'warning',
+      message: `Disclosures: could not be read -- ${String(renderCause(cause))}.`,
+    };
+  }
+  // `specs/22` M15 P10's own round-1 gauntlet critic found an earlier version reported a clean "none
+  // open" here for a `kb/disclosures.md` that actually held real, unresolved rows next to one that
+  // failed its own schema; a round-2 critic found the identical bug one file over, in `reports/
+  // exemptions.md` (`kb-disclosures.ts`'s own `DisclosureLedger` doc comment has the full reasoning for
+  // why the two counts stay separate, named by file, rather than summed). Both are surfaced explicitly,
+  // in the SAME `warning`-severity message, rather than silently folded into "0 open."
+  const corruptNote =
+    (disclosureCorruptCount > 0
+      ? ` ${String(disclosureCorruptCount)} entr${disclosureCorruptCount === 1 ? 'y' : 'ies'} in kb/disclosures.md could not be read -- run \`forge kb lint\`.`
+      : '') +
+    (exemptionCorruptCount > 0
+      ? ` ${String(exemptionCorruptCount)} entr${exemptionCorruptCount === 1 ? 'y' : 'ies'} in reports/exemptions.md could not be read.`
+      : '');
+  return {
+    id: 'disclosures',
+    ok: true,
+    severity: 'warning',
+    message:
+      (open === 0
+        ? 'Disclosures: none open.'
+        : `Disclosures: ${String(open)} open (forge kb disclosures for the full list).`) +
+      corruptNote,
+  };
+}
+
 export interface DoctorOptions {
   readonly paths: ProjectPaths;
   readonly projectRoot: string;
@@ -169,6 +226,7 @@ async function runChecks(options: DoctorOptions): Promise<DoctorCheck[]> {
     { id: 'secret-references', promise: checkSecretReferences(paths, env) },
     { id: 'model-tiers', promise: checkModelTiers(paths, config, adapter) },
     { id: 'workflow-claims', promise: checkWorkflowClaims(paths) },
+    { id: 'disclosures', promise: checkDisclosures(options) },
   ];
 
   return Promise.all(

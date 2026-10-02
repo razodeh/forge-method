@@ -11,6 +11,9 @@ import { adrNew } from '../../src/commands/adr.ts';
 import { specNew } from '../../src/commands/spec.ts';
 import {
   kbDiff,
+  kbDisclose,
+  kbDiscloseResolve,
+  kbDisclosures,
   kbGraph,
   kbLint,
   kbList,
@@ -210,5 +213,64 @@ describe('kbDiff', () => {
     } catch (error) {
       expect((error as ForgeError).code).toBe('USR-003');
     }
+  });
+});
+
+describe('kbDisclose / kbDiscloseResolve / kbDisclosures (specs/22 M15 P10)', () => {
+  it('records a real disclosure and reads it back as an open row through the merged ledger', async () => {
+    const project = await createTestProject();
+    const id = await kbDisclose(ctx(project), {
+      kind: 'trade-off',
+      summary: 'coverage is project-wide, not scoped to the story the bundle is for',
+      owner: 'architect',
+      sources: [{ kind: 'decision', ref: 'ADR-0011' }],
+    });
+    expect(id).toMatch(/^DISC-\d{3}$/);
+
+    const ledger = await kbDisclosures(ctx(project));
+    expect(ledger.entries).toEqual([
+      expect.objectContaining({ id, kind: 'trade-off', open: true, synthesized: false }),
+    ]);
+  });
+
+  it('resolving a real disclosure flips it to closed in the merged ledger, never removing it', async () => {
+    const project = await createTestProject();
+    const id = await kbDisclose(ctx(project), {
+      kind: 'known-gap',
+      summary: 'a real, disclosed gap',
+      owner: 'architect',
+      sources: [{ kind: 'human', ref: 'elicitation 2026-01-05' }],
+    });
+    await kbDiscloseResolve(ctx(project), { id, reason: 'closed the gap', by: 'architect' });
+
+    const ledger = await kbDisclosures(ctx(project));
+    expect(ledger.entries).toEqual([
+      expect.objectContaining({ id, open: false, synthesized: false }),
+    ]);
+  });
+
+  it('resolving an unknown id refuses with KB-018, not-found', async () => {
+    const project = await createTestProject();
+    await expect(
+      kbDiscloseResolve(ctx(project), { id: 'DISC-999', reason: 'r', by: 'a' }),
+    ).rejects.toMatchObject({ code: 'KB-018', details: { reason: 'not-found' } });
+  });
+
+  it('defaults reportsRoot to DEFAULT_CONFIG.paths.reports when the context leaves it unset, so an exemption still appears automatically', async () => {
+    const project = await createTestProject();
+    const { appendExemption } = await import('../../src/commands/loop/test/exemptions.ts');
+    const { SYSTEM_CLOCK } = await import('@forge/core');
+    await appendExemption(project.paths, 'docs/forge/reports', SYSTEM_CLOCK, {
+      testId: 'STORY-001: timing-guard',
+      reason: 'r',
+      owner: 'alice',
+      expiry: '2099-01-01',
+    });
+    // `ctx(project)` above never sets `reportsRoot` -- the same unset shape every pre-existing test in
+    // this file already uses for every OTHER context field this piece did not touch.
+    const ledger = await kbDisclosures(ctx(project));
+    expect(ledger.entries.find((entry) => entry.kind === 'exemption')).toMatchObject({
+      open: true,
+    });
   });
 });

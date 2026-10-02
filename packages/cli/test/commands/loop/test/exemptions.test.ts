@@ -50,7 +50,9 @@ describe('qualifiedTestId', () => {
 describe('loadExemptions', () => {
   it('reads [] for a project that has never run `forge test exempt`', async () => {
     const paths = await freshProject();
-    expect(await loadExemptions(paths, 'docs/forge/reports')).toEqual([]);
+    const result = await loadExemptions(paths, 'docs/forge/reports');
+    expect(result.exemptions).toEqual([]);
+    expect(result.corruptCount).toBe(0);
   });
 
   it('reads back exactly what appendExemption wrote', async () => {
@@ -62,8 +64,9 @@ describe('loadExemptions', () => {
       expiry: '2026-12-01',
     });
 
-    const exemptions = await loadExemptions(paths, 'docs/forge/reports');
+    const { exemptions, corruptCount } = await loadExemptions(paths, 'docs/forge/reports');
 
+    expect(corruptCount).toBe(0);
     expect(exemptions).toHaveLength(1);
     expect(exemptions[0]).toMatchObject({
       testId: 'STORY-001: timing-guard',
@@ -72,6 +75,45 @@ describe('loadExemptions', () => {
       expiry: '2026-12-01',
     });
     expect(exemptions[0]?.id).toMatch(/^EXEMPT-\d{3}$/);
+  });
+
+  it('tolerates a schema-invalid row: the valid sibling survives and the corruption is counted, never silently zeroing the whole read (specs/22 M15 P10, round-2 gauntlet critic)', async () => {
+    const paths = await freshProject();
+    const reportsDir = paths.resolveWithin('docs/forge/reports');
+    await mkdir(reportsDir, { recursive: true });
+    const seed = {
+      type: 'Exemption' as const,
+      schemaVersion: 1,
+      title: 'Exemption register',
+      status: 'active',
+      created: '2026-09-30',
+      updated: '2026-09-30',
+      revision: 1,
+      author: 'alice',
+      changelog: [],
+      exemptions: [
+        {
+          id: 'EXEMPT-001',
+          testId: 'STORY-001: real-test',
+          reason: 'a real, valid exemption',
+          owner: 'alice',
+          expiry: '2026-12-01',
+        },
+        // Missing `reason`/`expiry` -- schema-invalid.
+        { id: 'EXEMPT-002', testId: 'STORY-001: other-test', owner: 'bob' },
+      ],
+    };
+    await writeFile(
+      path.join(reportsDir, 'exemptions.md'),
+      `---\n${YAML.stringify(seed)}---\n`,
+      'utf8',
+    );
+
+    const { exemptions, corruptCount } = await loadExemptions(paths, 'docs/forge/reports');
+
+    expect(corruptCount).toBe(1);
+    expect(exemptions).toHaveLength(1);
+    expect(exemptions[0]?.id).toBe('EXEMPT-001');
   });
 });
 
@@ -217,7 +259,7 @@ describe('appendExemption', () => {
     );
 
     expect(new Set(ids).size).toBe(10);
-    expect(await loadExemptions(paths, 'docs/forge/reports')).toHaveLength(10);
+    expect((await loadExemptions(paths, 'docs/forge/reports')).exemptions).toHaveLength(10);
   });
 
   it('refuses once idWidth digits are full (GATE-515 id-exhausted), rather than silently wrapping or colliding', async () => {
@@ -253,7 +295,7 @@ describe('appendExemption', () => {
       `---\n${YAML.stringify(seed)}---\n`,
       'utf8',
     );
-    expect(await loadExemptions(paths, 'docs/forge/reports')).toHaveLength(999);
+    expect((await loadExemptions(paths, 'docs/forge/reports')).exemptions).toHaveLength(999);
 
     await expect(
       appendExemption(paths, 'docs/forge/reports', fakeClock(), {
@@ -264,7 +306,7 @@ describe('appendExemption', () => {
       }),
     ).rejects.toMatchObject({ code: 'GATE-515' });
     // Refused, not a corrupting partial write: the 999 already-recorded entries are untouched.
-    expect(await loadExemptions(paths, 'docs/forge/reports')).toHaveLength(999);
+    expect((await loadExemptions(paths, 'docs/forge/reports')).exemptions).toHaveLength(999);
   });
 
   it('writes a real, schema-valid ExemptionsFile document', async () => {
@@ -382,7 +424,9 @@ describe('appendExemption — real cross-process concurrency', () => {
     // The real, load-bearing assertion: all 10 concurrent, separate-process declarations survived,
     // each with a distinct id -- not silently lost to another process's own read-modify-write.
     expect(new Set(ids).size).toBe(workerCount);
-    expect(await loadExemptions(paths, 'docs/forge/reports')).toHaveLength(workerCount);
+    expect((await loadExemptions(paths, 'docs/forge/reports')).exemptions).toHaveLength(
+      workerCount,
+    );
   }, 30_000);
 });
 

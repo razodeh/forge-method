@@ -25,11 +25,18 @@ import {
   type KbTree,
   type LintKbSpecArtifacts,
 } from '@forge/kb';
-import type { Capability, Epic } from '@forge/schemas';
+import type { ArtifactSource, Capability, DisclosureKind, Epic } from '@forge/schemas';
+import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import type { ProjectLevel } from '@forge/methods/level';
 import { SYSTEM_CLOCK } from '@forge/core';
 import { errorMessage } from '@forge/vcs';
 
+import {
+  appendDisclosure,
+  listDisclosureLedger,
+  resolveDisclosure,
+  type DisclosureLedger,
+} from './kb-disclosures.ts';
 import { writeKbSyncRecord } from './kb-sync-record.ts';
 import { listSpecArtifacts, summarize, type KbEntrySummary } from './shared.ts';
 
@@ -47,6 +54,12 @@ export interface KbCommandContext {
    * than read ambiently here (R10): `bin.ts`'s own `buildKbContext` is the one real caller allowed to
    * read `process.env`, via `realEnvSnapshot()`. */
   readonly env: Readonly<Record<string, string | undefined>>;
+  /** `specs/22` M15 P10: the project's own configured reports root (`config.paths.reports`) — only
+   * the disclosure ledger's own exemption-synthesis (`kbDisclosures`) needs this; every pre-existing
+   * caller of this context leaves it `undefined` and gets `DEFAULT_CONFIG.paths.reports`
+   * ("docs/forge/reports"), the identical "a project need not have run `forge config set` even once"
+   * leniency `gate-commands.ts`'s own `resolveReportsRoot` already establishes for the same field. */
+  readonly reportsRoot?: string;
 }
 
 export async function loadLintSpecArtifacts(ctx: KbCommandContext): Promise<LintKbSpecArtifacts> {
@@ -329,6 +342,56 @@ export async function kbVerify(ctx: KbCommandContext): Promise<readonly KbVerify
     );
   }
   return findings;
+}
+
+/** `specs/22` M15 P10: `ctx.now`/`ctx.reportsRoot` resolved the identical "inject, don't read
+ * ambiently, default leniently if absent" way every other disclosure-adjacent context field already
+ * is in this file and in `gate-commands.ts`'s own `resolveReportsRoot`. */
+function clockFrom(ctx: KbCommandContext): { readonly now: () => string } {
+  return { now: () => (ctx.now ?? new Date(SYSTEM_CLOCK.now())).toISOString() };
+}
+
+/** The full, merged disclosure ledger (`forge kb disclosures`): every real, explicitly-authored
+ * `Disclosure` plus every synthesized exemption/stopped-critic-loop row — `kb-disclosures.ts`'s own
+ * doc comment has the full Mandate reasoning for why only two of the four kinds are ever really
+ * written. */
+export async function kbDisclosures(ctx: KbCommandContext): Promise<DisclosureLedger> {
+  return listDisclosureLedger({
+    paths: ctx.paths,
+    projectRoot: ctx.paths.resolveWithin('.'),
+    kbRoot: ctx.kbRoot,
+    reportsRoot: ctx.reportsRoot ?? DEFAULT_CONFIG.paths.reports,
+    now: ctx.now ?? new Date(SYSTEM_CLOCK.now()),
+  });
+}
+
+export interface DiscloseInput {
+  readonly kind: DisclosureKind;
+  readonly summary: string;
+  readonly owner: string;
+  readonly sources: readonly ArtifactSource[];
+}
+
+/** `forge kb disclose`: records one new, real, explicitly-authored `Disclosure` — never an exemption
+ * or a stopped-critic-loop row, both of which are read-time synthesis only (`kb-disclosures.ts`'s own
+ * doc comment). */
+export async function kbDisclose(ctx: KbCommandContext, input: DiscloseInput): Promise<string> {
+  return appendDisclosure(ctx.paths, ctx.kbRoot, clockFrom(ctx), input);
+}
+
+export interface DiscloseResolveInput {
+  readonly id: string;
+  readonly reason: string;
+  readonly by: string;
+}
+
+/** `forge kb disclose resolve <id>`: "a disclosure is never deleted, only resolved with a reason" —
+ * the one real mutation a disclosure's own lifecycle ever allows after it is first recorded. */
+export async function kbDiscloseResolve(
+  ctx: KbCommandContext,
+  input: DiscloseResolveInput,
+): Promise<void> {
+  return resolveDisclosure(ctx.paths, ctx.kbRoot, clockFrom(ctx), input);
 }
 
 /** `diff`: `03` §3.2.2 names this subcommand but no real mechanism to diff two versions of a KB

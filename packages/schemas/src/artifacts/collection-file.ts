@@ -35,6 +35,7 @@ import { z } from 'zod';
 
 import { baseFrontMatterShape } from '../registry/front-matter.ts';
 import { assumptionSchema } from './assumption.ts';
+import { disclosureSchema } from './disclosure.ts';
 import { environmentSchema } from './environment.ts';
 import { exemptionSchema } from './exemption.ts';
 import { openQuestionSchema } from './open-question.ts';
@@ -81,3 +82,11 @@ export const exemptionsFileSchema = collectionFileBase
   })
   .strict();
 export type ExemptionsFile = z.infer<typeof exemptionsFileSchema>;
+
+export const disclosuresFileSchema = collectionFileBase
+  .extend({
+    type: z.literal('Disclosure'),
+    disclosures: z.array(disclosureSchema),
+  })
+  .strict();
+export type DisclosuresFile = z.infer<typeof disclosuresFileSchema>;

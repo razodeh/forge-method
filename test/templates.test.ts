@@ -1,6 +1,6 @@
 /**
- * `@forge/templates`'s 25 artifact stub templates (21 original + `ReviewReport`, added post-v1.0, +
- * `MutationEvidence`/`EvidenceBundle`/`Exemption`, post-v1.0 M15), per `PLAN-M1.md` P11.
+ * `@forge/templates`'s 26 artifact stub templates (21 original + `ReviewReport`, added post-v1.0, +
+ * `MutationEvidence`/`EvidenceBundle`/`Exemption`/`Disclosure`, post-v1.0 M15), per `PLAN-M1.md` P11.
  *
  * Lives at the repository root, not inside `packages/templates/test/` or `packages/schemas/test/`:
  * this is the one check in the whole piece that needs both `@forge/schemas` (the real per-type zod
@@ -31,6 +31,7 @@ import {
   dataModelSchema,
   defectSchema,
   diagramSchema,
+  disclosureSchema,
   environmentSchema,
   epicSchema,
   evidenceBundleSchema,
@@ -75,6 +76,7 @@ const SCHEMA_BY_TYPE: Record<ArtifactTypeId, z.ZodTypeAny> = {
   OpenQuestion: openQuestionSchema,
   Waiver: waiverSchema,
   Exemption: exemptionSchema,
+  Disclosure: disclosureSchema,
   SessionRecord: sessionRecordSchema,
   RCA: rcaSchema,
   Defect: defectSchema,

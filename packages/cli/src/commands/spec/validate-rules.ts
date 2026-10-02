@@ -472,6 +472,9 @@ function collectEntryIds(entry: KbParsedEntry, ids: Set<string>): void {
     case 'components-file':
       for (const component of entry.value.components) ids.add(component.id);
       return;
+    case 'disclosures-file':
+      for (const disclosure of entry.value.disclosures) ids.add(disclosure.id);
+      return;
     default: {
       // Exhaustiveness guard: a `KbParsedEntry` kind added elsewhere without a matching case here
       // would otherwise silently contribute zero ids, with no compiler warning (this function's own

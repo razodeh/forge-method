@@ -55,7 +55,7 @@ describe('validateArtifact — every @forge/templates document-shaped stub', () 
   it('found all 18 document-shaped stubs this describe block expects', () => {
     const allFiles = readdirSync(templatesDir).filter((name) => name.endsWith('.md'));
     const collectionFiles = allFiles.filter((name) => !DOCUMENT_TYPE_FILES.includes(name));
-    expect(collectionFiles).toHaveLength(7);
+    expect(collectionFiles).toHaveLength(8);
     expect(DOCUMENT_TYPE_FILES).toHaveLength(18);
   });
 

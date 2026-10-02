@@ -201,6 +201,9 @@ function knownIds(
       case 'components-file':
         for (const component of entry.value.components) ids.add(component.id);
         break;
+      case 'disclosures-file':
+        for (const disclosure of entry.value.disclosures) ids.add(disclosure.id);
+        break;
     }
   }
   for (const doc of specs.docs) {

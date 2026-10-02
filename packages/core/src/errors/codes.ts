@@ -440,6 +440,47 @@ export const ERROR_CODES = {
       'Run this forge adr command from a person at their own terminal, outside any run -- never from ' +
       'inside an agent session or a run-spawned command.',
   },
+  // `specs/22` M15 P10: the project disclosure ledger (`kb/disclosures.md`, a `collection: true`
+  // artifact, the identical shape `Exemption` already is) — the four refusals its own
+  // append/resolve write path can genuinely hit, mirroring `GATE-515`'s own dual-reason shape for the
+  // identical "id space exhausted" / "lock contention exhausted" pair `Exemption`'s own write path
+  // already has (not reused directly: `GATE-515`'s own message text is hardcoded to
+  // "reports/exemptions.md", not generic across collection files). `'not-found'`: `forge kb disclose
+  // resolve <id>` named an id no committed `Disclosure` entry has. `'already-resolved'`: that id
+  // names a real entry, but it is already resolved — "a disclosure is never deleted, only resolved
+  // with a reason" (the Mandate's own words) means a resolution is a one-way door, not an action to
+  // repeat or overwrite.
+  // `specs/22` M15 P10's own round-1 gauntlet critic found an earlier version of this code's own write
+  // path silently FILTERED a schema-invalid existing row out of `kb/disclosures.md` on the very next
+  // `forge kb disclose`/`disclose resolve` call -- a direct violation of "a disclosure is never
+  // deleted" reached through a code path the append-only mutation-evidence test never exercised.
+  // `'corrupt'` is the fix: the write path now refuses outright, naming the bad row, rather than ever
+  // silently deciding a row never existed.
+  'KB-018': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: {
+      id: string;
+      reason: 'id-exhausted' | 'lock-exhausted' | 'not-found' | 'already-resolved' | 'corrupt';
+      max?: number;
+    }) => {
+      if (d.reason === 'id-exhausted')
+        return `kb/disclosures.md already holds the highest Disclosure id this project's idWidth allows (DISC-${show(d.max ?? 0)}); no id is free for a new one.`;
+      if (d.reason === 'lock-exhausted')
+        return `kb/disclosures.md's own write lock is still held after ${show(d.max ?? 0)} attempts to acquire it -- sustained contention, or a wedged lock file.`;
+      if (d.reason === 'not-found')
+        return `${show(d.id)} names no disclosure recorded in kb/disclosures.md.`;
+      if (d.reason === 'corrupt')
+        return `kb/disclosures.md already has an entry (${show(d.id)}) that fails its own schema -- refusing to write rather than silently dropping it.`;
+      return `${show(d.id)} is already resolved -- a disclosure's own resolution is one-way, never re-applied or overwritten.`;
+    },
+    remedy:
+      'Check `forge kb disclosures` for the real, current id; a disclosure that is already resolved ' +
+      'needs no further action, and one that was never recorded must be declared first (`forge kb ' +
+      'disclose`) before it can be resolved. If an existing entry is reported as corrupt, fix or remove ' +
+      'that one entry by hand in kb/disclosures.md (its own front matter is plain YAML) before running ' +
+      'any `forge kb disclose` command again.',
+  },
   // `08` §8.11.4: "a lint error (`KB-031`)" — a spec-given code, transcribed verbatim, not invented.
   'KB-031': {
     severity: 'error',

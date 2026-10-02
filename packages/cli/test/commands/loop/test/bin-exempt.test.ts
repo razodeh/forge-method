@@ -706,4 +706,30 @@ describe('forge test exempt — hostile input the CLI-level checks must themselv
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('--reason');
   }, 60_000);
+
+  it('refuses a --reason made entirely of BRAILLE PATTERN BLANK (U+2800), not merely Cc/Cf/whitespace', async () => {
+    // specs/22 M15 P10's own round-3 gauntlet critic reproduced live that this call site kept its own,
+    // separate `\p{Cc}\p{Cf}\s`-only copy of the blank check even after `isBlank()` (bin.ts) had already
+    // closed this exact character for `kb disclose` -- durably recording a meaningless exemption whose
+    // own blank `reason` then flows straight into the disclosure ledger (`synthesizeExemptionEntries`).
+    // This call site now shares `isBlank()` directly instead of its own copy.
+    const dir = await freshProject();
+    const result = run(
+      [
+        'test',
+        'exempt',
+        'STORY-001',
+        'tautology',
+        '--reason',
+        '⠀⠀⠀',
+        '--owner',
+        'alice',
+        '--expires',
+        isoDate(30),
+      ],
+      dir,
+    );
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--reason');
+  }, 60_000);
 });
