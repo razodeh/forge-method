@@ -19,7 +19,9 @@
  *   `JSON.stringify` even nested inside a `StepFailureInfo`'s own `cause` field — confirmed directly,
  *   empirically, before writing this — so this reads real, structured data off the event log the same
  *   already-established way `forge cost`'s own `allLedgerEntries` walks every run directory
- *   (`cost.ts`'s own `listRunIds`), not a second, parallel mechanism. A stopped critic loop's own
+ *   (`run-ids.ts`'s own shared `listRunIds`, also used by `cost.ts`/`report.ts` -- `specs/22` M15 P12
+ *   extracted this from what were three separate, byte-identical private copies), not a second,
+ *   parallel mechanism. A stopped critic loop's own
  *   "resolved" state is NOT tracked here: correlating a later run's own success back to an earlier
  *   run's own failed step (same story, different run id, no shared key this project already
  *   maintains) is a real, open problem this piece's own narrow Surface does not take on — disclosed,
@@ -57,13 +59,7 @@
  */
 import type { Clock } from '@forge/core';
 import { ForgeError } from '@forge/core/errors';
-import {
-  listDirEntriesSorted,
-  pathExists,
-  readTextFile,
-  writeFileAtomic,
-  type ProjectPaths,
-} from '@forge/core/fs';
+import { pathExists, readTextFile, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
 import {
   definitionForType,
   disclosureSchema,
@@ -77,6 +73,7 @@ import * as YAML from 'yaml';
 
 import { withCollectionLock } from './collection-lock.ts';
 import { loadExemptions } from './loop/test/exemptions.ts';
+import { listRunIds } from './run-ids.ts';
 
 const DISCLOSURES_RELATIVE_PATH = 'disclosures.md';
 
@@ -398,16 +395,6 @@ async function synthesizeExemptionEntries(
     })),
     corruptCount,
   };
-}
-
-async function listRunIds(paths: ProjectPaths): Promise<readonly string[]> {
-  // `.forge/state/` is a denied prefix under `resolveWithin` -- `resolveState` is the one sanctioned
-  // way to reach inside it (`forge cost`'s own `listRunIds`, the identical pattern reused here rather
-  // than re-derived).
-  const runsDir = paths.resolveState('runs');
-  if (!(await pathExists(runsDir))) return [];
-  const entries = await listDirEntriesSorted(runsDir);
-  return entries.filter((entry) => entry.isDirectory).map((entry) => entry.name);
 }
 
 async function synthesizeCriticLoopEntries(

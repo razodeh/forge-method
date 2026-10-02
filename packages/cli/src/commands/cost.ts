@@ -5,7 +5,7 @@
  * @see specs/03 §3.2.8
  * @see specs/18 §18.5
  */
-import { listDirEntriesSorted, pathExists, type ProjectPaths } from '@forge/core/fs';
+import type { ProjectPaths } from '@forge/core/fs';
 import { readEvents } from '@forge/telemetry/events';
 import {
   attributedSpend,
@@ -14,6 +14,8 @@ import {
   type LedgerEntry,
 } from '@forge/telemetry/ledger';
 import type { ForgeConfig } from '@forge/schemas/config';
+
+import { listRunIds } from './run-ids.ts';
 
 export interface CostCommandContext {
   readonly paths: ProjectPaths;
@@ -29,15 +31,6 @@ export interface CostReport {
   readonly budgetStatus: 'ok' | 'warning' | 'breached';
 }
 
-async function listRunIds(ctx: CostCommandContext): Promise<readonly string[]> {
-  // `.forge/state/` is a denied prefix under `resolveWithin` (`@forge/core/fs`'s own containment
-  // rule) -- `resolveState` is the one sanctioned way to reach inside it.
-  const runsDir = ctx.paths.resolveState('runs');
-  if (!(await pathExists(runsDir))) return [];
-  const entries = await listDirEntriesSorted(runsDir);
-  return entries.filter((entry) => entry.isDirectory).map((entry) => entry.name);
-}
-
 function sumInto(map: Map<string, number>, key: string, amount: number): void {
   map.set(key, (map.get(key) ?? 0) + amount);
 }
@@ -46,7 +39,7 @@ function sumInto(map: Map<string, number>, key: string, amount: number): void {
  * itself only ever projects one run's own event stream at a time, so this walks every real run
  * directory and concatenates. */
 async function allLedgerEntries(ctx: CostCommandContext): Promise<readonly LedgerEntry[]> {
-  const runIds = await listRunIds(ctx);
+  const runIds = await listRunIds(ctx.paths);
   const entries: LedgerEntry[] = [];
   for (const runId of runIds) {
     entries.push(...(await projectLedger(readEvents(ctx.projectRoot, runId))));

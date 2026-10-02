@@ -111,6 +111,7 @@ import {
 import { forgeCompile } from './commands/compile.ts';
 import { costReport, type CostCommandContext } from './commands/cost.ts';
 import { customize } from './commands/customize.ts';
+import { buildReport, writeBaseline, type ReportCommandContext } from './commands/report.ts';
 import {
   diagramDiff,
   diagramGenerate,
@@ -2771,6 +2772,91 @@ async function runCostCommand(
   return report.budgetStatus === 'breached' ? EXIT_CODES.budgetExceeded : EXIT_CODES.success;
 }
 
+/** Byte-for-byte the same validation `commands/audit.ts`'s own `parseSince`/`SINCE_PATTERN` already
+ * is (both ISO-8601 forms it accepts, both rejection reasons, the identical `USR-002` code) — a SECOND
+ * copy, not an import, since `audit.ts` keeps it module-private and `commands/audit.ts` is outside
+ * this piece's own Surface (`report.ts`/`events.ts` readers/`bin.ts`) to refactor. See that file's own
+ * doc comment above its `SINCE_PATTERN` for the full two-part "why not a bare `new Date(raw)`"
+ * reasoning (invalid-date detection, and the timezone-ambiguity gap a gauntlet critic round closed).
+ * Disclosed here, not fixed: a future piece consolidating this with `run-ids.ts`'s own `listRunIds`
+ * extraction (`specs/22` M15 P12's own doc comment on that file) would be the natural place to also
+ * merge this second copy into one shared `--since` helper. */
+const REPORT_SINCE_PATTERN =
+  /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}))?$/;
+
+function parseReportSince(raw: string | undefined): Date | undefined {
+  if (raw === undefined) return undefined;
+  if (!REPORT_SINCE_PATTERN.test(raw)) {
+    throw new ForgeError('USR-002', { flag: '--since', value: raw });
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new ForgeError('USR-002', { flag: '--since', value: raw });
+  }
+  return parsed;
+}
+
+const REPORT_FLAGS = { '--since': true, '--baseline': false } as const;
+
+/** `forge report [--since <when>] [--baseline] [--json]` (`specs/22` M15 P12) — a thin CLI layer over
+ * `report.ts`'s own real `buildReport`/`writeBaseline`/`readBaseline`. `--baseline` writes a fresh
+ * snapshot (the real, CURRENT, unfiltered scorecard — `--since` and `--baseline` together is refused
+ * as `USR-002`, the same incompatible-flag-combination shape `forge doctor --rule`'s own
+ * `--fix`/`--rebuild-index` refusal already uses, NOT `USR-003` — that code is specifically for a
+ * named feature this codebase has no implementation for at all (`forge cost --since`'s own refusal,
+ * say); `--since` IS fully implemented here, just refused in this one combination by design) and
+ * prints that snapshot back, rather than a second, separate `forge report --show-baseline` verb this
+ * Mandate never asked for. */
+async function runReportCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { values, flags, positionals } = parseCommandFlags(args, REPORT_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  const baseline = flags.has('--baseline');
+  if (baseline && values.has('--since')) {
+    throw new ForgeError('USR-002', {
+      flag: '--baseline',
+      value: `${values.get('--since') ?? ''} (cannot be combined with --since -- a baseline is always the current, unfiltered scorecard)`,
+    });
+  }
+  const since = parseReportSince(values.get('--since'));
+  const config = await readConfig(paths);
+  const ctx: ReportCommandContext = {
+    paths,
+    projectRoot,
+    reportsRoot: config.paths.reports,
+    clock: SYSTEM_CLOCK,
+  };
+  if (baseline) {
+    const snapshot = await writeBaseline(ctx);
+    console.log(
+      json
+        ? JSON.stringify({ v: 1, baseline: snapshot })
+        : `forge report --baseline: captured at ${snapshot.capturedAt} (commit ${snapshot.commit ?? '(none)'}).`,
+    );
+    return EXIT_CODES.success;
+  }
+  const report = await buildReport(ctx, since === undefined ? {} : { since });
+  console.log(
+    json
+      ? JSON.stringify({ v: 1, report })
+      : [
+          `forge report: binding ${String(report.binding.passingCount)}/${String(report.binding.totalCount)} (${(report.binding.passRate * 100).toFixed(0)}%)`,
+          `  critic loop: ${String(report.criticLoop.roundsConsumed)} round(s) consumed, ${String(report.criticLoop.stopAndDiscloseCount)} stop-and-disclose`,
+          `  gates: ${String(report.gates.pairsWithCleanFirstPass)}/${String(report.gates.pairsEvaluated)} clean first pass, ${String(report.gates.totalRejectionsBeforeFirstPass)} rejection(s) total`,
+          `  exemptions: ${String(report.exemptions.opened)} opened, ${String(report.exemptions.expiredIds.length)} expired`,
+          `  cost: $${report.cost.totalUsd.toFixed(2)} across ${String(report.cost.byStory.length)} stor(y/ies)`,
+          `  kb reads: ${String(report.kbReads.precededByKbRead)}/${String(report.kbReads.artifactsCreated)} artifacts preceded by a real KB read (${(report.kbReads.rate * 100).toFixed(0)}%)`,
+        ].join('\n'),
+  );
+  return EXIT_CODES.success;
+}
+
 const UNINSTALL_FLAGS = { '--remove-docs': false } as const;
 
 /** `forge uninstall [--remove-docs]` (`03` §3.2.1) — `--yes` (already global) is required, matching
@@ -4984,6 +5070,9 @@ async function main(): Promise<number> {
   }
   if (command === 'cost') {
     return runCostCommand(paths, projectRoot, afterCommand, flags.json);
+  }
+  if (command === 'report') {
+    return runReportCommand(paths, projectRoot, afterCommand, flags.json);
   }
   if (command === 'uninstall') {
     return runUninstallCommand(paths, projectRoot, afterCommand, flags.yes, flags.json);

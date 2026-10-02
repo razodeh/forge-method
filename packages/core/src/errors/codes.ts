@@ -550,6 +550,25 @@ export const ERROR_CODES = {
     message: (d: { feature: string }) => `${show(d.feature)} is not yet supported.`,
     remedy: "Check GAUNTLET-LOG.md or SPEC-QUESTIONS.md for this feature's current status.",
   },
+  'USR-004': {
+    // `specs/22` M15 P12: `forge report`'s own `reports/baseline.md` is a plain, human-committable
+    // file this piece's own doc comment deliberately does not protect with a cross-process lock or a
+    // collection schema the way `Exemption`/`Disclosure` are -- a hand edit, a merge conflict left
+    // half-resolved, or a truncated write can leave it syntactically broken or wrongly shaped. Distinct
+    // from USR-002 (a bad CLI argument) and USR-003 (an unbuilt feature): the command line here is
+    // fine and the feature is built, but the FILE this command needs to read is not usable as one.
+    // `readBaseline` throws this rather than silently returning as if no baseline had ever been
+    // captured (which could let `forge report --baseline` silently overwrite the one thing a human
+    // might have wanted to recover, or let a later milestone's own "compare against committed
+    // baseline" silently compare against nothing without ever being told why).
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string; detail: string }) =>
+      `${show(d.path)} exists but could not be read as a report baseline: ${show(d.detail)}.`,
+    remedy:
+      'Check the file by hand, or re-run `forge report --baseline` to overwrite it with a fresh, ' +
+      'valid snapshot if the old one cannot be recovered.',
+  },
   'CFG-003': {
     // `specs/02` §2.5: every write goes through @forge/core/fs, which enforces containment. A path
     // that resolves outside the project root — by traversal, by being absolute, or by a symlink —

@@ -1979,6 +1979,117 @@ describe('forge cost (real subprocess dispatch, PLAN-M12.md P2)', () => {
   });
 });
 
+describe('forge report (real subprocess dispatch, specs/22 M15 P12)', () => {
+  it('runs `forge report --json` for real, exiting 0 with a real, zeroed scorecard against a project with no real runs', async () => {
+    const dir = await realProject();
+
+    const result = run(['report', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly v: number;
+      readonly report: {
+        readonly since: string | null;
+        readonly binding: { readonly totalCount: number };
+      };
+    };
+    expect(parsed.v).toBe(1);
+    expect(parsed.report.since).toBeNull();
+    expect(parsed.report.binding.totalCount).toBe(0);
+  });
+
+  it('`forge report --json` output is exactly one line -- no pretty-printing, matching every other real --json call site in this CLI', async () => {
+    const dir = await realProject();
+
+    const result = run(['report', '--json', '-C', dir]);
+
+    expect(result.stdout.trimEnd().split('\n')).toHaveLength(1);
+  });
+
+  it('`forge report --baseline --json` output is also exactly one line', async () => {
+    const dir = await realProject();
+
+    const result = run(['report', '--baseline', '--json', '-C', dir]);
+
+    expect(result.stdout.trimEnd().split('\n')).toHaveLength(1);
+  });
+
+  it('runs `forge report --since <date> --json` for real, echoing the real cutoff back', async () => {
+    const dir = await realProject();
+
+    const result = run(['report', '--since', '2026-01-01', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: { readonly since: string | null };
+    };
+    expect(parsed.report.since).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('exits 2 with a real USR-002 for a real, malformed `forge report --since` value', async () => {
+    const dir = await realProject();
+
+    const result = run(['report', '--since', 'not-a-real-date', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--since');
+  });
+
+  it('exits 2 with a real USR-002 for the real, disclosed `--baseline --since` incompatible-flags refusal', async () => {
+    const dir = await realProject();
+
+    const result = run(['report', '--baseline', '--since', '2026-01-01', '-C', dir]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--baseline');
+    expect(result.stderr).toContain('--since');
+  });
+
+  it('runs `forge report --baseline --json` for real, writing a real snapshot with commit: null against a project with no commits yet', async () => {
+    const dir = await realProject();
+
+    const result = run(['report', '--baseline', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly baseline: { readonly commit: string | null; readonly capturedAt: string };
+    };
+    expect(parsed.baseline.commit).toBeNull();
+    expect(typeof parsed.baseline.capturedAt).toBe('string');
+
+    const baselinePath = path.join(dir, 'docs/forge/reports/baseline.md');
+    const written = await readFile(baselinePath, 'utf8');
+    expect(written).toContain('capturedAt:');
+  });
+
+  it('projects a real CheckRun{kind:"binding"} event through to a real scorecard number', async () => {
+    const dir = await realProject();
+    await appendEvent(dir, 'run-1', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-1',
+      type: 'CheckRun',
+      payload: {
+        kind: 'binding',
+        storyId: 'STORY-001',
+        testsNamed: 3,
+        bound: 3,
+        nonBinding: 0,
+        exempted: 0,
+      },
+    });
+
+    const result = run(['report', '--json', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly report: {
+        readonly binding: { readonly passingCount: number; readonly totalCount: number };
+      };
+    };
+    expect(parsed.report.binding).toMatchObject({ passingCount: 1, totalCount: 1 });
+  });
+});
+
 describe('forge uninstall (real subprocess dispatch, PLAN-M12.md P2)', () => {
   it('exits non-zero for `forge uninstall` with no real --yes, removing nothing', async () => {
     const dir = await realProject();
