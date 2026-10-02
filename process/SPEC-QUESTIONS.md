@@ -26921,3 +26921,108 @@ left as-is, already covered piecemeal and guaranteed by construction, and adding
 coverage this project's own anti-premature-abstraction discipline argues against.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P11`.
+
+---
+
+## Q291 — M15 P12: `forge report` and a captured baseline — projecting without judging, and the
+cost of a second error code nobody re-ran the registry test for
+
+**Context.** `PLAN-M15.md` P12's own Mandate is pure projection: read M15 P11's own already-landed
+telemetry and turn it into a milestone scorecard, plus a committed baseline snapshot a later milestone
+can compare against. "Discloses: a scorecard invites gaming; that is the point of M17 measuring on a
+project FORGE did not build" — this piece deliberately does not judge whether any number is good. Two
+full gauntlet rounds; full narrative in `GAUNTLET-LOG.md`'s own `## M15 P12` entry.
+
+**Decision 1 — state metrics are deduplicated per story by latest occurrence; occurrence metrics are
+not, and the dividing line is "does this metric describe a CURRENT state or a real, independent
+EVENT."** The Mandate's own named mutation ("compute the rate over attempts rather than stories") is
+about metric 1 specifically: a story's binding check can genuinely run more than once across separate
+real `forge run` invocations, and the correct pass rate asks "is this story passing right now," not
+"what fraction of all historical attempts passed." `buildBindingMetric` concatenates every real
+`CheckRun{kind:'binding'}` event across every run, groups by `storyId`, and keeps only each story's
+chronologically latest occurrence (`ts`, not `seq` — `seq` is only run-local). Metrics 2 (critic rounds,
+stop-and-disclose) and 4a (exemptions opened) are the opposite case — every real occurrence is counted,
+with no dedup at all, since a critic loop exhausting twice across two separate runs, or a real exemption
+declared twice, are two real, independent facts, not two readings of the same current state.
+
+**Decision 2 — metric 3 (gate failures before first pass) is scoped per real `(runId, gateId)` pair, not
+project-wide-ever-per-gate-id, and counts `GateRejected`, not `GateEvaluated.passed === false`.** The
+same gate id is legitimately re-evaluated fresh in every new real run (`G-Verify` once per story's own
+verify phase) — collapsing every run's own attempts into one all-time "time to first-ever pass" per gate
+id would conflate genuinely different real attempts into one meaningless number. `GateEvaluated` only
+ever fires from the engine's own automatic gate step (`dispatch/steps.ts`'s `runGateStep`); a human's own
+`forge gate reject`/`approve`/`waive` (`gate-commands.ts`) emits `GateRejected`/`GateApproved`/
+`GateWaived` directly with no accompanying `GateEvaluated` at all — counting only
+`GateEvaluated.passed === false` would silently miss every human-driven rejection.
+
+**Decision 3 — metric 5 (real cost per delivered story) sums raw `UsageRecorded.storyId`/`costUsd`
+directly, never via `@forge/telemetry/ledger`'s own `attributedSpend`.** `attributedSpend` is a
+different, per-STEP retry-collapsing view, purpose-built for `03` §3.2.8's own cost-ceiling use case —
+reusing it here would silently produce a different number than "real cost including any wasted retries,"
+which is what the Mandate's own words mean. `UsageRecordedPayload.storyId` (M15 P11's own additive
+field) has no equivalent on `LedgerEntry` at all, so `attributedSpend` is structurally incapable of
+grouping by story regardless. Read directly off raw `ForgeEvent`s rather than through
+`projectLedger`/`toLedgerEntry`, which throw on any `UsageRecorded` event missing `stepId`/`agentId` —
+too strict for a forward-compatible projector that must skip, never crash on, an event shape it does not
+fully recognise.
+
+**Decision 4 — "committed with trailers" is satisfied by the baseline's own real git provenance field,
+not by this piece making a git commit.** Investigated directly before deciding, not assumed: zero real
+CLI command writers in this codebase (`EvidenceBundle`, `Exemption`, `Disclosure`, `GateReport`) ever
+issue a real `git commit` themselves — each writes a plain tracked file and leaves the actual commit to a
+human, or (for a genuinely per-story artifact like `EvidenceBundle`) to the engine's own lane-commit
+machinery, which is architecturally scoped to one story's lane and does not fit a project-wide,
+cross-story command like `forge report --baseline`. `writeBaseline` writes a single, well-known,
+overwritten-in-place file (`reports/baseline.md` — "a baseline," singular, the one reference point a
+later milestone compares against, not an append-only collection the way `Exemption`/`Disclosure` are)
+whose own front matter names the real `HEAD` commit sha it was captured at (`resolveHeadShaOrUndefined`,
+`@forge/vcs`) and a real `capturedAt` from the injected `Clock`. This `commit:` field is this piece's own
+honest substance for "committed with trailers": not that this piece makes a git commit, but that the
+snapshot's own provenance names the real commit it was captured at, so a human committing it afterward
+(or a reader comparing it later) has real, verifiable grounding, not a bare timestamp.
+
+**Decision 5 — metric 6's own real, present-day scope is narrower than its Mandate text sounds, and this
+is disclosed rather than papered over.** `ArtifactCreated` is, within `packages/engine/src`, emitted ONLY
+by `swarm-review-step.ts`, only for `ReviewReport` artifacts — confirmed by grep, and
+`ArtifactUpdated`/`ArtifactValidated`/`ArtifactRejected` are emitted nowhere at all in this codebase
+today, since the P7 output-contract check folds its verdict straight into `StepSucceeded`/`StepFailed`
+with no dedicated artifact event. A second, real `ArtifactCreated` call site exists outside
+`packages/engine/src` (`packages/agents/src/handoff/emit-handoff.ts`'s `emitHandoff`) but is genuinely
+unreachable in any real run today (`ForgeMcpBackend` has zero real implementations anywhere, M15 P11's
+own disclosed gap). This piece's own code is correctly generic — it filters on `event.type ===
+'ArtifactCreated'` alone, never on a payload's own `type` field — so it will pick up any future real
+emitter automatically and correctly, with no change needed here; the gap is purely in what the metric can
+measure TODAY, not a defect in how it is built.
+
+**Decision 6 — the `(runId, gateId)` composite key uses `JSON.stringify` of a real tuple, not a
+`\0`-joined string, because `gateId`'s own validation (`packages/engine/src/gates/document.ts`,
+`isNonBlankString`) does not actually reject a control character the way the key's own safety would need
+it to.** Structurally loose, not a demonstrated exploit (no real path in this codebase could produce a
+colliding pair), but cheap to close outright rather than leave as a documented assumption resting on an
+invariant nothing enforces — confirmed collision-free against several adversarial injection attempts
+(embedded NUL, quotes, commas) by a round-2 critic.
+
+**Round-1 findings (two independent critics), all fixed directly, no architectural rework:** `readBaseline`
+had zero runtime validation (added `isBaselineSnapshot` and six per-metric shape validators, new `USR-004`
+error code, distinguishing "corrupt" from "never captured"); a live forward-compatibility gap on metric 6
+had no regression-guard test (the code was already correct — M14 P44's own real `{kind:'context-request'}`
+payload on the identical `SessionEvent` type could have been silently miscounted as a KB read if that
+check ever regressed, with nothing to catch it; added the test, plus two lower-stakes siblings for metrics
+2 and 4); `--baseline --since` was refused under `USR-003`, a semantic mismatch with that code's own
+documented "unbuilt feature" scope (reclassified to `USR-002`, matching `forge doctor --rule`'s own
+established incompatible-flags precedent); the `(runId, gateId)` key's `\0`-join (Decision 6, above); and
+`tsToComparableMs`'s own `+Infinity`-for-malformed sentinel (correct for `--since` filtering) was reused,
+wrongly, for metric 1's own "which occurrence is latest" dedup, where the safe direction is the opposite
+(`-Infinity`) — split into two deliberately different functions.
+
+**Round-2 finding (both fresh critics, independently): the new `USR-004` error code's own remedy failed
+`packages/core/test/errors.test.ts`'s exhaustive "every remedy opens with an imperative verb" check** —
+"Inspect" was not on that file's own whitelist. Reworded to "Check" (already whitelisted), reverified.
+**Lesson, worth carrying forward past this piece: adding any new error code needs
+`packages/core/test/errors.test.ts` run explicitly, every time** — it lives in `@forge/core`, a different
+package from wherever the new code is actually thrown, so it is not reachable from a package-scoped
+"tests for the files I touched" sweep, and nothing else in this milestone's own established floor
+discipline (`pnpm typecheck`/`pnpm lint`/targeted test runs) would have caught it short of either running
+this specific file or the full untargeted suite.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P12`.

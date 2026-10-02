@@ -20798,3 +20798,108 @@ Floor (`pnpm typecheck`, `pnpm lint`, `pnpm boundaries`) and every targeted test
 package passed clean, independently, for both critics and again after the two doc-comment fixes above.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q290`.
+
+---
+
+## M15 P12 — `forge report` and a captured baseline
+
+Two full gauntlet rounds. Round 1 (two independent critics): zero truly new-design-level BLOCKING
+findings, but real, concrete gaps both critics converged on independently — fixed directly. Round 2 (two
+fresh critics verifying the fixes): both independently re-derived the SAME one remaining real floor
+failure (a new error code's remedy failing this codebase's own exhaustive imperative-verb check) — fixed
+immediately, reverified, both critics' every other check came back clean. This is the piece that makes
+M15 P11's own telemetry legible: `forge report [--since <when>] [--json]` is a pure projection of the six
+Mandate metrics over the real event log, and `forge report --baseline` writes a single, committed
+reference snapshot so a later milestone can ask "did this help?" against a real number instead of memory.
+
+**What the piece builds.** `packages/cli/src/commands/report.ts` (new) — `buildReport` (six pure
+aggregation functions, one per metric, each explicitly resolving the Mandate's own state-vs-occurrence
+distinction: metric 1, binding pass rate, is deduplicated per story by chronologically latest occurrence,
+since a story can be re-checked across separate real runs and the correct rate is "currently passing,"
+not "fraction of all attempts that passed" — the Mandate's own named mutation; metrics 2 and 4a are
+occurrence metrics, every real event counted, no dedup; metric 3, gate failures before first pass, is
+scoped per real `(runId, gateId)` pair, counting `GateRejected` — not `GateEvaluated.passed === false`,
+since a human's own `forge gate reject` never emits the latter; metric 5 sums raw `UsageRecorded.storyId`
+directly, deliberately not via `@forge/telemetry/ledger`'s `attributedSpend`, a different per-step
+retry-collapsing view built for an unrelated cost-ceiling purpose; metric 6 correlates `ArtifactCreated`
+against `SessionEvent{kind:'kb-read'}` by shared `stepId` within one run). `writeBaseline`/`readBaseline` —
+a single, well-known, overwritten-in-place snapshot file (`reports/baseline.md`) carrying real git
+provenance (`commit: <HEAD sha> | null`) in its own front matter, investigated and deliberately NOT a new
+git-commit mechanism (no CLI command writer in this codebase issues a real commit itself; "committed with
+trailers" is satisfied by the snapshot's own provenance field, not by this piece calling `git commit`).
+`packages/cli/src/commands/run-ids.ts` (new) — `listRunIds`, extracted from what were THREE separate,
+byte-identical private copies (`cost.ts`, `kb-disclosures.ts`, and this piece's own new need — one more
+than anticipated going in), mirroring the M15 P10 `withCollectionLock` extraction precedent.
+`packages/cli/src/bin.ts` — `runReportCommand`, a disclosed second copy of `audit.ts`'s own
+`--since`-parsing regex (that file is outside this piece's Surface to refactor).
+
+**Round 1 (two independent critics): real, concrete gaps found and fixed directly, no architectural
+rework needed.**
+
+1. **`readBaseline` did zero runtime validation** — a bare `YAML.parse(...) as BaselineSnapshot` cast,
+   diverging from this exact package's own established precedent for the identical problem
+   (`loop/test/coverage.ts`'s own `readBaseline`/`isRatchetBaseline`). A syntactically broken or
+   wrong-shaped baseline file (a hand edit, a future schema change) would either throw a raw, unhandled
+   exception or — worse — silently return a garbage object cast as if it were well-typed. Fixed: a real,
+   nested `isBaselineSnapshot`/`isMilestoneScorecard`/six-per-metric-shape validator, throwing a new
+   `USR-004` rather than collapsing "corrupt" and "never captured" into the same `undefined` — a real
+   distinction this function's own two future callers (`forge report --baseline` itself, and whatever
+   M16/M17 piece compares against the committed baseline) both need to tell apart.
+2. **A live forward-compatibility gap on metric 6, the Mandate's own "central claim" metric.** One critic
+   found that removing `isKbReadEvent`'s own `kind === 'kb-read'` discriminator check was NOT caught by
+   any existing test — and, critically, `SessionEvent` already carries a second, real, already-shipped
+   payload kind on the identical `EventType` (`{kind:'context-request'}`, M14 P44's own context-expansion
+   feature) that would be silently miscounted as a KB read if that check ever regressed. The underlying
+   CODE was already correct (confirmed independently by both rounds' own live mutation reproduction); only
+   the regression-guard TEST was missing. Fixed: a new test using the real `context-request` shape,
+   confirming it is never counted, plus two lower-stakes siblings for metrics 2 and 4 along the same
+   pattern (no live collision exists for those today, but the same discipline applies going forward).
+3. **`--baseline --since` was refused under `USR-003`, a semantic mismatch.** `USR-003`'s own doc comment
+   scopes it specifically to "a real, named feature this codebase has no implementation for yet" — but
+   `--since` IS fully implemented for `forge report`, just refused in this one combination by design. The
+   real, already-established precedent for an incompatible-flag-combination refusal is `USR-002`
+   (confirmed via `forge doctor --rule`'s own identical `--fix`/`--rebuild-index` refusal shape). Fixed:
+   reclassified to `USR-002`, matching that precedent exactly.
+4. **`GateMetric`'s own `(runId, gateId)` pairing key used a `\0`-joined string**, whose safety rested on
+   an invariant this codebase does not actually enforce (`gateId` is validated only as a non-blank
+   string, nothing rejects a control character). Structurally loose, not a demonstrated exploit — fixed
+   anyway, cheaply: `JSON.stringify([runId, gateId])`, collision-free regardless of either field's own
+   content (confirmed adversarially by a round-2 critic attempting several real injection shapes).
+5. **`tsToComparableMs`'s own `+Infinity`-for-malformed-timestamp sentinel, correct for `--since`
+   filtering ("never silently exclude"), was reused unchanged for metric 1's own "which occurrence is
+   latest" dedup** — the wrong direction for that second question, since a malformed timestamp would
+   incorrectly WIN the authoritative-state slot over a legitimately later, well-formed occurrence.
+   Genuinely inert today (every real `ts` in this codebase comes from an injected `Clock`), but a real,
+   if rare, latent correctness gap. Fixed: a second, deliberately different `tsToComparableMsForDedup`
+   (`-Infinity` for malformed), used only at the dedup call site.
+6. Also added, same round: a broader `--since` test confirming all six metrics (not just binding) are
+   filtered correctly, and a dedicated `--json` one-line output test (the Mandate's own named
+   requirement, previously untested — the same pre-existing gap pattern `forge cost --json` already has,
+   left out of this piece's own narrower Surface to fix).
+
+**Round 2 (two fresh critics, verifying the round-1 fixes): one small, genuinely new finding, caught
+independently by both.**
+
+7. **The new `USR-004` error code's own remedy failed `packages/core/test/errors.test.ts`'s exhaustive
+   "every remedy opens with an imperative verb" check** — "Inspect" was not on that file's own
+   `IMPERATIVE_VERBS` whitelist. A real, reproducible floor failure (`pnpm test` would have caught this
+   immediately; it was missed because the orchestrator's own round-1 fix cycle ran the targeted CLI test
+   suite but not this specific core-package test file). Fixed: reworded to open with "Check" (already
+   whitelisted), reverified clean. **Lesson worth carrying forward: adding ANY new error code, however
+   small, needs `packages/core/test/errors.test.ts` run explicitly — it is not reachable from a
+   package-scoped "tests for the files I touched" sweep, since the new code's own declaration lives in
+   `@forge/core`, a different package from where it is thrown.**
+
+Every other round-1 fix (1-6 above) was independently re-verified correct by BOTH round-2 critics via
+real, live reproduction — not re-read and assumed: one critic reverted `isKbReadEvent`'s own kind check
+and confirmed the new test fails exactly as predicted before restoring; both independently wrote ad hoc
+corrupt-baseline fixtures (broken YAML, wrong element types, a hand-edited version bump) and confirmed
+each throws `USR-004` cleanly; both re-read `USR-002`/`USR-003`'s own doc comments directly rather than
+trusting the stated reasoning; one attempted several adversarial NUL-byte/quote-injection `(runId,
+gateId)` pairs against the new `JSON.stringify` key and found no collision possible.
+
+Floor (`pnpm typecheck`, `pnpm lint`, `pnpm boundaries`) and the full targeted suite (`report.test.ts`,
+`bin.test.ts`, `cost.test.ts`, `kb-disclosures.test.ts`, `errors.test.ts` — 738 tests) passed clean after
+every fix, independently confirmed by both round-2 critics and again by the orchestrator.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q291`.
