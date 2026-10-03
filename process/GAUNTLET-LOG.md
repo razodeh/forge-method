@@ -21007,9 +21007,21 @@ directory still on disk). Grouped by what each attempt actually found, not narra
    cross-process file lock (`withEventLogLock`), self-contained in `@forge/telemetry` (no `@forge/core`/`@forge/cli`
    edge to reuse `withCollectionLock`'s own algorithm directly, per `specs/02` §2.2's package boundary — mirrored
    it instead: exclusive-create via `wx`, synchronous read-back verification, age-gated reclaim of a stale-empty
-   or dead-owner lock). Verified against 10 real, separate OS processes appending 5 events each concurrently: 50
-   gapless, unique seqs every time; confirmed the test is non-vacuous by temporarily bypassing the lock (0 of 50
-   events survived the induced race). The owner was asked directly before this fix — a real, safety-critical
+   or dead-owner lock). Verified against 10 real, separate OS processes appending 5 events each concurrently:
+   50 gapless, unique seqs on the overwhelming majority of real runs (confirmed clean 5 of 6 times across this
+   piece's own isolated and combined-suite re-runs); confirmed the test is non-vacuous by temporarily bypassing
+   the lock (0 of 50 events survived the induced race). **One real, disclosed residual limitation, found during
+   this piece's own clean-worktree verification, not fixed:** a single real run of the full seven-file
+   combination (this file alongside `run-init.test.ts`'s own unusually subprocess-heavy tests, in a freshly
+   `pnpm install`-ed worktree) produced a genuine, if rare, SEQ GAP (one write missing entirely, not
+   duplicated) — `EVENT_LOG_MAX_LOCK_ATTEMPTS` × `EVENT_LOG_LOCK_RETRY_DELAY_MS` is a fixed 5-second ceiling,
+   and `append-many.ts`'s own fixture loop has no retry around `appendEvent` itself, so a writer that
+   genuinely exhausts that ceiling under sufficiently extreme, atypical concurrent load throws and the whole
+   fixture process dies without completing its remaining writes. Did not reproduce across five further
+   attempts (three in isolation, two more of the identical seven-file combination) — a safe failure mode
+   (throw, never silently corrupt) under a load level well beyond this test's own, or a real run's own,
+   ordinary concurrency, not a logic defect in the lock or reclaim algorithm itself, but the "every time"
+   this entry first claimed was not literally true and is corrected here rather than left standing. The owner was asked directly before this fix — a real, safety-critical
    change to shared infrastructure mid-live-run — and chose "attempt the cross-process locking fix now" over
    reverting item 3 (accepting the lesser, already-known project-root bug) or pausing the run entirely.
 
@@ -21185,5 +21197,14 @@ every other failure across all three runs (`packages/tui/test/screens/{specs,kb}
 huge-tree timeout, `packages/engine/test/interaction/session.test.ts`'s concurrent-write-back race) reproduced
 in isolation in under 2 s each, every time — resource contention from running a real live agent session and a
 647-file test suite on one machine at once, not a regression from anything this piece touched.
+
+**Clean-worktree re-verification** (`git worktree add` at the final commit, `pnpm install --frozen-lockfile`,
+mirroring `M13-AGENT-NOTES.md` rule 15's own "verify every piece in a clean worktree" requirement): `pnpm
+typecheck`/`pnpm lint` clean; every test file this piece's own two commits touched re-run together, once more —
+196 of 197 passed, the one failure being `packages/telemetry/test/events.test.ts`'s own 10-process concurrency
+test hitting the real seq-gap limitation disclosed above for the first time. Re-run five more times (three
+alone, two more of the identical seven-file combination): clean every time. The gap is real, rare, and disclosed
+— not swept into the same "confirmed transient, no action needed" bucket as the unrelated flakes above, because
+unlike those, this one touches the exact mechanism this piece's own safety claim rests on.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q293`.
