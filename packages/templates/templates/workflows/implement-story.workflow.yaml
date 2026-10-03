@@ -139,7 +139,33 @@ steps:
     kind: merge
     over: 'storyId'
     dependsOn: [commit]
-    policy: { conflict: agent, preChecks: fast, postChecks: full }
+    # specs/22 M15 P14's own real live run found `preChecks: fast` structurally incompatible with this
+    # workflow's own stacked lane chain, reproduced twice: "fast" runs the declared test layers against
+    # EACH landing lane's own isolated worktree before any of them merge (PLAN-M13.md P38) -- but `plan`
+    # has no test files yet (`red` has not run), and `red` has the test FILE but not yet the
+    # implementation it imports (`green` has not run) -- both are the TDD cycle's own intended,
+    # structural incompleteness, not a real regression "fast" should ever have caught.
+    #
+    # Removing `preChecks` alone was NOT sufficient, confirmed by a second, later real live run:
+    # `postChecks: full` runs the identical layers, against the integration tree, once per lane AS IT
+    # LANDS (the same `PLAN-M13.md` P38 per-lane timing, just a different worktree) -- not once after the
+    # WHOLE chain has landed, which this comment originally, incorrectly assumed. `red`'s own lane still
+    # hits the identical wall one step later: a real `unit` command run right after `red` lands fails
+    # exactly like "fast" did --
+    #   FAIL  src/classify-order-priority.test.js
+    #   Error: Cannot find module './classify-order-priority.js' imported from .../story.test.js
+    # -- because `green` has not landed yet either way. `skipChecks: [red]` is the real fix: that one
+    # lane's checks (both pre and post) are skipped entirely, never partially (which real-execution
+    # layers would fail is project/config-dependent -- a TypeScript project's `typecheck` fails on the
+    # same unresolved import `unit` does, and whether `lint` does depends on whether an import-resolution
+    # rule is configured, so no smaller, always-safe subset exists to keep instead). Safe because `red`'s
+    # own write claim is already narrowly bounded (`produces: ['{{run.testPaths}}']` only, `RUN-104`
+    # reverts anything else), and because the SAME `postChecks: full` set runs again, unskipped, the very
+    # next lane down (`green`) -- a real defect in `red`'s own file still surfaces there, attributed one
+    # lane later rather than at the lane that introduced it. `build-stage.workflow.yaml`'s own merge has
+    # the identical fix for the identical reason -- its own `generate-tests`/`implement` fanout pair is
+    # the same red/green shape, one real lane per story, not a single already-complete unit.
+    policy: { conflict: agent, postChecks: full, skipChecks: [red] }
 
 onFailure:
   default: escalate

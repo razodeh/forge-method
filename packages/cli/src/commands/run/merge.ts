@@ -10,10 +10,11 @@
  *
  * `mergeLane`/`mergeAllReady` land through `landLane` (`@forge/engine/dispatch`, `PLAN-M14.md` P40) with
  * the pre/post checks the run that left the lane `'ready'` would itself have applied: the run's own
- * `merge` step's declared `policy.preChecks`/`postChecks` when the lane is in that step's
- * `mergeLandingScope` (recomputed here from the run's manifest, the identical `workflowId` +
- * `expressionContext` recompilation `resumeWorkflow` does), else `execution.mergeChecks` — never the
- * empty `{}` this command used to hand the queue, which ran no check at all. A `LandLaneDeps` is built
+ * `merge` step's declared `policy.preChecks`/`postChecks` — and `policy.skipChecks` (specs/22 M15 P14,
+ * `declaredChecksFor`'s own `skip` result below) — when the lane is in that step's `mergeLandingScope`
+ * (recomputed here from the run's manifest, the identical `workflowId` + `expressionContext`
+ * recompilation `resumeWorkflow` does), else `execution.mergeChecks` — never the empty `{}` this command
+ * used to hand the queue, which ran no check at all. A `LandLaneDeps` is built
  * directly from the real facades (`createVcsFacade`/`createTelemetryFacade`/`createMergeQueueFacade`),
  * never `buildRunEngineContext`'s wider run-driving shape (an adapter, a gate registry, prompt assembly,
  * ...) this command has no use for — the same real event log, git repository and merge queue a live run
@@ -32,6 +33,7 @@ import {
   createVcsFacade,
   landLane,
   resolveLaneChecks,
+  skipsChecksFor,
   type LaneHandle,
   type LandLaneDeps,
   type MergeOutcome,
@@ -128,21 +130,34 @@ function fallbackChecks(ctx: MergeContext): DeclaredChecks {
  * `expressionContext`), recompiled fresh here — never trusted stale from when the run started — the
  * identical way `resumeWorkflow` recompiles it (`resume.ts:70-112`). When `originStepId` falls inside a
  * `merge` step's landing scope (`mergeLandingScope`) of that fresh compile, that step's own declared
- * `policy.preChecks`/`postChecks` is what `runMergeStep` itself would have used. A lane in no merge step's
- * scope, a run with no manifest at all (never started by `forge run`, or one whose manifest was since
- * removed), and a workflow that no longer parses or compiles (edited or deleted since the run started) all
- * fall back to `execution.mergeChecks` instead; only the last of those three carries a `warning` back —
- * the other two never had a real merge step to have used in the first place. A manifest that exists but
- * cannot be read or parsed is not tolerated the same way: `readManifest` throws `RUN-054` for that, and
- * this function lets it propagate rather than guessing which checks a corrupt run intended.
+ * `policy.preChecks`/`postChecks` is what `runMergeStep` itself would have used — and so is its
+ * `policy.skipChecks` (specs/22 M15 P14, `skipsChecksFor`, `@forge/engine/dispatch`): a lane this merge
+ * policy names there skips checks here too, exactly as it would have under `runMergeStep` itself. A
+ * round-2 gauntlet critic (two independent reviewers, the same finding) caught the first version of the
+ * `skipChecks` fix leaving this command with no such check at all, so a run recovered by hand with
+ * `forge merge`/`forge merge --all` after crashing mid-lane silently ran real checks against a
+ * `skipChecks`-named lane exactly as before that fix — the identical deterministic failure
+ * (`MergePolicy.skipChecks`'s own doc comment, `types.ts`, has the real evidence) reached through this
+ * command instead of a run's own merge step. `skip` is false for every fallback path below: none of them
+ * found a real merge step's own policy to read a `skipChecks` list off in the first place. A lane in no
+ * merge step's scope, a run with no manifest at all (never started by `forge run`, or one whose manifest
+ * was since removed), and a workflow that no longer parses or compiles (edited or deleted since the run
+ * started) all fall back to `execution.mergeChecks` instead; only the last of those three carries a
+ * `warning` back — the other two never had a real merge step to have used in the first place. A manifest
+ * that exists but cannot be read or parsed is not tolerated the same way: `readManifest` throws `RUN-054`
+ * for that, and this function lets it propagate rather than guessing which checks a corrupt run intended.
  */
 async function declaredChecksFor(
   ctx: MergeContext,
   originStepId: string,
-): Promise<{ readonly declared: DeclaredChecks; readonly warning?: string }> {
+): Promise<{
+  readonly declared: DeclaredChecks;
+  readonly skip: boolean;
+  readonly warning?: string;
+}> {
   const manifestPath = ctx.paths.resolveState(`runs/${ctx.runId}/manifest.json`);
   if (!(await pathExists(manifestPath))) {
-    return { declared: fallbackChecks(ctx) };
+    return { declared: fallbackChecks(ctx), skip: false };
   }
   const manifest = await readManifest(ctx.paths, ctx.runId);
   try {
@@ -168,12 +183,14 @@ async function declaredChecksFor(
           preSource: `the merge policy preChecks of ${node.id}`,
           postSource: `the merge policy postChecks of ${node.id}`,
         },
+        skip: skipsChecksFor(node.mergePolicy?.skipChecks, originStepId),
       };
     }
-    return { declared: fallbackChecks(ctx) };
+    return { declared: fallbackChecks(ctx), skip: false };
   } catch (cause) {
     return {
       declared: fallbackChecks(ctx),
+      skip: false,
       warning:
         `The workflow ${manifest.workflowId} no longer compiles, so forge merge could not recompile ` +
         `this run's own plan; using execution.mergeChecks instead of its merge step's own declared ` +
@@ -242,7 +259,7 @@ export async function mergeLane(
     branch: laneBranchName(ctx.runId, origin.stepId),
   };
 
-  const { declared, warning } = await declaredChecksFor(ctx, origin.stepId);
+  const { declared, skip, warning } = await declaredChecksFor(ctx, origin.stepId);
   const preSource = overrides.pre !== undefined ? 'the --pre-checks flag' : declared.preSource;
   const postSource = overrides.post !== undefined ? 'the --post-checks flag' : declared.postSource;
   const deps = landLaneDepsFor(ctx);
@@ -260,24 +277,38 @@ export async function mergeLane(
     };
   }
   const { checks, skipped } = resolved.value;
-  const checksSummary: MergeCheckSummary = {
-    pre: checkLabelsOf(checks.preCommands),
-    post: checkLabelsOf(checks.postCommands),
-    ...(skipped.pre.length + skipped.post.length === 0 ? {} : { skippedLayers: skipped }),
-  };
   if ((checks.preCommands?.length ?? 0) === 0 && (checks.postCommands?.length ?? 0) === 0) {
+    const checksSummary: MergeCheckSummary = {
+      pre: checkLabelsOf(checks.preCommands),
+      post: checkLabelsOf(checks.postCommands),
+      ...(skipped.pre.length + skipped.post.length === 0 ? {} : { skippedLayers: skipped }),
+    };
     return {
       failure: noChecksConfiguredFailure(preSource, postSource),
       checks: checksSummary,
       ...(warning === undefined ? {} : { warning }),
     };
   }
+  // `MergePolicy.skipChecks` (specs/22 M15 P14): an explicit `--pre-checks`/`--post-checks` override is
+  // the operator deliberately asking for specific checks to run right now, so it wins over the policy's
+  // own `skipChecks` the same way it already wins over the policy's own `preChecks`/`postChecks` above —
+  // `declared.pre`/`.post` is never consulted at all once an override is given. Checked only here, after
+  // `noChecksConfiguredFailure`: that check validates the *policy's* own declared checks resolve to real
+  // commands at all (a config sanity check, independent of any one lane), so a `skipChecks`-named lane
+  // still goes through it — only the checks `landLane` actually runs for THIS lane are overridden.
+  const skipThisLane = skip && overrides.pre === undefined && overrides.post === undefined;
+  const effectiveChecks = skipThisLane ? { preCommands: [], postCommands: [] } : checks;
+  const checksSummary: MergeCheckSummary = {
+    pre: checkLabelsOf(effectiveChecks.preCommands),
+    post: checkLabelsOf(effectiveChecks.postCommands),
+    ...(skipped.pre.length + skipped.post.length === 0 ? {} : { skippedLayers: skipped }),
+  };
   const landed = await landLane(deps, {
     eventStepId: origin.stepId,
     laneStepId: origin.stepId,
     lane,
     conflictPolicy: 'abort',
-    checks,
+    checks: effectiveChecks,
     skippedLayers: skipped,
   });
   return {

@@ -81,6 +81,7 @@ export {
   integrateLane,
   landLane,
   resolveLaneChecks,
+  skipsChecksFor,
   type ConflictPolicy,
   type LandLaneDeps,
   type LandLaneOptions,

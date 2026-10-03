@@ -4255,6 +4255,10 @@ async function runStoryCommand(
       flakeConfig: config.quality.flake,
       testRoots: config.execution.testRoots,
       runId: realEnvSnapshot()[FORGE_RUN_ID],
+      // See `StoryVerifyContext.telemetryProjectRoot`'s own doc comment (`story.ts`) for the full
+      // real-live-run-found reasoning: `projectRoot` above stays lane-scoped (`getDirtyFiles` needs
+      // it), this is the real project root `emitBindingCheckTelemetry` needs instead.
+      telemetryProjectRoot: realEnvSnapshot()['FORGE_PROJECT_ROOT'],
     },
     storyId,
     phaseFlag ?? 'verify',
@@ -4344,7 +4348,21 @@ async function runStoryEvidenceCommand(
   const coverageProblems = [...(acCoverage.problems ?? []), ...(ratchetCoverage.problems ?? [])];
   const written = await assembleAndWriteEvidenceBundle({
     paths,
-    projectRoot,
+    // `specs/22` M15 P14's own real live run found this step always fails when run as a genuine
+    // `implement-story` workflow command step: `runCommandStep`'s own `cwd` is the step's own LANE
+    // worktree (`dispatch/steps.ts`'s `runShellCommand(run, lane.path, commandEnv)`), never the real
+    // project root, so a bare `projectRoot` here (resolved from `process.cwd()`/`-C` in `main()`)
+    // reads an EMPTY event log at the wrong path and `findReviewsThisRun`/`computeStoryCost` always
+    // find nothing -- `GATE-516 'missing-review'` on every real run, 100% reproducible, never caught
+    // because no existing test dispatches this command through a real lane (every one calls
+    // `assembleAndWriteEvidenceBundle` directly, or via a fake adapter where cwd and projectRoot
+    // happen to coincide). `commandStepEnvironment` (`dispatch/steps.ts`) already sets a real
+    // `FORGE_PROJECT_ROOT` in every command step's own env FOR exactly this purpose (`elicit.ts`'s own
+    // doc comment names the convention) -- read here, preferred over the bare, lane-scoped
+    // `projectRoot` above, which stays correct and unchanged for `paths`/`reportsRoot` (the bundle
+    // must still be WRITTEN inside this step's own lane, for claim enforcement to see it) and for a
+    // standalone, bare invocation outside any real run, where the env var is simply unset.
+    projectRoot: realEnvSnapshot()['FORGE_PROJECT_ROOT'] ?? projectRoot,
     reportsRoot: config.paths.reports,
     storyId,
     runId: realEnvSnapshot()[FORGE_RUN_ID],

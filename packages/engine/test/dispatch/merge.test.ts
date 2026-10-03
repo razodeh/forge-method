@@ -65,6 +65,80 @@ describe('runMergeStep — check sets (PLAN-M13.md P38)', () => {
   });
 });
 
+describe('runMergeStep — skipChecks (specs/22 M15 P14)', () => {
+  it("a lane named in skipChecks lands clean even though the merge's own postChecks would fail every real lane; a lane not named in skipChecks still runs that same check for real and fails it", async () => {
+    const projectRoot = await createTempRepo('merge-skip-checks');
+    const ctx = createTestContext({ projectRoot, runId: 'run-skip-checks' });
+    await executeStep(
+      node({ id: 'wf:red', kind: 'command', run: 'echo red > red.txt', produces: ['red.txt'] }),
+      ctx,
+    );
+    await executeStep(
+      node({
+        id: 'wf:green',
+        kind: 'command',
+        run: 'echo green > green.txt',
+        produces: ['green.txt'],
+      }),
+      ctx,
+    );
+
+    const outcome = await executeStep(
+      node({
+        id: 'wf:merge',
+        kind: 'merge',
+        dependsOn: ['wf:red', 'wf:green'],
+        // An always-failing postCheck every real lane would hit -- skipChecks: ['red'] is the only
+        // reason wf:red's own lane lands anyway; wf:green, not named, still runs it and fails for real.
+        mergePolicy: { conflict: 'abort', postChecks: 'exit 1', skipChecks: ['red'] },
+      }),
+      ctx,
+    );
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.detail.kind).toBe('merge');
+    if (outcome.detail.kind === 'merge') {
+      const byStep = new Map(outcome.detail.merges.map((entry) => [entry.stepId, entry.outcome]));
+      expect(byStep.get('wf:red')?.kind).toBe('clean');
+      expect(byStep.get('wf:green')?.kind).toBe('post-check-failed-reverted');
+    }
+    expect(ctx.laneRegistry.has('wf:red')).toBe(false);
+    expect(ctx.laneRegistry.has('wf:green')).toBe(true);
+  });
+
+  it("matches a bare step id against ANY colon-separated segment of a lane's real compiled id, not only an exact match or a leading prefix -- the shape a real fanout-expanded lane (build-stage's own generate-tests:<story>) actually has", async () => {
+    const projectRoot = await createTempRepo('merge-skip-checks-segment');
+    const ctx = createTestContext({ projectRoot, runId: 'run-skip-checks-segment' });
+    await executeStep(
+      node({
+        id: 'build-stage:generate-tests:STORY-001',
+        kind: 'command',
+        run: 'echo test > test.txt',
+        produces: ['test.txt'],
+      }),
+      ctx,
+    );
+
+    const outcome = await executeStep(
+      node({
+        id: 'wf:merge',
+        kind: 'merge',
+        dependsOn: ['build-stage:generate-tests:STORY-001'],
+        // `generate-tests` is a middle segment of the real lane id, never a prefix or the whole id --
+        // only a true segment match saves it from this always-failing postCheck.
+        mergePolicy: { conflict: 'abort', postChecks: 'exit 1', skipChecks: ['generate-tests'] },
+      }),
+      ctx,
+    );
+
+    expect(outcome.status).toBe('succeeded');
+    expect(outcome.detail.kind).toBe('merge');
+    if (outcome.detail.kind === 'merge') {
+      expect(outcome.detail.merges[0]?.outcome.kind).toBe('clean');
+    }
+  });
+});
+
 describe('runMergeStep — a set that cannot be resolved (PLAN-M13.md P38)', () => {
   it('a merge driven on its own (no run-start preflight) fails typed before touching any lane, and an auto-integration does the same', async () => {
     const projectRoot = await createTempRepo('merge-unconfigured');

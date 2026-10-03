@@ -191,6 +191,17 @@ export interface StoryVerifyContext {
    * any real `forge run`, in which case `checkBinding`'s own `specs/22` M15 P11 telemetry (metrics 1 and
    * 4b) emits nothing: there is no event log to write into. */
   readonly runId?: string | undefined;
+  /** `specs/22` M15 P14's own real live run found `projectRoot` above cannot double as "where the
+   * telemetry event log lives": `getDirtyFiles(ctx.projectRoot)` (above) genuinely needs the LANE's
+   * own working tree when this runs as a real `self-verify`/`done-check` workflow command step
+   * (`runCommandStep`'s own `cwd`, `dispatch/steps.ts`), but `emitBindingCheckTelemetry` needs the
+   * real PROJECT root, since `.forge/state/runs/.../events.ndjson` lives there, never inside any
+   * one lane's own worktree copy — writing through the lane-scoped `projectRoot` instead silently
+   * creates a second, disconnected event log inside the lane that nothing ever reads, discarded the
+   * moment the lane is cleaned up. `undefined` (every existing caller, every bare `forge test
+   * binding`-equivalent standalone invocation with no lane at all) falls back to `projectRoot`,
+   * unchanged. */
+  readonly telemetryProjectRoot?: string | undefined;
 }
 
 interface Resolution {
@@ -741,7 +752,7 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
   // `runOneStoryBinding` emits at the identical point, for the identical reason (that function's own
   // doc comment has the fuller reasoning).
   await emitBindingCheckTelemetry({
-    projectRoot: ctx.projectRoot,
+    projectRoot: ctx.telemetryProjectRoot ?? ctx.projectRoot,
     runId: ctx.runId,
     clock: SYSTEM_CLOCK,
     storyId: story.id,

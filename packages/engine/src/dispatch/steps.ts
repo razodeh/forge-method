@@ -43,7 +43,7 @@ import {
 } from './assemble.ts';
 import { expandRequestedContext } from './context-expansion.ts';
 import { GateNotFoundError } from './facades.ts';
-import { contentLanded, landLane, resolveLaneChecks } from './integrate.ts';
+import { contentLanded, landLane, resolveLaneChecks, skipsChecksFor } from './integrate.ts';
 import { restoreIntegrationTree, snapshotIntegrationTree } from './inline-tree.ts';
 import { resolveLaneBase } from './lane-base.ts';
 import { reserveDeclaredKbOutputIds, type KbOutputReservation } from './output-ids.ts';
@@ -1586,12 +1586,20 @@ export async function runMergeStep(node: StepNode, ctx: ExecuteStepContext): Pro
     // piece's own mandate) and onto `detail.merges[]` below regardless of which of the two it is.
     const reviewInfo = swarmReview.landable.get(predecessorId);
     const replayFrom = replayFromFor(lane, notLanded);
+    // `MergePolicy.skipChecks` (specs/22 M15 P14): this one lane's own checks are replaced with an empty
+    // pre/post pair, not simply omitted -- `commandsOf` (`facades.ts`) treats an explicit `[]` as "run
+    // nothing" and only falls back to `checks.preCheck`/`.postCheck` when its own `preCommands`/
+    // `postCommands` argument is `undefined`, so passing `resolvedChecks.value.checks` unchanged here
+    // would not skip anything. Every other lane keeps the one, globally-resolved `checks` value.
+    const checksForLane = skipsChecksFor(mergePolicy.skipChecks, predecessorId)
+      ? { preCommands: [], postCommands: [] }
+      : resolvedChecks.value.checks;
     const landed = await landLane(ctx, {
       eventStepId: node.id,
       laneStepId: predecessorId,
       lane,
       conflictPolicy,
-      checks: resolvedChecks.value.checks,
+      checks: checksForLane,
       skippedLayers: resolvedChecks.value.skipped,
       ...(reviewInfo?.verdict === 'concerns'
         ? { reviewVerdict: reviewInfo.verdict, reviewReportId: reviewInfo.reportId }

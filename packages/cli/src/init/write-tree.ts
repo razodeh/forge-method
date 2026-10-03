@@ -319,6 +319,14 @@ const GITIGNORE_ENTRIES = [
   '.forge/overrides.local/',
   '.forge/secrets.local.yaml',
   '.forge/state/',
+  // specs/22 M15 P14's own real live run found this missing: `forge upgrade`'s own backup step
+  // (`03` §3.4 step 3, `createBackup` in `../upgrade/backup.ts`) writes a full copy of `.forge/` (plus
+  // the spec tree) into a fresh `.forge/backups/<timestamp>/` directory on every real upgrade that
+  // touches a regenerable file -- never gitignored, a real `forge run` on the same project then refuses
+  // to start at all ("FORGE never discards uncommitted work"), surfacing hundreds of untracked backup
+  // files as a wall of uncommitted changes the project owner never asked for and git already makes
+  // redundant (the prior content `createBackup` copies out is already in history).
+  '.forge/backups/',
 ];
 
 async function appendGitignore(target: ProjectPaths): Promise<WrittenFile> {

@@ -199,20 +199,26 @@ describe('appendEvent', () => {
     expect(resultC.seq).toBe(1);
   });
 
-  it('trusts its in-memory last-seq cache rather than re-reading the file on every append within the same process', async () => {
-    const projectRoot = await createTempProjectRoot();
-    const runId = 'run-cache-check';
+  it(
+    'always determines the next seq from the real, current file on disk, never from an in-process ' +
+      'cache of its own last write — specs/22 M15 P14 found the cache this test used to assert ' +
+      '(an earlier version of this test) unsafe the instant a second real process can also append ' +
+      'to the same run (a real duplicate seq, reproduced live): deleting the file out from under this ' +
+      'process must be read as "no prior events", exactly as a genuinely fresh process would, not as ' +
+      '"my own cached seq is still correct"',
+    async () => {
+      const projectRoot = await createTempProjectRoot();
+      const runId = 'run-cache-check';
 
-    const first = await appendEvent(projectRoot, runId, baseEvent({ runId }));
-    expect(first.seq).toBe(1);
+      const first = await appendEvent(projectRoot, runId, baseEvent({ runId }));
+      expect(first.seq).toBe(1);
 
-    // Delete the file out from under the cache — if the next append re-read it instead of trusting the
-    // cache, it would see nothing on disk and (incorrectly) restart at seq 1.
-    await rm(eventLogFilePath(projectRoot, runId));
+      await rm(eventLogFilePath(projectRoot, runId));
 
-    const second = await appendEvent(projectRoot, runId, baseEvent({ runId }));
-    expect(second.seq).toBe(2);
-  });
+      const second = await appendEvent(projectRoot, runId, baseEvent({ runId }));
+      expect(second.seq).toBe(1);
+    },
+  );
 
   it('a real SIGKILL of the writing process immediately after it signals success does not lose the appended event — see the direct structural proof of the fsync-await ordering below for the specific "fsync itself" guarantee this alone cannot isolate', async () => {
     // What this test actually proves, and what it does not: a killed *process* never evicts the
@@ -759,6 +765,62 @@ describe('appendEvent — resilience', () => {
         );
       }
       expect(caught.code).toBe('TELEMETRY-EVENT-LOG-WRITE-FAILED');
+    },
+  );
+
+  it(
+    '10 real, separate OS processes appending concurrently to the SAME run never produce a ' +
+      "duplicate or gapped seq — specs/22 M15 P14's own real live run found exactly this race live " +
+      '(two different events both claiming seq 44), reproducing the exact shape that found it: a ' +
+      'spawned command-step-like subprocess writing telemetry at close to the same real moment another ' +
+      "process writes for the same run, not a single process's own in-memory Promise.all",
+    async () => {
+      const projectRoot = await createTempProjectRoot();
+      const runId = 'run-cross-process-concurrency';
+      const fixturePath = fileURLToPath(new URL('./fixtures/append-many.ts', import.meta.url));
+      const processCount = 10;
+      const eventsPerProcess = 5;
+
+      const runs = Array.from(
+        { length: processCount },
+        (_unused, index) =>
+          new Promise<void>((resolve, reject) => {
+            const child = spawn('node', [
+              '--experimental-strip-types',
+              fixturePath,
+              projectRoot,
+              runId,
+              String(eventsPerProcess),
+              `proc-${String(index)}`,
+            ]);
+            let stderr = '';
+            child.stderr.on('data', (chunk: Buffer) => {
+              stderr += chunk.toString();
+            });
+            child.on('error', reject);
+            child.on('exit', (code) => {
+              if (code === 0) resolve();
+              else
+                reject(
+                  new Error(`fixture process ${String(index)} exited ${String(code)}: ${stderr}`),
+                );
+            });
+          }),
+      );
+      await Promise.all(runs);
+
+      const events: ForgeEvent[] = [];
+      for await (const event of readEvents(projectRoot, runId)) events.push(event);
+      const seqs = events.map((event) => event.seq).sort((a, b) => a - b);
+      const expectedTotal = processCount * eventsPerProcess;
+
+      // Every real event actually landed (no silent loss — the opposite failure mode a naive fix
+      // could introduce) ...
+      expect(events).toHaveLength(expectedTotal);
+      // ... each at its own distinct, real seq ...
+      expect(new Set(seqs).size).toBe(expectedTotal);
+      // ... forming the real, gapless 1..N run `readEvents` itself would otherwise throw on.
+      expect(seqs).toEqual(Array.from({ length: expectedTotal }, (_unused, i) => i + 1));
     },
   );
 });

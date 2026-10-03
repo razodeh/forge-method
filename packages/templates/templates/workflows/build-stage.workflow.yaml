@@ -143,7 +143,36 @@ steps:
     kind: merge
     over: 'stage.stories'
     dependsOn: ['review:{{item.id}}']
-    policy: { conflict: agent, preChecks: fast, postChecks: full }
+    # specs/22 M15 P14's own real live run found `preChecks: fast` structurally incompatible with this
+    # workflow's own per-story lane shape (reproduced against `implement-story.workflow.yaml`'s own
+    # identical pattern, which this fanout mirrors one story at a time): `merge`'s own landing scope
+    # here reaches back through `review:{{item.id}}` to `implement:{{item.id}}` to
+    # `generate-tests:{{item.id}}` (`PLAN-M13.md` P19's own `mergeLandingScope`), and "fast" runs the
+    # declared test layers against EACH of those lanes' own isolated worktree individually
+    # (`PLAN-M13.md` P38) -- but `generate-tests`'s own lane has the test file with no implementation
+    # for it to import yet (`implement` has not run), the TDD cycle's own intended, structural
+    # incompleteness, not a real regression "fast" should ever have caught.
+    #
+    # Removing `preChecks` alone was NOT sufficient, confirmed by a second, later real live run against
+    # `implement-story.workflow.yaml`'s own identical pattern: `postChecks: full` runs the identical
+    # layers, against the integration tree, once per lane AS IT LANDS (the same `PLAN-M13.md` P38
+    # per-lane timing, just a different worktree) -- not once after every story's lanes have landed,
+    # which this comment originally, incorrectly assumed. `generate-tests`'s own lane still hits the
+    # identical wall one step later: a real `unit` command run right after it lands fails exactly like
+    # "fast" did (`Cannot find module` on the not-yet-written implementation), because `implement` has
+    # not landed yet either way. `skipChecks: [generate-tests]` is the real fix: that one fanout's own
+    # lane, every expanded item of it, skips checks entirely, never partially (which real-execution
+    # layers would fail is project/config-dependent, so no smaller, always-safe subset exists to keep
+    # instead). Matched by colon-segment membership (`skipsChecksFor`, `@forge/engine/dispatch`), not a
+    # fixed prefix: driven as a stage, the real compiled id is `build-stage:generate-tests:STORY-001`,
+    # where `generate-tests` is a middle segment, never a prefix -- a first version of this fix matched
+    # only an `<entry>:` prefix and a real test run proved it silently matched nothing. Safe because
+    # `generate-tests`'s own write claim is already narrowly bounded (`produces: ['{{item.test_paths}}']`
+    # only, `RUN-104` reverts anything else), and because the SAME `postChecks: full` set runs again,
+    # unskipped, the very next lane down (`implement`) -- a real defect in `generate-tests`'s own file
+    # still surfaces there, attributed one lane later rather than at the lane that introduced it.
+    # `implement-story.workflow.yaml`'s own merge has the identical fix for the identical reason.
+    policy: { conflict: agent, postChecks: full, skipChecks: [generate-tests] }
 
   - id: verify
     kind: gate

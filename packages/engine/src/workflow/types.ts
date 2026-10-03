@@ -221,6 +221,32 @@ export interface MergePolicy {
   readonly conflict: string;
   readonly preChecks?: string | undefined;
   readonly postChecks?: string | undefined;
+  /** specs/22 M15 P14's own real live run found a gap `preChecks`/`postChecks` alone cannot close: both
+   * name a set of test *layers* (`merge-checks.ts`'s `fast`/`full`), run once per lane this merge lands,
+   * against that lane's own worktree (`preChecks`) or the integration tree (`postChecks`) — correct and
+   * valuable for most lanes, but structurally unpassable for the one lane in a TDD-stacked chain whose
+   * whole job is to add a test for code that does not exist yet (`implement-story.workflow.yaml`'s `red`,
+   * `build-stage.workflow.yaml`'s `generate-tests`): any real `execution.testCommands` layer that actually
+   * imports/runs the code fails there, every time, by design, not as a caught regression. `skipChecks`
+   * names bare step ids (`red`, `generate-tests`) whose landed lane runs neither `preChecks` nor
+   * `postChecks` at all — matched by colon-separated segment membership against the lane's own, real
+   * compiled id (`skipsChecksFor`, `dispatch/integrate.ts`), not by exact equality or a fixed prefix: a
+   * real compiled id carries every scope it was authored inside of (`generate-tests` is a middle segment
+   * of `build-stage:generate-tests:STORY-001` when driven as a stage, the whole id when driven
+   * standalone), and an author names only the bare step, never how many scopes wrap it at a given call
+   * site. `skipsChecksFor` is read from two real, independent landing paths — `runMergeStep`
+   * (`dispatch/steps.ts`), a run's own automatic landing, and `forge merge`/`forge merge --all`
+   * (`@forge/cli`'s `commands/run/merge.ts`, `PLAN-M14.md` P40), manual recovery over the identical
+   * lanes — a round-2 gauntlet critic (two independent reviewers, the same finding) caught the first
+   * version of this fix leaving the second path with no way to reuse it at all, silently landing a
+   * `skipChecks`-named lane with real checks exactly as before the fix whenever a run was recovered by
+   * hand instead of run end to end. Safe because that lane's own write claim is
+   * already narrowly bounded (`produces: ['{{run.testPaths}}']` only, enforced at commit time,
+   * `RUN-104`), and because the identical check set runs again, unskipped, on the very next lane
+   * (`green`/`implement`) once a real implementation exists to check — a real defect in the skipped
+   * lane's own file still surfaces there, just attributed one lane later instead of at the lane that
+   * introduced it. See `SPEC-QUESTIONS.md`. */
+  readonly skipChecks?: readonly string[] | undefined;
 }
 
 export interface MergeStep extends WorkflowStepBase {

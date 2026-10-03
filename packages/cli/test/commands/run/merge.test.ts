@@ -9,7 +9,10 @@
  *
  * `PLAN-M14.md` P40: `mergeLane` now lands through `landLane` with the checks the run would itself have
  * applied — the run's own `merge` step's declared policy when the lane is in its landing scope, else
- * `execution.mergeChecks` — never the empty `{}` this command used to hand the queue.
+ * `execution.mergeChecks` — never the empty `{}` this command used to hand the queue. That includes the
+ * policy's own `skipChecks` (specs/22 M15 P14): a round-2 gauntlet critic found the first version of
+ * that fix left this command with no way to honor it at all, silently re-running real checks `forge
+ * merge`/`forge merge --all` would skip inside a real run's own `merge` step.
  *
  * @see specs/03 §3.2.4
  * @see PLAN-M14.md P40
@@ -188,6 +191,50 @@ describe('mergeLane', () => {
       'utf8',
     );
     expect(written).toBe(`${FIXTURE_ITEM_ID}\n`);
+  });
+
+  it('a lane the merge policy names in skipChecks lands clean even though its declared preCheck would still fail for real (specs/22 M15 P14)', async () => {
+    const { project, laneId } = await readyLaneProject('run-merge-skip-checks');
+    // `declaredChecksFor`/`skipsChecksFor` (`@forge/engine/dispatch`): `skipChecks` names the bare step
+    // id (`implement`, not `FIXTURE_STEP_IMPLEMENT_ID`'s own compiled, workflow-prefixed form) — the
+    // identical "a workflow author names only the step it wrote, never how many scopes wrap it at its
+    // real compiled id" the engine's own `skipsChecksFor` doc comment gives for `red`/`generate-tests`.
+    // `preChecks: "false"` is left in place, unchanged from `readyLaneProject`'s own setup: if this gap
+    // ever reopens (`forge merge` stops reading `skipChecks`, the exact regression a round-2 gauntlet
+    // critic found and this test exists to pin), this lane would fail exactly like the first test above
+    // does, not land clean.
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${FIXTURE_WORKFLOW_ID}.workflow.yaml`),
+      FIXTURE_WORKFLOW_WITH_MERGE_SOURCE.replace(
+        'policy: { conflict: abort }',
+        'policy: { conflict: abort, preChecks: "false", skipChecks: [implement] }',
+      ),
+    );
+    const ctx = await mergeContextFor(project, 'run-merge-skip-checks');
+
+    const result = await mergeLane(ctx, laneId);
+
+    expect(result.failure).toBeUndefined();
+    expect(result.outcome?.kind).toBe('clean');
+    expect(result.checks).toEqual({ pre: [], post: [] });
+  });
+
+  it('skipChecks naming an unrelated step does not skip this lane: the declared preCheck still runs for real and still fails it', async () => {
+    const { project, laneId } = await readyLaneProject('run-merge-skip-checks-unrelated');
+    await writeFile(
+      path.join(project.dir, WORKFLOWS_ROOT, `${FIXTURE_WORKFLOW_ID}.workflow.yaml`),
+      FIXTURE_WORKFLOW_WITH_MERGE_SOURCE.replace(
+        'policy: { conflict: abort }',
+        'policy: { conflict: abort, preChecks: "false", skipChecks: [some-other-step] }',
+      ),
+    );
+    const ctx = await mergeContextFor(project, 'run-merge-skip-checks-unrelated');
+
+    const result = await mergeLane(ctx, laneId);
+
+    expect(result.failure?.code).toBe('MERGE-PRE-CHECK-FAILED');
+    expect(result.outcome?.kind).toBe('pre-check-failed');
+    expect(result.checks).toEqual({ pre: ['literal command'], post: [] });
   });
 
   it("an override lands the lane despite the declared preCheck still failing, is named, and records events under the lane's own step id", async () => {

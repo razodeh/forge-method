@@ -417,7 +417,8 @@ describe('runInit', () => {
       '.forge/config.local.yaml\n' +
       '.forge/overrides.local/\n' +
       '.forge/secrets.local.yaml\n' +
-      '.forge/state/\n';
+      '.forge/state/\n' +
+      '.forge/backups/\n';
     await writeFile(gitignorePath, preexisting);
 
     await runInit(dir, BASE, deps());

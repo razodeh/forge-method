@@ -198,7 +198,7 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
   // `PLAN-M14.md` P21 added one more `produces` entry to `freeze-contracts` itself:
   // `docs/forge/kb/architecture/version-skew.yaml`, the version-skew declaration `G-Integration`'s own
   // `version:skew` check reads (`briefs/freeze-contracts.md`'s new "Declarations the gate reads" section).
-  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211), freeze-contracts' produces (Q216, M14 P21), implement's `!{{item.test_paths}}` exclusion (Q225), the rca escalation's reproduction-test globs (M14 P13, Q216), and review's own fixAgent/produces for the bounded critic loop (specs/22 M15 P9, Q288)", () => {
+  it("build-stage matches 10 §10.1's own worked example, plus 16 §16.6's standup addition, the review itemKey, freeze-contracts after prepare (Q211), freeze-contracts' produces (Q216, M14 P21), implement's `!{{item.test_paths}}` exclusion (Q225), the rca escalation's reproduction-test globs (M14 P13, Q216), review's own fixAgent/produces for the bounded critic loop (specs/22 M15 P9, Q288), and merge's own preChecks removal plus generate-tests' skipChecks (specs/22 M15 P14, Q293): a per-lane check, pre OR post, is structurally incompatible with generate-tests' own lane having no implementation yet", () => {
     const worked = `
 id: build-stage
 name: Implement a stage
@@ -292,7 +292,7 @@ steps:
     kind: merge
     over: "stage.stories"
     dependsOn: [ "review:{{item.id}}" ]
-    policy: { conflict: agent, preChecks: fast, postChecks: full }
+    policy: { conflict: agent, postChecks: full, skipChecks: [generate-tests] }
 
   - id: verify
     kind: gate

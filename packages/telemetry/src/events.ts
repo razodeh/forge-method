@@ -10,6 +10,7 @@
  * @see specs/20 §20.4
  * @see PLAN-M5.md P6
  */
+import { readFileSync, writeFileSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
@@ -217,14 +218,142 @@ function enqueueForRun<T>(key: string, operation: () => Promise<T>): Promise<T> 
   return thisOperation;
 }
 
-/** The last `seq` written for `(projectRoot, runId)`, or `0` if nothing has been written yet — cached
- * per process lifetime once determined, since every *subsequent* call within the same process already
- * knows the answer from its own last successful append (updated only after that append's fsync
- * genuinely completes, never optimistically before). The cache is deliberately not trusted across a
- * process boundary: the first call for a given run in a fresh process (the realistic shape of a
- * crash-resume) always reads the file to find the true last seq, since nothing in memory could know it
- * yet. */
-const lastSeqCache = new Map<string, number>();
+/** `specs/22` M15 P14's own real live run found this file's own earlier `lastSeqCache` (a per-process
+ * cache of "the last seq I personally wrote") genuinely UNSAFE, not just theoretically so: a real
+ * `implement-story` workflow step's own `run:` command (`forge story verify`/`forge story evidence`,
+ * a SEPARATE spawned OS process) and the main engine process both append real events for the SAME run
+ * in close succession, and the cache's own documented assumption — "nothing else could have changed
+ * the file between my writes" — is false the instant a second real process can also write. Reproduced
+ * directly: a real `events.ndjson` with TWO different events both claiming `seq: 44`, from exactly
+ * this race. The cache is gone, not patched, because a cache that is sometimes safe and sometimes not
+ * is worse than no cache at all here — this file now always determines the true last `seq` from disk,
+ * while holding `withEventLogLock` below, which is the only way to know that no other process
+ * (including a future resumed run, a concurrent `forge logs`, or another lane's own command step) has
+ * written since. See `withEventLogLock`'s own doc comment for the real cross-process exclusion this
+ * now relies on instead. */
+
+/** `18` §18.10: assigning the next `seq` and appending it must happen as ONE atomic unit across every
+ * real process that might call `appendEvent` for the same `(projectRoot, runId)` — not just within one
+ * process (`enqueueForRun` above already serialises that cheaply, in-process, with no file I/O at
+ * all), but across every spawned command-step subprocess and the main engine process that dispatched
+ * it, all of which can genuinely run at once. Mirrors `@forge/cli`'s own already-three-round-hardened
+ * `withCollectionLock` (`commands/collection-lock.ts`, M15 P6/P10) algorithm exactly — exclusive-create,
+ * read-back to confirm this process genuinely holds it (`wx`'s own atomicity does not reliably hold
+ * under this environment's real I/O contention), age-gated reclaim of a stale or dead-owner lock — but
+ * is its own, separate implementation, not an import: `telemetry ← schemas` only (`specs/02` §2.2,
+ * this file's own `TelemetryError` doc comment), no edge to `@forge/core`/`@forge/cli` at all, so the
+ * CLI's own version is structurally unreachable here. Disclosed, not hidden: this is now a THIRD copy
+ * of the same proven algorithm (`collection-lock.ts` already consolidated two) — a future
+ * consolidation moving the generic mechanism down into a package both `@forge/cli` and
+ * `@forge/telemetry` can reach (`@forge/core/fs`, the obvious candidate) would be the right long-term
+ * fix, out of this live run's own narrow scope. */
+const EVENT_LOG_MAX_LOCK_ATTEMPTS = 200;
+const EVENT_LOG_LOCK_RETRY_DELAY_MS = 25;
+const EVENT_LOG_STALE_EMPTY_LOCK_MS = 2000;
+
+/** `process.kill(pid, 0)` sends no signal, only checks; throws `ESRCH` for a dead pid, `EPERM` for a
+ * live one this process cannot signal (still alive, so this counts as alive too) — the identical,
+ * tiny technique `@forge/cli`'s own `isProcessAlive` (`commands/run/lock.ts`) already uses, copied
+ * here rather than imported for the same package-boundary reason `withEventLogLock`'s own doc comment
+ * gives. */
+function isEventLogLockOwnerAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
+async function withEventLogLock<T>(
+  projectRoot: string,
+  runId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const runDir = path.dirname(eventLogPath(projectRoot, runId));
+  try {
+    await fsp.mkdir(runDir, { recursive: true });
+  } catch (cause) {
+    // The identical code `appendLineWithFsync`'s own `mkdir` failure already uses below: both are the
+    // same real failure class ("can't create this run's own directory"), now reachable from this
+    // function first (it runs before `appendLineWithFsync` ever does) rather than only from there.
+    throw new TelemetryError(
+      {
+        code: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',
+        message: `Failed to create the event log directory for run "${runId}": ${errorMessage(cause)}`,
+        remedy:
+          'Verify the project root is correct, this process has permission to write .forge/state/, and the disk is not full.',
+      },
+      { cause },
+    );
+  }
+  const resolved = path.join(runDir, 'events.lock');
+
+  let acquired = false;
+  for (let attempt = 0; attempt < EVENT_LOG_MAX_LOCK_ATTEMPTS && !acquired; attempt += 1) {
+    try {
+      // Synchronous, deliberately: a single call does create+write+close with no `await` (no Node
+      // microtask yield, no OS-scheduler preemption point) between the file coming into existence and
+      // its content being the real pid — `withCollectionLock`'s own doc comment has the fuller
+      // reasoning this is copied from.
+      writeFileSync(resolved, String(process.pid), { flag: 'wx' });
+      let readBack: string | undefined;
+      try {
+        readBack = readFileSync(resolved, 'utf8').trim();
+      } catch {
+        readBack = undefined;
+      }
+      if (readBack !== String(process.pid)) {
+        await new Promise((resolveDelay) =>
+          setTimeout(resolveDelay, EVENT_LOG_LOCK_RETRY_DELAY_MS),
+        );
+        continue;
+      }
+      acquired = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const ownerPidText = await fsp
+        .readFile(resolved, 'utf8')
+        .then((text) => text.trim())
+        .catch(() => '');
+      const ownerPid = Number(ownerPidText);
+      if (ownerPid > 0) {
+        if (!isEventLogLockOwnerAlive(ownerPid)) {
+          await fsp.rm(resolved, { force: true });
+          continue;
+        }
+      } else {
+        // The identical boundary reason `audit.ts`'s own `listRunIds` already takes (no `@forge/core`
+        // edge to reach an injected `Clock` with): purely internal lock-reclaim timing, never recorded
+        // event data, the one thing this package's own determinism discipline actually governs (this
+        // file's own header comment).
+        const ageMs = await fsp
+          .stat(resolved)
+          // eslint-disable-next-line no-restricted-syntax -- see the comment above
+          .then((info) => Date.now() - info.mtimeMs)
+          .catch(() => undefined);
+        if (ageMs === undefined || ageMs > EVENT_LOG_STALE_EMPTY_LOCK_MS) {
+          await fsp.rm(resolved, { force: true });
+          continue;
+        }
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, EVENT_LOG_LOCK_RETRY_DELAY_MS));
+    }
+  }
+  if (!acquired) {
+    throw new TelemetryError({
+      code: 'TELEMETRY-EVENT-LOG-LOCK-EXHAUSTED',
+      message: `Could not acquire the event log lock for run "${runId}" after ${String(EVENT_LOG_MAX_LOCK_ATTEMPTS)} attempts.`,
+      remedy:
+        'Check for a stuck or crashed process holding .forge/state/runs/<runId>/events.lock; remove it by hand if no real process owns it.',
+    });
+  }
+  try {
+    return await operation();
+  } finally {
+    await fsp.rm(resolved, { force: true });
+  }
+}
 
 function parseEventLine(line: string, runId: string): ForgeEvent {
   let parsed: unknown;
@@ -307,15 +436,13 @@ async function truncateTornTrailingWrite(filePath: string, content: string): Pro
 
 /** Reuses `parseEventLine` rather than duplicating its shape-check — the same "is this a well-formed
  * event" question `readEvents` already asks of every line, asked here of just the last one, so the two
- * can't drift apart into checking slightly different things. */
-async function determineLastSeq(
-  projectRoot: string,
-  runId: string,
-  cacheKey: string,
-): Promise<number> {
-  const cached = lastSeqCache.get(cacheKey);
-  if (cached !== undefined) return cached;
-
+ * can't drift apart into checking slightly different things. Always reads the real file fresh — no
+ * cache: see the removed `lastSeqCache`'s own doc comment (above `withEventLogLock`) for why a
+ * per-process cache of this value is unsafe the instant a second real process can also write, which
+ * `appendEvent`'s own real callers (a spawned command-step subprocess, the main engine process) now
+ * provably are. Called only while `appendEvent` holds `withEventLogLock`, so this real read is the
+ * one place genuinely safe to trust as "the true current last seq." */
+async function determineLastSeq(projectRoot: string, runId: string): Promise<number> {
   const filePath = eventLogPath(projectRoot, runId);
   let content: string;
   try {
@@ -400,35 +527,32 @@ export async function appendEvent(
   // projectRoot "/a" + runId "b c" would otherwise both produce "/a b c". NUL cannot appear in a valid
   // path or a realistic run id, so it cannot collide the same way.
   const cacheKey = `${projectRoot}\0${runId}`;
-  return enqueueForRun(cacheKey, async () => {
-    const lastSeq = await determineLastSeq(projectRoot, runId, cacheKey);
-    const seq = lastSeq + 1;
-    const redactedPayload = redactPayload(
-      event.payload,
-      options.redactPatterns ?? [],
-      options.knownSecrets ?? [],
-      options.valuePatterns ?? [],
-    );
-    const fullEvent: ForgeEvent = { ...event, v: 1, seq, payload: redactedPayload };
-    try {
-      await appendLineWithFsync(eventLogPath(projectRoot, runId), `${JSON.stringify(fullEvent)}\n`);
-    } catch (cause) {
-      // A failed append's own best-effort rollback (inside appendLineWithFsync) can itself fail — a
+  // In-process queue first (cheap, no file I/O, the common case — one process rarely has two
+  // genuinely concurrent `appendEvent` calls for the same run), THEN the real cross-process lock
+  // (`withEventLogLock`'s own doc comment has the full real-live-run-found reasoning for why this
+  // second layer is not redundant with the first).
+  return enqueueForRun(cacheKey, () =>
+    withEventLogLock(projectRoot, runId, async () => {
+      const lastSeq = await determineLastSeq(projectRoot, runId);
+      const seq = lastSeq + 1;
+      const redactedPayload = redactPayload(
+        event.payload,
+        options.redactPatterns ?? [],
+        options.knownSecrets ?? [],
+        options.valuePatterns ?? [],
+      );
+      const fullEvent: ForgeEvent = { ...event, v: 1, seq, payload: redactedPayload };
+      // A failed append's own best-effort rollback (inside `appendLineWithFsync`) can itself fail — a
       // doubly-degraded disk, confirmed empirically to leave a fully well-formed (newline-terminated)
       // "phantom" line on disk for this seq, indistinguishable on its own from a real committed event.
-      // Trusting the cached lastSeq afterwards would let the *next* successful append reuse this seq
-      // number, colliding with the phantom already on disk — readEvents then finds two lines both
-      // claiming the same seq and the run becomes permanently unreadable past that point. Invalidating
-      // the cache forces the next append for this run to re-derive the truth from disk instead: if the
-      // rollback actually succeeded (the common case), disk still says lastSeq unchanged, no behaviour
-      // change; if it didn't, disk now shows the phantom's own seq as the real last one, and the next
-      // append correctly continues past it with no collision.
-      lastSeqCache.delete(cacheKey);
-      throw cause;
-    }
-    lastSeqCache.set(cacheKey, seq);
-    return fullEvent;
-  });
+      // No cache to invalidate any more (removed — see `determineLastSeq`'s own doc comment): the next
+      // call simply re-reads the real file fresh regardless, which already lands on the right answer
+      // either way (unchanged if the rollback worked, past the phantom's own seq if it didn't) with no
+      // separate bookkeeping needed for this case at all.
+      await appendLineWithFsync(eventLogPath(projectRoot, runId), `${JSON.stringify(fullEvent)}\n`);
+      return fullEvent;
+    }),
+  );
 }
 
 /** Streams `.forge/state/runs/<runId>/events.ndjson` back in order. A `seq` gap — including a `seq` of

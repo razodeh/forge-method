@@ -437,13 +437,17 @@ describe('the shipped build-stage through the engine (runEngine)', () => {
 
   it('integrates the contracts before the design gate, lands the story lanes at the merge, and runs prepare as a no-op on the stage branch', async () => {
     const workflow = shippedBuildStage();
-    // The shipped source, unmodified: its `preChecks: fast` / `postChecks: full` resolve to the configured test
-    // commands (they used to be run as shell commands, `fast: command not found`, and this test had to swap them).
+    // The shipped source, unmodified: its `postChecks: full` resolves to the configured test commands (they
+    // used to be run as shell commands, `fast: command not found`, and this test had to swap them). No
+    // `preChecks` (specs/22 M15 P14): a per-lane "fast" check is structurally incompatible with
+    // `generate-tests`'s own lane having no implementation yet.
     const source = readFileSync(
       path.join(repoRoot, 'packages', 'templates', WORKFLOW_INDEX['build-stage']),
       'utf8',
     );
-    expect(source).toContain('policy: { conflict: agent, preChecks: fast, postChecks: full }');
+    expect(source).toContain(
+      'policy: { conflict: agent, postChecks: full, skipChecks: [generate-tests] }',
+    );
 
     const probed = new Map<string, boolean>();
     const adapter = adapterFor(stories, (request) => {
@@ -619,18 +623,22 @@ describe('the shipped build-stage inner loop, end to end (runEngine, stacked lan
     expect(merged.filter((event) => event.stepId === `${P}merge`)).toHaveLength(6);
   });
 
-  it('the merge runs the shipped fast set before and the full set after every lane it lands, all pass, and the integration branch holds everything', async () => {
+  it('the merge runs only the shipped full set, once per lane it lands in the integration tree, all pass, and the integration branch holds everything', async () => {
     const { fixture, marker, events } = await runShipped(recordingAll());
 
     const lines = markerLines(marker);
     const inIntegration = (line: string): boolean =>
       line.endsWith(path.join('worktrees', 'integration'));
-    const pre = lines.filter((line) => !inIntegration(line)).map((line) => line.split(' ')[0]);
+    // No per-lane isolated pre-check (specs/22 M15 P14): only `full` (typecheck, lint, unit, integration,
+    // contract) runs, once per lane, against the integration tree itself -- except `generate-tests`'s own
+    // two lanes (one per story), which `skipChecks: [generate-tests]` exempts entirely (its own test file
+    // has no implementation yet to import, the same TDD-structural reason `preChecks` was removed for).
+    // Four of the six lanes run the full five-layer set; the other two run none.
+    const pre = lines.filter((line) => !inIntegration(line));
     const post = lines.filter(inIntegration).map((line) => line.split(' ')[0]);
-    // Six lanes: `fast` (typecheck, lint, unit) in each lane, `full` (fast + integration + contract) in the tree.
-    expect(pre).toEqual(Array.from({ length: 6 }, () => ['typecheck', 'lint', 'unit']).flat());
+    expect(pre).toEqual([]);
     expect(post).toEqual(
-      Array.from({ length: 6 }, () => [
+      Array.from({ length: 4 }, () => [
         'typecheck',
         'lint',
         'unit',
@@ -655,25 +663,24 @@ describe('the shipped build-stage inner loop, end to end (runEngine, stacked lan
     expect(JSON.stringify(events)).not.toContain('command not found');
   });
 
-  it('a failing pre-check blocks the landing with the typed reason and the configured command named; nothing of the stories reaches the branch', async () => {
+  it('a failing unit check -- once a "fast" pre-check layer, now only caught by the full set one lane after generate-tests (which skipChecks exempts) -- reverts implement\'s own lane; nothing it built on survives', async () => {
     const { fixture, events } = await runShipped(recordingAll({ unit: 1 }));
 
     const failure = events.find(
       (event) => event.type === 'StepFailed' && event.stepId === `${P}merge`,
     )?.payload as { code?: string; message?: string } | undefined;
-    expect(failure?.code).toBe('MERGE-PRE-CHECK-FAILED');
+    expect(failure?.code).toBe('MERGE-POST-CHECK-FAILED');
     expect(failure?.message).toContain('execution.testCommands.unit');
+    expect(events.filter((event) => event.type === 'MergeReverted')).toHaveLength(1);
     const files = await filesOnIntegration(fixture);
-    expect(files).not.toContain('tests/story-001/story-001.test.ts');
+    // generate-tests:STORY-001's own lane runs no checks at all (skipChecks) and lands cleanly; `unit: 1`
+    // is first evaluated one lane later, at implement:STORY-001's own post-check, which reverts only that
+    // lane's own file.
+    expect(files).toContain('tests/story-001/story-001.test.ts');
     expect(files).not.toContain('src/story-001/story-001.ts');
-    // The lanes are kept for inspection; the integration tree is clean.
-    expect(fixture.ctx.laneRegistry.size).toBeGreaterThan(0);
-    expect(
-      (await execa('git', ['status', '--porcelain'], { cwd: fixture.integrationPath })).stdout,
-    ).toBe('');
   });
 
-  it('a failing post-check reverts the merge of the lane that broke it and lands nothing after it', async () => {
+  it('a failing post-check reverts the merge of the lane that broke it (one lane after generate-tests, which skipChecks exempts) and lands nothing after it', async () => {
     const { fixture, events } = await runShipped(recordingAll({ contract: 1 }));
 
     const failure = events.find(
@@ -683,8 +690,9 @@ describe('the shipped build-stage inner loop, end to end (runEngine, stacked lan
     expect(failure?.message).toContain('execution.testCommands.contract');
     expect(events.filter((event) => event.type === 'MergeReverted')).toHaveLength(1);
     const files = await filesOnIntegration(fixture);
-    // The first lane of the first story (its tests) was merged and reverted; nothing built on it landed.
-    expect(files).not.toContain('tests/story-001/story-001.test.ts');
+    // generate-tests:STORY-001's own lane (skipChecks) lands cleanly; implement:STORY-001's own lane is
+    // the one `contract: 1` reverts, so its own file never lands, but the test file before it does.
+    expect(files).toContain('tests/story-001/story-001.test.ts');
     expect(files).not.toContain('src/story-001/story-001.ts');
   });
 
@@ -919,12 +927,16 @@ describe('the shipped implement-story inner loop, end to end (runEngine, stacked
     // and evidence each changed nothing (the fake `forge` writes no tracked file).
     expect(merged).toHaveLength(6);
     const lines = markerLines(marker);
+    // No per-lane isolated pre-check (specs/22 M15 P14): only `full`, once per lane, in the integration
+    // tree -- except `red`'s own lane, which `skipChecks: [red]` exempts entirely (its own test file has
+    // no implementation yet to import). Five of the six lanes run the full five-layer set (25 entries);
+    // `red`'s own contributes none.
     expect(
       lines.filter((line) => !line.endsWith(path.join('worktrees', 'integration'))),
-    ).toHaveLength(18);
+    ).toHaveLength(0);
     expect(
       lines.filter((line) => line.endsWith(path.join('worktrees', 'integration'))),
-    ).toHaveLength(30);
+    ).toHaveLength(25);
     const files = await filesOnIntegration(fixture);
     for (const file of WATCHED) expect(files).toContain(file);
     expect(files.filter((file) => /REVIEW-\d{3}\.md$/.test(file))).toHaveLength(1);
@@ -932,14 +944,15 @@ describe('the shipped implement-story inner loop, end to end (runEngine, stacked
     expect(JSON.stringify(events)).not.toContain('command not found');
   });
 
-  it('a failing pre-check stops the merge with the typed reason: nothing of the story is integrated', async () => {
+  it('a failing lint check -- once a "fast" pre-check layer, now only caught by the full set after a lane lands -- reverts the merge with the typed reason: nothing of the story is integrated', async () => {
     const { fixture, events } = await runShipped({ lint: 1 });
 
     const failure = events.find(
       (event) => event.type === 'StepFailed' && event.stepId === `${PS}merge`,
     )?.payload as { code?: string; message?: string } | undefined;
-    expect(failure?.code).toBe('MERGE-PRE-CHECK-FAILED');
+    expect(failure?.code).toBe('MERGE-POST-CHECK-FAILED');
     expect(failure?.message).toContain('execution.testCommands.lint');
+    expect(events.filter((event) => event.type === 'MergeReverted')).toHaveLength(1);
     expect(await filesOnIntegration(fixture)).not.toContain(HANDOFF_PATH);
   });
 });

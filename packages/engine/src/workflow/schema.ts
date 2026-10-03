@@ -82,6 +82,8 @@ const mergePolicySchema = z
     conflict: nonBlank(),
     preChecks: nonBlank().optional(),
     postChecks: nonBlank().optional(),
+    // specs/22 M15 P14: `MergePolicy.skipChecks`'s own doc comment (`types.ts`) has the full reasoning.
+    skipChecks: z.array(nonBlank()).optional(),
   })
   .strict();
 

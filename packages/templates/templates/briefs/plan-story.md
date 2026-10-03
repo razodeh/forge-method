@@ -20,7 +20,12 @@ file claim.
 A `HandoffRecord` (subtype `implementation-plan`) for this story, registered in
 `reports/handoffs.md`. Its `step` names this planning step. The entry has no `subtype` key, so the
 first string in `delivered` is `subtype: implementation-plan` (the output check reads the subtype from
-that line). It has no free-form body, so carry the plan in the fields:
+that line). It has no free-form body, so carry the plan in the fields: the file starts with the `---`
+line of this entry's own front matter — no heading, no title, no comment, nothing at all before it,
+even if `reports/handoffs.md` does not exist yet and you are creating it for the first time. Close the
+front matter too: after the very last field you write, add a final `---` line of its own, and nothing
+after it — there is no free-form body for this type, so the file ends there. A front matter block with
+no closing `---` is as invalid as one with no opening `---`, and fails the same way.
 
 - `delivered`: after the `subtype:` line, each production file to create or change, one entry per file, with the approach in a
   sentence and the acceptance criteria it serves, and then each test file to create, one entry per
@@ -30,12 +35,22 @@ that line). It has no free-form body, so carry the plan in the fields:
 - `constraints_for_receiver`: the rules the tests and the implementation must respect. Include the
   contract names and error codes to use, the standards that apply, and the risks (concurrency,
   ordering, migration, performance) with how each is contained.
-- `acceptance_for_receiver`: for each acceptance criterion, the test that will prove it (use the
-  test names the story already binds to the criterion in its `tests` field, each beginning with its
-  AC id, and say which planned test file holds each), the
-  strongest oracle available, and the command that runs it.
-- `assumptions` and `open_questions`: anything you had to assume, with confidence and how to
-  validate it, and anything a human must answer before implementation.
+- `acceptance_for_receiver`: a plain array of strings, ONE SENTENCE per acceptance criterion — pack
+  the test that will prove it (use the test names the story already binds to the criterion in its
+  `tests` field, each beginning with its AC id, and say which planned test file holds it), the
+  strongest oracle available, and the command that runs it, all into that ONE string, the identical
+  "one entry per X, with Y in a sentence" shape `delivered` above already uses. NOT an object with
+  its own `criterion`/`test`/`file`/`oracle`/`command` keys — that shape reads naturally from this
+  section's own prose, but is wrong; e.g. write `'AC-001-1: src/foo.test.js asserts foo(5) === 10
+  (exact-match); run with the project's configured unit command.'` as ONE string, not four or five
+  separate fields.
+- `open_questions`: a plain array of strings — anything a human must answer before implementation.
+- `assumptions`: NOT plain strings — each entry is an object with its own `id` (`ASM-###`), `text`
+  (the assumption itself), `confidence` (`low`/`medium`/`high`), and `validate_by` (how/when to
+  confirm it), e.g. `{id: 'ASM-001', text: 'the order object shape is...', confidence: 'medium',
+  validate_by: 'confirm with the architect before a second story consumes this function'}`. This is
+  the only field in this handoff shaped as an object instead of a plain string — every other field
+  above and below it, including `acceptance_for_receiver`, is a plain array of strings.
 
 Address the receiver by role: `to` is the role that writes the tests next.
 

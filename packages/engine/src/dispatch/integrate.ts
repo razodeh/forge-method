@@ -89,6 +89,33 @@ export function resolveLaneChecks(
   };
 }
 
+/** Whether `stepId`'s own lane is one `mergePolicy.skipChecks` (`@forge/engine/workflow`'s `MergePolicy`,
+ * specs/22 M15 P14) names. A real compiled step id carries every scope it was authored inside of, joined
+ * by `:`, and a workflow author names only the one bare step it wrote (`red`, `generate-tests`) — never
+ * how many scopes of prefixing wrap it at the id's actual call site. A first build of this matched only
+ * an exact id or an `<entry>:` *prefix*, which looked right against the bare ids `build-stage.workflow.
+ * yaml`'s own doc comment shows, but a real test run of `build-stage` driven as a stage (step ids
+ * `build-stage:generate-tests:STORY-001`) proved it wrong: `generate-tests` is a *middle* segment there,
+ * never a prefix, so that version silently matched nothing and every check still ran. Splitting on `:`
+ * and checking segment membership handles any depth of prefixing (a bare top-level workflow, a
+ * stage-scoped one, a fanout item suffix) with one rule, not a family of prefix/suffix special cases.
+ * Runtime matching, not compile-time templating: `skipChecks` names the *fanout step itself*
+ * (`generate-tests`), never a per-item `{{item.id}}` template — `mergeDependsOn` (`plan/compile.ts`)
+ * only ever expands that templating for a step's own `dependsOn`, and generalising it to a second field
+ * for this one, narrow use is more compiler surface than this real, bounded gap needs.
+ *
+ * Lives here, not in `steps.ts`, and is exported (`dispatch/index.ts`) for the identical reason
+ * `landLane`/`resolveLaneChecks` already do: `runMergeStep`'s own automatic landing and `@forge/cli`'s
+ * `forge merge`/`forge merge --all` (`commands/run/merge.ts`, `PLAN-M14.md` P40) are a *second*, real,
+ * independent landing path over the same lanes — a round-2 gauntlet critic caught the first version of
+ * this fix leaving that second path with no way to reuse this check at all (private, unexported), so it
+ * silently kept running real checks against a `skipChecks`-named lane exactly as before the fix. */
+export function skipsChecksFor(skipChecks: readonly string[] | undefined, stepId: string): boolean {
+  if (skipChecks === undefined) return false;
+  const segments = stepId.split(':');
+  return skipChecks.some((entry) => segments.includes(entry));
+}
+
 export interface LandLaneOptions {
   /** The step the `Merge*` events are recorded against: the `merge` step for an explicit merge, the lane's
    * own step for the engine's automatic integration. */
