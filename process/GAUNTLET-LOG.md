@@ -20967,3 +20967,223 @@ existing "`forge init`: wrote 166 files" line has drifted (a real project now wr
 unrelated to anything P13 edited, not a regression this piece introduces.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q292`.
+
+## M15 P14 — Live-run exit proof: `forge run implement-story`, real Claude Code, real API key, real throwaway project (M15's final piece)
+
+Run by the orchestrator with the owner's explicit authorization ("start the live testing P14"), from a real
+throwaway project (`/tmp/forge-p14-live`, outside this repository, its own independent git history), budget-capped
+(`.forge/config.yaml`'s `budget: {perRunUsd: 15, perStepUsdDefault: 3, dailyUsd: 100, onBreach: abort}`), the real
+`ANTHROPIC_API_KEY` loaded via `set -a; . /path/to/forge/.env; set +a` for a single command at a time, never printed.
+A post-run scan (`grep -rl "$ANTHROPIC_API_KEY" .`) found the key in 0 files across this repository, the throwaway
+project, and every captured log. Nothing was committed from the throwaway project into this repository. Full record
+in `SPEC-QUESTIONS.md` Q293.
+
+**P14's own Mandate asks for:** a real `implement-story` run at L1, with the required evidence being G-Verify
+failing at `test:binding` naming a non-binding test, the critic loop running and terminating within its cap, the
+fixed story passing with a committed EvidenceBundle, `forge report` showing round count and binding recovery, and
+the disclosure ledger being consistent — recorded here with real costs and every gap the run discloses, not a
+hand-assembled demonstration.
+
+**31 real attempts, $43.07 total real spend** (`forge report --json`'s own `cost.totalUsd` for STORY-001 — the
+project's only story — reconciles exactly with a manual sum of every real `UsageRecorded` event across every run
+directory still on disk). Grouped by what each attempt actually found, not narrated one by one.
+
+**Six real FORGE defects found live and fixed, each a brief-only or source-only change, never a workaround:**
+
+1. **`plan-story.md`'s own brief, four separate real ambiguities, each hit by a real agent and fixed in turn:**
+   front matter must open AND close with its own `---` line (an agent omitted the closing fence); `assumptions`
+   is a structured object array (`id`/`text`/`confidence`/`validate_by`), not plain strings, with no worked
+   example to copy; `acceptance_for_receiver` is a plain array of strings, never a nested object with its own
+   `criterion`/`test`/`file`/`oracle`/`command` keys (an agent invented that shape by analogy with a sibling
+   field); the `assumptions` exception note's own wording was ambiguous about which field is the one shaped as
+   an object.
+
+2. **`@forge/telemetry`'s `appendEvent`: a real, safety-critical cross-process race, found only because a
+   `telemetryProjectRoot` fix (item 3 below) exposed it.** The removed `lastSeqCache`'s own doc comment asserted
+   "nothing else could have changed the file between my writes" — false the instant a spawned command-step
+   subprocess and the main engine process both legitimately append to the same run's event log, which is exactly
+   what item 3's fix made happen for the first time. Reproduced live: two real, separate OS processes racing on
+   `determineLastSeq` both read seq 43, both wrote seq 44, a silent duplicate. Fixed with a real, hardened
+   cross-process file lock (`withEventLogLock`), self-contained in `@forge/telemetry` (no `@forge/core`/`@forge/cli`
+   edge to reuse `withCollectionLock`'s own algorithm directly, per `specs/02` §2.2's package boundary — mirrored
+   it instead: exclusive-create via `wx`, synchronous read-back verification, age-gated reclaim of a stale-empty
+   or dead-owner lock). Verified against 10 real, separate OS processes appending 5 events each concurrently: 50
+   gapless, unique seqs every time; confirmed the test is non-vacuous by temporarily bypassing the lock (0 of 50
+   events survived the induced race). The owner was asked directly before this fix — a real, safety-critical
+   change to shared infrastructure mid-live-run — and chose "attempt the cross-process locking fix now" over
+   reverting item 3 (accepting the lesser, already-known project-root bug) or pausing the run entirely.
+
+3. **`bin.ts`/`story.ts`: `forge story evidence`/`checkBinding`'s own telemetry write used the lane's own
+   ephemeral `projectRoot`** (no `.forge/state/` directory there at all — confirmed empirically) **instead of
+   `FORGE_PROJECT_ROOT`,** the true root `commandStepEnvironment` already sets for every command step specifically
+   so a `run:` string can reach it. Every real binding-check/evidence write from inside a workflow's own command
+   step silently landed nowhere. Added a new, deliberately separate `StoryVerifyContext.telemetryProjectRoot`
+   field (the pre-existing `projectRoot` is correctly lane-scoped for `getDirtyFiles`, so widening it instead
+   would have been wrong for a different reason).
+
+4. **Both shipped TDD-stacked workflows' `merge` step, two compounding findings, the second found only after the
+   first's own fix reached a real test command for the first time:**
+   - `preChecks: fast` is structurally incompatible with a stacked red/green lane chain: "fast" runs the
+     declared test layers against EACH landing lane's own isolated worktree, individually, before any of them
+     merge (`PLAN-M13.md` P38) — but the TDD-writing lane (`implement-story`'s `red`, `build-stage`'s
+     `generate-tests`) has the test file with no implementation for it to import yet, by design, not as a real
+     regression. Removed from both shipped `policy:` blocks.
+   - **Removing `preChecks` alone was NOT sufficient** — confirmed by a second real live run reaching the
+     identical wall one step later: `postChecks: full` runs the identical layers, once per lane, AS IT LANDS,
+     against the integration tree instead of the lane's own worktree — the same `PLAN-M13.md` P38 per-lane
+     timing, just a different tree, and the real error (`Cannot find module './classify-order-priority.js'`)
+     was byte-for-byte the same failure mode wearing a different hat. The real, deeper fix: a new, optional
+     `MergePolicy.skipChecks: readonly string[]` field naming bare step ids (`red`, `generate-tests`) whose
+     landed lane skips checks entirely — matched at runtime by colon-separated segment membership against the
+     lane's real compiled id (`skipsChecksFor`, `@forge/engine/dispatch`), not compile-time templating (no
+     change to `mergeDependsOn`/`plan/compile.ts`) and not a fixed prefix (a build-phase self-check caught its
+     own first version, which matched only an `<entry>:` prefix, silently matching nothing against the real,
+     stage-scoped id `build-stage:generate-tests:STORY-001`, where `generate-tests` is a middle segment).
+     Safe because that lane's own write claim is already narrowly bounded (`produces`, enforced at commit
+     time, `RUN-104`), and the identical check set runs again, unskipped, one lane later (`green`/`implement`)
+     once a real implementation exists to check.
+
+   This fix got its own dedicated gauntlet round, below. Both shipped workflows' own `merge` doc comments now
+   carry the full, real reasoning, including the first (wrong) comment's own correction.
+
+5. **`forge init`'s own `GITIGNORE_ENTRIES`: missing `.forge/backups/`**, the directory `forge upgrade`'s own
+   backup step (`03` §3.4 step 3, `createBackup`) writes a full copy of `.forge/` plus the spec tree into on
+   every real upgrade that touches a regenerable file. Upgrading the throwaway project to pick up fix 4 above
+   produced 637 real, untracked files; `forge run` then correctly refused outright ("FORGE never discards
+   uncommitted work") rather than silently working around a dirty tree. Fixed by adding the entry to the
+   scaffold template (new projects); the throwaway project's own already-scaffolded `.gitignore` was patched by
+   hand to unblock the live run, disclosed below as a related, deliberately unfixed gap.
+
+6. **The throwaway project's own setup, not a FORGE defect, found live anyway:** `implement-story.workflow.yaml`'s
+   `plan` step declares `kb:engineering/standards` as a required input; nothing had ever created that KB entry
+   in the throwaway project (only `dod-profiles.yaml` existed under `docs/forge/kb/engineering/`). A real agent
+   correctly noticed the gap and emitted a real `FORGE_REQUEST_CONTEXT: kb:engineering/standards` line rather
+   than inventing content — exactly the context-request mechanism working as designed — but the request could
+   not be served (nothing to serve), and the step failed with `RUN-083` ("no file ... added or changed").
+   Fixed by authoring a real, minimal, schema-valid KB entry (`KB-ENG-0001`) in the throwaway project and
+   committing it — the project's own setup gap, not FORGE's.
+
+**A dedicated gauntlet round for fix 4's own `skipChecks` mechanism (two independent fresh-context critics, both
+converging on the same blocking finding).** Built by a forked agent, reviewed by two critics working
+independently from the real diff alone (no access to each other's findings, no summary of the build agent's own
+claims trusted uncritically):
+
+- **Both critics independently found the same HIGH-severity gap:** `packages/cli/src/commands/run/merge.ts` (the
+  standalone `forge merge`/`forge merge --all` manual-recovery command, `PLAN-M14.md` P40 — a second, real,
+  independent lane-landing path alongside `runMergeStep`'s own automatic one) read `mergePolicy.preChecks`/
+  `.postChecks` directly but never `.skipChecks`, and `skipsChecksFor` was a private, unexported function with no
+  way for this file to reuse it even if it tried — reintroducing the exact deterministic `Cannot find module`
+  failure fix 4 exists to eliminate, reachable the moment a real run crashed or paused mid-lane and an operator
+  ran `forge merge --all` to recover it by hand. This also broke the command's own doc comment, which still
+  asserted (now falsely) that it lands a lane "with the checks the run would have applied, never none." Zero
+  test coverage existed for this path with `skipChecks` in play.
+- One critic additionally flagged (LOW/MEDIUM, not blocking): a skip-exempted lane's own `MergeStarted`/
+  `skippedLayers` telemetry carries no marker distinguishing "policy-skipped" from "nothing configured" — in
+  the common fully-configured case, indistinguishable from "this merge policy names zero checks" to an auditor
+  reading the event log. One critic flagged (LOW, docs-only): `build-stage.workflow.yaml`'s own comment still
+  claimed `skipChecks` matches by a fixed `generate-tests:` prefix, the exact semantics the engine's own doc
+  comment says was tried first and proven wrong.
+- **Fixed directly by the orchestrator:** moved `skipsChecksFor` from `steps.ts` into `integrate.ts` (the file
+  `landLane`/`resolveLaneChecks` already live in, for the identical "the engine's automatic path and a second,
+  independent CLI path are the same code" reason) and exported it; wired `declaredChecksFor`/`mergeLane`
+  (`merge.ts`) to read `skipChecks` from the recompiled plan's own merge-step policy, override to empty checks
+  for a matched lane only after the policy's own "are any checks configured at all" sanity check already passed
+  (so a legitimately-configured project with a skip-exempted lane still lands clean, never refused as
+  misconfigured), and to defer to an explicit `--pre-checks`/`--post-checks` override exactly as it already
+  defers to the policy's own `preChecks`/`postChecks`. Added two real tests to `merge.test.ts` (a `skipChecks`-
+  named lane lands clean despite a declared pre-check that would still fail for real; `skipChecks` naming an
+  unrelated step does not skip this lane, and the same declared pre-check still fails it for real) and fixed the
+  stale YAML comment. The telemetry gap was disclosed, not fixed (below) — both critics independently agreed it
+  is a real audit gap, not a correctness bug, and neither put it in their own "must fix before sign-off" list.
+- **Verification:** `pnpm typecheck`/`pnpm lint` clean; every directly touched test file re-run clean (109 tests
+  across `test/workflows.test.ts`, `test/build-stage-lane-landing.test.ts`,
+  `packages/engine/test/dispatch/merge.test.ts`, `packages/cli/test/commands/run/merge.test.ts`); the full
+  `packages/engine`+`packages/cli` suites (5527 tests, one confirmed-transient timeout,
+  `confined-command.test.ts`, re-ran clean in isolation in 1.05 s) and the full root `test/` suite (twice; each
+  time, the only failures were confirmed transient by isolated re-run — a TUI keypress test, an
+  `intake-workflow.test.ts` hook timeout, a KB-decision-writeback race test — none reproducing alone, all
+  consistent with this machine running a real live agent session and the full suite at once).
+
+**Organically confirmed, working as designed, not fixed — real findings this run surfaced on its own, without
+being engineered to find them:**
+
+- **`RUN-083` at the swarm-review step, multiple perspectives (design, security, testing, performance), multiple
+  attempts, including once on a critic-loop's own third and final round.** The review-output parsing contract
+  (`PROSE_OUTPUT_CONTRACT`, exactly one fenced `json` block, nothing after its closing fence) is a deliberate
+  security boundary against prompt injection from hostile reviewed content, already disclosed earlier this
+  milestone as having a real, observed ~20-30% per-perspective failure rate against real Claude Code output.
+  Confirmed again here, organically, at real cost, across every perspective at least once — never loosened.
+- **`RUN-083` at the `plan` step itself**, twice: once the session emitted a real `FORGE_REQUEST_CONTEXT` line
+  with no file written at all (fix 6 above); once the session wrote a `HandoffRecord` with entirely invented
+  field names (`type`/`schemaVersion`/`title`/`status`/`created`/`updated`/`revision`/`author`/`changelog`/
+  `story`) that validate against nothing real — the identical brief, on other real attempts, produced a
+  correctly-shaped record that reached merge, so this reads as ordinary model variance, not a reproducible
+  brief defect.
+- **`error_max_turns` (20) at the `plan` step**, once, with zero billed cost and a one-line transcript
+  ("I'll start by exploring the repo...") — the agent ran its full turn budget before ever producing output.
+  Ordinary model variance under this project's own configured turn ceiling, not investigated further (a lower
+  real cost than any alternative use of the time this run already had).
+- **`RUN-104` at the `review` step, once, for real:** the review's own automatic fix-and-re-review session
+  (`specs/22` M15 P9's bounded critic loop, the same implementer role as `green`/`refactor`, never the reviewer
+  itself) wrote to `src/classify-order-priority.test.js` — a test file, outside its own claim
+  (`produces: ['{{run.filesExpected}}', '!{{run.testPaths}}']`) — and the engine caught it, reverted the one
+  stray path, and failed the step under `strict` enforcement, exactly as `06` §6.7/`PLAN-M14.md` P3 already
+  specify and as the pre-existing test suite (`test/authoring-roles-run.test.ts`'s own "a session that writes
+  ONLY a stray file fails RUN-104") already covers — the reviewer/implementer separation working correctly
+  against a real model's real, unprompted mistake, not a synthetic one.
+
+**The run that completed clean (`run-implement-story-20261003061154131`, $2.0712 real cost):** all 11 steps
+succeeded — `plan red green refactor self-verify review document done-check evidence commit merge` — 6 real
+`MergeCompleted` events (one per content-changing lane: `plan`, `red`, `green`, `review`, `document`,
+`evidence`), zero `MergeReverted`. Binding: `testsNamed: 3, bound: 3, nonBinding: 0, exempted: 0`. The committed
+`EVID-001-STORY-001.md` on the integration branch: `verify: {phase: done, passed: true, errors: 0}`, both
+`test:unit` and `spec:ac-coverage` checks passing, `coverage.acCoveragePercent: 100`, `reviews: [{id: REVIEW-001,
+verdict: concerns}]`, `cost.totalUsd: 2.0711961` (matching the event log exactly), and its own honest, self-
+disclosed gap in the front matter ("no coverage data found at coverage/coverage-summary.json").
+`forge report --json`: `binding.passRate: 1`, `criticLoop: {roundsConsumed: 19, stopAndDiscloseCount: 0}`,
+`cost.totalUsd: 43.07381750000004` (the project-wide total, reconciling exactly with the manual sum), `kbReads:
+{artifactsCreated: 8, precededByKbRead: 0, rate: 0}` (disclosed as-is: no agent session in this run's own history
+read an existing KB entry before writing one, even though one — item 6's `KB-ENG-0001` — was a declared input).
+`forge kb disclosures --json`: `{open: 0, disclosuresCorrupt: 0, exemptionsCorrupt: 0, entries: []}`.
+
+**The one required-evidence item the Mandate asks for that this run did NOT organically produce, disclosed
+rather than fabricated.** Across all 31 real attempts, every real test that ever reached `self-verify`'s own
+binding check bound cleanly on its first try (`bound == testsNamed`, `nonBinding: 0`, every single time) —
+`G-Verify` never once failed at `test:binding` naming a real non-binding test, and `forge report`'s own
+`bindingEvidence` stayed empty accordingly (no binding RECOVERY ever happened within a single real run, because
+nothing ever needed recovering). This is not a defect in the mechanism — M15 P6 through P10's own real, synthetic
+mutation tests already prove the check fires correctly on a genuinely non-binding test — it is a real, honest gap
+in what THIS live run happened to produce: the `sdet`/`backend` agents, given the already-fixed `plan-story.md`/
+`write-failing-tests.md` briefs, reliably wrote binding tests across every real attempt. A deliberate, separately
+disclosed follow-up exercise (hand-authoring a non-binding test to drive G-Verify's own failure path) was
+considered and declined here, to avoid presenting manufactured evidence as if it were this run's own organic
+finding.
+
+**Disclosed, not fixed — real, bounded gaps found along the way, out of this piece's own Surface:**
+
+- The skip-exempted-lane telemetry/audit marker gap (above) — both critics independently flagged it, neither
+  required it fixed.
+- `forge upgrade` does not retrofit an EXISTING project's own `.gitignore` with newly-added `GITIGNORE_ENTRIES`
+  — only `forge init`'s own scaffolding (`appendGitignore`, called once, at init time) does. Fix 5 above closes
+  the gap for every NEW project; an existing one upgrading into a forge version that adds a new regenerable-file
+  category would hit the identical surprise this run did, just for a different, future entry. Retrofitting this
+  properly means a new step inside `runUpgrade`'s own seven-step procedure (`03` §3.4) — a real, separate change
+  to an already-tested pipeline, correctly out of scope for a fix discovered mid-live-run.
+- `test/workflows.test.ts` gives `build-stage.workflow.yaml` a full structural-equality fixture test (so a typo
+  in its own `skipChecks` line would be caught directly) but only a step-id-list check for
+  `implement-story.workflow.yaml` — a real asymmetry a critic flagged, narrowed by that file still being
+  exercised live (the real YAML, not a mock) in `test/build-stage-lane-landing.test.ts`'s own "shipped
+  implement-story inner loop" describe block, so not left wholly uncovered.
+
+**Verification.** `pnpm typecheck` (21/21 packages) and `pnpm lint` (eslint + prettier) clean on every commit.
+The full root `test/` suite run three times across this piece's own two commits; every failure across all three
+runs confirmed transient by isolated re-run (never reproducing alone): `test/workspace-floor.test.ts`'s own real
+regression from a new, untracked fixture file (`packages/telemetry/test/fixtures/append-many.ts`) was fixed for
+real (added to `IGNORED_PATHS`, mirroring the existing `append-and-hang.ts` precedent) before the second run;
+every other failure across all three runs (`packages/tui/test/screens/{specs,kb}.test.tsx` keypress tests,
+`test/intake-workflow.test.ts`'s `beforeAll` hook, `packages/engine/test/dispatch/confined-command.test.ts`'s
+huge-tree timeout, `packages/engine/test/interaction/session.test.ts`'s concurrent-write-back race) reproduced
+in isolation in under 2 s each, every time — resource contention from running a real live agent session and a
+647-file test suite on one machine at once, not a regression from anything this piece touched.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q293`.

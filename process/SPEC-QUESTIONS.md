@@ -27092,3 +27092,80 @@ source, not trusted from the doc's own citation of itself. This is the same stan
 P7` already set for this exact pair of files — re-confirmed, not relaxed, for this piece.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P13`.
+
+## Q293 — M15 P14: the live-run exit proof — six real defects found and fixed, two confirmed working as designed, one required evidence item honestly undelivered
+
+**Context.** `PLAN-M15.md` P14, M15's final piece: a real `forge run implement-story` at L1 against a real
+throwaway project, with real spend, authorized directly by the owner ("start the live testing P14") after the
+orchestrator correctly stopped short of starting it autonomously (P14's own text says "run by the project
+owner," the `M13 P9`/`P9-2` precedent `## Q208`/`## Q231` already established). Full narrative, every attempt's
+own finding, and every real cost figure: `GAUNTLET-LOG.md`, `## M15 P14`. This entry records the decisions —
+what got fixed in FORGE's own source, what got fixed only in the throwaway project, what got disclosed and left
+alone, and the one piece of required evidence this run did not organically produce.
+
+**Decision 1 — every real defect this run found got fixed at its real root, never worked around, mirroring
+`M13 P9-2`'s own precedent for a live-run-discovered bug.** Six distinct fixes landed in FORGE's own source
+(`plan-story.md`'s four brief-shape gaps, the `@forge/telemetry` cross-process event-log race, the
+`FORGE_PROJECT_ROOT` telemetry-write bug, the `preChecks`/`postChecks`/`skipChecks` merge-policy evolution, and
+`forge init`'s missing `.forge/backups/` gitignore entry) — see `GAUNTLET-LOG.md` for each one's own full
+reasoning. None was a feature-flag, a `--no-verify`-shaped escape hatch, or a change scoped narrower than the
+defect itself. The one genuinely safety-critical fix (the event-log lock) was explicitly put to the owner before
+being made, rather than decided unilaterally — a real, in-flight infrastructure change discovered mid-run, not
+a piece planned in advance.
+
+**Decision 2 — `postChecks: full` having the identical per-lane timing defect `preChecks: fast` did is a real,
+separate finding, not a continuation of the same fix, and got its own dedicated gauntlet round rather than a
+quick patch.** The first fix (removing `preChecks`) was committed and the live run resumed on the strength of
+it; a second real live run proved it insufficient. Rather than retry blindly against a now-confirmed
+*deterministic* (not probabilistic) structural failure — the owner was asked directly, choosing "investigate a
+deeper engine fix" over narrowing the shipped `postChecks` set or disclosing-and-stopping — the orchestrator
+treated the resulting `MergePolicy.skipChecks` addition as its own real engine feature: forked BUILD, two
+independent fresh-context CRITIC rounds, JUDGE, fix, commit, exactly M15's own established gauntlet discipline
+for a planned piece, applied here to one P14 discovered mid-exercise. Both critics converged on the identical
+HIGH finding (`forge merge`'s own second, manual lane-landing path had no way to honor `skipChecks` at all) —
+convergent, independent agreement from reviewers given no access to each other's work is the strongest possible
+signal that a finding is real, and it was fixed before this piece's own commit, not deferred.
+
+**Decision 3 — the throwaway project's own setup gaps (a missing KB entry) were fixed in the throwaway project,
+never in FORGE's source.** A real agent's own `FORGE_REQUEST_CONTEXT` line for `kb:engineering/standards`
+correctly identified a genuine gap in the project `forge run` was pointed at, not a FORGE defect; authoring the
+missing KB entry (`KB-ENG-0001`) in `/tmp/forge-p14-live` and committing it there is exactly the mundane,
+expected "fix the cause and retry" loop this whole exercise already establishes for YAML-authoring mistakes
+made before the real workflow ever started (four, found via `forge spec validate`, zero real cost) — not a
+gap this piece's commit touches.
+
+**Decision 4 — the required-evidence item never organically produced (a real non-binding test caught by
+`G-Verify`/`test:binding`) is disclosed, not manufactured.** Every one of 31 real attempts that reached
+`self-verify` bound every test on its first try. `forge report`'s own `bindingEvidence` field exists
+specifically to record a recovery that happened; it is correctly empty here because no recovery was ever
+needed. The mechanism itself is not in question — M15 P6 through P10's own synthetic mutation tests already
+prove `G-Verify` fails correctly on a genuinely non-binding test, independent of whether a live run happens to
+produce one. Two ways to close this gap were considered and both declined: (a) keep retrying indefinitely
+hoping to stochastically hit one, which would spend real money for a coin-flip rather than new information,
+given the brief fixes already landed make a non-binding test from these two agent roles unlikely by design;
+(b) hand-author one inside the live run's own story to force the failure path, which would present manufactured
+evidence as if the real run had found it. Recorded here as a disclosed gap instead, matching this milestone's
+own established preference (`## Q190`, `## M15 P13`'s own getting-started walkthrough fix) for an honest "this
+was not observed" over a massaged "here is what it would have looked like."
+
+**Decision 5 — two gaps found but structurally out of this piece's own Surface are disclosed, not fixed:
+`forge upgrade` does not retrofit an existing project's `.gitignore`, and one shipped-workflow fixture test is
+asymmetric with its sibling.** The first (`forge init`'s `appendGitignore` runs once, at init time, never from
+`runUpgrade`'s own seven-step procedure) is a real, separate feature addition to an already-tested pipeline
+(`03` §3.4) — closing it properly means a new upgrade step with its own tests, not a few-line patch riding
+along with an unrelated merge-policy fix. The second (`test/workflows.test.ts`'s own full structural-equality
+fixture for `build-stage.workflow.yaml` but only a step-id-list check for `implement-story.workflow.yaml`) is
+narrowed by the latter file still being exercised live, unmocked, elsewhere in the suite — real, but not an
+uncovered path. Both named here for whichever future piece next touches either file.
+
+**What this run proved live for the first time (this milestone's own real capabilities, not merely tested
+ones).** The full `implement-story` inner loop end to end against a real adapter and a real git repository:
+plan → red → green → refactor → self-verify → review (with its own bounded, real critic-fix-and-re-review
+loop, confirmed running multiple real rounds before either succeeding or exhausting) → document → done-check →
+evidence → commit → merge, landing six real content-changing lanes with zero reverts; the reviewer/implementer
+separation (`RUN-104`) catching a real, unprompted model mistake, not a synthetic one; `forge report`'s own
+cross-run aggregation (`criticLoop.roundsConsumed`, `cost.totalUsd`) reconciling exactly against a manual sum
+of the real event log; the disclosure ledger staying consistent (`0 open, 0 corrupt`) across every real
+attempt, success and failure alike.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P14`. This closes M15 (P1 through P14).
