@@ -675,3 +675,35 @@ test('AC-910-4 crosses the threshold this run', () => {
     expect(Object.keys(flakyState.tests)).toContain(staleKey);
   });
 });
+
+describe('testRun — default rule, a hung test command (specs/22 M16 P10)', () => {
+  it('a genuinely hung unit command is killed within options.timeoutMs; the verb itself returns, reports failed >= 1, and names the timeout as a real problem', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    // A synchronous busy loop, never an unresolved Promise: it blocks the whole worker's event loop
+    // (vitest's own per-test timeout relies on `setTimeout`, which this starves), so only this piece's
+    // own external, process-group kill can ever end it — exactly the real hang `runAndNormalize`'s
+    // own sibling test in `reporter.test.ts` already proves is killed; this test's own job is proving
+    // that `testRun` — the calling verb `forge test run` itself invokes — returns too, rather than
+    // hanging ITSELF on top of the lower layer's own, already-proven kill.
+    await writeFile(
+      path.join(dir, 'hang.test.js'),
+      `import { test } from 'vitest'; test('hangs forever', () => { for (;;) { /* busy */ } });`,
+      'utf8',
+    );
+
+    const started = Date.now();
+    const result = await testRun(
+      ctx(dir, { unit: VITEST_CMD }),
+      { timeoutMs: 3_000 },
+      UNUSED_TEMP_PATH,
+    );
+    const elapsedMs = Date.now() - started;
+
+    // Well under what an UN-timed hang would take (it would never return at all).
+    expect(elapsedMs).toBeLessThan(15_000);
+    expect(result.failed).toBeGreaterThanOrEqual(1);
+    expect(result.outcomes?.some((outcome) => outcome.kind === 'timeout')).toBe(true);
+    expect(result.problems?.some((problem) => problem.includes('timed out'))).toBe(true);
+  }, 30_000);
+});

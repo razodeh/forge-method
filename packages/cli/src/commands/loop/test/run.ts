@@ -95,6 +95,11 @@ export interface TestRunOptions {
    * (lint/typecheck/oracle-lint have no per-file form). `undefined` or `[]` runs the whole configured
    * layer command, unchanged. */
   readonly files?: readonly string[];
+  /** Overrides `reporter.ts`'s own `DEFAULT_TEST_RUN_TIMEOUT_MS` for every layer the default rule runs
+   * (`specs/22` M16 P10) — omitted, the default applies. Ignored when `rule` is set: `lint`/
+   * `typecheck`/`oracle-lint` never call `runAndNormalize` at all. `bin.ts`'s own `--timeout-ms` flag
+   * on `forge test run` is the one real caller that ever sets this. */
+  readonly timeoutMs?: number;
 }
 
 /** `failed`/`errors` are always both present (`test:run`'s own `failOn: 'failed > 0'` and `test:
@@ -165,6 +170,7 @@ async function runDefaultRule(
       undefined,
       undefined,
       files,
+      options.timeoutMs,
     );
     if (result.outcome === 'tool-error') {
       problems.push(`testCommands.${layer} ("${command}") failed to run: ${result.message}`);
@@ -180,10 +186,23 @@ async function runDefaultRule(
       );
       continue;
     }
+    // `specs/22` M16 P10: a whole-run timeout still reports as one real, named `TestOutcome` (`kind:
+    // 'timeout'`, pushed into `outcomes` below exactly like any other failure, so `failed` is never
+    // left at a silent 0) — named here too, as its own `problems` entry, so a human reading this
+    // layer's own report sees the real reason rather than an unexplained failing "test."
+    const timedOutOutcome = result.report.outcomes.find((outcome) => outcome.kind === 'timeout');
+    if (timedOutOutcome !== undefined) {
+      problems.push(`testCommands.${layer} ("${command}"): ${timedOutOutcome.name}.`);
+    }
     outcomes.push(...result.report.outcomes);
 
     for (const outcome of result.report.outcomes) {
       if (outcome.status !== 'fail') continue;
+      // A confirmed whole-run timeout is never retried (`specs/22` M16 P10): the retry would re-run
+      // under the identical timeout and, if the command genuinely hangs, burn another full
+      // timeout-length wait for a "classification" this run already has with certainty — unlike an
+      // ordinary failure, there is no "did this pass in isolation" question to answer.
+      if (outcome.kind === 'timeout') continue;
       if (retriesUsed >= MAX_RETRIES_PER_RUN) {
         retryCapHit = true;
         continue;
@@ -196,6 +215,8 @@ async function runDefaultRule(
         createTempPath,
         outcome.name,
         outcome.file,
+        undefined,
+        options.timeoutMs,
       );
       if (retry.outcome === 'tool-error') {
         problems.push(

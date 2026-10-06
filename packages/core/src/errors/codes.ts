@@ -819,6 +819,23 @@ export const ERROR_CODES = {
       'Set "fixAgent" to a different agent than "agent" on this step, such as the story\'s own ' +
       'implementer role, before running this step.',
   },
+  // `specs/22` M16 P10: `forge test run`'s and `forge test binding`'s own `--timeout-ms` override of
+  // `reporter.ts`'s own `DEFAULT_TEST_RUN_TIMEOUT_MS`, found malformed at the CLI boundary (`bin.ts`'s
+  // own `parseTimeoutMsFlag`) before any lane is created or any command runs. Distinct from `USR-002`
+  // (whose own comment names it as raised specifically by `@forge/cli/entry`'s `parseGlobalFlags`, the
+  // GLOBAL-flags table of `03` §3.2 -- `--timeout-ms` is a per-command flag parsed locally the same
+  // way `--rule`/`--story` already are) and given its own tailored remedy naming the expected shape
+  // (a positive integer) rather than USR-002's generic "see the accepted values" pointer, which reads
+  // oddly for an open-ended integer with no enumerable value set.
+  'RUN-117': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { flag: string; value: string }) =>
+      `${show(d.flag)}'s value (${show(d.value)}) is not a positive integer number of milliseconds.`,
+    remedy:
+      'Pass a positive whole number of milliseconds (for example, --timeout-ms 60000), or omit the ' +
+      'flag to use the built-in default.',
+  },
   // `06` §6.2's own rule 5 (`PLAN-M5.md` P11's own `detectCycles`, operating on a compiled `StepNode[]`).
   // A lower-level utility, unlike `@forge/engine/plan`'s own `compilePlan`/`expandFanout` (which never
   // throw): `detectCycles` throws this for the one input shape no realistic compiled plan gets remotely

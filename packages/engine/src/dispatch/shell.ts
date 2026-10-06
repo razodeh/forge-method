@@ -7,6 +7,8 @@
  *
  * @see PLAN-M5.md P15
  */
+import { execFileSync } from 'node:child_process';
+
 import { execa } from 'execa';
 
 export interface ShellCommandResult {
@@ -62,24 +64,88 @@ export async function runShellCommand(
   return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 };
 }
 
+/** Every real descendant of `rootPid`, found by walking `ps`'s own real pid/ppid columns — not merely
+ * the members of its process GROUP, which a descendant that started its OWN session (Node's
+ * `detached: true`, Python's `start_new_session=True`, or any program that calls `setsid(2)` before
+ * it hangs) leaves immediately, becoming the leader of a new group `process.kill(-rootPid, ...)`
+ * below can never reach. Confirmed directly: a real detached grandchild that writes its own real pid
+ * to a marker file and then busy-loops forever survived the group-only kill this function used to
+ * send, reparented to PID 1, still alive and burning CPU, until killed by hand.
+ *
+ * Read ONCE, before any signal is sent anywhere: a process already killed has its own children
+ * reparented to PID 1 immediately, severing the `ppid` chain back to `rootPid` from that moment on,
+ * so scanning after killing would silently miss exactly the processes this exists to find. Returns
+ * `[]` on any failure (no real `ps` on this platform, a transient read error) rather than throwing —
+ * the caller's own group kill is still real protection even when this extra pass cannot run. */
+function listDescendantPids(rootPid: number): readonly number[] {
+  try {
+    const output = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' });
+    const childrenByParent = new Map<number, number[]>();
+    for (const line of output.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed === '') continue;
+      const [pidText, ppidText] = trimmed.split(/\s+/);
+      const pid = Number(pidText);
+      const ppid = Number(ppidText);
+      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+      const siblings = childrenByParent.get(ppid);
+      if (siblings === undefined) childrenByParent.set(ppid, [pid]);
+      else siblings.push(pid);
+    }
+    const descendants: number[] = [];
+    // A `for...of` over `queue` safely sees elements pushed during its own iteration -- the array
+    // iterator re-reads `.length` on every step rather than snapshotting it -- which is exactly what
+    // this breadth-first walk relies on: each discovered child is pushed back onto the same queue.
+    const queue: number[] = [rootPid];
+    for (const current of queue) {
+      for (const child of childrenByParent.get(current) ?? []) {
+        descendants.push(child);
+        queue.push(child);
+      }
+    }
+    return descendants;
+  } catch {
+    return [];
+  }
+}
+
 /** Kills the whole process group `pid` leads (POSIX), so a grandchild the shell started cannot keep the output
  * pipes open after the command was killed: with `execa`'s own `timeout`, `sleep 30 & sleep 30` under a 400 ms
  * limit still took 30 s to return, because `execa` waits for the streams to close, not only for the shell to
- * exit. Falls back to the single process where a group kill is not available. */
+ * exit. ALSO kills every real descendant found by `listDescendantPids`, individually, whether or not it is
+ * still a member of that group — the group kill alone leaves a descendant that started its own session
+ * (`listDescendantPids`'s own doc comment has the real, confirmed repro) orphaned and running forever. Falls
+ * back to the single process where neither mechanism is available (win32, or `pid` is unknown) or found
+ * anything to do. */
 function killGroup(subprocess: {
   readonly pid?: number;
   kill: (signal: 'SIGKILL') => boolean;
 }): void {
   const pid = subprocess.pid;
-  if (pid !== undefined && process.platform !== 'win32') {
+  if (pid === undefined) {
+    subprocess.kill('SIGKILL');
+    return;
+  }
+  const descendants = process.platform === 'win32' ? [] : listDescendantPids(pid);
+  let groupKilled = false;
+  if (process.platform !== 'win32') {
     try {
       process.kill(-pid, 'SIGKILL');
-      return;
+      groupKilled = true;
     } catch {
-      // The group is already gone, or was never one: fall through to the single-process kill.
+      // The group is already gone, or was never one.
     }
   }
-  subprocess.kill('SIGKILL');
+  for (const descendantPid of descendants) {
+    try {
+      process.kill(descendantPid, 'SIGKILL');
+    } catch {
+      // Already gone -- it may have been a member of the group just killed above.
+    }
+  }
+  if (!groupKilled && descendants.length === 0) {
+    subprocess.kill('SIGKILL');
+  }
 }
 
 /** After the group is killed, a process that left the group (`setsid`) can still hold the output pipes; `execa` waits

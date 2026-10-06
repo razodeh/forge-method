@@ -725,6 +725,36 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
       message: `${String(result.failing.length)} test(s) already failing before any mutation (see test:unit): binding cannot be judged until the baseline is green.`,
     };
   }
+  // `specs/22` M16 P10: `baseline-timeout`/`mutated-timeout`/`*-zero-outcomes` carry no `.message` at
+  // all (the run never finished, or finished having verified nothing, so there is nothing a tool
+  // produced to echo) -- each handled before the generic `!== 'completed'` fallback below, which
+  // reads `.message` and would otherwise be a compile error, not merely a worse message, for these.
+  if (result.outcome === 'baseline-timeout') {
+    return {
+      status: 'unverifiable',
+      message: 'the baseline run timed out before any mutation: binding cannot be judged.',
+    };
+  }
+  if (result.outcome === 'mutated-timeout') {
+    return {
+      status: 'unverifiable',
+      message:
+        'the mutated (reverted) run timed out: no test can be credited as bound from a run that never finished.',
+    };
+  }
+  if (result.outcome === 'baseline-zero-outcomes') {
+    return {
+      status: 'unverifiable',
+      message: 'the baseline run matched or collected zero tests: binding cannot be judged.',
+    };
+  }
+  if (result.outcome === 'mutated-zero-outcomes') {
+    return {
+      status: 'unverifiable',
+      message:
+        'the mutated (reverted) run matched or collected zero tests: no test can be credited as bound from a run that verified nothing.',
+    };
+  }
   if (result.outcome !== 'completed') {
     return { status: 'unverifiable', message: `could not run: ${result.message}` };
   }

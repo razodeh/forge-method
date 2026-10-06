@@ -91,6 +91,12 @@ export interface BindingCheckInput {
   /** `QUALITY-BAR.md` R10: `runAndNormalize`'s own injected source of a unique temp file path (its
    * pytest branch's real need) — never this module's own `crypto.randomUUID()`/`os.tmpdir()` call. */
   readonly createTempPath: () => string;
+  /** Overrides `reporter.ts`'s own `DEFAULT_TEST_RUN_TIMEOUT_MS` for all three runs this check makes
+   * (`specs/22` M16 P10) — omitted, the default applies. The one real caller that ever sets this is
+   * `bin.ts`'s own `--timeout-ms` flag on `forge test binding`; a later per-hunk piece (P11-P13) that
+   * runs this same check N+3 times per story is the other real reason this exists — a tight override
+   * is what keeps that loop fast rather than waiting out the full default on every one of those runs. */
+  readonly timeoutMs?: number;
 }
 
 export interface BindingCheckCompleted {
@@ -121,7 +127,34 @@ export type BindingCheckOutcome =
    * unanswerable, so no binding verdict is reported for any test. */
   | { readonly outcome: 'baseline-not-green'; readonly failing: readonly string[] }
   | { readonly outcome: 'baseline-tool-error'; readonly message: string }
+  /** The BASELINE run itself timed out (`specs/22` M16 P10) — genuinely distinct from
+   * `'baseline-not-green'`: that outcome means the named tests ran and at least one failed; this one
+   * means they never finished at all, so there is no "already failing" fact to report either — binding
+   * cannot be established, full stop, before any revert is even attempted. */
+  | { readonly outcome: 'baseline-timeout' }
+  /** The BASELINE run completed (no tool-error, no timeout) but matched or collected ZERO real
+   * tests (`specs/22` M16 P10, a fresh critic round) — confirmed directly: a real vitest run whose
+   * `testPaths` positional argument matches nothing on disk reports a genuine, well-formed, EMPTY
+   * `testResults: []`, not an error of any kind `reporter.ts`'s own shape-validation (M16 P10) can
+   * catch. Checked before `namedTests` is computed: an empty baseline is not "genuinely green," it
+   * is "nothing was verified," and reporting `'completed'` with `namedTests: []` would be exactly the
+   * vacuous, uncatchable pass `run.ts`'s own identical `outcomes.length === 0` guard already refuses
+   * for the sibling `forge test run` path. */
+  | { readonly outcome: 'baseline-zero-outcomes' }
   | { readonly outcome: 'mutated-tool-error'; readonly message: string }
+  /** The MUTATED (reverted) run itself timed out (`specs/22` M16 P10) — a sibling of
+   * `'mutated-tool-error'`, not the `'completed'` shape: the run never finished, so nothing it was
+   * running can be reported as `failedUnderMutation` (real binding evidence) OR as non-binding
+   * (a test that "kept passing" when it never got the chance to). Returned BEFORE
+   * `namesFailedUnderMutation` is ever called with this run's own outcomes — `13` F-TEST-10's own "do
+   * not let a timeout masquerade as a fail that then gets credited as real binding evidence." */
+  | { readonly outcome: 'mutated-timeout' }
+  /** The MUTATED run completed but matched or collected ZERO real tests (`specs/22` M16 P10) — the
+   * identical "a well-formed, genuinely empty report is not evidence of anything" fact
+   * `'baseline-zero-outcomes'` names, at the revert phase instead: `failedUnderMutation` would
+   * otherwise silently compute to `[]` from an input that proves nothing, not from tests that
+   * genuinely kept passing. */
+  | { readonly outcome: 'mutated-zero-outcomes' }
   | { readonly outcome: 'restore-verification-tool-error'; readonly message: string };
 
 /**
@@ -139,6 +172,16 @@ export type BindingCheckOutcome =
  * in that same file (`TestOutcome.file`, populated identically by both runs) — the whole file could not
  * run, so none of its own named tests ran either, which is real binding evidence for each of them, not
  * information to silently drop because the string itself does not match.
+ *
+ * Never reached with a `kind: 'timeout'` outcome (`specs/22` M16 P10): `runBindingCheck`'s own caller
+ * returns `'mutated-timeout'` before this function is ever invoked with one, so there is nothing to
+ * special-case here — an earlier draft added a redundant `kind === 'timeout'` guard in this loop
+ * anyway, found to be dead code unreachable through the public `runBindingCheck` entry point (R5: a
+ * branch a test can only reach by calling this un-exported function directly, bypassing the real
+ * caller's own guard, is not a real branch to keep) and removed. The structural fact that still holds
+ * even if that caller-side guard were ever weakened: `reporter.ts`'s own synthetic timeout outcome
+ * carries no `file` and a `name` no real test shares, so the two checks below would already decline
+ * to credit it.
  */
 function namesFailedUnderMutation(
   namedTestsByFile: ReadonlyMap<string, readonly string[]>,
@@ -210,9 +253,28 @@ export async function runBindingCheck(input: BindingCheckInput): Promise<Binding
       undefined,
       undefined,
       testPaths,
+      input.timeoutMs,
     );
     if (baseline.outcome === 'tool-error') {
       return { outcome: 'baseline-tool-error', message: baseline.message };
+    }
+    // Checked BEFORE `namedTests` is even computed (`specs/22` M16 P10): a baseline timeout means the
+    // named tests this check would discover never finished running at all — there is no "already
+    // failing" fact here the way `'baseline-not-green'` reports one, so that outcome would misreport
+    // what actually happened.
+    if (baseline.report.outcomes.some((outcome) => outcome.kind === 'timeout')) {
+      return { outcome: 'baseline-timeout' };
+    }
+    // `specs/22` M16 P10 (a fresh critic round): a real vitest/pytest run that matched or collected
+    // ZERO tests is a genuine, well-formed, EMPTY report — not malformed (`reporter.ts`'s own
+    // shape-validation does not and should not refuse it) and not a timeout — so neither check above
+    // catches it. Confirmed directly: `testPaths` naming a file vitest's own positional matching
+    // fails to resolve to anything reports exactly this. Reported as `'completed'` with
+    // `namedTests: []` it would read as "genuinely green, nothing to revert" -- a vacuous pass this
+    // check must refuse the same way `run.ts`'s own identical `outcomes.length === 0` guard already
+    // does for `forge test run`.
+    if (baseline.report.outcomes.length === 0) {
+      return { outcome: 'baseline-zero-outcomes' };
     }
     const namedTests = baseline.report.outcomes.map((outcome) => outcome.name);
     const failingAtBaseline = baseline.report.outcomes
@@ -239,9 +301,26 @@ export async function runBindingCheck(input: BindingCheckInput): Promise<Binding
       undefined,
       undefined,
       testPaths,
+      input.timeoutMs,
     );
     if (mutated.outcome === 'tool-error') {
       return { outcome: 'mutated-tool-error', message: mutated.message };
+    }
+    // Checked BEFORE `namesFailedUnderMutation` is ever called (`specs/22` M16 P10): a mutated run
+    // that times out proves nothing about any test — crediting it as `'completed'` with an empty
+    // `failedUnderMutation` would read as "every test is non-binding," which is a different, false
+    // claim from "this check could not finish." See `BindingCheckOutcome.mutated-timeout`'s own doc
+    // comment for the fuller reasoning, and `namesFailedUnderMutation`'s own doc comment for why it
+    // needs no matching guard of its own: this check already keeps it from ever seeing one.
+    if (mutated.report.outcomes.some((outcome) => outcome.kind === 'timeout')) {
+      return { outcome: 'mutated-timeout' };
+    }
+    // `specs/22` M16 P10: the identical "a well-formed, genuinely empty report proves nothing" fact
+    // the baseline check above already refuses -- here, crediting it as `'completed'` with
+    // `failedUnderMutation: []` would read as "every test kept passing under mutation" (non-binding,
+    // by name), when in truth NONE of them ran at all to even have an opinion.
+    if (mutated.report.outcomes.length === 0) {
+      return { outcome: 'mutated-zero-outcomes' };
     }
     const failedUnderMutation = namesFailedUnderMutation(
       namedTestsByFile,
@@ -258,11 +337,23 @@ export async function runBindingCheck(input: BindingCheckInput): Promise<Binding
       undefined,
       undefined,
       testPaths,
+      input.timeoutMs,
     );
     if (restored.outcome === 'tool-error') {
       return { outcome: 'restore-verification-tool-error', message: restored.message };
     }
-    const restoreVerified = restored.report.outcomes.every((outcome) => outcome.status === 'pass');
+    // A restore-run timeout gets no dedicated outcome of its own: its own synthetic outcome's
+    // `status: 'fail'` already makes `.every(... === 'pass')` false below, the identical "a real,
+    // disclosed engine problem" signal a genuinely failed restore already reports via
+    // `restoreVerified: false` (`BindingCheckCompleted`'s own doc comment) — a caller cannot mistake
+    // either case for binding evidence, since `restoreVerified` never feeds `failedUnderMutation`.
+    // The `.length > 0` guard (`specs/22` M16 P10, a fresh critic round) closes the identical
+    // zero-outcomes gap the baseline and mutated phases both got a dedicated outcome for, here folded
+    // into the boolean instead: `[].every(...)` is VACUOUSLY true in JS, so a restore run that
+    // matched zero tests would otherwise report "verified" having proven nothing at all.
+    const restoreVerified =
+      restored.report.outcomes.length > 0 &&
+      restored.report.outcomes.every((outcome) => outcome.status === 'pass');
 
     return {
       outcome: 'completed',

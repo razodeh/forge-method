@@ -464,6 +464,42 @@ describe('forge (real subprocess dispatch)', () => {
     expect(parsed.failed).toBe(0);
   });
 
+  it('runs `forge test run --timeout-ms` for real: a genuinely hung unit command is killed near the declared bound, never hanging the CLI process itself (specs/22 M16 P10)', async () => {
+    // A synchronous busy loop, never an unresolved Promise: it blocks the whole worker's own event
+    // loop, so only this flag's own real, external process-group kill can end it —
+    // `test/run.test.ts` already proves `testRun` the library function handles this; this proves the
+    // full real pipeline (CLI flag parsing -> `testRun` -> the killed subprocess -> a real exit).
+    const dir = await realProject();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await setTestCommand(dir, 'unit', REAL_VITEST_CMD);
+    await writeFile(
+      path.join(dir, 'hang.test.js'),
+      `import { test } from 'vitest'; test('hangs', () => { for (;;) { /* busy */ } });`,
+      'utf8',
+    );
+
+    const started = Date.now();
+    const result = run(['test', 'run', '--timeout-ms', '3000', '--json', '-C', dir]);
+    const elapsedMs = Date.now() - started;
+
+    expect(elapsedMs).toBeLessThan(20_000);
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly failed: number;
+      readonly problems?: readonly string[];
+    };
+    expect(parsed.failed).toBeGreaterThanOrEqual(1);
+    expect(parsed.problems?.some((problem) => problem.includes('timed out'))).toBe(true);
+  }, 30_000);
+
+  it('exits 2 with a real, typed RUN-117 for a malformed "test run --timeout-ms" value (specs/22 M16 P10)', async () => {
+    const dir = await realProject();
+    const result = run(['test', 'run', '--timeout-ms', 'soon', '--json', '-C', dir]);
+    expect(result.status).toBe(2);
+    const parsed = JSON.parse(result.stdout) as { readonly error: { readonly code: string } };
+    expect(parsed.error.code).toBe('RUN-117');
+  });
+
   it('exits 2 with a real, specific message for an unrecognised "test run --rule" value, rather than silently running the default suite', async () => {
     // A fresh critic round found `findTestRuleFlag`'s first draft collapsed "no --rule given" and
     // "a --rule given but misspelled" into the identical `undefined`, silently running the entire

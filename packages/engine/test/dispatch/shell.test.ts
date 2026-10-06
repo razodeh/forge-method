@@ -5,7 +5,7 @@
  * @see PLAN-M5.md P15
  */
 import { spawn } from 'node:child_process';
-import { mkdtemp, realpath } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -121,18 +121,81 @@ describe('runShellCommand limits (M13 P25: a caller that must not hang on, or bu
     expect(Date.now() - startedErr).toBeLessThan(8_000);
   });
 
-  it('returns within about the timeout even when a grandchild left the process group and holds the pipe', async () => {
+  it('returns within about the timeout even when a grandchild left the process group and holds the pipe, and that grandchild does not survive the kill (specs/22 M16 P10)', async () => {
+    // `POSIX::setsid()` is exactly what Node's `spawn(..., { detached: true })` and Python's
+    // `subprocess.Popen(..., start_new_session=True)` both do under the hood: the grandchild becomes
+    // the leader of a brand new process group, immediately leaving the one `process.kill(-pid, ...)`
+    // signals. A fresh critic round confirmed directly, via `ps`, that this grandchild survived --
+    // reparented to PID 1, still alive and burning CPU -- when `killGroup` only sent the group
+    // signal; `marker` (unique per run) lets this test confirm, via a real `pgrep`, that it does not
+    // survive any more.
     const cwd = await mkdtemp(path.join(tmpdir(), 'forge-shell-'));
+    const marker = `5${String(Date.now() % 100_000).padStart(5, '0')}`;
     const started = Date.now();
     const result = await runShellCommand(
-      `perl -e 'use POSIX; if (fork() == 0) { POSIX::setsid(); exec "sleep", "20" } sleep 100'`,
+      `perl -e 'use POSIX; if (fork() == 0) { POSIX::setsid(); exec "sleep", "${marker}" } sleep 100'`,
       cwd,
       undefined,
       { timeoutMs: 500 },
     );
     expect(result.timedOut).toBe(true);
     expect(Date.now() - started).toBeLessThan(8_000);
+    const stillAlive = await execa('pgrep', ['-f', `^sleep ${marker}$`], { reject: false });
+    expect(
+      stillAlive.exitCode,
+      'the setsid-detached grandchild must not survive the kill',
+    ).not.toBe(0);
   });
+
+  it('kills a Node grandchild that detaches into its own session before it starts busy-looping (specs/22 M16 P10)', async () => {
+    // The exact shape a hung real-world test command can produce: a `detached: true` child (Node's
+    // own, direct equivalent of `setsid(2)`) that writes its own real pid to a marker file, then
+    // blocks the event loop with a synchronous busy loop -- unreachable by anything that relies on
+    // `setTimeout`/signal handling inside it, so only an external SIGKILL by pid can end it. Written
+    // to real files on disk, not an inline `-e` string, so nothing here depends on how this shell
+    // quotes a multi-line script. The PARENT also busy-loops after spawning (never exits on its own)
+    // so `killGroup` only ever fires via the real timeout below, by which point the grandchild --
+    // spawned in the parent's very first statement -- has certainly already written its marker; a
+    // parent that exited immediately instead would race `killGroup`'s own "process exited" cleanup
+    // against the grandchild still booting.
+    const cwd = await mkdtemp(path.join(tmpdir(), 'forge-shell-'));
+    const markerPath = path.join(cwd, 'grandchild.pid');
+    const grandchildPath = path.join(cwd, 'grandchild.cjs');
+    const parentPath = path.join(cwd, 'parent.cjs');
+    await writeFile(
+      grandchildPath,
+      "require('node:fs').writeFileSync(process.argv[2], String(process.pid));\nfor (;;) { /* busy */ }\n",
+      'utf8',
+    );
+    await writeFile(
+      parentPath,
+      "const { spawn } = require('node:child_process');\n" +
+        "const child = spawn(process.execPath, [process.argv[2], process.argv[3]], { detached: true, stdio: 'ignore' });\n" +
+        'child.unref();\n' +
+        'for (;;) { /* the parent hangs too, so the timeout -- not an early exit -- is what triggers killGroup */ }\n',
+      'utf8',
+    );
+
+    const started = Date.now();
+    const result = await runShellCommand(
+      `node ${JSON.stringify(parentPath)} ${JSON.stringify(grandchildPath)} ${JSON.stringify(markerPath)}`,
+      cwd,
+      undefined,
+      { timeoutMs: 1_500 },
+    );
+    expect(result.timedOut).toBe(true);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    const pid = Number((await readFile(markerPath, 'utf8')).trim());
+    expect(Number.isInteger(pid)).toBe(true);
+    // `kill -0`: the standard liveness probe, sends no real signal.
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive, `detached grandchild pid ${String(pid)} must not survive the kill`).toBe(false);
+  }, 15_000);
 
   for (const signal of ['SIGTERM', 'SIGHUP'] as const) {
     it(`ends the command it started when this process is sent ${signal} (no orphan survives)`, async () => {

@@ -1401,6 +1401,35 @@ function findRawTestRuleFlag(rest: readonly string[]): string | undefined {
   return index === -1 ? undefined : (rest[index + 1] ?? '');
 }
 
+/** `--timeout-ms <n>`, found locally in `rest` (`specs/22` M16 P10) — the identical "not a global
+ * flag, found locally" pattern `findRawTestRuleFlag` just above already establishes for `--rule`,
+ * reused here for `forge test run`'s own override of `reporter.ts`'s `DEFAULT_TEST_RUN_TIMEOUT_MS`.
+ * Returns the raw value verbatim, never silently defaulting a value that fails to parse to
+ * `undefined` — `parseTimeoutMsFlag` is what turns a bad one into a real, reported `RUN-117`. */
+function findTimeoutMsFlag(rest: readonly string[]): string | undefined {
+  const index = rest.indexOf('--timeout-ms');
+  return index === -1 ? undefined : (rest[index + 1] ?? '');
+}
+
+/** Parses `--timeout-ms`'s raw string value into a real, positive millisecond count — shared by
+ * `forge test run` and `forge test binding` (`specs/22` M16 P10), both of which override the SAME
+ * `reporter.ts`-level default. `undefined` when the flag was not given at all (the caller then omits
+ * the override and `runAndNormalize`'s own default applies); a flag that WAS given but does not parse
+ * as a positive whole number is a real, typed `RUN-117` refusal, never silently ignored or coerced
+ * (`Number("1e3")`/`Number("")`/`Number(" 1 ")` all parse as a finite number in JS, which is exactly
+ * the class of surprising coercion the `^[0-9]+$` pre-check below refuses before `Number` ever runs). */
+function parseTimeoutMsFlag(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new ForgeError('RUN-117', { flag: '--timeout-ms', value: raw });
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ForgeError('RUN-117', { flag: '--timeout-ms', value: raw });
+  }
+  return value;
+}
+
 /** `test:run`/`test:lint`/`test:typecheck` (`G-Verify.gate.yaml`) each shell `forge test run
  * [--rule lint|typecheck] --json` and read back a top-level numeric `failed` or `errors` field
  * (`failOn: 'failed > 0'` / `'errors > 0'`) — `testRun`'s own return value already carries both,
@@ -1411,6 +1440,7 @@ async function runTestRunCommand(
   projectRoot: string,
   rule: TestRuleId | undefined,
   json: boolean,
+  timeoutMs: number | undefined,
 ): Promise<number> {
   const config = await readConfig(paths);
   const ctx = {
@@ -1419,7 +1449,10 @@ async function runTestRunCommand(
     testCommands: config.execution.testCommands,
     flakeConfig: config.quality.flake,
   };
-  const options = rule === undefined ? {} : { rule };
+  const options = {
+    ...(rule === undefined ? {} : { rule }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+  };
   const result = await testRun(ctx, options, () => createSystemTempPath('forge-test-run'));
   if (json) {
     console.log(JSON.stringify({ v: 1, ...result }));
@@ -1475,6 +1508,10 @@ async function runRawBindingCheck(
   testCommand: string,
   ecosystem: 'js' | 'python',
   clock: Clock,
+  // `specs/22` M16 P10: overrides `reporter.ts`'s own `DEFAULT_TEST_RUN_TIMEOUT_MS` for every run this
+  // check makes. Optional, and the last parameter, so `runTestExemptCommand`'s own pre-check call
+  // (which has no `--timeout-ms` of its own to thread) keeps compiling unchanged.
+  timeoutMs?: number,
 ): Promise<
   | { readonly kind: 'skipped' }
   | { readonly kind: 'problem'; readonly problem: string }
@@ -1497,16 +1534,27 @@ async function runRawBindingCheck(
     baseRevision: 'HEAD~1',
     clock,
     createTempPath: () => createSystemTempPath('forge-test-binding'),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
   });
   if (result.outcome === 'no-test-paths') return { kind: 'skipped' };
   if (result.outcome !== 'completed') {
     // `baseline-not-green`/`*-tool-error`: a genuine engine problem, never a binding verdict (never
     // conflated with "every test is non-binding" — no `MutationEvidence` is written for any of these,
     // matching `runBindingCheck`'s own doc comment: no evidence for a check that never completed).
+    // `baseline-timeout`/`mutated-timeout`/`*-zero-outcomes` (`specs/22` M16 P10): none of these
+    // carry a `.message`/`.failing` to read — each gets its own, distinct, plain-text reason.
     const problem =
       result.outcome === 'baseline-not-green'
         ? `${String(result.failing.length)} test(s) already failing before any mutation: ${result.failing.join(', ')}.`
-        : result.message;
+        : result.outcome === 'baseline-timeout'
+          ? 'the baseline run timed out before any mutation; binding cannot be established.'
+          : result.outcome === 'mutated-timeout'
+            ? 'the mutated (reverted) run timed out; no test can be credited as bound from a run that never finished.'
+            : result.outcome === 'baseline-zero-outcomes'
+              ? 'the baseline run matched or collected zero tests; binding cannot be established.'
+              : result.outcome === 'mutated-zero-outcomes'
+                ? 'the mutated (reverted) run matched or collected zero tests; no test can be credited as bound from a run that verified nothing.'
+                : result.message;
     return { kind: 'problem', problem };
   }
   const rawNonBinding = result.namedTests.filter(
@@ -1549,6 +1597,9 @@ async function runOneStoryBinding(
   // (`test-binding-${story.id}-...`) that `assembleAndWriteMutationEvidence` records; the two are
   // unrelated and must not collide under one name.
   telemetryRunId: string | undefined,
+  // `specs/22` M16 P10: threaded straight through to `runRawBindingCheck`'s own identically-named,
+  // identically-optional parameter.
+  timeoutMs?: number,
 ): Promise<
   | {
       readonly kind: 'completed';
@@ -1563,7 +1614,14 @@ async function runOneStoryBinding(
   | { readonly kind: 'skipped' }
   | { readonly kind: 'problem'; readonly storyId: string; readonly problem: string }
 > {
-  const raw = await runRawBindingCheck(projectRoot, story, testCommand, ecosystem, clock);
+  const raw = await runRawBindingCheck(
+    projectRoot,
+    story,
+    testCommand,
+    ecosystem,
+    clock,
+    timeoutMs,
+  );
   if (raw.kind === 'skipped') return { kind: 'skipped' };
   if (raw.kind === 'problem') return { kind: 'problem', storyId: story.id, problem: raw.problem };
   const { runId, result, rawNonBinding } = raw;
@@ -1647,6 +1705,7 @@ async function runSingleStoryBindingCommand(
   exemptions: readonly Exemption[],
   json: boolean,
   runId: string | undefined,
+  timeoutMs: number | undefined,
 ): Promise<number> {
   const story = await resolveStoryById(paths, storyId);
   const outcome = await runOneStoryBinding(
@@ -1659,6 +1718,7 @@ async function runSingleStoryBindingCommand(
     clock,
     exemptions,
     runId,
+    timeoutMs,
   );
   if (outcome.kind === 'skipped') {
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
@@ -1768,6 +1828,7 @@ async function runDiscoverModeBindingCommand(
   exemptions: readonly Exemption[],
   json: boolean,
   runId: string | undefined,
+  timeoutMs: number | undefined,
 ): Promise<number> {
   const doneStories = await loadDoneStories(paths, specsRoot);
   const outcomes = await Promise.all(
@@ -1782,6 +1843,7 @@ async function runDiscoverModeBindingCommand(
         clock,
         exemptions,
         runId,
+        timeoutMs,
       ),
     ),
   );
@@ -1860,6 +1922,7 @@ async function runTestBindingCommand(
   projectRoot: string,
   storyId: string | undefined,
   json: boolean,
+  timeoutMs: number | undefined,
 ): Promise<number> {
   await assertCleanWorkingTree(projectRoot);
 
@@ -1896,6 +1959,7 @@ async function runTestBindingCommand(
       exemptions,
       json,
       runId,
+      timeoutMs,
     );
   }
   return runSingleStoryBindingCommand(
@@ -1909,6 +1973,7 @@ async function runTestBindingCommand(
     exemptions,
     json,
     runId,
+    timeoutMs,
   );
 }
 
@@ -4939,8 +5004,21 @@ async function main(): Promise<number> {
       return 2;
     }
     if (isTestLayerRule(rawRule)) {
-      // The layer checks take exactly `--rule <name>`: an unknown flag is refused here like everywhere else.
-      const { positionals: layerPositionals } = parseCommandFlags(rest, { '--rule': true });
+      // The layer checks take exactly `--rule <name>` (plus `--timeout-ms`, accepted and ignored --
+      // see below): an unknown flag is refused here like everywhere else.
+      const { positionals: layerPositionals } = parseCommandFlags(rest, {
+        '--rule': true,
+        // `specs/22` M16 P10 (a fresh critic round): `--rule smoke`/`--rule contract` go to
+        // `runTestLayerCommand`/`layer.ts`'s own `testRunLayer`, which has its own, separate,
+        // pre-existing timeout (`TEST_LAYER_LIMITS`, out of this piece's scope) that this flag does
+        // not override -- accepted here, syntactically, so it does not throw a confusing USR-002
+        // ("Invalid value for --timeout-ms") when combined with `--rule smoke`/`--rule contract`,
+        // and silently ignored past this point, the identical documented no-op this flag already is
+        // for `--rule lint`/`--rule typecheck`/`--rule oracle-lint` (none of those three read
+        // `options.timeoutMs` either, confirmed directly: `runLintRule`/`runTypecheckRule`/
+        // `runOracleLintRule` each take only `ctx`).
+        '--timeout-ms': true,
+      });
       assertNoArgs(layerPositionals);
       if (rest.filter((token) => token === '--rule').length > 1) {
         throw new ForgeError('USR-002', { flag: '--rule', value: 'given more than once' });
@@ -4960,7 +5038,8 @@ async function main(): Promise<number> {
       );
       return 2;
     }
-    return runTestRunCommand(paths, projectRoot, rawRule, flags.json);
+    const timeoutMs = parseTimeoutMsFlag(findTimeoutMsFlag(rest));
+    return runTestRunCommand(paths, projectRoot, rawRule, flags.json, timeoutMs);
   }
   if (command === 'test' && sub === 'coverage') {
     const rawRule = findRuleFlag(rest);
@@ -4985,9 +5064,13 @@ async function main(): Promise<number> {
     return runTestFlakyCommand(paths, flags.json);
   }
   if (command === 'test' && sub === 'binding') {
-    const { values, positionals } = parseCommandFlags(rest, { '--story': true });
+    const { values, positionals } = parseCommandFlags(rest, {
+      '--story': true,
+      '--timeout-ms': true,
+    });
     assertNoArgs(positionals);
-    return runTestBindingCommand(paths, projectRoot, values.get('--story'), flags.json);
+    const timeoutMs = parseTimeoutMsFlag(values.get('--timeout-ms'));
+    return runTestBindingCommand(paths, projectRoot, values.get('--story'), flags.json, timeoutMs);
   }
   if (command === 'test' && sub === 'exempt') {
     const { values, positionals } = parseCommandFlags(rest, {

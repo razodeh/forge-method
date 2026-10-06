@@ -327,6 +327,26 @@ describe('gate command lines in the doctor, kb lint and test families', () => {
     }
   }, 120_000);
 
+  it('`test run --rule smoke --timeout-ms <n>` is accepted, not a USR-002 flag refusal (specs/22 M16 P10)', async () => {
+    // A fresh critic round found `--timeout-ms` combined with `--rule smoke`/`--rule contract`
+    // threw `USR-002` ("Invalid value  for --timeout-ms") -- a SECOND, separate `parseCommandFlags`
+    // call for the layer-rule branch had never been given `'--timeout-ms': true`, unlike the plain
+    // `--rule lint`/`--rule typecheck`/`--rule oracle-lint` path. `layer.ts`'s own, separate,
+    // pre-existing timeout stays authoritative for `smoke`/`contract`; this flag is accepted and
+    // ignored here, never applied, which `rule: 'smoke'` in the envelope below (not a thrown refusal)
+    // confirms.
+    const dir = await emptyProject();
+    for (const rule of ['smoke', 'contract']) {
+      const outcome = await forge(
+        ['-C', dir, 'test', 'run', '--rule', rule, '--timeout-ms', '5000', '--json'],
+        dir,
+      );
+      expect(outcome.status, rule).not.toBe(2);
+      const envelope = JSON.parse(outcome.stdout) as Record<string, unknown>;
+      expect(envelope['rule'], rule).toBe(rule);
+    }
+  }, 60_000);
+
   it('the unset test command is an envelope with the typed code and a remedy, not an empty stdout', async () => {
     const dir = await emptyProject();
     const outcome = await forge(['-C', dir, 'test', 'run', '--rule', 'smoke', '--json'], dir);

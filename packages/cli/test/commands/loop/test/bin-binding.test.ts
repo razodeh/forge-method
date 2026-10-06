@@ -715,6 +715,45 @@ describe('forge test binding — a genuinely broken test command', () => {
   }, 30_000);
 });
 
+describe('forge test binding --timeout-ms (specs/22 M16 P10)', () => {
+  it('a real --timeout-ms reaches the engine: a baseline that genuinely hangs is killed near the declared bound and reported as a distinct, typed problem, never a crash or a hang', async () => {
+    // A synchronous busy loop, never an unresolved Promise: it blocks the whole worker's own event
+    // loop, so only an external, process-group kill (this flag's own real effect) can ever end it.
+    const dir = await freshProject({
+      testBody: "import { test } from 'vitest'; test('hangs', () => { for (;;) { /* busy */ } });",
+    });
+
+    const started = Date.now();
+    const result = run(
+      ['test', 'binding', '--story', 'STORY-001', '--timeout-ms', '3000', '--json'],
+      dir,
+    );
+    const elapsedMs = Date.now() - started;
+
+    expect(elapsedMs).toBeLessThan(20_000);
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as { readonly ok: boolean; readonly problem: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.problem).toContain('timed out');
+    expect(result.stdout).not.toContain('MUT-');
+  }, 30_000);
+
+  it('a malformed --timeout-ms is a real, typed RUN-117 usage refusal, before any git work at all', async () => {
+    const dir = await freshProject();
+    const result = run(
+      ['test', 'binding', '--story', 'STORY-001', '--timeout-ms', 'soon', '--json'],
+      dir,
+    );
+
+    expect(result.status).toBe(2);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly error: { readonly code: string; readonly message: string };
+    };
+    expect(parsed.error.code).toBe('RUN-117');
+    expect(parsed.error.message).toContain('--timeout-ms');
+  });
+});
+
 describe('forge test binding — plain-text output (no --json)', () => {
   // A round-3 gauntlet critic (M15 P4) found every one of this file's other tests passes `--json`,
   // leaving the entire human-readable branch of `runTestBindingCommand` (the success summary line,

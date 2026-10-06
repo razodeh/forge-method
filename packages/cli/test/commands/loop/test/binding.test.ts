@@ -421,3 +421,376 @@ describe('runBindingCheck — concurrency', () => {
     expect(await listOrphanedWorktrees(dir)).toEqual([]);
   });
 });
+
+// --- specs/22 M16 P10: the vitest/pytest load-failure asymmetry, and the two timeout outcomes -----
+
+const PYTEST_COMMAND = 'pytest -q';
+
+let junitCounter = 0;
+/** A real, unique junit-xml temp path per pytest invocation — `UNUSED_TEMP_PATH` above is only valid
+ * for the js/vitest branch, which never calls this. */
+function createPythonTempPath(dir: string): () => string {
+  return () => {
+    junitCounter += 1;
+    return path.join(dir, `junit-${String(junitCounter)}`);
+  };
+}
+
+describe('runBindingCheck — the vitest/pytest load-failure asymmetry (specs/22 M16 P10, 13 F-TEST-10)', () => {
+  // One shared test, looped over both ecosystems with an EQUIVALENT fixture shape, per the piece's own
+  // brief: "so a regression in either runner's path is caught by one test, not two that could silently
+  // diverge." The shape is the exact one `13` F-TEST-10 and M15's shipped vitest behaviour already
+  // credit: a BRAND NEW module (does not exist at `baseRevision` at all) whose own test imports it —
+  // reverting to base does not just change behaviour, it REMOVES the file outright
+  // (`revertPathsToRevision`'s own "or removal when the file is new"), so the test's own import fails
+  // to resolve, not merely a changed return value.
+  const cases: readonly {
+    readonly ecosystem: 'js' | 'python';
+    readonly testCommand: string;
+    readonly implPath: string;
+    readonly testPath: string;
+    readonly implContent: string;
+    readonly testContent: string;
+    readonly expectedNames: readonly string[];
+  }[] = [
+    {
+      ecosystem: 'js',
+      testCommand: TEST_COMMAND,
+      implPath: 'impl.js',
+      testPath: 'impl.test.js',
+      implContent:
+        'export function add(a, b) { return a + b; }\nexport function sub(a, b) { return a - b; }\n',
+      testContent:
+        "import { test, expect } from 'vitest';\n" +
+        "import { add, sub } from './impl.js';\n" +
+        "test('adds', () => { expect(add(1, 2)).toBe(3); });\n" +
+        "test('subtracts', () => { expect(sub(3, 1)).toBe(2); });\n",
+      expectedNames: ['adds', 'subtracts'],
+    },
+    {
+      // `impl_test.py`, not `test_impl.py`: `isTestPath` (`@forge/engine/dispatch`,
+      // `splitImplementationAndTestPaths`'s own heuristic) only recognises the Python SUFFIX
+      // convention (`_test\.[a-z]+$`), not the equally-real, pytest-discovered PREFIX convention
+      // (`test_*.py`) every other pytest fixture in this file's own sibling `reporter.test.ts` uses —
+      // confirmed directly (a round of this exact test with `test_impl.py` instead refused
+      // `'no-test-paths'`, a real, pre-existing, out-of-scope limitation of that heuristic, not a bug
+      // this piece's own Mandate covers). pytest itself discovers both (`python_files` defaults to
+      // `test_*.py *_test.py`), so `impl_test.py` is still real, ordinary, pytest-collected input.
+      ecosystem: 'python',
+      testCommand: PYTEST_COMMAND,
+      implPath: 'impl.py',
+      testPath: 'impl_test.py',
+      implContent: 'def add(a, b):\n    return a + b\n\n\ndef sub(a, b):\n    return a - b\n',
+      testContent:
+        'from impl import add, sub\n\n\ndef test_adds():\n    assert add(1, 2) == 3\n\n\ndef test_subtracts():\n    assert sub(3, 1) == 2\n',
+      expectedNames: ['test_adds', 'test_subtracts'],
+    },
+  ];
+
+  for (const testCase of cases) {
+    it(`${testCase.ecosystem}: a revert that removes a brand new module credits EVERY baseline-passing test in its own test file as bound`, async () => {
+      const dir = await freshRepo();
+      // The module does not exist at all at `baseSha` — the revert below removes it outright.
+      const baseSha = await headSha(dir);
+      await writeFiles(dir, {
+        [testCase.implPath]: testCase.implContent,
+        [testCase.testPath]: testCase.testContent,
+      });
+      await commit(dir, 'the story: adds a brand new module and its own test file');
+
+      const result = await runBindingCheck({
+        projectRoot: dir,
+        runId: `run-asymmetry-${testCase.ecosystem}`,
+        storyId: `STORY-ASYMMETRY-${testCase.ecosystem.toUpperCase()}`,
+        filesExpected: [testCase.implPath, testCase.testPath],
+        testCommand: testCase.testCommand,
+        ecosystem: testCase.ecosystem,
+        integrationBase: 'HEAD',
+        baseRevision: baseSha,
+        clock: FAKE_CLOCK,
+        createTempPath:
+          testCase.ecosystem === 'python' ? createPythonTempPath(dir) : UNUSED_TEMP_PATH,
+      });
+
+      if (result.outcome !== 'completed') {
+        throw new Error(`expected 'completed', got ${result.outcome}`);
+      }
+      expect([...result.namedTests].sort()).toEqual([...testCase.expectedNames].sort());
+      // The real proof: EVERY one of this file's own baseline-passing tests is credited, exactly as
+      // vitest's own shipped M15 behaviour already did — before this piece's fix, the pytest row of
+      // this same table credited NOTHING (an empty array), which is the asymmetry this test exists to
+      // close.
+      expect([...result.failedUnderMutation].sort()).toEqual([...testCase.expectedNames].sort());
+      expect(result.restoreVerified).toBe(true);
+    });
+  }
+});
+
+describe('runBindingCheck — a baseline that times out (specs/22 M16 P10)', () => {
+  it('reports the typed, distinct "baseline-timeout" outcome, never "baseline-not-green"', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      // A synchronous, unconditional infinite loop — unlike an unresolved Promise, this blocks the
+      // WHOLE worker's event loop (vitest's own per-test timeout relies on `setTimeout`, which this
+      // starves), so only an external process-group kill can ever end it. Hangs at BASELINE
+      // (unmutated, HEAD state) regardless of the implementation, so this check never even reaches a
+      // revert.
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\nimport { add } from './impl.js';\ntest('hangs forever', () => { expect(add(1, 2)).toBe(3); for (;;) { /* busy */ } });\n",
+    });
+    await commit(dir, 'the story: a test that hangs forever at baseline');
+
+    const started = Date.now();
+    const result = await runBindingCheck({
+      ...baseInput(dir, 'STORY-BASELINE-TIMEOUT', baseSha),
+      filesExpected: ['impl.js', 'impl.test.js'],
+      timeoutMs: 3_000,
+    });
+    const elapsedMs = Date.now() - started;
+
+    // Well under what an untimed hang would take (it would never return at all) — proves the kill
+    // actually fired near the declared bound, not merely that the function eventually resolved.
+    expect(elapsedMs).toBeLessThan(15_000);
+    expect(result).toEqual({ outcome: 'baseline-timeout' });
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
+  }, 30_000);
+});
+
+describe('runBindingCheck — a mutated (reverted) run that times out (specs/22 M16 P10)', () => {
+  it('reports the typed, distinct "mutated-timeout" outcome and credits NOTHING as bound', async () => {
+    const dir = await freshRepo();
+    // `impl.js` hangs at BASE (the revert target) and resolves normally at HEAD (the story's own
+    // implementation) — baseline (HEAD, unmutated) passes quickly; the revert sends the test back to
+    // the hanging version, so only the MUTATED run ever hangs.
+    await writeFiles(dir, {
+      'impl.js':
+        'export function add(a, b) { for (;;) { /* busy: this base version never returns */ } }\n',
+    });
+    const baseSha = await commit(dir, 'base: add() hangs forever');
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\nimport { add } from './impl.js';\ntest('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story: add() now returns immediately');
+
+    const started = Date.now();
+    const result = await runBindingCheck({
+      ...baseInput(dir, 'STORY-MUTATED-TIMEOUT', baseSha),
+      filesExpected: ['impl.js', 'impl.test.js'],
+      timeoutMs: 3_000,
+    });
+    const elapsedMs = Date.now() - started;
+
+    expect(elapsedMs).toBeLessThan(20_000);
+    expect(result).toEqual({ outcome: 'mutated-timeout' });
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
+  }, 40_000);
+
+  it('MUTATION-TARGET PROOF: without the dedicated check, a timed-out mutated run falls through to "completed" with nothing credited — asserting BOTH facts so the dedicated-outcome mutation (#4) has something real to break', async () => {
+    // This test exists so the brief's own mutation evidence item 4 ("classify a mutated-run timeout
+    // as 'fail' and credit it as bound") has a real assertion to falsify: it pins the CURRENT, correct
+    // behaviour (a distinct outcome tag) precisely so that removing the dedicated check in
+    // `runBindingCheck` — which would make this fall through to `namesFailedUnderMutation` instead —
+    // changes the OUTCOME TAG itself from `'mutated-timeout'` to `'completed'`, a difference this
+    // assertion catches even though `failedUnderMutation` would stay `[]` either way (the synthetic
+    // timeout outcome's own missing `file` already prevents crediting on its own, structurally).
+    const dir = await freshRepo();
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { for (;;) { /* busy */ } }\n',
+    });
+    const baseSha = await commit(dir, 'base: add() hangs forever');
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\nimport { add } from './impl.js';\ntest('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story');
+
+    const result = await runBindingCheck({
+      ...baseInput(dir, 'STORY-MUTATED-TIMEOUT-PROOF', baseSha),
+      filesExpected: ['impl.js', 'impl.test.js'],
+      timeoutMs: 3_000,
+    });
+
+    expect(result.outcome).toBe('mutated-timeout');
+  }, 40_000);
+});
+
+describe('runBindingCheck — ONLY the restore-verification run hangs (specs/22 M16 P10)', () => {
+  it('baseline and mutated both complete normally and quickly; restoreVerified is false, never true or a hang, when only the THIRD run hangs', async () => {
+    // Decision 4 (the piece's own report): a restore-run timeout gets no dedicated outcome of its
+    // own, folded instead into `restoreVerified: false` -- reasoned from the synthetic timeout
+    // outcome's own `status: 'fail'` making `.every(... === 'pass')` false. Proven here with a REAL
+    // hang isolated to ONLY the third (restore) run: a counter file on disk, read and incremented by
+    // the test itself (never reverted -- `revertPathsToRevision` only ever touches implementation
+    // paths), busy-loops on the third invocation only. Calls 1 (baseline, HEAD state) and 2 (mutated,
+    // reverted to base) both complete fast and for real; only call 3 (restore, back to HEAD state)
+    // hangs.
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    const counterPath = path.join(dir, 'restore-hang-counter.txt');
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\n" +
+        "import { existsSync, readFileSync, writeFileSync } from 'node:fs';\n" +
+        `const counterPath = ${JSON.stringify(counterPath)};\n` +
+        "test('adds', () => {\n" +
+        "  let n = existsSync(counterPath) ? Number(readFileSync(counterPath, 'utf8')) : 0;\n" +
+        '  n += 1;\n' +
+        '  writeFileSync(counterPath, String(n));\n' +
+        '  if (n >= 3) { for (;;) { /* busy: only the THIRD (restore) run reaches this */ } }\n' +
+        '  expect(1).toBe(1);\n' +
+        '});\n',
+    });
+    await commit(dir, 'the story');
+
+    const started = Date.now();
+    const result = await runBindingCheck({
+      ...baseInput(dir, 'STORY-RESTORE-ONLY-HANG', baseSha),
+      filesExpected: ['impl.js', 'impl.test.js'],
+      timeoutMs: 3_000,
+    });
+    const elapsedMs = Date.now() - started;
+
+    // Well under what an UN-timed hang would take (it would never return at all) -- proves the kill
+    // fired near the declared 3s bound for the restore run specifically.
+    expect(elapsedMs).toBeLessThan(15_000);
+    if (result.outcome !== 'completed') {
+      throw new Error(
+        `expected 'completed' (baseline and mutated both ran for real), got ${result.outcome}`,
+      );
+    }
+    // Baseline (call 1) genuinely ran and passed, so this check's own "completed" shape is reached
+    // honestly, not vacuously -- confirming calls 1 and 2 were real, fast, and uninterrupted.
+    expect(result.namedTests).toEqual(['adds']);
+    expect(result.restoreVerified).toBe(false);
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
+  }, 30_000);
+});
+
+describe('runBindingCheck — a run that completes but matches or collects zero tests (specs/22 M16 P10)', () => {
+  it('a fake command that prints valid JSON with no real "testResults" array is a baseline-tool-error, never a vacuous "completed" pass', async () => {
+    // The critic's own exact repro: `{}` is valid JSON but not a real vitest report at all --
+    // `reporter.ts`'s own shape-validation (M16 P10) now refuses it outright as a tool-error, before
+    // this ever reaches the dedicated zero-outcomes guard below (a genuinely different, well-formed
+    // empty report, not a malformed one).
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\nimport { add } from './impl.js';\ntest('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story');
+    const fakeCmd = path.join(dir, 'fake-unit.mjs');
+    await writeFile(fakeCmd, 'console.log(JSON.stringify({}));', 'utf8');
+
+    const result = await runBindingCheck({
+      ...baseInput(dir, 'STORY-FAKE-EMPTY-JSON', baseSha),
+      filesExpected: ['impl.js', 'impl.test.js'],
+      testCommand: `${process.execPath} ${fakeCmd}`,
+    });
+
+    expect(result.outcome).toBe('baseline-tool-error');
+    expect(result).not.toEqual(
+      expect.objectContaining({ outcome: 'completed', namedTests: [], failedUnderMutation: [] }),
+    );
+  });
+
+  it('a real baseline run whose own testPaths resolves to no real file on disk is baseline-zero-outcomes, never a vacuous "completed" pass', async () => {
+    // Confirmed directly: a real vitest invocation whose positional file argument matches nothing on
+    // disk still exits with a genuine, well-formed, EMPTY `testResults: []` -- not an error of any
+    // kind `reporter.ts`'s own shape-validation (M16 P10) can or should catch, since it is not
+    // malformed, just empty.
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, { 'impl.js': 'export function add(a, b) { return a + b; }\n' });
+    await commit(dir, 'the story');
+
+    const result = await runBindingCheck({
+      ...baseInput(dir, 'STORY-BASELINE-ZERO-OUTCOMES', baseSha),
+      // `impl.test.js` is declared but does not exist on disk at all.
+      filesExpected: ['impl.js', 'impl.test.js'],
+    });
+
+    expect(result).toEqual({ outcome: 'baseline-zero-outcomes' });
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
+  });
+
+  it('a mutated run that matches or collects zero tests, after a real, non-empty baseline, is mutated-zero-outcomes, crediting nothing', async () => {
+    // No natural vitest/pytest fixture reaches this (a test FILE is never reverted, so its own
+    // collection behaviour cannot legitimately change between baseline and mutated) -- a real, hand-
+    // written fake test runner that counts its own real invocations on disk, so the first (baseline)
+    // call reports a real, passing test and every call after it reports a real, well-formed, EMPTY
+    // report. A genuinely different, more "real" stand-in than mocking `runAndNormalize`, since this
+    // is a real subprocess producing real, varying stdout.
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, { 'impl.js': 'export function add(a, b) { return a + b; }\n' });
+    await commit(dir, 'the story');
+    const counterPath = path.join(dir, 'counter.txt');
+    const fakeCmd = path.join(dir, 'fake-counting-vitest.mjs');
+    await writeFile(
+      fakeCmd,
+      "import { existsSync, readFileSync, writeFileSync } from 'node:fs';\n" +
+        `const counterPath = ${JSON.stringify(counterPath)};\n` +
+        "let n = existsSync(counterPath) ? Number(readFileSync(counterPath, 'utf8')) : 0;\n" +
+        'n += 1;\n' +
+        'writeFileSync(counterPath, String(n));\n' +
+        'const report = n === 1\n' +
+        "  ? { testResults: [{ assertionResults: [{ title: 'adds', status: 'passed' }], status: 'passed', name: 'impl.test.js' }] }\n" +
+        '  : { testResults: [] };\n' +
+        'console.log(JSON.stringify(report));\n',
+      'utf8',
+    );
+
+    const result = await runBindingCheck({
+      ...baseInput(dir, 'STORY-MUTATED-ZERO-OUTCOMES', baseSha),
+      filesExpected: ['impl.js', 'impl.test.js'],
+      testCommand: `${process.execPath} ${fakeCmd}`,
+    });
+
+    expect(result).toEqual({ outcome: 'mutated-zero-outcomes' });
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
+  });
+
+  it('a restore-verification run that matches or collects zero tests is restoreVerified: false, never vacuously true', async () => {
+    // `[].every(...)` is vacuously `true` in JS -- the same class of bug the mutated/baseline checks
+    // above close, here at the THIRD phase, which `runBindingCheck` folds into the existing boolean
+    // rather than a dedicated outcome (symmetric with how a restore-timeout is already handled).
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, { 'impl.js': 'export function add(a, b) { return a + b; }\n' });
+    await commit(dir, 'the story');
+    const counterPath = path.join(dir, 'counter.txt');
+    const fakeCmd = path.join(dir, 'fake-counting-vitest.mjs');
+    await writeFile(
+      fakeCmd,
+      "import { existsSync, readFileSync, writeFileSync } from 'node:fs';\n" +
+        `const counterPath = ${JSON.stringify(counterPath)};\n` +
+        "let n = existsSync(counterPath) ? Number(readFileSync(counterPath, 'utf8')) : 0;\n" +
+        'n += 1;\n' +
+        'writeFileSync(counterPath, String(n));\n' +
+        'const report = n <= 2\n' +
+        "  ? { testResults: [{ assertionResults: [{ title: 'adds', status: 'passed' }], status: 'passed', name: 'impl.test.js' }] }\n" +
+        '  : { testResults: [] };\n' +
+        'console.log(JSON.stringify(report));\n',
+      'utf8',
+    );
+
+    const result = await runBindingCheck({
+      ...baseInput(dir, 'STORY-RESTORE-ZERO-OUTCOMES', baseSha),
+      filesExpected: ['impl.js', 'impl.test.js'],
+      testCommand: `${process.execPath} ${fakeCmd}`,
+    });
+
+    if (result.outcome !== 'completed')
+      throw new Error(`expected 'completed', got ${result.outcome}`);
+    expect(result.restoreVerified).toBe(false);
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
+  });
+});
