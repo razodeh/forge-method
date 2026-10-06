@@ -608,7 +608,7 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-describe('TestOutcome.kind — the classification table (specs/22 M16 P10, 13 F-TEST-10)', () => {
+describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F-TEST-10)', () => {
   it('vitest: an ordinary assertion failure (the test ran and lost) is kind "assertion"', async () => {
     const dir = await tempDir();
     await writeFile(

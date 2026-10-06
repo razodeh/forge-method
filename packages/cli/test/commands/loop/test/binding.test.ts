@@ -436,7 +436,7 @@ function createPythonTempPath(dir: string): () => string {
   };
 }
 
-describe('runBindingCheck — the vitest/pytest load-failure asymmetry (specs/22 M16 P10, 13 F-TEST-10)', () => {
+describe('runBindingCheck — the vitest/pytest load-failure asymmetry (specs/22 M16 P10) (13 F-TEST-10)', () => {
   // One shared test, looped over both ecosystems with an EQUIVALENT fixture shape, per the piece's own
   // brief: "so a regression in either runner's path is caught by one test, not two that could silently
   // diverge." The shape is the exact one `13` F-TEST-10 and M15's shipped vitest behaviour already
