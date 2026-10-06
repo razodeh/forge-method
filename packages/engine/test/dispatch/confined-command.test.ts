@@ -734,14 +734,27 @@ describe('runConfinedCommand: a detached grandchild does not survive the kill (s
     expect(Date.now() - started).toBeLessThan(10_000);
     const pid = Number((await readFile(markerPath, 'utf8')).trim());
     expect(Number.isInteger(pid)).toBe(true);
-    // `kill -0`: the standard liveness probe, sends no real signal.
-    let alive = true;
     try {
-      process.kill(pid, 0);
-    } catch {
-      alive = false;
+      // `kill -0`: the standard liveness probe, sends no real signal.
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      expect(alive, `detached grandchild pid ${String(pid)} must not survive the kill`).toBe(false);
+    } finally {
+      // A timing-sensitive assertion like the one above can flake under real host contention
+      // (confirmed directly: a verify run on a genuinely busy host once found this exact marker
+      // still alive, and nothing in the test went back to clean it up afterward, leaving a real,
+      // CPU-burning orphan on the host indefinitely). Force-kill the marker regardless of the
+      // assertion's own outcome, so a flake here is a red test, never a leaked process.
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // Already gone -- the common, expected case.
+      }
     }
-    expect(alive, `detached grandchild pid ${String(pid)} must not survive the kill`).toBe(false);
   }, 15_000);
 });
 
