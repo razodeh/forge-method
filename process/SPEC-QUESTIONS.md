@@ -28176,3 +28176,69 @@ this gap explicitly, citing this piece's own landed fix as the literal pattern t
 real and tested exactly once, by the piece that will actually exercise the fixed code path.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P10`.
+
+## Q297 — M16 P3: the observation engine — a symlink the write path forgot to check, a decision
+that U+FFFD-the-codepoint and U+FFFD-the-artifact are not the same thing, and a flake worth
+investigating rather than dismissing
+
+**Context.** `PLAN-M16.md` P3's own Mandate: run each case's command for real, against both a
+reference (a scratch git worktree) and a candidate (the project tree in place), producing a raw,
+typed observation per surface. Two gauntlet rounds: round 1, two independent fresh-context critics;
+round 2, the fix pass, verified directly rather than by a fresh critic round. The critic-round
+narrative, the fix detail, and the verification numbers — including a real process-leak investigation
+this piece's own clean-worktree verification surfaced — are in `GAUNTLET-LOG.md`'s own `## M16 P3`
+entry and are not repeated here.
+
+**Decision 1 — the symlink check belongs on the write path too, not only on read/clean, and the fix
+is the identical function, called one step earlier.** `overlay.ts`'s `containsSymlinkComponent`
+already existed and was already trusted by `cleanDeclaredOutputs`/`readDeclaredOutputContent` — the
+gap was never "no mechanism exists," it was "the mechanism exists and is correct, but one of its four
+natural call sites was missed." A critic's real repro (an in-project `subdir -> safe-dir` symlink as
+an input's declared destination) showed the consequence is not merely "no refusal" — it is a leaked
+file that never surfaces to any caller at all, because the one place that WOULD have caught it after
+the fact (`observeOneCase`'s own cleanup pass) has its own throw deliberately swallowed, by design,
+so that a cleanup failure can never override a case's already-decided real result. That swallow is
+itself correct for its own stated purpose; the fix is to never reach it with a symlink-shaped write
+in the first place, by calling the same check before writing that the read/clean paths already call
+after.
+
+**Decision 2 — `lossyUtf8Refusal`'s own behaviour (refuse an invalid byte sequence; let a genuinely
+valid U+FFFD through) is correct, and this piece's own Q294-citing documentation was describing a
+weaker, now-obsolete design.** Q294 Decision 7's own words — "refusing any U+FFFD is the conservative
+fallback for the decode" — were written for a design that only had a lossy-decoded STRING to inspect,
+where a real codepoint and a decode artifact are genuinely indistinguishable, so treating either as
+suspect was the only available conservative choice. This piece's own `preserveRawOutput` addition
+changes that premise: with the raw bytes in hand, a strict decode (`TextDecoder('utf-8',{fatal:true})`)
+can tell the two apart exactly — a byte sequence that is valid UTF-8 and happens to encode U+FFFD is,
+definitionally, not a decode artifact, since no decoding was lossy to produce it. Refusing it anyway
+would be strictly more conservative than the property the oracle actually needs, with no
+corresponding safety benefit — a real tool that legitimately emits a literal U+FFFD (for instance,
+signalling its own internal recovery from some other corruption) would have its real, reproducible
+behaviour refused for no reason tied to THIS check's own purpose. Decided: keep the behaviour, correct
+the documentation and the one misleadingly-named test to describe it accurately, and add a test that
+pins a genuinely valid U+FFFD as intentionally accepted, so the next reader sees a reviewed contract,
+not an accident.
+
+**Decision 3 — the Windows `composeArgs` gap `M16 P2` disclosed is resolved as a refusal (`ENV-007`),
+not a platform-conditional quoting scheme, because no Windows host exists anywhere in this build's
+own environment to validate one.** `specs/02` §2.7 calls Windows first-class, so silence was not an
+acceptable answer, and P2's own brief had offered two routes: a proven, tested, platform-conditional
+composition, or an explicit, scoped limitation. This piece chose the second, for a reason specific to
+this build's own circumstances rather than a general architectural preference: shipping an unproven
+`cmd.exe`-safe quoting scheme, reviewed by nobody who could actually run it, is exactly the latent-bug
+shape a real review process exists to prevent — the refusal is honest about a real gap, where an
+unvalidated quoting scheme would have been a false confidence. `ENV-007` fires as the literal first
+statement of `observeParityDeclaration`, before any worktree or process, confirmed by both critics via
+a real, load-bearing mutation (removing the guard lets the call genuinely execute under a faked
+`win32` platform, rather than merely returning a different error).
+
+**Decision 4 — `killGroup`/`listDescendantPids` is ported into `confined-command.ts` as a byte-identical
+copy of `M16 P10`'s own fix, deliberately not unified into one shared implementation.** The two files
+(`shell.ts`, `confined-command.ts`) already had independent, pre-existing copies of this function
+before either was fixed; unifying them now would mean editing `shell.ts`, a file this milestone's own
+chain-A (parity) pieces have no need to touch and chain B (`M16 P10`) already closed. Porting the
+fix verbatim, confirmed identical by a real `diff` rather than by inspection, gives this file its own
+independent proof that its own copy is really fixed, without reopening a file outside this piece's
+own Surface.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P3`.

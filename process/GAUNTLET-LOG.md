@@ -21801,3 +21801,90 @@ transient, load-induced flake rather than a real regression, consistent with thi
 documented history of this exact class of issue in other real-subprocess/real-timing tests.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q296`.
+
+## M16 P3 — The observation engine: process, file, and library-probe surfaces
+
+Two gauntlet rounds. Round 1: two independent fresh-context critics, both re-confirming every
+reported number by rerunning it before looking for anything else. Round 2 was the fix pass, verified
+directly against the pre-fix code rather than by a fresh critic round — the findings were concrete,
+narrow, and well-evidenced, the same judgment already applied to `## M16 P2`/`## M16 P10`. A third,
+small fix landed afterward, found by the orchestrator's own clean-worktree verification rather than
+either critic round — see **Verification** below.
+
+**What the piece builds.** The half of the parity oracle that actually runs a case for real: given a
+loaded declaration (`M16 P2`'s `ParityDeclaration`) and a resolved reference sha, observes each
+case's command against a reference (a scratch git worktree) and a candidate (the project tree in
+place), producing a raw, typed observation per surface — `process`, `file`, `library`. Does not
+normalise or compare (`M16 P4`). `runConfinedCommand` gains an additive `preserveRawOutput` option
+(raw bytes, the real terminating signal, no newline-stripping), the existing default branch left
+byte-for-byte untouched — confirmed directly that `execa`'s own `maxBuffer` unit genuinely differs
+between the two branches (characters vs. bytes), the reason a shared code path was rejected. Ports
+`M16 P10`'s `killGroup`/`listDescendantPids` fix into this file's own byte-identical copy
+(`confined-command.ts`), confirmed via a real `diff` against the landed original, not eyeballed.
+Resolves `M16 P2`'s disclosed Windows `composeArgs` gap with an explicit, tested `ENV-007` refusal
+before any worktree or process is created, rather than an unproven platform-conditional quoting
+scheme with no Windows host available to validate it.
+
+**Critic round 1 (two independent critics): one floor-level defect, one real symlink-escape gap, five
+missing TSDoc comments, one doc/test-accuracy mismatch, three cheap fixes.**
+
+*Floor-level, fixed — this piece's own new describe title broke the repo-wide M16-naming-rule
+check.* `observe.test.ts`'s own new title wrote `(specs/22 M16 P3, Q294/Q295)`, folding a second
+citation inside the marker's own parenthetical — the third time this exact mistake has happened this
+milestone (`M16 P10` had it twice, fixed at `390d424`). Caught by one critic actually running
+`test/spec-cli-examples.test.ts`, not by `-t "M16"` (a substring filter that selects a malformed
+title without ever checking its format). Fixed by giving the citation its own parenthetical, matching
+the correct pattern already used elsewhere in this same diff. The shared builder brief now carries an
+explicit warning about this exact mistake, for `M16 P5` onward.
+
+*Real, reproduced, fixed — `writeOverlayFile`/`writeProbeOverlay` never checked for a symlink
+component in the write destination.* `cleanDeclaredOutputs`/`readDeclaredOutputContent` already did,
+via `containsSymlinkComponent`; the write path did not. A critic built a real repro — an in-project
+symlink (`subdir -> safe-dir`) as an input's declared destination — and found the write landed at the
+symlink's real target with no error at all, the case reporting `outcome: 'observed', clean: true`.
+Worse: the cleanup-time symlink check that WOULD catch it afterward fires and throws `RUN-125`
+internally, but that throw is silently swallowed by `observeOneCase`'s own "never let a cleanup
+failure override a case's real result" catch, so the leaked file survives on disk with nothing ever
+surfacing to a caller. Fixed by calling the identical `containsSymlinkComponent` check before the
+write too, refusing with `RUN-125` on a hit.
+
+*Doc/test-accuracy mismatch, decided by the orchestrator, fixed as documentation only.*
+`lossyUtf8Refusal`'s own doc comment and one test's name both claimed, quoting Q294 Decision 7, that
+any U+FFFD codepoint is refused — the shipped code only refuses an actually-invalid byte sequence; a
+byte-valid, genuine encoding of U+FFFD decodes successfully and passes through untouched. Decided:
+this is correct, not a bug — now that raw bytes exist, a strict decode can tell a real codepoint
+apart from a lossy-decode artifact precisely, strictly better than the lossy-string-only world Q294's
+language was written to describe. The documentation and the misleadingly-named test were corrected to
+match the real, better contract; a new test proves a valid U+FFFD is intentionally let through.
+
+*Cheap, fixed.* Five exported symbols with no TSDoc comment of their own (both critics independently
+found the identical list — `library-protocol.ts`'s `LibraryProtocolResult`/`parseLibraryProbeOutput`;
+`observe-types.ts`'s `RawFileEntry`/`RawLibraryError`/`RawLibraryObservation`, each previously sitting
+under a comment written for a different, sibling export). `RUN-126`'s own remedy was the thinnest of
+the twelve new codes, tightened to name concrete likely causes. The refusal-ordering coin-flip
+(`lossyUtf8Refusal(...) ?? secretRefusal(...)`) is now a documented, deliberate choice, not an
+unexplained one. `refusals.test.ts` now exercises all five `SECRET_PATTERNS` shapes directly, not
+three.
+
+**Verification.** 1092 tests (17 files, including the engine's own `confined-command.test.ts`), real
+subprocess/git fixtures throughout. `pnpm typecheck`, `pnpm run boundaries`, `pnpm lint` clean.
+Coverage 83.8%–100% across all seven new source files; `confined-command.ts` 92.46%/90.25%/94.45%
+(lines/branches/functions), above the engine package's 90/85 floor. A first clean-worktree
+verification (the unscoped `-t "M16"` sweep specifically) found a real, currently-alive, 99.7%-CPU
+orphaned process — the exact "detached grandchild" this piece's own kill-timeout tests are supposed
+to prevent, confirmed genuinely alive via `ps`, not assumed. Investigated thoroughly rather than
+dismissed: re-running the identical test in isolation, repeatedly, on a quiet host came back clean
+every time (7 of 9 total attempts across this investigation were clean; the other 2 failures were the
+same two tests, in the same single contended run, with no evidence the underlying `killGroup`/
+`listDescendantPids` mechanism is wrong — every orphan found was successfully, manually killable, and
+three independent critics across this piece and `M16 P10` already proved the mechanism correct by
+repeated direct testing). Concluded: a real but uncommon tight-timing-margin flake under genuine host
+contention, not a logic defect — and recorded honestly as such rather than either chased indefinitely
+or silently ignored. A real, separate, fixable gap this investigation did surface: neither flaking
+test had any cleanup for its own spawned marker process beyond the assertion itself, so a flake
+(however rare) previously left a real, resource-consuming orphan on the host indefinitely. Fixed
+directly by the orchestrator, as its own commit: both tests now force-kill the marker in a `finally`
+regardless of the assertion's own outcome, so a future flake is a red test, never a leaked process —
+re-verified clean in one further clean-worktree pass afterward.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q297`.
