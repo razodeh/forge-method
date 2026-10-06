@@ -529,9 +529,10 @@ refused; a `name` that is not the file stem refused; an unvettable `run` or `set
 `invalid`; a `run` composed with a case's literal arguments (each appended as one single-quoted word) that
 vetting refuses — an argument holding a single quote, a newline or a shell operator such as `;` or `|` —
 makes the declaration `invalid` too, at load, before any case runs. `reference.ref`: a full lower-case sha
-(40 or 64 hex digits) and a `refs/tags/<name>` that `git check-ref-format` accepts each resolve; a branch
-name, `HEAD`, an abbreviated sha and an upper-case sha are `invalid`; a well-formed name or sha that
-resolves to no commit is `missing`, not `invalid`. Digest: key
+(40 or 64 hex digits) and a `refs/tags/<name>` that `git check-ref-format` accepts each resolve; `HEAD`,
+an abbreviated sha and an upper-case sha are `invalid`, and so, checked explicitly against
+`refs/heads/<name>` regardless of a same-named tag, is a name that names a branch; a well-formed,
+non-branch name or sha that resolves to no commit is `missing`, not `invalid`. Digest: key
 reordering does not change it; changing `review.by`, `expires` or an `unobservable` entry does not;
 changing any surface field, normalisation rule, overlaid file byte or probe byte does (a table over
 every field). Capture: schema round-trip; the filename is the sha256 of the canonical bytes; a scan

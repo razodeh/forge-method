@@ -27451,12 +27451,15 @@ stem, and an unknown key is `invalid`. `reference.ref` is a full commit sha (40 
 SHA-256 repository) or a tag. A sha resolves as `<sha>^{commit}` and a tag as `refs/tags/<name>^{commit}`,
 so a tag is peeled and an unqualified name cannot be shadowed (critic B planted `refs/v1` and
 `git rev-parse 'v1^{commit}'` returned another commit, with only a warning on stderr); replace objects are
-off; a branch name, `HEAD` or an abbreviated sha is `invalid`, because `ref: main` re-resolves after the
-refactor merges and a re-capture would then record post-refactor code, the self-agreeing oracle F-TEST-2
-bans. A tag that has since moved or been deleted reads `missing`, because the capture key carries the
-reference sha. `setup` (the plan's `prepare`, which no spec gave a meaning to) is a list of commands vetted
-exactly as `run` is, in the digest, run in the scratch tree only. Overlay sources and probes live under
-`.forge/parity/`, where the anchor reaches them.
+off; **[corrected by Q295: the first version of this decision said "a branch name... is `invalid`," which
+cannot be checked as text alone, since git's own ref grammar is identical for a branch and a tag name; what
+follows replaces it.]** `HEAD` and an abbreviated sha are each `invalid`, and so, checked explicitly against
+`refs/heads/<name>` regardless of a same-named tag, is a name that names a branch — `ref: main` would
+otherwise re-resolve after the refactor merges, and a re-capture would then record post-refactor code,
+exactly what the self-agreeing oracle F-TEST-2 bans. A tag that has since moved or been deleted reads
+`missing`, because the capture key carries the reference sha. `setup` (the plan's `prepare`, which no spec
+gave a meaning to) is a list of commands vetted exactly as `run` is, in the digest, run in the scratch tree
+only. Overlay sources and probes live under `.forge/parity/`, where the anchor reaches them.
 
 *Capture.* A capture holds the declaration's name and digest, the reference's ref and sha, the platform and
 each case's normalised observation, as canonical sorted-key UTF-8 JSON, with no tool version, no clock time
@@ -28011,3 +28014,88 @@ reporting, so its work was verified from outside and resumed, not repeated by an
 list, with each correction, is in the log entry.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P1`.
+
+## Q295 — M16 P2: the parity declaration, capture and digest — a join that could be forged, a parser
+that read past its own closed schema, and a decision that could not be checked as text
+
+**Context.** `PLAN-M16.md` P2's own Mandate: the pure data layer `specs/13` F-TEST-9/F-TEST-10's
+parity oracle rests on — the declaration loader, the content-addressed capture and its selection
+key, the digest, and UTC-calendar expiry — with nothing in this piece executing a command, observing
+behaviour, or writing a file. Two gauntlet rounds: round 1, two independent fresh-context critics,
+both re-confirming every reported number before looking for anything else; round 2, the fix pass,
+verified directly rather than by a fresh critic round. The critic-round narrative, the fix detail,
+and the verification numbers are in `GAUNTLET-LOG.md`'s own `## M16 P2` entry and are not repeated
+here.
+
+**Decision 1 — the digest's overlay/probe join is canonical-JSON-encoded and length-prefixed, not
+raw delimited text.** The original join concatenated each overlay's path and hash (and each probe's
+path and byte length) as `${path} ${hash}\n`-style text, unescaped. `paths.ts`'s own rule permits
+spaces and newlines inside a path segment (only `/` is excluded), so a crafted overlay path can
+contain the join's own delimiter — the adversarial critic built two overlay sets that differ only in
+where such a path is split between two entries, and both produced the identical digest. Fixed by
+encoding each overlay entry as canonical JSON (`{overlay: path, sha256}`, entries sorted by path) and
+each probe entry as a length-prefixed record (`{probe: path, bytes: length}` immediately followed by
+exactly that many raw bytes) — both self-delimiting, so no value a path or a hash can take is ever
+confused with the start of the next entry. The digest's own version string is bumped `v1`→`v2`, at
+no real cost, since no capture has been taken against `v1` yet to invalidate.
+
+**Decision 2 — `parseCapture` gets the identical closed-schema discipline `declaration.ts` already
+has, plus one check the declaration loader has no equivalent of.** The parser read the fields it
+expected off the parsed JSON and ignored the rest, so a capture carrying an extra `capturedAt`,
+`hostPath`, or `reference.toolVersion` loaded without complaint — directly against F-TEST-9's own
+explicit requirement that a capture hold no clock time and no host path, a requirement whose entire
+point is defeated by a parser that merely declines to read a field rather than refusing its
+presence. Fixed with `expectKnownKeys()`, mirroring `declaration.ts`'s own `Collector.strictKeys`,
+applied at every level `parseCapture` descends — the top document, `reference`, each case entry,
+each surface's observation shape and its nested objects, eleven call sites in total. A second,
+independent check closes a gap the first one cannot: after the typed `ParityCapture` is built, it is
+re-serialised and compared byte-for-byte against the original raw text. A per-key scan, however
+thorough, cannot see a duplicated top-level key, because `JSON.parse` has already resolved it to its
+last occurrence before any key list is ever read — the re-serialisation check catches exactly that
+case, which the critic also built and confirmed silently accepted before the fix.
+
+**Decision 3 — `composeArgs`'s single-quote defense is disclosed as POSIX-only, not patched to also
+cover Windows, and the question is handed to `P3`.** `composeArgs` single-quotes each argument and
+refuses one containing a quote, a newline, `;`, `|`, `&`, a backtick, or `$(` — a correct and
+sufficient defense for a POSIX shell, and not a safe one for `cmd.exe`, which never treats `'` as a
+quote character. `specs/02` §2.7 names Windows first-class, so this is a real gap, not a hypothetical
+one — but this piece composes a line and never executes it, so the fix (a platform-conditional
+composition, or an explicit, scoped Windows limitation for this milestone) belongs to whichever piece
+actually runs the composed line. `P3` is that piece; its own brief names this question explicitly
+rather than leaving it to be rediscovered. Two cheaper, same-round fixes travel with this decision
+rather than earning their own: `streams` now has the same per-surface restriction `network` already
+enforces (a `file`/`http` surface declaring `streams` previously loaded without complaint), and a
+stale `reference-ref.ts` doc comment claiming a scratch `cwd` is passed to `git check-ref-format` is
+corrected to match the real call, which passes none.
+
+**Decision 4 — `reference.ref`'s branch-name rule, in `specs/13`, `PLAN-M16.md`, and this file's own
+`## Q294` Decision 6, described a check that cannot be performed as text, and all three are
+corrected here, not silently.** The original wording: "a branch name... is `invalid`," read as a
+load-time text rule. It cannot be one. Git's own ref-name grammar is identical for a branch and a
+tag — `refs/heads/release` and `refs/tags/release` are each individually well-formed, and nothing
+about the string `release` alone says which namespace, if either, it names. This piece's own code
+was never wrong: `reference-ref.ts` already resolves a bare name as a tag candidate and separately,
+explicitly checks `refs/heads/<name>`, treating a match there as `invalid` regardless of whether a
+same-named tag also exists. The conformance critic confirmed this against a real repository holding
+a branch `release` and no tag of the same name: `git check-ref-format refs/tags/release` exits 0 —
+the shape alone is fine — but `git rev-parse --verify 'refs/tags/release^{commit}'` fails while
+`git rev-parse --verify 'refs/heads/release^{commit}'` succeeds, so only an explicit,
+namespace-qualified check, not the bare name's shape, can tell the two apart. The orchestrator
+independently confirmed the sharper case, a branch and a tag both named `release` but pointing at
+two different commits: `git rev-parse 'release^{commit}'` resolves — silently but for one
+`warning: refname 'release' is ambiguous` on stderr, exit `0` — to the *tag's* commit, never the
+branch's, which is exactly why `reference.ref`'s own resolution cannot lean on git's own default
+bare-name order and must check `refs/heads/<name>` first, unconditionally: a bare name that also
+names a branch must read `invalid` regardless of which commit git's own default resolution would
+silently have picked. The real design intent behind the original sentence survives unchanged — a
+branch moves exactly as `HEAD` does, which the self-agreeing oracle (F-TEST-2) bans as a reference —
+only the mechanism was mis-stated. The corrected text: `HEAD` and an abbreviated sha are each
+`invalid`, being pure text checks; a name that resolves against `refs/heads/<name>`, regardless of a
+same-named tag, is `invalid` for naming a branch; a name that names no branch is resolved only as a
+tag, so one with no matching tag reads `missing`, never `invalid`. `specs/13`, `PLAN-M16.md`'s P2
+Tests-first line, and this file's own `## Q294` Decision 6 are each corrected to say exactly that,
+`## Q294`'s own paragraph marked with a non-silent "corrected by Q295" note rather than rewritten to
+hide that it was wrong, and the one pinned sentence this touches (`test/spec-cli-examples.test.ts`)
+is split in two, the second half newly pinned where before it was not.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P2`.

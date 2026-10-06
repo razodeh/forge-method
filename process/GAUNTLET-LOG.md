@@ -21580,3 +21580,99 @@ each caught by the command's own error rather than a silent wrong result; a gues
 filename, corrected before it was used for anything.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q294`.
+
+## M16 P2 — The parity declaration, capture, digest, selection and expiry
+
+Two gauntlet rounds. Round 1: two independent fresh-context critics (one conformance-focused, one
+adversarial), both re-confirming every reported test/coverage/typecheck/lint number by rerunning
+them before looking for anything else. Round 2 was the fix pass, verified directly against the
+pre-fix code rather than by a fresh critic round — a judgment call made because every round-1
+finding was concrete, narrow and already evidenced by a real reproduction, not an architectural
+question. Each fix below was re-derived from the actual diff, and each defect it fixes was
+reproduced against the pre-fix code and confirmed to fail for the stated reason before being
+confirmed fixed.
+
+**What the piece builds.** The pure data layer the parity oracle (`specs/13` F-TEST-9/F-TEST-10)
+rests on: a strict loader for `.forge/parity/<name>.parity.yaml`, with a "did you mean" suggestion
+on every unknown key and every load-time `invalid` cause individually tested; the content-addressed,
+canonical-JSON capture and its selection key; UTC-calendar expiry; and `composeArgs`, which turns a
+`run` plus an argument list into one vetted shell word, so the engine's existing command vetting
+runs against the composed line and never the bare `run` alone. Nothing here executes a command,
+observes behaviour, or writes a file — `P3`/`P4`/`P6`/`P7` import this contract. 10 source files, 9
+test files, 263 tests before round 2.
+
+**Critic round 1: two real, reproduced defects; one disclosed cross-platform gap; two cheap fixes;
+and a pre-existing spec-text defect outside this piece's own code.**
+
+*Real, reproduced, fixed — the digest's overlay/probe join was forgeable.* The adversarial critic
+ran `computeParityDeclarationDigest` on two different overlay sets, built so one overlay's path text
+contained the join's own raw delimiter, and got an identical digest both times — the join
+(`overlay ${path} ${hash}\n`-style text; `paths.ts`'s own rule permits spaces and newlines inside a
+path segment, only `/` is excluded) had no escaping, so a crafted path could smuggle a fake entry
+boundary. A digest two different inputs can share defeats the one property F-TEST-9 needs from it.
+
+*Real, reproduced, fixed — `parseCapture` was not the closed-schema parser `declaration.ts` already
+is.* The same critic built a capture JSON carrying an extra `capturedAt`, `hostPath`, and
+`reference.toolVersion`, plus a duplicated top-level key, and all four survived parsing untouched —
+directly contradicting F-TEST-9's explicit "a capture carries no clock time and no host path"
+requirement.
+
+*Disclosed, not fixed — `composeArgs`'s quoting is POSIX-only.* The same critic confirmed, by
+reading the `execa`/Node source (no Windows host available to run it live), that single-quoting
+never survives `cmd.exe`, which never treats `'` as a quote character — and this repository's own
+`specs/02` §2.7 calls Windows first-class. Since this piece executes nothing itself, the fix is a
+disclosure, not a code change: a prominent doc-comment warning in `compose-args.ts`, and an open
+question handed to `P3`, the piece that actually runs a composed line.
+
+*Cheap, fixed.* The same critic found `digest.test.ts`'s own field-coverage table never varied
+`ignore-json-pointers`, leaving that branch of `digest.ts` genuinely uncovered (confirmed against the
+coverage report, not assumed); and a stale `reference-ref.ts` doc comment claiming a scratch `cwd` is
+passed to `git check-ref-format`, when the real call, two paragraphs below the comment making the
+claim, passes none. The same critic also flagged `streams` as missing the per-surface restriction
+`network` already has (a `file`/`http` surface declaring `streams` loaded without complaint) — low
+priority by the critic's own judgment, the same already-disclosed class of looseness as an existing
+per-case-field gap, but cheap enough to fix rather than leave open.
+
+*A pre-existing spec-text defect, outside this piece's own code, found independently by the
+conformance critic and, separately and earlier, by the orchestrator's own pre-critic reading —
+corrected directly by the orchestrator, not by the builder.* `specs/13`, `PLAN-M16.md`, and
+`SPEC-QUESTIONS.md` `## Q294` Decision 6 each asserted, as a load-time text rule, that "a branch
+name... is `invalid`" for `reference.ref`. This piece's own code was never wrong — it already
+resolves a bare name as a tag candidate and separately checks it against `refs/heads/<name>` — but
+the three normative texts described a check that cannot be done as stated, since git's own ref-name
+grammar makes a branch name and a tag name indistinguishable as text. One correction to the record in
+passing: this piece's own code commit (`b3273be`) describes this as found by "two critics
+independently," which overclaims — it was one critic, plus the orchestrator's own reading before any
+critic report arrived, not two critics; corrected here rather than left standing. The reasoning for
+the fix, and a real-repository confirmation beyond what either the critic or the builder ran, is in
+`SPEC-QUESTIONS.md` `## Q295`, Decision 4, not repeated here.
+
+**The fixes (round 2).** The digest join is now canonical-JSON-encoded per overlay entry
+(`{overlay, sha256}`, entries sorted by path) and length-prefixed per probe entry (`{probe, bytes}`
+followed by exactly that many raw bytes) — both self-delimiting, so no value can forge another
+entry's boundary the way raw concatenation could. The digest version is bumped `v1`→`v2`, free since
+no capture exists yet to invalidate. The original collision was reproduced against the pre-fix
+algorithm first, confirmed gone after, then locked in as a regression test. `parseCapture` gained the
+same closed-key discipline `declaration.ts` already had, applied via `expectKnownKeys()` at eleven
+call sites — the top document, `reference`, each case entry, and each surface's own observation
+shape and nested objects — plus one check `declaration.ts` has no equivalent of: after the typed
+`ParityCapture` is built, it is re-serialised and compared byte-for-byte against the original raw
+text. That catches what a per-key scan structurally cannot: a duplicated JSON key, which `JSON.parse`
+has already resolved to its last occurrence before any key list is ever read. `streams` gained the
+identical per-surface restriction `network` already had; the coverage gap and the stale comment were
+both closed.
+
+**Verification.** 273 tests (9 files; 263 before round 2, 10 added by the fixes above), each against
+the spec text, mutation-verified for both real defects (each original bug reproduced live against the
+pre-fix code, confirmed red for the stated reason, confirmed green after) plus the piece's own
+original 10-row declaration-invalid-cause table. Coverage 91.58%–100% across all ten source files,
+above the 85/80 floor. `pnpm typecheck`, `pnpm run boundaries`, `pnpm lint` clean.
+`test/spec-cli-examples.test.ts` (499, was 498 — the branch-name pin, split in two by this piece's own
+spec correction, adds one), `test/output-contract-known-gaps.test.ts` (15), and
+`packages/core/test/errors.test.ts` unaffected. Independently re-verified in a clean worktree built
+from the committed, cherry-picked `HEAD` alone (`b3273be`, before this entry's own second commit):
+install, typecheck, lint, schema-drift, and the scoped suite all clean; `-t "M16"` selects 745 of
+15,013. With this entry's own commit landed beside it, the working count becomes 746 of 15,014 (one
+more pinned sentence, one more `it`).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q295`.

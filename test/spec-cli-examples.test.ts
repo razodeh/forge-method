@@ -1080,12 +1080,19 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it("M16 specs/13 F-TEST-9: `reference.ref` is a full commit sha or a tag name resolved to the commit it points at, under the trust anchor's exactness rules, and a branch name, `HEAD` or an abbreviated sha is `invalid` because each can move or be ambiguous", () => {
+  it("M16 specs/13 F-TEST-9: `reference.ref` is a full commit sha or a tag name resolved to the commit it points at, under the trust anchor's exactness rules, and `HEAD` or an abbreviated sha is `invalid` because each can move or be ambiguous", () => {
     const section = parity();
     expectPinned(section, [
-      "`reference.ref` is a full commit sha (40 hexadecimal digits, or 64 in a repository that uses SHA-256) or a tag name, resolved to the commit it points at: a sha as `<sha>^{commit}` and a tag as `refs/tags/<name>^{commit}` (so a tag is peeled), with replace objects disabled, because an unqualified name follows git's own ambiguity rules and a ref planted elsewhere could win, and under the exactness rules that the trust anchor states below (a tag name that `git check-ref-format` does not accept as `refs/tags/<name>`, `v1~1` for one, is `invalid`); a branch name, `HEAD` or an abbreviated sha is `invalid`, because each can move or be ambiguous.",
+      "`reference.ref` is a full commit sha (40 hexadecimal digits, or 64 in a repository that uses SHA-256) or a tag name, resolved to the commit it points at: a sha as `<sha>^{commit}` and a tag as `refs/tags/<name>^{commit}` (so a tag is peeled), with replace objects disabled, because an unqualified name follows git's own ambiguity rules and a ref planted elsewhere could win, and under the exactness rules that the trust anchor states below (a tag name that `git check-ref-format` does not accept as `refs/tags/<name>`, `v1~1` for one, is `invalid`); `HEAD` and an abbreviated sha are each `invalid`, because each can move or be ambiguous.",
     ]);
     expectAbsent(section, ['which capture resolves to a sha']);
+  });
+
+  it('M16 specs/13 F-TEST-9: a name that resolves as a branch (`refs/heads/<name>`) is `invalid` regardless of a same-named tag, because a branch moves exactly as `HEAD` does, which the self-agreeing oracle bans; a name with no matching tag reads `missing`, never `invalid`', () => {
+    const section = parity();
+    expectPinned(section, [
+      'So, checked explicitly against `refs/heads/<name>` and regardless of whether a tag of the identical name also exists, is a name that names a branch, since a branch moves exactly as `HEAD` does, which the self-agreeing oracle (F-TEST-2) bans as a reference; a bare name that names no branch is resolved only as a tag, so one with no matching tag reads `missing`, never `invalid`.',
+    ]);
   });
 
   it('M16 specs/13 F-TEST-9: the declaration is human-authored and committed', () => {
@@ -4711,7 +4718,8 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
       '**The declaration**',
       'is `.forge/parity/<name>.parity.yaml`, one file per declaration, its `name` the file stem.',
       'It names the reference (`reference.ref`) and the surfaces to compare.',
-      "`reference.ref` is a full commit sha (40 hexadecimal digits, or 64 in a repository that uses SHA-256) or a tag name, resolved to the commit it points at: a sha as `<sha>^{commit}` and a tag as `refs/tags/<name>^{commit}` (so a tag is peeled), with replace objects disabled, because an unqualified name follows git's own ambiguity rules and a ref planted elsewhere could win, and under the exactness rules that the trust anchor states below (a tag name that `git check-ref-format` does not accept as `refs/tags/<name>`, `v1~1` for one, is `invalid`); a branch name, `HEAD` or an abbreviated sha is `invalid`, because each can move or be ambiguous.",
+      "`reference.ref` is a full commit sha (40 hexadecimal digits, or 64 in a repository that uses SHA-256) or a tag name, resolved to the commit it points at: a sha as `<sha>^{commit}` and a tag as `refs/tags/<name>^{commit}` (so a tag is peeled), with replace objects disabled, because an unqualified name follows git's own ambiguity rules and a ref planted elsewhere could win, and under the exactness rules that the trust anchor states below (a tag name that `git check-ref-format` does not accept as `refs/tags/<name>`, `v1~1` for one, is `invalid`); `HEAD` and an abbreviated sha are each `invalid`, because each can move or be ambiguous.",
+      'So, checked explicitly against `refs/heads/<name>` and regardless of whether a tag of the identical name also exists, is a name that names a branch, since a branch moves exactly as `HEAD` does, which the self-agreeing oracle (F-TEST-2) bans as a reference; a bare name that names no branch is resolved only as a tag, so one with no matching tag reads `missing`, never `invalid`.',
       'The declaration is human-authored and committed.',
       'It is not unwritable by an agent: `.forge/**` is in the never-writable floor for agent steps, but that floor is enforced after the fact, by claim enforcement (`06` §6.7), which runs only when the adapter reports changed files, so a session that commits its own work is not reverted (disclosed in `process/SPEC-QUESTIONS.md` Q212).',
       'The floor is therefore not what protects the oracle: the trust anchor below is, and it has a boundary of its own, stated there.',
