@@ -21208,3 +21208,375 @@ alone, two more of the identical seven-file combination): clean every time. The 
 unlike those, this one touches the exact mechanism this piece's own safety claim rests on.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q293`.
+
+## M16 P1 — Spec first: parity oracles, a workflow-scoped gate that did not exist, the trust anchor, `ParityEvidence`, hunk-level binding, and evidence retention
+
+Spec-only piece, no code: `PLAN-M16.md`'s own Mandate for P1 (write the normative text first, pin
+every load-bearing sentence with a test, build nothing under `packages/`). Three full gauntlet
+rounds, the maximum, with a real-git prototype between the second round and the third. The sequence
+is a small demonstration of the milestone's own thesis: round 1's fix was my own trust-anchor
+design, a value that only the engine's run manifest held, and three independent round-2 critics
+showed that a gate check could not reach it and that it held only inside the one run in which a
+rewrite happens. I had trusted that design without running it; round 3 replaced it, then built it
+and ran it on real git before anyone attacked it.
+
+**What the check found (before any writing).** `specs/22`'s M16 entry, as M15 closed, said to
+"attach the check to the `refactor`, `migrate` and `adopt` gates". The plan's own research
+(`0a6a767`) read the three workflows as shipped and found the premise had no referent: none of them
+contains a `kind: gate` step. `refactor` is `state-invariants` (agent), `refactor-code` (agent),
+`verify-invariants` (command, `forge test run --json`) and `commit` (a no-op checkpoint);
+`migrate`'s `migrate-data` step (`forge migrate run`) and `adopt`'s `inventory-codebase` are
+unwired, and `G-Adopt` is evaluated in-process with no gate file at all. So P1 had two jobs, not
+one: say what a parity oracle is, and say where it attaches when nothing it was meant to attach to
+exists. The answer (Q294 Decision 1) is `G-Parity`, the first workflow-scoped gate that has a file:
+a gate with no lifecycle `phase`, scheduled by a workflow's `kind: gate` step, with one
+deterministic check, `behavior:parity`. That needed `10` §10.3 rule 8, which did not exist, and made
+`refactor` strict where the spec had implied it already was.
+
+**Critic round 1 (two independent, fresh-context critics): four blocking among twenty-six, all
+fixed; the fix to the largest one is the thing round 2 overturned.** Critic A (conformance, a
+20-item mandate) found six numbered defects, one blocking: the new rule 8's "reached only from a
+workflow's `kind: gate` step" was false against the CLI (`forge gate check`, `approve` and `waive`
+resolve any gate by id) and against its own precedent, `G-Adopt`; the rest were a mis-attributed
+limit of `forge upgrade`, a cardinality statement for `ParityEvidence`, a capture rationale that did
+not hold, a retention sentence that contradicted the retention rules, and a mis-cited "id scan
+(§18.8)". Critic B (an implementer's view, an adversary's view, pin mutation and staleness) found
+twenty, three of them blocking: the nine verdicts had no precedence and no counting unit, so two
+builders would print different totals for the same run; added and deleted files were unclassified,
+so the spec said `invalid` where the plan said `killed`; and a session that commits its own work
+could rewrite the declaration it was being judged by with no claim ever seeing the write
+(`packages/engine/src/dispatch/steps.ts` gates `enforceClaim` on `work.changed`; `SPEC-QUESTIONS.md`
+Q209 and Q212 had already disclosed that a self-committing session is never reverted). Its
+pin-mutation pass deleted 149 of 149 pinned snippets and every deletion turned a test red; its 35
+inversions and 9 weakenings found that a trailing-qualifier weakening stayed green. All fixed. The
+self-commit hole was answered by making the design not depend on claim enforcement: an anchor
+comparison made by the harness itself, which at that point I specified as a value read from the run
+manifest.
+
+**Critic round 2 (three independent, fresh-context critics, explicitly re-verifying round 1's fix):
+one blocking and several major, almost all against round 1's anchor, which I had specified without
+running.** Critic A found seven (two major): the manifest value is unreachable from a gate check,
+and the property held only inside the one run in which a rewrite happens. It also found that
+"nothing is installed" in the scratch reference tree is false for Node, that `git status` cannot see
+a content change to an already modified file, that `granularity: file` meant two things, that a
+declaration-level verdict had no home in the envelope, and that `--story` had no input. Critic B
+(red team, about 1,500 pin-mutation runs) found nine, one blocking: "changed since the anchor" named
+no mechanism a builder could implement. It also showed that "`failing` is 0 only when `passing` >=
+1" was false as worded, that a symlinked path component could delete a tracked file, that an
+unqualified tag name resolves a planted ref, that retention had four holes, and that `expectPinned`
+was an unanchored substring (a prefix qualifier stayed green for 83 of 220 pins, 49 of them in spec
+13). Critic C (code claims, with real in-process `runWorkflow` experiments) found five (two major)
+and reproduced the two anchor failures independently: the gate check's cwd and environment cannot
+reach the manifest, and `FORGE_RUN_ID` is absent from a gate check unless the launcher shim is in
+play. Three independent critics converging on the same design error is the entry's clearest signal
+that the design, not the wording, was wrong.
+
+**Round 3, the build (the last round the loop allows: round 2's findings answered, a prototype run
+on real git before any critic saw it, then four further revision passes).** Round 2 left twenty
+items open (R3-1 to R3-20 in the build directive; Q294 records each disposition). The one that
+mattered, R3-1, replaced the manifest-based anchor and deleted the sentence that rested on it ("the
+oracle cannot move during a run"). `forge parity check --trusted <ref>` now names a ref; the harness
+lists every entry under `.forge/parity/` as it is on disk (no symlink followed, ignored and
+untracked files included), compares each path and the git blob id of each file's raw bytes with the
+listing of `git ls-tree -r -z <ref> -- .forge/parity`, never reads the index or `git status`, runs
+every git command of its own with `GIT_NO_REPLACE_OBJECTS=1`, and makes the comparison before the
+first case and again after the last. Any difference, an added, modified or deleted path committed,
+staged, untracked or ignored alike, makes every declaration `invalid` with the check-level reason
+`oracle-changed`. The `G-Parity` check passes the anchor as an explicit argument,
+`forge parity check --json --no-record --trusted refs/heads/main`, and nothing is sniffed from the
+environment, which is the one thing round 2's three critics had shown a gate check cannot do.
+
+The other nineteen, in short. `--no-record` (R3-2): a file written in the integration worktree
+leaves it dirty and the next run refuses to start (`VCS-INTEGRATION-DIRTY`), so the gate's check
+writes no `ParityEvidence`. `--story` (R3-3), and `forge parity capture` and
+`forge evidence prune --apply` refusing whenever the FORGE session marker is present (R3-4, R3-14).
+The `unclean` snapshot defined as `HEAD` plus a status code and a byte digest per path (R3-5); where
+each side is observed, the reference in a scratch worktree under `.forge/state/` holding only the
+ref's tracked files and the candidate in place (R3-6). A case and surface model with one unit of
+counting (R3-11): a declaration lists surfaces, a surface lists its own cases, `passing` and
+`failing` count cases, and a check that would print zero passing and zero failing is a refusal, so
+`failOn: "failing > 0"` can never read nothing as success. The hunk-level model of `13` F-TEST-10
+given its file mutant and its `granularity` (R3-7); a declaration-level `reason` in the envelope
+(R3-8); path rules for a `file` output (R3-13: a tracked path is `invalid`, cleaning deletes only a
+file the reviewed declaration names and never a tracked one, and the sentence "so cleaning can never
+delete a project file" was dropped as an overclaim); `reference.ref` resolved as `<sha>^{commit}` or
+`refs/tags/<name>^{commit}` so a tag is peeled (R3-15); a declaration digest that excludes `review`,
+`expires` and `unobservable` (R3-16); a capture that lacks one of the declaration's cases reading
+`missing`, never a partial comparison (R3-18); an `unobservable` entry that names a surface and
+counts once per surface (R3-20); and the helper hardening for the pin test (R3-17: `expectPinned`
+had been an unanchored substring). Two honest-boundary sentences were added (R3-12): a change of
+installed dependency is not seen where both sides run against one installed copy, and FORGE does not
+check the candidate's own build.
+
+The pin pass (the build fork, tests first) found 51 pins failing on the rewritten text: 46 updated,
+4 deleted (two of those four re-created as sentences of the trust anchor) and one retired cross-spec
+guard. It added 61 `it`s, 19 of them `expectClause` pins over a fragment of a long sentence, and
+pinned eight retired wordings as absent over unstripped text. Its mutation evidence: 52
+spec-mutation rounds and three helper passes; across 955 spec-level mutations (inversion, deletion,
+duplication, end-qualification, prefix qualifier, move-out, comment-out and fence-out, plus a
+whole-line deletion and the retired wordings re-inserted plain and inside a comment or fence) every
+one turned a pin red, and 42 of 43 helper mutants were killed, the survivor (`offset === 0`) an
+equivalent mutant. The helper has 19 unit tests of its own. The scoped run was 338 of 338 green (323
+in `test/spec-cli-examples.test.ts`, 15 in `test/output-contract-known-gaps.test.ts`).
+
+**The prototype, between the specs and the critics.** Round 2's lesson was that I had specified a
+mechanism I had never run. So before any critic saw round 3, a throwaway script (not committed)
+built the comparison and ran 96 scenarios against real git 2.39.5 on Node 22 and APFS, with every
+blob id cross-checked against `git hash-object --no-filters`. It detected every tamper that
+`git status` and `git diff` cannot see: `skip-worktree`, `assume-unchanged`, ignore rules, a sparse
+checkout, an edit committed on the working branch, a clean-filter edit, replace objects, special
+files, case and Unicode-normalisation respellings, a symlinked `.forge` or `.forge/parity`,
+unreadable entries and races. As worded it missed six things: the executable bit, an empty
+directory, `--trusted main` with a planted tag named `main` (a tag outranks a branch), a moved trunk
+ref, a swap-and-restore of a file between the two comparisons, and a trunk that moved mid-run when
+the second comparison re-resolved it. It also showed that `ls-tree` run from the repository's top
+level silently compares another directory, that a SHA-256 repository reads every file as modified
+under SHA-1-only hashing, and that `git hash-object <path>` runs clean filters. Eight corrections
+went into the specs (pass 3b below). Two of the six no wording can close, a ref that an agent moves
+before the check starts and a file changed and restored between the two comparisons, so they became
+the stated boundary (`13` F-TEST-9, "The anchor's boundary") instead of defects left in.
+
+**Four further revision passes, each re-pinned by the build fork.** Pass 3b applied the prototype's
+eight corrections: a `--trusted` that is a full commit sha or a `refs/` name only, resolved once as
+`<ref>^{commit}`; the second comparison made against the sha the first resolved, so a ref that moves
+mid-run moves nothing; `ls-tree` run with the project root as its working directory; `.forge` and
+`.forge/parity` as entries that must be directories; the blob id computed in-process in the
+repository's own object format; `.gitattributes` `-text -filter -ident -working-tree-encoding`
+rather than `-text` alone; "modified means a different blob id", with the executable bit and empty
+directories declared not compared and the reason given; and a probe or overlay written from the
+bytes the harness loaded, never read from `.forge/parity/` a second time. The same pass made `10`
+§10.3 rule 6 name the three marker variables (`FORGE_RUN_ID`, `FORGE_STEP_ID`, `FORGE_AGENT_ID`),
+which specs 03, 13 and 18 had been citing it for without it naming them (the build fork's own note),
+and changed `setup` from "built or fetched" to built from the tracked files. Pin side: 15 updated,
+10 added, none deleted; 237 pin mutations in 48 rounds all red, 22 single-region reversions turning
+31 pins red, and the whole revert turning 25 of 25 updated-or-added pins red; 348 tests, 307
+selected by `-t "M16"`.
+
+Pass 3d took the build fork's seven "spec wording problems" (the resolution command named and every
+later step using the resolved id; the second comparison conditioned on a case having run; the
+wording for a non-regular entry; the reason given for the mode and empty-directory limits; reading
+each file once against the second comparison; command vetting defined in three sentences; the
+`invalid` list) and added a sentence disclosing that the candidate is observed in place. Pin side:
+11 updated, 17 added (12 of them retired wordings pinned absent), none deleted; every mutation class
+red (183 of 183 retired-wording mutations); each delta region reverted alone turned the predicted
+`it`s red (43 in 31 rounds) and the whole revert turned 28 titles red with none outside the
+predicted set; 365 passed in the scoped run, 324 selected by `-t "M16"`.
+
+Pass 3e came from checking my own pass-3d sentences, not from a critic. I probed the shipped command
+vetting with 80 commands (the real `vetStoredCommand` and `runConfinedCommand`, not a reading of
+them), and it showed that vetting judges a command's text, and for a glob or a symlink the tree as
+it is when the declaration loads, never what the program the command names then does. Two sentences
+I had written in pass 3d were therefore wrong: the anchor-boundary sentence said the anchor "reaches
+nothing the harness runs or compares", which a case's own command defeats by reading a file while it
+is changed, and the `setup` parenthetical said `setup` "has no network and cannot fetch", which no
+vetting can promise (Decision 7 of Q294 carries the corrected claim). Pass 3e fixed both; defined
+vetting as the confinement model of `20` §20.1 applied to a stored command, at declaration load,
+against the project's tree; added two honest-boundary sentences saying what vetting does and does
+not judge; gave `--trusted` a referent in `git check-ref-format`; made the first anchor comparison
+happen even when no case runs; and dropped `--end-of-options` from the specs because its support in
+`git rev-parse` on the project's git floor (`03` §3.4, `git` >= 2.30) could not be verified. Pin
+side: 14 updated and 13 added, none deleted (287 of 314 generated pins unchanged); 565 mutations of
+the specs' text, every one red (the eight structural classes, 147 of 147; the retired wordings
+re-inserted plain, in a comment and in a fence, 278 of 278; each of the 85 elements of the new
+wording deleted or replaced, 85 of 85, eight of them counted with the retired wordings; the 24
+spec-diff hunks and 39 word-level delta regions put back to the older text, 63 of 63); each of the
+eight delta regions reverted alone turned exactly the predicted `it`s red; the whole revert of specs
+03 and 13 to the pass-3d text turned the predicted 22 of 23 red, with none red outside the predicted
+set and the seven must-stay-green pins green (the twenty-third, the re-targeted ref-form test,
+cannot fail on the older text, which never held the phrase it forbids; it is red under ten clause
+mutations instead); all 141 mutation rounds restored the specs byte-identically; 363 tests passed in
+the spec file and 15 in the gaps file, 337 selected by `-t "M16"`.
+
+Pass 3f came from the build fork's report on pass 3e, which listed eight places where the spec's
+wording was narrower than the engine it describes or hard to read, and from a second probe of mine
+to check each: 76 further commands through the real `vetStoredCommand` (156 with pass 3e's 80). The
+probe confirmed the build fork's first item and made a false statement of mine visible. The
+definition of vetting in `13` read as complete, yet the engine also refuses a program that runs
+another program (`env`, `xargs`, `timeout`), a program that changes files or the environment (`rm`,
+`mv`, `chmod`), a package runner that fetches what it runs (`npx`), `find` with `-exec`, `-execdir`,
+`-ok`, `-okdir` or `-delete`, a git subcommand that is not read-only, and a path that names a secret
+file, `.git` or `.forge/state`, so a reader would have taken `env FOO=1 pnpm test` for one plain
+invocation. The probe also showed that `network: none` is not a default a declaration can change
+(the engine fixes it for a stored command) and that a glob is accepted, which the test command
+granted by `20` §20.1 may not use. I also found an error of my own: the sentence placing the
+reference's scratch tree under "the `.forge/state/` of the tree the check runs in" was wrong,
+because only a capture creates a scratch tree (a check observes the candidate alone and runs no
+`setup`). Pass 3f made six changes to spec 13 and none to the other specs (the `forge parity check`
+row of `03` carries the ref-form clause but uses its colon to introduce what is compared, so it has
+no list of refused forms to misread). The ref-form sentence now says "`HEAD`, an abbreviated sha and
+a bare name (which a tag can shadow) are refused" after a semicolon, where a colon had let it read
+as a list of accepted forms. Vetting is defined with the engine's other refusals, with
+`network: none` "which no declaration can relax for a command", with the glob difference, and
+"against the project's tree, whichever tree a command later runs in"; a `run` or `setup` that
+vetting refuses makes the declaration `invalid`, where the text had said "a load error", which is
+not a verdict. The scratch tree sits under the `.forge/state/` of "the tree a capture runs in", and
+`setup` is said to run only at capture. The introduction of the verdicts is split so that the one
+exception to "decided before any case is observed" is stated as an exception: the anchor's second
+comparison, made after the last case, can still find `oracle-changed`. The honest-boundary sentence
+reads "what the program the command names does when it runs". Pin side: 8 updated and 15 added, none
+deleted (306 of 329 generated pins unchanged); 378 tests passed in the spec file and 15 in the gaps
+file, 352 selected by `-t "M16"`.
+
+**Critic round 3 (final, the maximum: four independent, fresh-context critics running at once
+against the pass-3e/3f text and the real prototype, read-only — one blocking, several major and
+minor, all fixed or disclosed; no fifth round followed.** Critic A (conformance, twenty items): no
+blocking, two major, four minor, one nit group. Major: a case's arguments had no composition rule,
+so whether vetting saw them depended on which builder read "literal words" (a probe against the
+shipped `vetStoredCommand` showed one reading lets `x;echo INJECTED` run); a process a signal ends
+has no exit code, and the shipped runner reports one anyway (`exitCode: result.exitCode ?? 1`,
+confirmed on `SIGKILL`/`SIGSEGV` probes), so a crash mid-refactor could read `match`. Minor: a
+snapshot that cannot be taken, and a held port, were on no verdict list; the digest's "canonical
+form" was undefined to the point that two declarations differing only in `surfaces` or `cases` could
+hash identically under the common one-liner; the normalisation rules were named, not defined, so two
+builders could produce different bytes for one declaration; `expires`' boundary day and zone were
+unstated against the shipped `<=`-today precedent. The nit group: unpinned `declarations` order;
+"refusal" used loosely for a gate failure that is not one; `EvidenceBundle.parityEvidence` named
+with no producer; the plan called the loader "pure" though its vetting is async and reads the tree;
+the plan's normative list omitted spec 17. Critic B (red team: 699 probed commands, an
+11,064-combination verdict-algebra model, three throwaway git repos): no blocking, two major, three
+minor, two nit. Major: check-time stability had no run count, so one builder could compare a single
+sample and never reach `unstable`; the vet's refusals were stated as classes when `vetStoredCommand`
+enforces fixed lists, so `python3 -m pip install`, `go mod download` and `cp`/`touch`/`sed -i` all
+passed against text that implied they would not. Minor: the same `expires`-boundary gap B found
+independently; retention's "referenced" was computed from one enumeration, so a reference written
+between it and removal is unprotected; a mismatch display's relationship to the `--json` `reason`
+was unstated, so a builder could copy candidate text, a secret included, into the evidence. Nit:
+`git rev-parse --verify` follows git's own DWIM resolution, so a planted `refs/tags/refs/heads/main`
+resolves where the text promised a refusal; `oracle-changed`-with-zero-declarations and a `--name`
+miss against `oracle-changed` were gate-neutral but unstated. Critic C (code claims: real probes,
+re-run claims, no worktree): no blocking, one major, eight minor, nits. Major, the same
+vetting-as-classes finding B made independently, with `.FORGE/STATE/x` (case-insensitive on APFS)
+and a live `eval "rm victim.txt"` added as evidence. Minor: the DWIM and same-digits ref gaps A and
+B had each found separately, now triply confirmed; the snapshot's path resolution broke under a
+project root below the git top level, needed `--no-renames`, and missed
+`skip-worktree`/`assume-unchanged`; a `CheckRun` event was claimed unconditionally though a gate
+check's `gateEnv` has no `FORGE_PROJECT_ROOT`; `vetPath` swallows a failing `realpath`, so a
+non-existent path under an escaping symlink passes; the `1→2` migrations were literal identity going
+up, which never sets `schemaVersion` and never converges; `forge doctor`'s `secret-references`
+check, missed, scans captures and `ParityEvidence` for `${secret:NAME}`; P9's own Surface list
+omitted four tests that break the moment `G-Parity` is wired in (confirmed by running them). Critic
+D (the pin tests themselves, mutation-first: 26,209 spec-text mutants, 260 helper mutants, 55
+real-vitest cross-checks): one blocking, two major, seven minor, two nit. Blocking: `expectPinned`
+guarantees a sentence only inside its own full stops; nothing constrains what comes before or after
+it in its block, so a contradicting sentence inserted next to a pinned one, including beside three
+of pass-3e/3f's own new sentences, left every pin green. Major: nothing pinned the nine verdicts'
+listed order against the separately-pinned claim that the list IS that order; a bold lead-in before
+any pinned sentence counted as a sentence start, so a fabricated "**Unless a waiver applies.**" in
+front of one was green. Minor: `normalise` folded more than whitespace, so an NBSP inside the gate
+string itself was invisible to the pins; the retired-wording scan covered only specs 03/10/13/18,
+missed casing and hyphenation, and rested on referents (the retention default, the gate count, two
+spec-20 clauses) that no test read; two load-bearing sentences, one each in specs 18 and 10, were
+simply unpinned; `expectLines` ignored indentation and order. Nit: deleting a list marker or a table
+pipe was invisible (rendering only); nothing enforced the naming convention itself.
+
+**The fix, final.** Every critic-A and critic-B/C content finding above is fixed in the spec text,
+not disclosed around: argument composition (each case argument is a literal, single-quoted word
+appended to the surface's `run`, and the composed line, not the bare `run`, is what vetting judges
+and what runs, so an argument holding a quote, a newline or a shell operator cannot be declared); a
+signal-ended process is observed as that signal, never as an exit code; the vet's refusals are named
+as the engine's closed lists, "closed, not classes", with the pass-through examples (`cp`, `touch`,
+`python3 -m pip install`) and the honest boundary restated to match (a `setup` that runs a program
+the lists do not know can still install dependencies; review covers it); a ref name is accepted only
+after `git show-ref --verify` confirms that exact ref exists, and a sha only as lower-case digits of
+the same length `rev-parse` itself returns, refusing an abbreviation, an upper-case spelling and a
+tag object's id (the `refs/heads/refs/heads/main` planted-ref case is now the pinned example);
+`reference.ref` is held to the same two rules; check-time stability runs the probe `stability.runs`
+times on the candidate and compares the shared value, not a single run — stability is a sample, not
+a proof; the normalisation rules run in the order a declaration lists them, each now defined
+(`line-endings`, `strip-ansi`, `trim-trailing-whitespace`, `sort-lines` by UTF-16 code unit,
+`replace`); the digest is canonical JSON, compact, keys sorted at every depth, no trailing newline,
+UTF-8; `expires` and an `unobservable` entry's own expiry are read as UTC and expire at their start;
+the snapshot command gained `--no-renames` and paths resolved from the repository's top level, and
+an ignored file's companion, a tracked `skip-worktree`/`assume-unchanged` file, is now also
+excluded; a snapshot that cannot be taken and a held port both make the case `error`; a `CheckRun`
+event is written only where `FORGE_RUN_ID` reaches the command **and** the command can name the
+run's own project root — which a gate check's integration worktree never is, so no in-run `G-Parity`
+evaluation ever gets one; the `1→2` migrations set `schemaVersion: 2` going up and change nothing
+else, and `down` strips the version-2 fields from a change-level record but refuses a hunk-level one
+outright, since it has no version-1 form; the `declarations` list is ordered by `name`; the mismatch
+display is printed only without `--json`, and an envelope or evidence record never carries observed
+text, only where a difference is; a path vetting judges that exists is followed through a symlink to
+where it ends, and one that does not yet exist is judged by its text alone; `forge doctor`'s
+`secret-references` scan is disclosed as the one check that can flag a declaration, capture or
+record; the HTTP surface's start command is named as the declaration's own vetted command. Pass 3g's
+re-pin (fork A, Part I) closed all 28 of these regions with no gaps, confirmed by reverting each
+alone and the whole file, both matched against real `vitest`. Critic D's blocking and major
+pin-structure findings are fixed too (Part II, items 1/2/4/5/6/7/8/9/12): new `Section.blocks` and
+two helpers, `expectBlock` (a block holds exactly the given sentences, in order, nothing before,
+between or after) and `expectBlockOrder` (a whole section's blocks, in listed order), closing
+`F-TEST-9` (31 blocks) and `F-TEST-10` (16 blocks) completely and four named mixed-section sites
+besides; `normalise` narrowed to `[ \t\r\n]+`; a case/hyphen-folding `expectAbsentFolded` replacing
+every retired-wording pin and extended to specs 17 and 22; the two previously-unpinned sentences
+(18:331-334, 10's rule-6 purpose clause) now pinned; `expectLines` comparing exact indentation and
+enforcing order; a dozen new helper fixtures targeting D's own named survivor regions; a repo-wide
+naming-rule test. Finding and fixing two real pre-existing pin-test bugs along the way: a YAML row
+pin missing its two leading spaces, invisible under the old trimming `expectLines`; and a
+gate-catalogue count (`expectClause` over ten row openings) that let an inserted eleventh row
+through, replaced with an `expectBlockOrder` over the whole catalogue.
+
+**Disclosed, not fixed.** Critic D's three remaining items, by the directive's own allowance for
+mixed sections and adversarial-only findings: item 3, a bold lead-in before any pinned sentence
+still counts as a sentence start (`before.endsWith('** ')`), unchanged this round, adversarial-only;
+item 10, `scanLines` still models only backtick fences and HTML comments, so a tilde fence, a
+four-space indent or a hidden `<div>` still evades `expectAbsent`, not re-measured; item 11,
+deleting a list marker or a table pipe is still invisible, a rendering-only change, not re-measured.
+Beyond the pin tests: `F-TEST-9` and `F-TEST-10` are closed at block granularity, but 78 of the 287
+currently-pinned sentences, in sections M16 only partly rewrote (most of spec 03 §3.2.5, spec 10
+rule 7/8's margins, spec 17, most of spec 18 §18.4/§18.7, spec 22's build-plan list), are measured
+still open at sentence granularity alone — a sentence inserted beside, relocated into, or swapped
+with one of those 78 still turns nothing red. Every item above is a measured count, not a guess, and
+nothing claims a closure it did not reach.
+
+**Verification.** Both pin-test files real-green: 513 of 513 (498 in
+`test/spec-cli-examples.test.ts`, 15 in `test/output-contract-known-gaps.test.ts`), `-t "M16"`
+selecting exactly 472 of them, matched independently against the count of `M16`-marked
+`describe`/`it` titles in both files, so nothing outside this piece and nothing missed. Real
+mutation evidence, not shim-only: every one of the 28 pass-3g spec regions reverts red, individually
+(fresh `-U0` diffs, not the stored context-diffs, which undercounted) and as a whole-file revert of
+specs 10/13/18 (94 pins red under real `vitest`, 95 under the repointed shim, the one difference a
+known, understood harness artifact — the naming-rule `it` resolves its repo root wrong once bundled
+and reruns under no mutant, confirmed by a side-by-side name diff, not assumed). Six referent- and
+class-level findings (the retention default, the gate-catalogue count, two spec-20 clauses, the two
+newly-pinned sentences, whitespace folded into the gate string, a folded retired wording
+re-inserted) each confirmed red live, one at a time, snapshot, mutate, run, restore, sha256-verify.
+One recovery incident during that work: a hand-spliced restore after the 18:331-334 test matched the
+wrong anchor and clobbered roughly seventy unrelated lines; caught immediately by a full six-file
+sha256 check (not a single-file `cmp`) against the frozen baseline and recovered from a still-fresh
+snapshot with nothing lost — every restore from that point on used the full sha256 check, and the
+lesson is recorded here so a later piece does not relearn it the same way. Spec-wording problems
+from this last pass: none found. `pnpm typecheck`, `pnpm lint`,
+`pnpm emit-schemas && pnpm schema-drift` all clean; specs unchanged by the pin work (sha256-verified
+against the baseline both before and after).
+
+**The orchestrator's own errors,** carried forward from `SPEC-QUESTIONS.md` Q294's own paragraph so
+a critic does not have to find them twice, with what this file itself got wrong added. In the spec,
+plan and Q294 text: round 1's blocking count first written as 3 (actual 4); D7's first draft
+mis-described round-2 critic A's "nothing installed" finding; the spec briefly said `setup` is
+"built or fetched" (corrected in pass 3b); a round-2 critic C nit was first attributed to round 3;
+two Decision 4/5 sentences misstated the verdict model; a wrong `compile.ts` line and
+`facades.ts`/`kb.ts` citations missing their package paths. Self-caught design errors, each before
+the next critic round saw them: the verdicts bullet flattened into prose and had to be re-split; the
+intro sentence read as false once the after-last-case exception existed; `nothing-compared`'s
+zero-surface wording; a capture with no entry for a no-longer-excused surface; `CheckRun` claimed
+unconditionally, twice — once before pass 3f named the scratch-tree/capture-only correction, again
+before this round's project-root caveat; the boundary sentence "reaches nothing the harness runs or
+compares", defeated by a case's own command reading a file while it is changed. The round-1
+trust-anchor design (the run manifest's `integrationTipAtStart`) was mine, and three independent
+round-2 critics showed it unreachable from a gate check and true only inside the run in which a
+rewrite happened — I had specified a mechanism I had never run, which the prototype between rounds 2
+and 3 exists to never repeat. `setup` was overclaimed twice ("can build or fetch", then "has no
+network and cannot fetch") before the pass-3e probe showed vetting reads the command, not the
+process. `--end-of-options` was copied from my own prototype without checking the git floor, and
+dropped; critic C later confirmed dropping it was right (`rev-parse` has had it only since git
+2.30.0, exactly the floor). The plan's false `vetConfiguredCommand` citation and its "pure" loader
+claim were both corrected before this round's critics saw them. Process and tooling, minor: one
+build fork stopped once at its turn limit and was resumed, not repeated, by sending it the same
+session a message rather than starting a duplicate; an early `cut -c1-300` hid critic A's "setup
+cannot install" statement on a first read; a path-vs-basename sha256 mismatch, a markdown-wrapping
+helper that split a backtick span, and two small Python helper bugs were each caught by their own
+output disagreeing with what was expected, not assumed correct; one BSD-vs-GNU shell slip
+(`cp -n && cmd`, `sed -i`, `grep \s`, `ls --time-style`, `cat -A`, zsh's bare `=word`) per round,
+each caught by the command's own error rather than a silent wrong result; a guessed spec-20
+filename, corrected before it was used for anything.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q294`.

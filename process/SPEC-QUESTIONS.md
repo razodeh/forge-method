@@ -27169,3 +27169,845 @@ of the real event log; the disclosure ledger staying consistent (`0 open, 0 corr
 attempt, success and failure alike.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M15 P14`. This closes M15 (P1 through P14).
+
+## Q294 — M16 P1: specifying the parity oracle before building it — a premise that had no referent, an oracle the party under test could have moved, and a count that could have passed on nothing
+
+**Context.** `PLAN-M16.md` P1's Mandate: write the normative text first, pin every load-bearing sentence
+with a test, and build nothing under `packages/`. `specs/22`'s M16 entry, as written at M15's close, said to
+"attach the check to the `refactor`, `migrate` and `adopt` gates"; the plan's own research found that
+premise false (Decision 1). The text was then written, attacked and corrected over three build-and-critic
+rounds, the maximum: two independent fresh-context critics in round 1, three in round 2 (spec conformance,
+red team, code claims) and four in round 3 (the same three lenses again, plus a dedicated pin-test critic)
+in round 3. The binding text is `13` F-TEST-9 (parity oracles) and F-TEST-10 (hunk-level behavioural
+binding), `18` §18.2/§18.4/§18.7/§18.8 (layout, payload versioning, `ParityEvidence`, retention), `10` §10.3
+rule 8 (workflow-scoped gates) with its check-contract bullet, `03` §3.2.5 (the parity and evidence rows),
+`17` §17.2/§17.4 (the `BASELINE` tag as a legitimate reference) and `22`'s M16 entry. This entry supersedes
+`PLAN-M16.md` wherever they differ: the plan carries an `## Amendments recorded by Q294` section (A1 to A15)
+and a `[Q294 A<n>]` marker at each place it alters; Decision 13 maps them. Every critic finding and its
+disposition, round by round, is in `GAUNTLET-LOG.md`, `## M16 P1`.
+
+**Decision 1 — the premise had no referent, so M16 creates the attachment instead of finding one.** As M15
+shipped them, `refactor`, `migrate` and `adopt` contain no `kind: gate` step. `refactor` is
+`state-invariants` (agent) → `refactor-code` (agent, `produces: ['**', '!@protected']`) →
+`verify-invariants` (a command step, `forge test run --json`) → `commit` (a `kind: checkpoint`, which does
+nothing). `migrate` ends in the same command step, and its `migrate-data` step (`forge migrate run`) is
+unwired and pinned as such in `test/command-steps.test.ts` (Q213/Q202). `adopt` is `inventory-codebase`
+(`forge adopt inventory --json`, also unwired) plus two agent steps, and `G-Adopt` is evaluated in-process
+with no gate file. There was no gate to attach a parity check to.
+
+M16 therefore creates one: the workflow-scoped gate `G-Parity` (no `phase`, because it belongs to no
+lifecycle phase; one deterministic check, `behavior:parity`,
+`run: 'forge parity check --json --no-record --trusted refs/heads/main'`, `parser: forge-json`,
+`failOn: 'failing > 0'`), scheduled only by an explicit `kind: gate` step; the two flags are Decisions 5 and
+3. `10` §10.3 rule 8 states the rule: a workflow-scoped gate is scheduled only by a workflow's `kind: gate`
+step, no phase transition evaluates it and nothing that enumerates every gate does, while
+`forge gate check|approve|reject|waive` still resolve it by id like any gate (`G-Adopt` is the precedent: a
+gate outside the lifecycle, evaluated in-process).
+
+The consequences are disclosed rather than hidden. `refactor` becomes **strict**: a declaration that
+compares at least one surface is required before any refactor can pass, and a fail-fast preflight refuses a
+project that has none before an agent step runs (whether the preflight is a first gate step or an entry
+check inside `forge refactor` is P9's mechanism choice, settled by a real run). `migrate`'s parity step is
+structurally proven but partly unreachable until `forge migrate run` is wired. `adopt` gets documentation
+only: the `BASELINE` tag it creates is a legitimate `reference.ref` (`17` §17.2), but it is created only
+when the pipeline reaches that phase and the repository has a commit, never recreated or moved, and names
+HEAD at adoption. The `specs/22` premise paragraph is written historically ("as M15 shipped them") so that
+it is not a false present-tense fact once P9 lands. Rejected: attaching the check to `G-Verify`, which
+couples `refactor` to a project-wide gate and forces a parity declaration on every story.
+
+**Decision 2 — the declaration is not agent-unwritable, and M16 neither claims it is nor fixes why.**
+`PLAN-M16.md` Decision 5 rested the oracle's integrity on one fact: `.forge/**` is in `NEVER_WRITABLE_GLOBS`
+(`packages/engine/src/rca/fix-scan.ts:61-70`), which `floorFor` hands to an agent step's claim
+(`packages/engine/src/dispatch/outputs.ts:402`), so a refactoring agent cannot write the declaration it is
+judged by. The floor is real but it is enforced after the fact, and only when the adapter reports changed
+files: `enforceClaim` (`packages/engine/src/dispatch/steps.ts:488`) sits inside `if (work.changed)`
+(`steps.ts:475`), and `work.changed` is `session.changedFiles.length > 0`, which the claude-code adapter
+derives from `git status --porcelain=v1 -z` in the lane
+(`packages/adapter-claude-code/src/changed-files.ts`). A session that commits its own work in the lane
+leaves a clean status, nothing is reverted, and the lane is integrated with whatever it wrote under
+`.forge/`. That is not new: M13 disclosed it for self-committing sessions (Q209, restated in Q212). It
+matters here because, with the lane committed, an agent could delete the declaration it broke, add an
+`unobservable` entry, push `expires`, or forge a capture (whose name is only its own sha256) (round 1,
+critic B, B2-1, blocking). Round 2's critic C reproduced it with in-process `runWorkflow` experiments: a
+session double that commits everything lands its rewrite, and the next run starts from it; a partial
+self-commit is caught, because the working tree is then dirty and enforcement runs.
+
+The spec therefore says plainly that the declaration, its probes, overlay inputs and captures are not
+agent-unwritable, and that "the floor is therefore not what protects the oracle: the trust anchor below is"
+(`13` F-TEST-9, Decision 3). Captures moved from `docs/forge/reports/parity/captures/` to
+`.forge/parity/captures/` for the same reason: `reports/` was never in the floor, so the plan's "also
+agent-unwritable (it lies under the reports root)" was never true, and a capture under `.forge/parity/`
+falls under the one comparison the anchor already makes.
+
+**M16 does not change claim enforcement.** Running `enforceClaim` whenever the lane differs from its base,
+as the adapter-crash path already does by asking `ctx.vcs.hasChanges(lane, baseSha)` instead of the
+session's own list (`steps.ts` ~832-840), would close the hole for every agent step, not only parity's, and
+would change how every workflow M1 to M15 shipped behaves; its exact scope is not verified here (for one
+thing, `ctx.vcs.commit` has to tolerate a clean tree). It is the owner's call and is listed under
+"Owner-redirectable calls" below; M16's design does not rely on it. Not established: whether a real
+claude-code session's grant lets it commit (`confined-command.ts:26-27` notes that a permitted test runner
+runs project code that can do anything the user can); the experiments used a session double that commits.
+
+**Decision 3 — the trust anchor: the harness compares the oracle on disk with a reviewed ref, and asks
+neither git's index nor the run what changed.** This is the decision the three rounds changed most, and it
+was redesigned twice. The first design took the anchor from the run (the manifest's
+`integrationTipAtStart`); round 2 showed that it cannot work, and that the natural mechanisms, `git status`
+and `git diff <anchor>`, are blind to an agent that has git. The design below was prototyped on real git
+before the last critics saw it (end of this decision).
+
+*Why not the run.* A gate check cannot read the manifest: it runs with the integration worktree as its
+working directory (`packages/engine/src/dispatch/steps.ts:1222`,
+`packages/engine/src/dispatch/facades.ts:309`), the CLI takes its project root from that directory
+(`packages/cli/src/bin.ts:4866`, `flags.project ?? process.cwd()`, no upward search), and the manifest is at
+`<projectRoot>/.forge/state/runs/<runId>/manifest.json`. An anchor taken from the run holds only inside the
+run in which a rewrite happens: the integration branch persists and is never reset to trunk when it is ahead
+of it (`context.ts:643-651`), and lanes are integrated between ticks whatever a gate says, so a rewrite that
+lands in run N is run N+1's starting tip (critic C observed run 1 fail the diff that run 2 then approved).
+`FORGE_RUN_ID` reaches a gate check only through the launcher shim, whose creation can fail with a warning
+(`packages/cli/src/commands/run/launcher-shim.ts:188-206`). And `git status` and `git diff <anchor>` miss
+`git update-index --skip-worktree` then `rm`, `--assume-unchanged` then an edit, a
+`.forge/parity/.gitignore` containing `*`, a clean filter, a case-only rename under `core.ignorecase=true`,
+and `git replace <anchor> <lane-tip>`, which reaches every worktree (git 2.39.5, round-2 critic B's
+`repro/matrix.sh`).
+
+**Decided.** The anchor is a ref the caller names, `forge parity check --trusted <ref>`, where `<ref>` is a
+full commit sha or a ref name that begins `refs/` and that `git check-ref-format` accepts. `HEAD`, an
+abbreviated sha and a bare name are refused: a bare name resolves to the first of several places git looks,
+so a planted tag `main` outranks the branch `main` (round-2 critic B; the prototype's scenario G2a, and the
+other scenario ids below are the prototype's too). `<ref>` is resolved once, by
+`git rev-parse --verify <ref>^{commit}`, and the commit id that returns is the one every later step uses;
+neither accepted form can begin with `-`, so it cannot be read as an option. A ref name is accepted only
+after `git show-ref --verify <ref>` confirms that exact ref exists — a name that merely resolves, as
+`refs/heads/refs/heads/main` does for `refs/heads/main`, is not that ref — and a sha is accepted only as
+lower-case digits of the repository's full object-id length, the id `rev-parse` returns having to be those
+same digits, which refuses an abbreviation, an upper-case spelling and a tag object's id. `reference.ref` is
+held to the same two rules, a tag checked as `refs/tags/<name>`: an invalid name or sha is `invalid`, and a
+valid one that resolves to no commit (a tag that does not exist, for one) is `missing`. The round-3 text and
+its prototype also passed `--end-of-options`; the last revision drops it, because it protects nothing the
+two forms leave open and because `rev-parse` has recognised it only since git 2.30.0, exactly the floor `03`
+lists, which leaves no margin to depend on it (round-3 critic C).
+
+The harness lists every entry under `.forge/parity/` as it is on disk, following no symlink and including
+ignored and untracked entries, and treats `.forge` and `.forge/parity` themselves as entries (each must be a
+directory when present). It compares each path, and the blob id of each file's raw bytes, with the listing
+of `git ls-tree -r -z <commit> -- .forge/parity`, run with the project root as its working directory (from
+the git top level it silently lists another directory, G8d). The blob id is computed in-process, in the
+repository's object format, because `git hash-object <path>` runs clean filters and SHA-1-only hashing reads
+every file of a SHA-256 repository as modified (G7c). The harness never reads the index or `git status`,
+sets `GIT_NO_REPLACE_OBJECTS=1` on every git command it runs, and makes its comparison first, before any
+case runs, and, when a case ran, again after the last, against the same commit id, so a ref that moves while
+the check runs does not move the anchor (T4a). A path added, modified (a different blob id) or deleted is
+`oracle-changed`, whether the difference is committed, staged, untracked or ignored; so is a symlink or any
+other entry that is neither a regular file nor a directory, and so is an entry that cannot be read.
+`oracle-changed` makes every declaration and the overall verdict `invalid`, the envelope's `reason` names
+each differing path, and deleting every declaration reads `oracle-changed`, not `no-declarations`.
+
+A file's mode (its exec bit) is not compared and an empty directory is not an entry: the harness executes
+nothing under `.forge/parity/` in place and loads nothing from a mode or an empty directory. Paths compare
+as raw bytes, so a case-only or Unicode respelling reads as one path deleted and another added. A project
+marks `.forge/parity/**` `-text -filter -ident -working-tree-encoding` in `.gitattributes`, since `-text`
+alone cures only line endings. At the first comparison each file is read once: the bytes compared are the
+bytes loaded, and a probe or an overlaid file is written into the tree under observation from those same
+bytes, never read from `.forge/parity/` again (T2). An unresolvable or malformed `--trusted` is a refusal
+(`ok: false`), never a skipped comparison; no `--trusted` means no comparison and `trusted: null`.
+`G-Parity`'s check passes `--trusted refs/heads/main`, an explicit argument with nothing sniffed from the
+environment.
+
+*Why trunk, and which trunk.* It is the one reviewed ref a gate check can reach without the run's help (the
+integration worktree shares the repository), it does not move when a lane lands, and the run syncs the
+integration branch to it before any lane exists (`runWorkflow`, `packages/cli/src/commands/run/run.ts`
+~196-236). The engine's trunk is the literal `main` (`TRUNK`, `context.ts:84`, a constant with no
+configuration): the run syncs to it (`run.ts:215-217`) and it is the lane base unless lanes are taken from
+the integration branch (`context.ts:708`), so the gate's `refs/heads/main` names the branch the engine
+already names, while the specs' prose says "trunk" without saying it is `main`. Run by hand,
+`forge gate check G-Parity` runs the same command and so compares with trunk too.
+
+**The boundary is part of the decision, not a footnote.** The anchor fails the evaluation that sees a
+rewrite, in that run and in every later one until the anchor and the tree agree; it does not prevent the
+rewrite or its landing on the integration branch. An agent that can run git can move a ref (G3), and code a
+case runs can change a file and restore it between the two comparisons, which neither sees: the harness uses
+only the bytes it loaded, so such a change alters nothing the harness itself writes into a tree or compares,
+although a case's own command can read the file while it is changed, and code a case runs can do anything
+the user can in any case. So this is an honest-session control, not a security boundary, the same standing
+`10` §10.3 rule 6 gives the marker. A project that sets `execution.integrationBranch` to the trunk itself
+gets no protection, because lanes then land on the anchor. The comparison cannot tell a deliberate change
+from an agent's, so a reviewed change to `.forge/parity/` reads `oracle-changed`, wherever it is on disk,
+until it is on trunk: it has to reach trunk before a `forge refactor` run can rely on it. Gate definitions
+are read from the main project when the run starts, so a lane's edits to `G-Parity.gate.yaml` or its check
+file cannot change that run, but once they land on the branch the project loads gates from they govern the
+next one. The anchor also fails closed where it cannot tell: a sparse checkout that omits `.forge/`,
+case-colliding names in the ref on a case-insensitive filesystem, `autocrlf` without the `-text` family, and
+a symlink committed in the ref are permanent false positives, never false passes.
+
+**What the anchor does not cover is the answer key.** The candidate is observed in place, so the code under
+test can read `.forge/parity/`, a capture's stored observation included: a change that reads its own
+expected output is a code change this check cannot tell from a faithful one, and review is what catches it.
+The spec's honest boundary says so (`13` F-TEST-9). Rejected: reusing `integrationTipAtStartOfRun`
+(`context.ts:168-180`) or `FORGE_BASE_REF` as the anchor, which move with the rewrite and, for the first,
+return `undefined` where the spec has to fail closed; a `review.digest` binding the review to the
+declaration's content, which the anchor makes redundant for the in-run threat (any change since trunk
+already fails) and which would make every reviewed edit a new review (left as an owner option);
+`git status`-based detection in any form.
+
+*The prototype.* Before any critic attacked it, the redesigned anchor was built and run on 96 scenarios
+(real git 2.39.5, Node 22, APFS). It detected every tamper that `git status` and `git diff` miss:
+`skip-worktree`, `assume-unchanged`, ignore rules, a sparse checkout, edits committed on the branch, clean
+filters, replace objects, special files, case and Unicode respellings, symlinked `.forge` and
+`.forge/parity`, unreadable entries and races. It also showed that the anchor as worded missed six things
+(the exec bit, an empty directory, a bare `--trusted main` with a planted tag `main`, a moved trunk ref, a
+swap-and-restore between the two comparisons, and a trunk that moves mid-run), which produced eight
+corrections to the spec, all applied. The two that wording cannot close, a moved ref and a swap-and-restore,
+are the boundary above. The prototype is not committed; P7's builder is pointed at it as a reference and
+told that its resolver passes `--end-of-options`, which the spec's final text does not, so that flag is not
+copied. A later pass over the spec text found three more gaps the 96-scenario run did not probe for, all in
+ref exactness rather than in the comparison itself: `rev-parse --verify` alone accepts a name that resolves
+without being the exact ref asked for (fixed by requiring `git show-ref --verify` first), accepts a sha in
+any case (fixed by the same-digits check), and accepts a tag object's id, which is not a commit id (fixed by
+the same check, since a tag object's id is never the digits `rev-parse` returns for `<id>^{commit}`). P7's
+real-git tests add a planted `refs/heads/refs/heads/main` with no `refs/heads/main` behind it, an upper-case
+sha, and a tag object's id to the refusal set the prototype already covered.
+
+**Decision 4 — the verdict model and the counting: one unit, a total order, and a count that cannot be zero
+on nothing.** The first draft named seven verdicts, gave no rule for which one wins, and said `passing` and
+`failing` without saying of what (round 1, critic B, B1-1, blocking): a case equal to its capture that also
+wrote outside its outputs satisfied two verdicts and, with `match` listed first, a first-hit implementation
+passed it. The first repair added a precedence and the invariant "`failing` is 0 only when `passing` is at
+least 1", and round 2's critic B falsified the invariant by enumerating the model's own states: six
+reachable states printed 0 failing beside 0 passing (among them a declaration with one surface that no case
+exercises plus one exempt surface that has a case, and a `--name` that matched nothing), and a
+`failOn: failing > 0` gate approves every one of them. It was one defect: the model counted what ran, so a
+check that ran nothing counted nothing.
+
+**Decided** (`13` F-TEST-9, Verdicts and Counting; `10` §10.3's check contract; `03` §3.2.5). The unit is
+the case, and a case belongs to exactly one surface and runs against that surface alone. There are nine
+verdicts at two levels: four are decided about a declaration and stop its cases from running (`invalid`,
+`expired`, `missing`, `ambiguous`), five about a case (`error`, `unclean`, `unstable`, `mismatch`, `match`).
+Precedence is total, in the order written, and the same order picks a declaration's verdict from its cases
+and a record's overall verdict from its declarations. `passing` counts the `match` cases in declarations
+that were not stopped; `failing` counts the other cases plus one for each stopped declaration, however many
+cases it declares. A case on an `unobservable` surface is not run, has no verdict and counts in a separate
+bucket of surfaces, never as compared. A check with no declaration counts one failing and is `invalid` with
+the check's own `reason`, `no-declarations`; a declaration with no surface that is not exempt is `invalid`
+as `nothing-compared`. The invariant now follows from the definitions instead of being asserted: a
+declaration that was not stopped has a surface that is not exempt, and every surface lists a case (a surface
+that lists none makes its declaration `invalid`), so it runs a case that ends `match` (one passing) or in
+one of the other four (one failing); a stopped declaration adds a failing; no declaration adds a failing. A
+check that would still print 0 and 0 is a refusal anyway, as is a `--name` that matches no declaration, and
+the `--name` refusal names the declarations that exist; the first is unreachable from a well-formed run, and
+the spec states it so that a later change to the counting cannot bring the hole back silently.
+
+What `forge parity check --json` prints is one `{"v":1,...}` envelope (`03` §3.5): numeric `failing` and
+`passing`, the overall verdict, the check's own `reason` where the check itself stopped (`no-declarations`,
+or `oracle-changed` naming each differing path), the evidence id (null when nothing was recorded) and a
+`declarations` list, in order of `name`, of `{name, verdict, reason, passing, failing}`. A refusal is
+`ok: false` and fails the gate. A `missing` reason names the `<os>-<arch>` it looked for, because a capture
+taken on another platform reads `missing`. Three placements were decisions, not transcriptions: `unclean` is
+case-level (observing decides it, and a declaration whose second case dirties the tree still ran its first);
+`nothing-compared` stays declaration-level, worded "no surface that is not exempt"; and the trust anchor's
+second comparison, made after the last case, can turn every declaration `invalid` after the fact, in which
+case no case's result counts.
+
+**Decision 5 — one `ParityEvidence` record per invocation, and none from inside a gate.** Two plan decisions
+changed. *The unit of a record.* `03` and `13` said a check writes "a `ParityEvidence` record" (one per run,
+`--name` being optional), `18` described one declaration per record with "the declaration name" as the
+retention subject, and the plan's P7 `evidenceId` was singular; a check over several declarations had no
+coherent record (round 1, critic A, F3). **Decided:** one `forge parity check` invocation writes one record,
+however many declarations it checks, with a `declarations` list in its body; `--story <id>` is the record's
+`story` and its retention subject, and without it the subject is the single shared literal `project` (the
+check is stateless and has no story of its own, and retention needs a subject to keep "the newest n per
+subject" against).
+
+*No record from inside a gate, and the reason is an experiment, not a preference.* `G-Parity`'s check passes
+`--no-record`. A gate check runs with the integration worktree as its working directory, and the plan's
+`reports/parity/{id}-{slug}.md` sits under a tracked directory, so a record the check writes is an untracked
+file in that worktree. A real in-process `runWorkflow` experiment (`scratchpad/m16/dirty-check/`) did
+exactly that: the check wrote `docs/forge/reports/parity/PAR-001-experiment.md`, run 1 completed, and run 2
+threw `VcsError` `VCS-INTEGRATION-DIRTY` ("The integration worktree for forge/integration/current has 1
+uncommitted change(s), so it cannot be synced with main"); the same check writing under a gitignored path
+(`.forge/state/…`) left run 2 unaffected. Rejected: writing the record to a gitignored location from inside
+the check (it splits the evidence across two homes, and a record a person is meant to review and commit does
+not belong under `.forge/state/`), and committing from inside a check (a check has no business writing
+history). The trail of an in-run evaluation is therefore the `GateEvaluated` event, which carries each
+check's verdict and the digests of its output, plus, where `FORGE_RUN_ID` reaches the command and the
+command can name the run's own project root, a `CheckRun` event of kind `'parity'`. A gate check's project
+root is the integration worktree, never the run's own, so an in-run `G-Parity` evaluation never gets one,
+`FORGE_RUN_ID` notwithstanding. `FORGE_RUN_ID` itself reaches a gate check only through the launcher shim,
+whose creation can fail with a warning (`launcher-shim.ts:188-206`), so a check can run with
+`FORGE_BASE_REF` set and `FORGE_RUN_ID` unset (reproduced by round-2 critic C); `FORGE_STEP_ID` is not set
+for a gate check at all. The cost is stated in the spec: an in-run result leaves no `ParityEvidence`, and
+M16 changes no bundle assembler, so nothing populates `EvidenceBundle.parityEvidence` yet (`18` §18.7): the
+field is the schema half of a link that a later piece writes.
+
+**Decision 6 — the declaration and the capture: what is digested, how a reference is named, what a capture
+holds, and who may take one.** The formats were under-specified in ways that each broke a different piece: a
+capture's fields were never listed (so the key's `name` and reference sha could not be recovered from a
+hash-named file, and a tool version stored inside it would turn a toolchain bump into a refused re-capture),
+the digest list read as exhaustive and omitted cases, `streams`, `expect`, `stability.runs` and the
+normalisation rules, and `setup`, which the first draft used, was scheduled by no piece (rounds 1 and 2,
+critics A and B). **Decided** (`13` F-TEST-9, declaration and capture bullets).
+
+*Declaration and reference.* The declaration is `.forge/parity/<name>.parity.yaml`, its `name` the file
+stem, and an unknown key is `invalid`. `reference.ref` is a full commit sha (40 hexadecimal digits, 64 in a
+SHA-256 repository) or a tag. A sha resolves as `<sha>^{commit}` and a tag as `refs/tags/<name>^{commit}`,
+so a tag is peeled and an unqualified name cannot be shadowed (critic B planted `refs/v1` and
+`git rev-parse 'v1^{commit}'` returned another commit, with only a warning on stderr); replace objects are
+off; a branch name, `HEAD` or an abbreviated sha is `invalid`, because `ref: main` re-resolves after the
+refactor merges and a re-capture would then record post-refactor code, the self-agreeing oracle F-TEST-2
+bans. A tag that has since moved or been deleted reads `missing`, because the capture key carries the
+reference sha. `setup` (the plan's `prepare`, which no spec gave a meaning to) is a list of commands vetted
+exactly as `run` is, in the digest, run in the scratch tree only. Overlay sources and probes live under
+`.forge/parity/`, where the anchor reaches them.
+
+*Capture.* A capture holds the declaration's name and digest, the reference's ref and sha, the platform and
+each case's normalised observation, as canonical sorted-key UTF-8 JSON, with no tool version, no clock time
+and no host path, so identical behaviour is the identical file. It is selected by the key
+`(name, declaration digest, reference sha, platform)`, the reference sha being the one `reference.ref`
+resolves to when the check runs. None selected is `missing`, which is what a capture taken under an older
+digest, at another reference sha or on another platform reads as, so it is never silently compared; two or
+more differing captures under one key are `ambiguous`. `platform` is `<os>-<arch>` as the harness's own
+runtime reports it (`darwin-arm64`, `linux-x64`), which is not the agent platform of `07`. Tool and
+interpreter versions are recorded in the evidence and are not in the key, so a capture pins no interpreter:
+a reference captured under one runtime and a candidate checked under another are compared as they are, and a
+difference the interpreter causes reads as a `mismatch` for a person to resolve. A capture on a second
+platform is a second human act. Its file name is the sha256 of its canonical bytes and is verified on every
+read: a capture that fails is `invalid`, and so is the declaration whose name it records; a differing
+capture under an existing key is refused, never replacing the old one and never sitting beside it. The
+digest is a sha256 over the whole declaration in canonical form **except** `review`, `expires` and
+`unobservable`, joined with the content hashes of the overlaid files and the bytes of the probes: renewing a
+review or excusing a surface does not invalidate a capture, and changing anything that determines what is
+observed, or how, does. A removed `unobservable` entry leaves a capture with no entry for a case that is
+compared again, and that reads `missing`, never a partial comparison. The way out of a refused capture or an
+`ambiguous` selection (a CI image change that legitimately changes bytes under the same `linux-x64` key; a
+merge that left two captures) is a reviewed commit that deletes the stale capture, because FORGE itself
+never deletes one.
+
+*Who may capture.* `forge parity capture` is a human act that no workflow runs, and it refuses whenever the
+FORGE session marker `FORGE_RUN_ID` is present, **whichever run it names**. That is broader than the fence
+`forge gate approve` and `forge gate waive` apply, which refuse only a bare marker that names the run being
+approved (`resolveApprover`, `packages/cli/src/commands/run/gate-commands.ts:548-558`: any other marker
+returns `{ kind: 'human' }` at line 555, a bare one raises `GATE-510` at line 557); a capture has no run to
+compare a marker with. The marker is an honest-session signal and not a security boundary (`10` §10.3 rule 6
+defines it), and the spec says so. Not built, and disclosed in the plan's non-goals: a lock for two
+concurrent `capture` or `check` invocations.
+
+**Decision 7 — observation: where each side runs, what vetting is, and the asymmetries that are disclosed
+instead of closed.** Critics found six ways for a comparison to be vacuous, false or destructive, and the
+probes below found three things the plan had wrong.
+
+*Where.* The reference is observed in a scratch worktree at the declared ref, placed under the
+`.forge/state/` of the tree a capture runs in (gitignored, `18` §18.2) and always removed (a check observes
+the candidate alone, so it creates no scratch tree and runs no `setup`); the candidate is observed in place.
+The placement has a consequence that the spec states in the observation bullet and in its honest boundary: a
+script run in a worktree under `<project>/.forge/state/` (where lanes sit, `lanes.ts:124`) resolves
+`<project>/node_modules/foo`, so a runtime that finds dependencies by walking up the directory tree, as Node
+does, reaches the same installed copy from both sides, and a change of installed dependency is **not seen**
+(round-2 critic A; an earlier text had called the scratch tree "a bare checkout with nothing installed",
+which is false for Node). Any other runtime, and anything that must be built from the tracked files, uses
+`setup`.
+
+*What vetting is.* The first spec text said "vetted" without defining it, and the plan cited
+`vetConfiguredCommand`, which the engine's `dispatch` barrel does not export. It is
+`vetStoredCommand(command, root)` (async, `packages/engine/src/dispatch/confined-command.ts:1097`): the
+configured-command stages (syntax, then the network, package-manager, git and argument stages, with
+`configuredProgramRefusal`, `831-880`, among them), then the proposed-command stage with a grant of exactly
+that command and `network: 'none'`, which adds the package rule (`232-243`, `914-918`) and path containment.
+FORGE runs the command with `runConfinedCommand` under `STORED_COMMAND_LIMITS`, all from
+`@forge/engine/dispatch`, the pair `packages/cli/src/commands/kb.ts:226-262` already uses. The spec defines
+vetting from `20` §20.1: one plain invocation, with no chaining, redirection or substitution, no variable,
+tilde or brace expansion and no shell `-c` string, nothing on the hard denylist, `network: none`, which no
+declaration can relax for a command (so a network program, a URL and a package-manager verb that fetches or
+changes dependencies are refused), and every path it names that exists, a glob's matches included, must stay
+inside the project, a symlink being followed to where it ends (a path that does not exist yet is judged by
+its text alone). It is applied when the declaration loads, against the project's tree, whichever tree a
+command later runs in, and a `run` or `setup` it refuses makes the declaration `invalid`. A case's arguments
+are literal words, each appended to the surface's `run` as one single-quoted word, and the composed line,
+not the bare `run`, is what vetting judges at load and what runs: a single quote, a newline or a shell
+operator such as `;` or `|` inside an argument cannot be declared, because no quoting lets it through, so
+the declaration is `invalid` at load, before any case runs. The round-3 text also lists what the engine
+refuses beyond that, which a reader of the first list would not have guessed (a program that runs another
+program, such as `env`, `xargs` or `timeout`; a program that changes files or the environment, such as `rm`,
+`mv` or `chmod`; a package runner, `npx`; `find` with an action that runs or removes; a git subcommand that
+is not read-only; a path that names a secret file, `.git` or `.forge/state`), and says that a glob is
+allowed, unlike in the test command that `20` §20.1 grants. I probed vetting on this host through a scratch
+bundle of that file. In the first 80 commands (59 in `exp-vet/probe.mjs`, `probe2.mjs` and `probe3.mjs`, and
+21 more for globs, redirection and expansion in `probe4.mjs`): `pnpm install`, `npm install x`,
+`pip install x`, `pnpm dlx x`, `npx x`, a bare `yarn`, `curl http://…`, `a && b`, `$(…)`, `bash -c`,
+`env X=1 node a.js`, `node a.js > out.txt`, `node a.js $FOO`, `node a.js ~`, `node a.js {a,b}` and
+`node ../x.js` are refused; `pnpm test`, `npm run build`, `yarn run build`, `node scripts/run.js`,
+`python3 -m pytest`, `make build`, `mvn test`, `go run ./cmd/x`, `./target/debug/tool`,
+`bash scripts/run.sh`, `node -e`, `python3 -c`, `ls *.txt` and `node scripts/r?n.js` pass. A further 76
+commands (`probe5.mjs` and `probe6.mjs`) checked every item of the round-3 list: `env`, `xargs`, `time`,
+`nohup`, `timeout`, `nice`, `rm`, `mv`, `chmod`, `tee`, `dd`, `sudo`, `kubectl`, `terraform`, `gh`, `doas`,
+`npx`, `pnpx`, `bunx`, `find` with `-exec`, `-execdir`, `-ok`, `-okdir` or `-delete`, `git commit`,
+`git checkout`, `git add`, `git stash`, `git fetch`, `git -C`, and a path naming `.env`, `.git`,
+`.forge/state`, `id_rsa` or a `.pem` file all came back refused, while `find . -name a.js`, `git status`,
+`git log`, `git diff HEAD`, `git show HEAD`, `git ls-files`, `node .forge/parity/probes/x.mjs`,
+`cat .forge/parity/x.parity.yaml` and a glob such as `node scripts/*.js` passed. So a `setup` is meant to
+build from the tracked files; vetting narrows that (an install by a package manager the engine knows is
+refused) but does not enforce it, because the lists it checks are closed, not classes — a program or path on
+none of them passes, so a reviewed script the vet does not recognise can still fetch or install, which is
+the honest boundary, not a gap this milestone closes.
+
+*Vetting reads the command, not the process.* `npm run build` and `bash scripts/build.sh` pass,
+`confined-command.ts` says in its own comment that a configured command may run any script, and neither the
+engine nor the CLI confines a process's network (no sandbox call exists in `packages/engine/src` or
+`packages/cli/src`), so a reviewed script that fetches is not stopped. The spec says so in the honest
+boundary (`13` F-TEST-9), where its `setup` parenthetical says only that `network: none` applies to a
+`setup` too; an earlier text said that a `setup` "has no network and cannot fetch", which is true of the
+command line and false of the process.
+
+*Vetting also refuses ordinary commands.* Any `cargo` command and a bare `pip`, `yarn build`, `pnpm build`,
+`pnpm exec` (a verb other than `test` or `run`), a leading `VAR=1` and a path argument such as Go's `./...`
+(read as a path outside the project) are refused, while a built binary, `go test ./pkg/x`, `yarn run build`
+and a reviewed wrapper script pass. That is the cost of `network: none` for a stored command; it falls
+hardest on Rust projects, which cannot name `cargo` in a `setup`, and a reviewed script is the way round it.
+It is disclosed here and left to P16's docs, and an owner who wants `cargo build` as a `setup` has to widen
+the vet, which this milestone does not do. A declaration also gets no registry allowlist, although `20`
+§20.1 grants one to an agent that needs one: a reference that cannot be built without a fetch cannot be
+declared. The vet accepts a glob, which `20` §20.1's "Test commands" bullet ("no chaining, no `*`, no
+expansion") would not: `vetGlob` expands it against the project and refuses a match that leaves the project,
+one named like an option, a secret or `.git` path, and any pattern that needs more than 20,000 entries, but
+only `execution.testCommands` refuses a `*` outright
+(`packages/engine/src/dispatch/test-command-grant.ts:176`). That difference between `20` and the engine
+existed before M16 and is recorded here, not changed. The root a load-time vet uses is decided here and is
+not left to a BUILD: the scratch tree does not exist when a declaration loads, so the vet reads the
+project's tree, as it is then, and a glob or a symlink is judged against that tree and not against the
+reference's scratch tree, which a ref fills (the spec's honest boundary says so).
+
+*The shipped runner does not return an observation at full fidelity, and the plan assumed it would.*
+`runConfinedCommand` takes execa 9.6.1's defaults, so the final newline of each stream is stripped
+(`printf 'x\n'` and `printf 'x'` both return `x`, and a final `\r\n` goes the same way, stdout and stderr
+alike) and the bytes are decoded as UTF-8 with replacement (`\xff\xfe` arrives as two U+FFFD,
+indistinguishable from a real U+FFFD): `exp-runner/probe.mjs` and `probe2.mjs`, which also show that
+`stripFinalNewline: false` keeps the newline and `encoding: 'buffer'` returns the raw bytes. `13` F-TEST-9
+decides equality on the full normalised content and refuses a text observation that does not decode as
+UTF-8, so P3 adds an option to `ConfinedRunOptions` that keeps the final newline and returns the raw bytes
+(additive: the existing callers pass none and keep today's result), or decides and states otherwise;
+refusing any U+FFFD is the conservative fallback for the decode, and none exists for the stripped newline,
+since the information is gone before the harness sees it.
+
+*The candidate is not built by FORGE.* The reference can be built by `setup`; nothing builds the candidate,
+and ignored build output is outside the digest, the anchor and the snapshot, so a candidate observed through
+a stale pre-refactor build reads `match` (round-2 critic B, finding 3, major). Rejected: a candidate-side
+`setup` (it runs project code in the tree that observing must leave unchanged, and puts a second command
+list under review) and a digest of the built output (FORGE cannot know what a build produces without yet
+another declaration to review). The spec states the asymmetry twice, in the observation bullet (a case's
+`run` that reads build output must build it) and in the honest boundary.
+
+*`unclean` and output paths.* The snapshot taken before and after each case is `HEAD` plus, for each path
+that `git status --porcelain=v1 -z --no-renames --untracked-files=all` lists (paths relative to the
+repository's top level, which can lie above the project root), its status code and a digest of its bytes
+(`absent`, `dir` or `link:<target>` where it is not a regular file): the status lines alone cannot see a
+case that rewrites a file that is already modified or untracked, because the line is the same (round-2
+critic B, finding 4). The delta digest recorded for the candidate is the digest of the snapshot before the
+first case; an ignored file is not part of it, and neither is a tracked file marked `skip-worktree` or
+`assume-unchanged`, so neither is observed. A `file` surface's outputs are cleaned before and after each
+case, which could delete a project file: with a tracked `src/result.txt` and an untracked `out -> src`,
+cleaning `out/result.txt` deletes it (reproduced). An output path is therefore relative, has no `..`
+component and lies outside `.git` and `.forge`; one tracked in the observed tree is `invalid`; each
+component is examined without following links, and a symlink makes the case `error`.
+
+*Vacuity, content and the other surfaces.* A reference that fails identically (its build output is missing)
+is stable and would be captured, and a candidate failing the same way would `match`: capture refuses a case
+whose reference exits other than its declared `expect` (default 0), and a case whose whole observation is
+empty unless it declares `expect: empty`. A `replace` or `ignore-json-pointers` rule that leaves some text
+behind while hiding everything that matters would make every candidate match, so a rule that would erase a
+non-empty observation is refused, as is a `replace` whose match is a whole non-empty stream, and a surface
+that does not want a stream says so with `streams`. The UTF-8 and secret checks ran on the raw observation,
+so a zip, or a CLI that prints a test vector, could never be captured, and since `nothing-compared` fails, a
+binary-only project could never pass: the checks now run on exactly what would be stored, after
+normalisation, and a declared `bytes` mode stores a file's sha256 alone. Host paths in observed content (a
+probe's `cannot open /private/var/.../a.json` is a permanent `mismatch`, and the capture would embed a
+per-machine path) are handled by rewriting each tree's root path, as given and as its real path, to a fixed
+token before any declared rule. `stability.runs` is an integer from 2 to 10, else `invalid`: at capture
+every run against the reference must agree or the case is `unstable` and capture refuses; at check the same
+probe runs `stability.runs` times on the candidate, and the value its runs share, not any single run, is
+what gets compared with the capture — stability is a sample, not a proof, so a case that varies too rarely
+for `stability.runs` runs to show it can still read `match`. A `replace` is linted for
+catastrophic-backtracking shapes and run under a time limit, which the spec calls "conservative, not a proof
+of linear time". The library surface is a `process` surface running a reviewed probe under
+`.forge/parity/probes/` that prints exactly one JSON object, so a thrown error is an observation and a stack
+trace, which carries host paths, is not part of the protocol. The HTTP surface is an explicit
+`network: loopback` opt-in: the harness starts the server with the declaration's own vetted start command,
+with a literal port verified free before the server starts (a held port makes the case `error`, never a
+comparison against whatever is already listening) and a client that refuses any other host. Every case runs
+in a scrubbed environment with `TZ=UTC`, `LC_ALL=C.UTF-8` and `LANG=C.UTF-8`.
+
+**Decision 8 — hunk-level binding: what a hunk is, what is not one, and what a hunk run reports.** The first
+draft said "reverse one hunk at a time" and nothing about a change that has no hunk to reverse (round 1,
+critic B, B1-2, blocking): an added text file was a text hunk in the spec, so a reversal that broke its
+loading was `invalid`, while the plan's P12 pinned the same file as one file-level mutant killed by a load
+failure, and P11 and P12 could not both pass. Round 2's critic A (finding 5) found the same seam from the
+other side: `granularity: file` meant both "a non-text change" and "a degrade level", a run with text hunks
+and a binary file had no defined record-level value, and the load-failure rule for a text file degraded to a
+file mutant was unspecified. Behind both sits a fact from the plan's reading of the shipped engine: PLAN-M15
+P3 said "revert exactly those hunks" and shipped a whole-file revert (`git checkout <base> -- <path>`, or
+removal when the file is new), so hunk granularity is new work and not a refinement.
+
+**Decided** (`13` F-TEST-10; `03` §3.2.5 row 117). A hunk is a unit of *text* change between an explicit
+base and the head, over the change's implementation paths only; test files are never mutated, and a
+comment-only or formatting-only hunk is still a hunk. An added, deleted, binary, mode-only or otherwise
+non-text change is not split: it is **one file mutant**, a revert of that file as a whole, whose verdict
+comes from the same revert-and-run procedure as the change-level mutant for that file and which takes the
+change-level load-failure credit. A hunk that cannot be reversed against the head is `invalid` and stays in
+the list, never dropped. Hunk boundaries are an artefact of the diff algorithm, so the algorithm is pinned
+and recorded in the evidence (the plan has P11 pin `git diff -U0 --no-renames` with fixed prefixes and
+`myers`); the spec fixes two requirements on a hunk id, stable for one base/head pair and distinct for
+textually identical hunks in one file, and leaves the format to P11. Five verdicts: `killed` (with
+`killedBy`), `uncovered`, `invalid`, `timeout`, `skipped`. `granularity` says how the *text* changes were
+mutated, `hunk`, `file` or `change`, degrading in that order above `--max-hunks` and never by sampling,
+since a sampled result would read as a verdict on hunks that were never run; a file that is not split into
+hunks is a file mutant at `hunk` and at `file` alike, which settles the double meaning. The `--max-hunks`
+default is left to P12, which chooses and states it (the plan expected about two dozen).
+
+*The load-failure rule follows the kind of mutant, not the reported `granularity`.* A text hunk whose
+reversal makes a file unloadable is `invalid`; a file mutant and the whole-change mutant take the
+change-level credit. Both simpler rules are wrong. Crediting every load failure would let a reversal that
+merely breaks a file's syntax "kill" a hunk by failing every test in the file, naming tests that never
+exercised it: a stillborn mutant proves nothing about an assertion. Refusing the credit everywhere would
+make an added file unable to read bound although its tests cannot load without it, which M15's shipped
+vitest behaviour already credits at change level. The position is written as one **P10 confirms by real runs
+under both test runners, or amends in its own commit**, because the plan's reading of the engine found the
+two runners disagreeing: vitest's synthetic load-failure outcome is credited to every baseline-passing test
+in the file, while pytest 8.4.2's collection `ImportError` surfaces as an `<error>` with an empty classname
+and is credited to none, so a revert that only breaks an import reads "bound" under one runner and
+"non-binding" under the other. That reading is the plan's and was not re-run here; the spec states the rule
+and who must settle the premise, and P10 must disclose any shipped change-level verdict it changes (the
+expected one: a pytest run whose revert breaks a collection moves from not credited to credited).
+
+*`--base`.* `--base main` without `--hunks` was unspecified, and "the exit code follows the change-level
+result exactly as without `--hunks`" was ambiguous: `--base` re-ranges the change-level run, so its exit
+code can differ from the `HEAD~1` default (round 1, B1-7). Decided: `--hunks` without `--base` is a usage
+error and so is `--base` without `--hunks`; `--base` governs the whole run, so the two halves of one
+`--json` envelope describe one range; without `--hunks` the range is as M15 shipped it (`HEAD~1`). The exit
+code follows the change-level result *over the same `--base` range*, by the rule it follows without
+`--hunks`; hunk verdicts never change it, the `--json` additions are optional fields and every M15 field is
+unchanged. What a `--base` that does not resolve to a commit does is not in the spec; P11 settles it and
+says so (a typed refusal is the expected answer).
+
+*No default threshold, and what a project takes on by writing one.* Hunk mode is report-only and ships no
+gate threshold. A comment-only or formatting-only hunk reads `uncovered` and there is no hunk exemption,
+attribution is bounded by the story's own tests (a hunk covered only by another story's test reads
+`uncovered`), and a threshold would fail changes on both counts. A project that wants one authors a check
+over the `--json` envelope under `10` §10.3's check contract and accepts those costs, which the spec lists
+as three; P13 proves through the real gate evaluator that `failOn: 'uncoveredHunks > 0'` fails on a fixture
+with one uncovered hunk, passes on a fully covered one, and still fails when the change-level result passes
+(`failOn` reads the parsed envelope). Cost: N hunks cost N + 3 runs of the story's test command (baseline,
+revert, restore, one per hunk), which is why the mode is opt-in and bounded. Not built, and disclosed in the
+plan: retry or flake handling (one flaky baseline run can still decide a verdict), the `HEAD~1` landing
+range outside hunk mode, and operator mutation. P10 fixes the gaps hunk work cannot tolerate (failure kinds,
+per-run timeouts, the runner asymmetry) and nothing else.
+
+**Decision 9 — retention: `forge evidence prune`, and what the first design of it could have destroyed or
+left behind.** `PLAN-M16.md` Decision 13 and P14 gave the shape (a dry run by default, keep the newest `n`,
+never prune the highest id, protect what is referenced, a tombstone before removal) and left the edge of
+each rule undefined, so that two builders would have written two commands. The critics closed the edges.
+"Referenced" computed before the run's own removals breaks idempotence (pruning bundle `B1` frees `MUT-001`
+only on the second run), so it is "referenced by a surviving record"; "newest" was undefined (id, timestamp
+or modification time); the first repair was circular, since a bundle kept only because an approval
+references it must protect what it references (`EVID-1` → `PAR-1`) and a one-pass reading prunes `PAR-1`
+from under the approval; an enumeration the command could not complete was not fail-closed, so an unreadable
+reference store would let `--apply` break a reference it never saw; tombstone-first is crash-safe only if
+the tombstone is published atomically and a torn one reads as absent, and "the next prune completes it" was
+undefined once the record is unselected or referenced; `prune --apply` had no run-marker fence although
+`capture` has one, so an agent could prune its own earlier failing `PAR` records; and the subject "the
+declaration name" conflicts with one record per invocation over N declarations (Decision 5). `18` also said
+an older instance "stays on disk, readable" with no qualifier, which contradicted retention while only §18.8
+had been qualified (round 1, critic A, F5).
+
+**Decided** (`18` §18.7, Retention, and §18.8's qualifier; `03` §3.2.5 row 116). The command manages three
+types, `MutationEvidence`, `EvidenceBundle` and `ParityEvidence`, and never prunes a parity capture (the
+oracle's baseline, not its evidence), a collection-shaped artifact, the event log or a tombstone. A dry run
+writes nothing and names its victims; only `--apply` removes. `--apply` refuses whenever `FORGE_RUN_ID` is
+present, whichever run it names, because a prune is a human act as a capture is and a run must not be able
+to discard the evidence about its own work (an honest-session signal and not a security boundary, `10` §10.3
+rule 6); a dry run is always allowed. `--keep <n>` keeps the newest `n` records per type and subject, the
+subject being the story id when the record was written for one and otherwise the single shared literal
+`project` (the same subject Decision 5 gives an invocation with no `--story`). Newest means highest id
+compared as a number (`PAR-1000` is newer than `PAR-999`), never a file's modification time, which a
+checkout or a copy rewrites. `n` is an integer of at least 1 (0, a negative number and a non-integer are
+refused) and defaults to 5, after `03` §3.4's "retain last 5" backups. The highest id of each type is never
+pruned: `n` of at least 1 already implies it, and it is stated on its own because the allocator's no-reuse
+guarantee rests on it (allocation is a scan of what exists, §18.8). What survives is computed **to a fixed
+point**: it starts from what `--keep` and the highest-id rule keep and adds whatever a surviving record, or
+a store outside the evidence records, references, until nothing more is added, so a record referenced only
+by a record this prune removes is not protected, and the outcome does not depend on the order in which
+records are visited. A prune that cannot enumerate every store that can hold an evidence id, because one is
+unreadable or does not parse, refuses and removes nothing. Removal is two steps in a fixed order: the
+tombstone `docs/forge/reports/pruned/<id>.json` (the id, the type, the subject, the record's sha256 and the
+time) is created first and atomically, then the record is removed. A crash between the two leaves a pending
+removal, a tombstone with its record still present; while both exist the record wins, and a reference
+resolves to the record, never to "pruned"; a later prune completes a pending removal only if it still
+selects that record, and otherwise the record stays; a repeated or concurrent prune is idempotent; a
+reference to a pruned id gets a distinct "pruned" answer naming the tombstone, never "dangling". §18.8's
+"files are retained" now holds until prune removes a file after writing its tombstone, the id stays spent,
+and captures are never pruned.
+
+*Chosen against, and left to P14.* Rejected: a lock (the plan's P14 replaces it with idempotence and
+requires real multi-process runs that say how clean it held, "clean on N runs" and never "every time");
+ordering by modification time; pruning captures (a pruned capture turns its declaration `missing`, so
+retention would delete the oracle); the declaration name as subject (one record covers N declarations); and
+`--keep 0` (it would allow pruning the highest id). Open to P14 by design: the enumeration of every store
+that can hold an evidence id (a surviving bundle, a gate approval or waiver under `10` §10.3's evidence
+resolution, a story field, and whatever else the enumeration finds, each tested) and whether the id
+allocator also reads the tombstones, under an invariant test that an id is never issued twice. One fact is
+verified here so that P14 does not rediscover it: `writeNewFileAtomic`
+(`packages/core/src/fs/atomic.ts:134`) writes a temporary file, syncs it and publishes it with `fsp.link`,
+not `rename`, so that an existing target is a refusal (`RUN-114`, line 156) and never an overwrite, and a
+file that exists is never partial. That meets the spec's "created atomically" and gives the exclusive create
+the plan asks for; the spec's parenthetical says "renamed into place", which describes the same
+never-partial property in its simpler form. A concurrent prune that meets `RUN-114` on a tombstone has met
+"already tombstoned" and is not an error.
+
+**Decision 10 — `ParityEvidence`, the optional bundle field and `schemaVersion: 2`: the one place M16
+changes how existing records are versioned.** **Decided** (`18` §18.6, §18.7 and §18.9, and the registry row
+`{ id: ParityEvidence, idPrefix: PAR, path: "reports/parity/{id}-{slug}.md" }`). `ParityEvidence` is a new
+registered, append-only artifact type with no `parent` and an optional `story`; there is one record per
+invocation (Decision 5), it holds names, digests, verdicts and hashes and never an observed value, and
+`{slug}` is settled at P5. The `platform` of a `declarations` entry is the operating system and architecture
+its capture was taken on, `<os>-<arch>`, and the spec says in so many words that it is neither §18.3's
+agent-platform block nor the ledger's `platform` column. `EvidenceBundle` gains an optional `parityEvidence`
+list of ids, and `MutationEvidence` gains the second shape `revert-hunks` (Decision 8: the base sha, the
+diff algorithm, the `granularity` and the hunk list; a hunk run is a new record and an existing change-level
+record is never rewritten). A record that uses a field version 1 lacks carries `schemaVersion: 2`, and two
+migrations, for `MutationEvidence` and for `EvidenceBundle`, both `1→2`, are added with those fields, pure
+and covered by a golden-file test over a real "before" fixture (`18` §18.9): `up` sets `schemaVersion: 2`
+and changes nothing else; `down`, where declared reversible, strips the version-2 fields from a change-level
+record and sets `schemaVersion: 1`, but refuses a hunk-level `MutationEvidence` record outright, because
+`revert-hunks` has no version-1 form to strip down to; `reversible` itself is decided when each migration is
+written (P5).
+
+*What the code does and does not support* (round 1, critic A, F2 and F6). `MIGRATIONS` is `[]`
+(`packages/schemas/src/migrations/registry.ts:18`, "empty at M1"), so these would be its first real entries,
+subject to `validateMigrationRegistry` (a reversible migration must agree with its `down`, and no
+`(type, from, to)` may appear twice), and `planArtifactMigrations` walks the specs root only
+(`packages/cli/src/commands/upgrade/migrate-artifacts.ts`, ~75-80), so a record under `reports/` is never
+reached and version-1 evidence stays version 1 on disk. That limit is the code's, and not `03` §3.4 step
+4's, which says only "Apply schema migrations to artifacts". The spec therefore states the reader rule as a
+P5 requirement ("every reader of these two types must accept `schemaVersion` 1 and 2") and not as a fact.
+The same class of error applied to captures: §18.8 says only that truth is a scan of existing artifacts, and
+the `.md`-only property and the skipped `.forge` directory are in `packages/core/src/ids/scan.ts`, so "no
+validation or health check flags a record or a capture" is a P5 test, over a project holding both, and not a
+present-tense fact.
+
+*Owner-redirectable.* `PLAN-M16.md` named this "the plan's most owner-redirectable scope call": the bundle
+field and the two migrations can be dropped, leaving `ParityEvidence` standalone. That holds for the bundle
+half. The `MutationEvidence` half is coupled to Decision 8, which this entry does not claim to have
+untangled: P5 registers its `1→2` migration before the `revert-hunks` fields exist, and P13's tests use P5's
+golden and write `schemaVersion: 2` records, so dropping the migrations would reach P13 too. That is to be
+re-checked at P13 before the owner redirects, not stated here as fact.
+
+*Event payloads: a rule, not a change.* `PLAN-M16.md` left "the telemetry payload-versioning rule for an
+additive `CheckRun` payload" to P1 and P15, and P1 settles it (`18` §18.4), because P15 cannot build against
+a rule nobody wrote. `v` versions the envelope and nothing else, so a log whose events carry another `v` is
+refused by the reader; no payload carries a version of its own; a payload's shape is selected by its event
+`type` and, for `CheckRun`, by its `kind` (`'binding'` and `'exemption-declared'` from M15, `'parity'` from
+M16), checked first and explicitly and never inferred from which fields happen to be present. Adding a
+`kind` or an optional field is additive and leaves `v` at 1; a change that is not additive takes a new
+`kind` and never reinterprets an old one. The `'parity'` payload carries the count per verdict, the total,
+the evidence id (null for a `--no-record` run) and the declaration names, never an observation; a hunk run's
+counts and `granularity` are optional fields on the existing `'binding'` payload. Like the other kinds it is
+written only where `FORGE_RUN_ID` reaches the command and the command can name the run's own project root;
+inside a run `FORGE_RUN_ID` reaches the command only through the launcher shim (Decision 5), and a gate
+check's project root is the integration worktree, never the run's own, so the event is always absent from an
+in-run gate evaluation, with or without the shim.
+
+**Decision 11 — what the gate wiring (P9) has to show by real runs, and what it discloses instead of
+fixing.** Every claim the wiring rests on was established by reading or by an in-process experiment with a
+session double, and the three rounds disagreed about enough of them that plan amendment A10 makes P9 run
+them. **Required of P9.** (1) A lane that no merge step lands is integrated between ticks, so the gate after
+`refactor-code` sees it, and this still holds after an earlier gate fails (round 2's critic C observed both
+in process with a session double; P9 shows it through the real wiring). (2) One gate id referenced by two
+steps of one workflow, a fail-fast preflight and `verify-parity`, works in a real run. Critic C passed that
+claim **by reading only**: `packages/engine/src/workflow/validate.ts:701-707` checks that the gate exists
+and nothing else, `packages/engine/src/plan/compile.ts:1229-1245` de-duplicates only an agent step's
+evidence list, and `packages/engine/src/dispatch/facades.ts:299-312` evaluates by id afresh on every call.
+Nothing has run it, so the fallback, an entry preflight inside `forge refactor`, stays in the plan. (3) End
+to end, a lane that rewrites `.forge/parity/`, including a session that commits its own work, makes
+`verify-parity` fail in that run, and a second run keeps failing until trunk and the tree agree.
+
+**Disclosed, not fixed.** Claim enforcement is skipped for a self-committing session (Decision 2); the
+integration branch can be the trunk (Decision 3); the in-run gate step writes no `GateReport` file although
+`10` §10.3 rule 4 says every gate evaluation writes one, which the step's own comment documents
+(`packages/engine/src/dispatch/steps.ts:1232-1235`: "This in-run step writes no report FILE of its own (that
+is `gate check`/`approve`/`waive`'s own job…)"); `forge gate check G-Parity` run by hand compares with
+trunk; a reviewed change to `.forge/parity/` has to reach trunk before a `forge refactor` run can rely on
+it; and an in-run result leaves no `ParityEvidence` (Decision 5). Whether a project with nothing observable
+can pass `refactor` at all is left to P9 as a question about a documented waiver: with no declaration, or
+none with a surface that is not exempt, the check fails by design (Decision 4). P9's fixtures are real git
+repositories with a `main` branch that holds the reviewed `.forge/parity/`, because the comparison is with
+trunk.
+
+**Decision 12 — what pins the spec text, and how M16's tests are named.** Two files pin the normative text:
+`test/spec-cli-examples.test.ts` (the M16 `describe` over the six edited specs) and
+`test/output-contract-known-gaps.test.ts` (four known-gap tests that pin what `forge parity` does not do). A
+pin is a presence test on wording: it makes a silent edit, deletion, inversion or weakening of a
+load-bearing sentence fail a test, and it cannot show that the sentence is right, which is the critics' job.
+**Naming (A14).** Every M16 test's `describe` name carries `(specs/22 M16 P<n>)`, so the milestone's exit
+command, `node scripts/run-tests.mjs run -t "M16"`, selects them, and every piece that adds tests adds at
+least one with its own marker (P16 is docs only and P17 is a live run, so neither adds any). **The
+helpers.** Round 1's pin mutation (149 of 149 deletions red, but trailing-qualifier weakenings green) and
+round 2's (about 1,500 mutations: `expectPinned` matched an unanchored substring of the whole section, so a
+sentence with a prefixed qualifier stayed green for 83 of 220 pins, and a moved paragraph or a sentence
+inside a comment or a code fence stayed green) led round 3 to harden them. `Section` carries `text`
+(comments and fenced code removed) and `rawText`; `expectPinned` needs exactly one occurrence, beginning a
+sentence and ending in a full stop; `expectAbsent` reads `rawText`, so a retired wording cannot hide in a
+comment; helper unit tests pin the helpers. The final suite and its mutation table: 513 `it`s across the two
+files (498 in `test/spec-cli-examples.test.ts`, 15 in `test/output-contract-known-gaps.test.ts`), 472 of
+them carrying the `M16` marker. Every one of the 28 spec regions pass 3g changed reverts red, individually
+and as a whole-file revert, against real `vitest`; `F-TEST-9` (31 blocks) and `F-TEST-10` (16 blocks) are
+closed completely at block granularity; and 78 of the 287 currently-pinned sentences, in sections M16 only
+partly rewrote, are measured still open at sentence granularity alone — disclosed, not claimed closed. The
+per-round numbers are in the log entry.
+
+**Decision 13 — where this entry changes the plan, and what the owner may want to redirect.**
+
+*Where it changes the plan.* `PLAN-M16.md` now says that this entry is binding and wins wherever they
+differ. Its `## Amendments recorded by Q294` section lists A1 to A15 and marks `[Q294 A<n>]` at each place
+it alters: Decisions 1, 5, 7, 10, 11, 13 and 14, pieces P2 to P7, P9 to P12 and P14 to P16, and the
+non-goals. The map from amendment to decision: A1 (the gate's check string, `--no-record`) is Decisions 1
+and 5; A2 (the oracle is not agent-unwritable) Decision 2; A3 (the trust anchor) Decision 3; A4 (one record
+per invocation, and `forge doctor` where the plan said `forge validate`, a command that does not exist)
+Decision 5; A5 and A8 (the formats, `forge parity capture`) Decision 6; A6 (observation) Decision 7; A7 and
+A9 (verdicts, counting, the envelope) Decision 4; A10 (what P9 proves and discloses) Decision 11; A11 and
+A12 (`--base`, what a hunk is, the load-failure rule, the P10 engine fixes) Decision 8; A13 (telemetry)
+Decisions 5 and 10; A14 (test naming) Decision 12; A15 (retention) Decision 9. The plan's "Left to a piece's
+own BUILD" list stands and gains one item, what an unresolvable `--base` does (P11). The rest of it: the
+library probe's shape, the capture's finer details, `G-Parity`'s approval, evidence and `onReject` blocks,
+whether one gate id can be referenced by two steps, the waiver path for a project with nothing observable,
+whether the `1` to `2` migrations are `reversible`, which stores hold evidence ids for prune, whether the
+allocator reads tombstones, `{slug}`, the hunk-id format, P10's confirmation of the load-failure asymmetry,
+and the per-run timeout and `--max-hunks` defaults.
+
+*Owner-redirectable calls.* None needs an answer before P2 starts; each is a place where the design could
+reasonably go another way, stated so that the owner can redirect it at the M16 boundary. (1) `G-Parity`
+exists and `refactor` is strict because the spec's premise had no referent (Decision 1). A project with
+nothing observable cannot pass `refactor`: `unobservable` excuses a surface, never a whole declaration, and
+the waiver path for that project is an open question for P9. `migrate`'s parity step is partly unreachable
+until `forge migrate run` is wired, and `adopt` gets documentation only. (2) Claim enforcement is skipped
+for a session that commits its own work (Decision 2). Running `enforceClaim` whenever the lane differs from
+its base would close the hole for every agent step; it is recommended, its scope is not verified, it changes
+the behaviour of every workflow M1 to M15 shipped, and M16 does not rely on it. (3) `ParityEvidence`, the
+optional `EvidenceBundle.parityEvidence` field (which nothing populates yet) and `schemaVersion: 2` with two
+`1` to `2` migrations (Decision 10). The bundle half is separable; the `MutationEvidence` half is coupled to
+P13, to be re-checked at P13 before the owner redirects, not taken as fact now. (4) The trust anchor
+(Decision 3): an explicit `--trusted` that takes a full commit sha or a `refs/` name that
+`git check-ref-format` accepts, and is `refs/heads/main` for the gate (the engine's trunk is the literal
+`main`, the constant `TRUNK` in `context.ts`, and no configuration changes it); an honest-session control
+and not a security boundary; a reviewed change that has to reach trunk before `forge refactor` can rely on
+it; `review.digest` left as an option. (5) Captures live under `.forge/parity/captures/`, not under
+`docs/forge/reports/` as the plan had them (Decision 2). (6) `setup` builds from tracked files, runs at
+capture only, and is held to `network: none` as `run` is: an install is refused and no registry allowlist is
+given, but vetting reads the command and not the process, and it refuses `cargo`, a wrapper program such as
+`env`, a file-changing program such as `rm`, `npx`, `find` with an action, a git subcommand that is not
+read-only and a secret, `.git` or `.forge/state` path, so a Rust project, or any project whose build needs
+one of those, reaches for a reviewed wrapper script; the vet applies when the declaration loads, against the
+project's tree and not the reference's scratch tree, a command it refuses makes the declaration `invalid`,
+and it accepts a glob, which `20` §20.1's "no `*`" for a test command would not (Decision 7). The candidate
+is observed as the agent left it, so the code under test can read `.forge/parity/`, a capture's stored
+observation included (the answer-key limit, Decision 3). The shipped runner strips a stream's final newline
+and decodes lossily, so P3 adds an additive option to the engine's runner (Decision 7). (7) Hunk mode is
+opt-in, report-only, single-story and explicit-base, with no default threshold, and P10's engine fixes may
+change an edge-case change-level verdict, which P10 must then disclose (Decision 8). (8) Retention: the
+default of five, the `--apply` run-marker fence, and that FORGE never prunes a capture (Decision 9). (9)
+P17, the live run, needs the owner's explicit authorization, and nothing in this entry grants it.
+
+*Found and not fixed.* Four groups, recorded because a reader of the specs or the plan could otherwise take
+the silence for an oversight. **Pre-existing disagreements between the specs and the code, left alone.**
+`10` §10.3 rule 4 says every gate evaluation writes a `GateReport` to `docs/forge/reports/gates/`, while
+`runGateStep` writes none for an in-run evaluation and says so in a comment
+(`packages/engine/src/dispatch/steps.ts:1232-1235`; verified by reading). For M16 that means an in-run
+`G-Parity` evaluation leaves no report file and, because its check passes `--no-record`, no
+`ParityEvidence`: the trail is the `GateEvaluated` event with per-check digests, and a `CheckRun` event only
+where `FORGE_RUN_ID` reaches the check and the check can name the run's own project root — which a gate
+check's integration worktree never is, so no in-run `G-Parity` evaluation ever gets one, `FORGE_RUN_ID` or
+not. Rule 6 says the session marker is carried by every engine-spawned session and run-spawned shell
+command, while a gate check gets `FORGE_RUN_ID` only through the launcher shim and no `FORGE_STEP_ID` at all
+(`packages/cli/src/commands/run/context.ts:685-695`; critic C observed it). That is left as it is; what rule
+6 now says is which variables the marker is, `FORGE_RUN_ID`, `FORGE_STEP_ID` and `FORGE_AGENT_ID`
+(`packages/core/src/session-marker.ts:27-34`), because specs `03`, `13` and `18` cite it as the definition
+of the marker and name `FORGE_RUN_ID`, which no spec at `HEAD` named. Spec 18's registry list has no
+`Exemption` row although the code registers one (`packages/schemas/src/registry/artifact-types.ts:161`), and
+§18.2's `reports/` line is an illustrative list that already omitted `mutation/` and `evidence/` and still
+omits `parity/` and `pruned/`. `specs/22` has 24 lines of the stale shorthand `pnpm test -- --grep "<tag>"`
+in 13 other milestone entries and 7 path-form lines in the M1 to M5, M9 and M10 entries, where the
+repository's runner is `node scripts/run-tests.mjs run`; M16's own entry was corrected and those were not
+touched. `20` §20.1's "Test commands" bullet says "(no chaining, no `*`, no expansion)", while the
+stored-command vet accepts a glob and only `execution.testCommands` refuses one
+(`packages/engine/src/dispatch/test-command-grant.ts:176`) (Decision 7). **Engine gaps that already
+existed.** Claim enforcement and a session that commits (Decision 2). `forge adopt inventory` and
+`forge migrate run` are unwired (`test/command-steps.test.ts`, Q213 and Q202). `MIGRATIONS` is empty
+(`packages/schemas/src/migrations/registry.ts:18`, "empty at M1"), so P5's two migrations would be its first
+real entries, and `forge upgrade` walks the specs root only (`planArtifactMigrations`), so it never reaches
+`reports/` evidence. **Suspected and not verified.** `G-Verify.gate.yaml`'s `test:binding` check also runs
+with the integration worktree as its working directory, the mechanism Decision 5's experiment shows can
+dirty that worktree and fail the next run with `VCS-INTEGRATION-DIRTY`. Whether `forge test binding` writes
+a tracked-directory `MutationEvidence` file there was not checked; if it does, M15's own gate has the hazard
+`--no-record` exists to avoid for `G-Parity`. **M16's own residual limits.** The anchor's permanent false
+positives and untested platforms, and the answer-key limit (Decision 3). A `run` or `setup` is vetted as a
+command and not sandboxed as a process, the vet refuses `cargo`, a bare `pip`, `yarn build`, a leading
+`VAR=1`, Go's `./...` and the engine's other refusals (a wrapper program, a file-changing program, `npx`,
+`find` with an action, a git subcommand that is not read-only, a secret, `.git` or `.forge/state` path), and
+it judges the project's tree as it is when the declaration loads (Decision 7). No lock for two concurrent
+`forge parity capture` or `check` invocations. `unobservable` has the shape of an F-TEST-8 exemption but is
+not mirrored to the disclosure ledger, as F-TEST-8's last bullet does for exemptions. A reference that is
+not held at a git ref (a running service, a vendor binary, a recorded session) is outside the oracle's
+definition. The sha256-repository and subdirectory or linked-worktree layouts the prototype exercised are
+test points for P7, and one gate id referenced by two steps is traced by reading only, until P9 runs it.
+
+*What was verified, and how.* Three tiers, kept apart because they are not equally strong. **Run for real**:
+Decision 5's integration-worktree experiment (a real in-process `runWorkflow` twice, with a gate check that
+writes an untracked file into a tracked directory: run 1 completed, run 2 threw `VCS-INTEGRATION-DIRTY`; a
+gitignored path did not); round-2 critic C's in-process `runWorkflow` experiments (the check's working
+directory and environment, the manifest out of reach, the run-2 anchor moving, a session double that commits
+landing its rewrite while a partial self-commit is caught); round-2 critic B's git 2.39.5 matrix of what
+`git status` and `git diff <anchor>` cannot see; round-2 critic A's demonstration that a script run in a
+worktree under `<project>/.forge/state/` resolves `<project>/node_modules`; the round-3 anchor prototype
+(Decision 3); and, for Decision 7, the runner's execa 9.6.1 defaults and the stored-command vet, run through
+a scratch esbuild bundle of `confined-command.ts` against 156 commands (80 in the first four probes and 76
+for the list that the spec gained in pass 3f). **Verified by reading**, the cited file and line each time:
+`NEVER_WRITABLE_GLOBS`, `floorFor`, `enforceClaim` and `work.changed`, `runGateStep` and
+`createGateEvaluator`, the gate environment, `runWorkflow`'s sync to trunk, `writeNewFileAtomic`,
+`MIGRATIONS`, `resolveApprover`, `vetStoredCommand` with both of its stages, `STORED_COMMAND_LIMITS` and the
+`dispatch` barrel's exports, `runStoredVerificationCommand` in `kb.ts`, and the engine's `TRUNK` and its
+three uses. **Not verified**, and said so where the claim is made: whether one gate id can be referenced by
+two steps (P9); the vitest and pytest load-failure asymmetry, which is the plan's reading and was not re-run
+(P10); whether a real claude-code session's grant lets it commit (the experiments used a session double); a
+real `forge refactor` lane integration end to end (P9 and, with authorization, P17); the `G-Verify` instance
+of the dirty-worktree hazard; and Windows, HFS+, Linux, `safe.directory` and partial clones for the anchor.
+
+*How the spec was attacked.* Three rounds of fresh-context critics under the gauntlet's cap, each told to
+find what is wrong and not to confirm what is right. Round 1 had two critics (six and twenty findings, four
+of them blocking); round 2 had three (seven, nine and five findings), and overturned the trust anchor that
+round 1 had settled on; round 3 answered twenty items, prototyped the redesigned anchor before anyone
+attacked it, and then ran four fresh-context critics against it at once — the same conformance, red-team and
+code-claims lenses as before, plus a new one dedicated to the pin tests themselves — who together found one
+blocking gap in the pin tests' own structure and several major and minor gaps in the spec text; every
+content gap was fixed in the spec, and the pin-test gap was closed by a last re-pin and structural-hardening
+pass rather than a fourth critic round. The findings round by round, what each changed, and the pin-mutation
+numbers are in `GAUNTLET-LOG.md`, `## M16 P1`, and are not repeated here.
+
+*The orchestrator's own errors,* listed so that a critic does not have to find them again. The round-1 trust
+anchor (the run manifest's `integrationTipAtStart`) was my design, and three independent round-2 critics
+showed it unreachable from a gate check and true only inside the run in which a rewrite happens. I twice
+overclaimed what `setup` can do (it "can build or fetch", then it "has no network and cannot fetch"), the
+second until the Decision 7 probe showed that vetting reads the command and not the process. I took
+`--end-of-options` from my own prototype without checking it against the git floor and named a `<ref>` form
+as "valid" with nothing to say what valid meant; both were corrected before the last critic round. The plan,
+and my first draft of its amendment, assumed that the shipped runner returns an observation at full fidelity
+and that the `dispatch` barrel exports `vetConfiguredCommand`; neither is so, and I found both while writing
+this entry. Several citations and attributions in my drafts of this entry were wrong and were caught on
+re-reading (paths without their package, a critic's finding attributed to the wrong round, two sentences of
+Decision 4 misstating the verdict model), and six wording errors of my own in the spec were caught before
+the round-3 critics saw them. The build fork's pin pass after pass 3e raised eight further wording problems,
+and pass 3f applied them. Two were errors of mine that mattered: my definition of vetting understated what
+the engine refuses (a wrapper program, a file-changing program, a package runner, `find` with an action, a
+git subcommand that is not read-only, a secret path), and my account of `setup` did not say that only a
+capture runs it; fixing that showed me that I had also written "the tree the check runs in" for the scratch
+worktree, although only a capture creates one. The M16 text in `03`, `13` and `18` also cited `10` §10.3
+rule 6 as the definition of the session marker although rule 6 never named `FORGE_RUN_ID`; the pin work
+caught it, and rule 6 now names the three variables. One build fork stopped at its turn limit instead of
+reporting, so its work was verified from outside and resumed, not repeated by another fork. The complete
+list, with each correction, is in the log entry.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P1`.
