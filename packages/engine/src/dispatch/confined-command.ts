@@ -40,6 +40,7 @@
  * @see PLAN-M13.md P28
  * @see PLAN-M14.md P28
  */
+import { execFileSync } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -1131,20 +1132,96 @@ export const ENGINE_COMMAND_LIMITS: ConfinedLimits = {
   maxOutputBytes: 8_000_000,
 };
 
+/**
+ * Every real descendant of `rootPid`, found by walking `ps`'s own real pid/ppid columns — not merely
+ * the members of its process GROUP, which a descendant that started its OWN session (Node's
+ * `detached: true`, Python's `start_new_session=True`, or any program that calls `setsid(2)` before
+ * it hangs) leaves immediately, becoming the leader of a new group `process.kill(-rootPid, ...)`
+ * below can never reach. Byte-identical port of `shell.ts`'s own `listDescendantPids` (M16 P10,
+ * `SPEC-QUESTIONS.md` Q296 Decision 1 and Decision 5, which names this file's own copy of `killGroup`
+ * as having the identical gap and hands the port to this piece) — see that function's own doc comment
+ * for the full reasoning and the real repro that found the gap; duplicated rather than imported
+ * because `shell.ts` exports neither this nor `killGroup`, and the two files are deliberately not
+ * made to share a module for one helper each (`PLAN-M16.md` P3, Q294: "keep this fix scoped to
+ * `confined-command.ts` alone — do not also touch `shell.ts`").
+ *
+ * Read ONCE, before any signal is sent anywhere: a process already killed has its own children
+ * reparented to PID 1 immediately, severing the `ppid` chain back to `rootPid` from that moment on,
+ * so scanning after killing would silently miss exactly the processes this exists to find. Returns
+ * `[]` on any failure (no real `ps` on this platform, a transient read error) rather than throwing —
+ * the caller's own group kill is still real protection even when this extra pass cannot run.
+ *
+ * @see packages/engine/src/dispatch/shell.ts (`listDescendantPids`, the original)
+ * @see process/SPEC-QUESTIONS.md Q296
+ */
+function listDescendantPids(rootPid: number): readonly number[] {
+  try {
+    const output = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' });
+    const childrenByParent = new Map<number, number[]>();
+    for (const line of output.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed === '') continue;
+      const [pidText, ppidText] = trimmed.split(/\s+/);
+      const pid = Number(pidText);
+      const ppid = Number(ppidText);
+      if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+      const siblings = childrenByParent.get(ppid);
+      if (siblings === undefined) childrenByParent.set(ppid, [pid]);
+      else siblings.push(pid);
+    }
+    const descendants: number[] = [];
+    // A `for...of` over `queue` safely sees elements pushed during its own iteration -- the array
+    // iterator re-reads `.length` on every step rather than snapshotting it -- which is exactly what
+    // this breadth-first walk relies on: each discovered child is pushed back onto the same queue.
+    const queue: number[] = [rootPid];
+    for (const current of queue) {
+      for (const child of childrenByParent.get(current) ?? []) {
+        descendants.push(child);
+        queue.push(child);
+      }
+    }
+    return descendants;
+  } catch {
+    return [];
+  }
+}
+
+/** Kills the whole process group `pid` leads (POSIX), so a grandchild the shell started cannot keep
+ * the output pipes open after the command was killed. ALSO kills every real descendant found by
+ * {@link listDescendantPids}, individually, whether or not it is still a member of that group — the
+ * group kill alone leaves a descendant that started its own session orphaned and running forever
+ * (M16 P10's own real, confirmed repro; ported here verbatim in shape, `SPEC-QUESTIONS.md` Q296
+ * Decision 1 and Decision 5). Falls back to the single process where neither mechanism is available
+ * (win32, or `pid` is unknown) or found anything to do. */
 function killGroup(subprocess: {
   readonly pid?: number;
   kill: (signal: 'SIGKILL') => boolean;
 }): void {
   const pid = subprocess.pid;
-  if (pid !== undefined && process.platform !== 'win32') {
+  if (pid === undefined) {
+    subprocess.kill('SIGKILL');
+    return;
+  }
+  const descendants = process.platform === 'win32' ? [] : listDescendantPids(pid);
+  let groupKilled = false;
+  if (process.platform !== 'win32') {
     try {
       process.kill(-pid, 'SIGKILL');
-      return;
+      groupKilled = true;
     } catch {
-      // The group is already gone, or was never one: fall through to the single-process kill.
+      // The group is already gone, or was never one.
     }
   }
-  subprocess.kill('SIGKILL');
+  for (const descendantPid of descendants) {
+    try {
+      process.kill(descendantPid, 'SIGKILL');
+    } catch {
+      // Already gone -- it may have been a member of the group just killed above.
+    }
+  }
+  if (!groupKilled && descendants.length === 0) {
+    subprocess.kill('SIGKILL');
+  }
 }
 
 export interface ConfinedRunOptions {
@@ -1153,16 +1230,90 @@ export interface ConfinedRunOptions {
    * process's own or a synthetic one. Required: nothing here reads the ambient environment by itself. */
   readonly parentEnv: Readonly<Record<string, string | undefined>>;
   readonly extraEnv?: Readonly<Record<string, string>>;
+  /**
+   * Additive (M16 P3, `SPEC-QUESTIONS.md` Q294 Decision 7, `13` F-TEST-9): absent or `false` is
+   * byte-for-byte today's behaviour for every existing caller — nothing below is reached and
+   * `stdout`/`stderr`/`exitCode`/`timedOut`/`outputLimitExceeded` are produced by the identical code
+   * path this function always had. Set `true` only when the caller needs full fidelity (a parity
+   * observation, which must hand P4 the raw bytes to refuse a lossy UTF-8 decode WITH, never having
+   * already thrown it away): the result then additionally carries `rawOutput` (the exact bytes of
+   * each stream, with execa's own default final-newline-stripping disabled) and `signal` (the real
+   * signal that ended the process, when one did, instead of letting `exitCode`'s own pre-existing
+   * `?? 1` fallback stand in for it unlabelled). `stdout`/`stderr` are still populated, decoded and
+   * newline-stripped exactly as the default path would (confirmed by direct experiment: decoding the
+   * raw bytes and stripping the final newline by hand reproduces execa's own default-mode `stdout`
+   * byte-for-byte), so an existing-shaped caller that happens to pass `true` sees no difference either.
+   *
+   * Deliberately a same-function option, not a new sibling: the alternative (a second function) would
+   * duplicate every line of timeout/kill/exit-listener bookkeeping above, which this option instead
+   * shares completely — only the `execa` call's own `encoding`/`stripFinalNewline` and the result shape
+   * differ, confined to the one branch below. The DEFAULT branch's own `execa` call is left completely
+   * untouched (not merely "equivalent") rather than unified with the new branch, because
+   * `execa/lib/io/max-buffer.js`'s own `getMaxBufferUnit` counts `maxBuffer` in *characters* for text
+   * mode and *bytes* for buffer mode (confirmed by reading that module) — unifying the two branches
+   * would silently shift the exact byte offset at which the pre-existing output-cap test fires for
+   * multi-byte content, which is exactly the kind of behaviour change to a shared, already-depended-on
+   * function this option must not be.
+   */
+  readonly preserveRawOutput?: true;
 }
 
 /** The result of `runConfinedCommand`: the shape `runShellCommand` returns, with the limit flags present only when
- * they fired. */
+ * they fired, and (only when `options.preserveRawOutput` was set) `rawOutput`/`signal` — see that option's own
+ * doc comment. */
 export interface ConfinedCommandResult {
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: number;
   readonly timedOut?: true;
   readonly outputLimitExceeded?: true;
+  /** Present only when `options.preserveRawOutput` was set: the exact bytes of each stream, before
+   * execa's own default final-newline stripping (never before `maxBuffer` truncation, which still
+   * applies — a capped stream's raw bytes are the capped bytes, not the full, unbounded ones). */
+  readonly rawOutput?: { readonly stdout: Uint8Array; readonly stderr: Uint8Array };
+  /** Present only when `options.preserveRawOutput` was set AND a signal, not a numeric exit code,
+   * ended the process (execa already reports this; the default branch never reads it, which is
+   * exactly the "`exitCode: result.exitCode ?? 1` drops `result.signal` entirely" gap this option
+   * exists to close for a caller that opts in). */
+  readonly signal?: NodeJS.Signals;
+}
+
+/** `strip-final-newline@4`'s own algorithm (`node_modules/.pnpm/strip-final-newline@4.0.0`), applied
+ * to a STRING rather than its own binary form: confirmed by direct experiment (invalid UTF-8 bytes
+ * plus a trailing CRLF, compared byte-for-byte against execa's own default-mode `stdout`) that
+ * decoding raw bytes lossily as UTF-8 and then applying this reproduces execa's own default `stdout`/
+ * `stderr` exactly, which is what lets {@link runConfinedCommand}'s new branch compute both the
+ * classic string fields and the raw bytes from one `encoding: 'buffer'` execa call rather than running
+ * the command twice. */
+function decodeLossyWithStrippedFinalNewline(bytes: Uint8Array): string {
+  const decoded = Buffer.from(bytes).toString('utf8');
+  if (decoded.at(-1) !== '\n') return decoded;
+  return decoded.slice(0, decoded.at(-2) === '\r' ? -2 : -1);
+}
+
+/** The timeout/kill/exit-listener bookkeeping both {@link runConfinedCommand} branches share
+ * identically — written once so the two `execa` call shapes below cannot drift apart in anything
+ * except the options and the result shape that genuinely differ between them. */
+function armConfinedTimeout(
+  subprocess: { readonly pid?: number; kill: (signal: 'SIGKILL') => boolean },
+  timeoutMs: number,
+): { readonly state: { timedOut: boolean }; readonly disarm: () => void } {
+  const state = { timedOut: false };
+  const timer = setTimeout(() => {
+    state.timedOut = true;
+    killGroup(subprocess);
+  }, timeoutMs);
+  const onExit = (): void => {
+    killGroup(subprocess);
+  };
+  process.once('exit', onExit);
+  return {
+    state,
+    disarm: () => {
+      clearTimeout(timer);
+      process.off('exit', onExit);
+    },
+  };
 }
 
 /**
@@ -1171,6 +1322,8 @@ export interface ConfinedCommandResult {
  * either limit is reported with `timedOut` or `outputLimitExceeded` and a non-zero exit code; the caller decides
  * what that means (the RCA loop never reads it as a reproduction). Does not vet: use `vetProposedCommand` first for
  * anything a model wrote.
+ *
+ * @see ConfinedRunOptions#preserveRawOutput for the one additive option this function reads.
  */
 export async function runConfinedCommand(
   command: string,
@@ -1178,6 +1331,42 @@ export async function runConfinedCommand(
   options: ConfinedRunOptions,
 ): Promise<ConfinedCommandResult> {
   const env = scrubbedEnvironment(options.parentEnv, options.extraEnv);
+
+  if (options.preserveRawOutput === true) {
+    const subprocess = execa(command, {
+      cwd,
+      shell: true,
+      reject: false,
+      env,
+      extendEnv: false,
+      stdin: 'ignore',
+      detached: process.platform !== 'win32',
+      maxBuffer: options.limits.maxOutputBytes,
+      encoding: 'buffer',
+      stripFinalNewline: false,
+    });
+    const { state, disarm } = armConfinedTimeout(subprocess, options.limits.timeoutMs);
+    try {
+      const result = await subprocess;
+      if (result.isMaxBuffer) killGroup(subprocess);
+      const rawStdout: Uint8Array = result.stdout;
+      const rawStderr: Uint8Array = result.stderr;
+      return {
+        stdout: decodeLossyWithStrippedFinalNewline(rawStdout),
+        stderr: decodeLossyWithStrippedFinalNewline(rawStderr),
+        exitCode: result.exitCode ?? 1,
+        ...(state.timedOut ? { timedOut: true as const } : {}),
+        ...(result.isMaxBuffer ? { outputLimitExceeded: true as const } : {}),
+        rawOutput: { stdout: rawStdout, stderr: rawStderr },
+        ...(result.signal === undefined ? {} : { signal: result.signal }),
+      };
+    } finally {
+      disarm();
+    }
+  }
+
+  // The default branch, deliberately untouched by the new option above — see that option's own doc
+  // comment for why it is not unified with the branch above.
   const subprocess = execa(command, {
     cwd,
     shell: true,
@@ -1188,15 +1377,7 @@ export async function runConfinedCommand(
     detached: process.platform !== 'win32',
     maxBuffer: options.limits.maxOutputBytes,
   });
-  const state = { timedOut: false };
-  const timer = setTimeout(() => {
-    state.timedOut = true;
-    killGroup(subprocess);
-  }, options.limits.timeoutMs);
-  const onExit = (): void => {
-    killGroup(subprocess);
-  };
-  process.once('exit', onExit);
+  const { state, disarm } = armConfinedTimeout(subprocess, options.limits.timeoutMs);
   try {
     const result = await subprocess;
     if (result.isMaxBuffer) killGroup(subprocess);
@@ -1208,7 +1389,6 @@ export async function runConfinedCommand(
       ...(result.isMaxBuffer ? { outputLimitExceeded: true as const } : {}),
     };
   } finally {
-    clearTimeout(timer);
-    process.off('exit', onExit);
+    disarm();
   }
 }

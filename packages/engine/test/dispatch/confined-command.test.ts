@@ -645,6 +645,106 @@ describe('runConfinedCommand: what actually reaches the child', () => {
   });
 });
 
+describe('runConfinedCommand: preserveRawOutput is additive (specs/22 M16 P3)', () => {
+  const limits = { timeoutMs: 20_000, maxOutputBytes: 100_000 };
+
+  it('every existing shape is unchanged when preserveRawOutput is absent', async () => {
+    const cwd = await lane();
+    const result = await runConfinedCommand('echo out; echo err 1>&2; exit 7', cwd, {
+      limits,
+      parentEnv: process.env,
+    });
+    expect(result).toEqual({ stdout: 'out', stderr: 'err', exitCode: 7 });
+  });
+
+  it('keeps the final newline and decodes nothing lossily when preserveRawOutput is set, while stdout/stderr still read as the identical stripped, decoded string', async () => {
+    const cwd = await lane();
+    // `printf` (not `echo`) so the trailing newline is exactly one `\n`, unambiguously.
+    const result = await runConfinedCommand(
+      `${process.execPath} -e "process.stdout.write(Buffer.from([0x68,0x69,0xff,0xfe,0x0d,0x0a]))"`,
+      cwd,
+      { limits, parentEnv: process.env, preserveRawOutput: true },
+    );
+    expect(result.exitCode).toBe(0);
+    // Lossy-decoded, final-newline-stripped -- identical to what the default branch would produce.
+    expect(result.stdout).toBe('hi��');
+    // The raw bytes: NOT lossily decoded (0xff 0xfe stay as themselves, not replaced), and the
+    // trailing CRLF is still there, uncut.
+    expect(result.rawOutput).toBeDefined();
+    expect([...(result.rawOutput?.stdout ?? [])]).toEqual([0x68, 0x69, 0xff, 0xfe, 0x0d, 0x0a]);
+    expect(result.rawOutput?.stderr).toEqual(new Uint8Array());
+  });
+
+  it('reports the real terminating signal instead of a synthesized exit code when preserveRawOutput is set', async () => {
+    const cwd = await lane();
+    const result = await runConfinedCommand(
+      `${process.execPath} -e "process.kill(process.pid, 'SIGTERM'); setTimeout(() => {}, 5000);"`,
+      cwd,
+      { limits, parentEnv: process.env, preserveRawOutput: true },
+    );
+    expect(result.signal).toBe('SIGTERM');
+    // The pre-existing fallback is untouched: `exitCode` still reads `?? 1`, never a null/undefined
+    // leaking through to a caller that only reads `exitCode` and ignores the new `signal` field.
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('a command that exits normally with preserveRawOutput set carries no signal field at all', async () => {
+    const cwd = await lane();
+    const result = await runConfinedCommand('exit 0', cwd, {
+      limits,
+      parentEnv: process.env,
+      preserveRawOutput: true,
+    });
+    expect(result.signal).toBeUndefined();
+    expect(result.exitCode).toBe(0);
+  });
+});
+
+describe('runConfinedCommand: a detached grandchild does not survive the kill (specs/22 M16 P3) (Q296 Decision 5)', () => {
+  it('kills a Node grandchild that detaches into its own session before it starts busy-looping, confirmed via a real pid liveness check', async () => {
+    // The identical real repro `shell.test.ts` uses for the sibling copy of this function (M16 P10,
+    // `SPEC-QUESTIONS.md` Q296), reproduced here against `confined-command.ts`'s own, separate
+    // `killGroup`/`listDescendantPids` pair -- the two files are deliberately not unified (Q296
+    // Decision 5), so this is this file's own, independent proof that its own copy is really fixed.
+    const cwd = await lane();
+    const markerPath = path.join(cwd, 'grandchild.pid');
+    const grandchildPath = path.join(cwd, 'grandchild.cjs');
+    const parentPath = path.join(cwd, 'parent.cjs');
+    await writeFile(
+      grandchildPath,
+      "require('node:fs').writeFileSync(process.argv[2], String(process.pid));\nfor (;;) { /* busy */ }\n",
+      'utf8',
+    );
+    await writeFile(
+      parentPath,
+      "const { spawn } = require('node:child_process');\n" +
+        "const child = spawn(process.execPath, [process.argv[2], process.argv[3]], { detached: true, stdio: 'ignore' });\n" +
+        'child.unref();\n' +
+        'for (;;) { /* the parent hangs too, so the timeout -- not an early exit -- triggers killGroup */ }\n',
+      'utf8',
+    );
+
+    const started = Date.now();
+    const result = await runConfinedCommand(
+      `node ${JSON.stringify(parentPath)} ${JSON.stringify(grandchildPath)} ${JSON.stringify(markerPath)}`,
+      cwd,
+      { limits: { timeoutMs: 1_500, maxOutputBytes: 100_000 }, parentEnv: process.env },
+    );
+    expect(result.timedOut).toBe(true);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    const pid = Number((await readFile(markerPath, 'utf8')).trim());
+    expect(Number.isInteger(pid)).toBe(true);
+    // `kill -0`: the standard liveness probe, sends no real signal.
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive, `detached grandchild pid ${String(pid)} must not survive the kill`).toBe(false);
+  }, 15_000);
+});
+
 describe('vetStoredCommand: a KB-verify/adopt stored command (PLAN-M14.md P28) gets the identical confinement', () => {
   const hostile: readonly (readonly [string, string])[] = [
     // A chained shell operator with a hard-denylisted piped-`sh` segment: found `denylisted` (the

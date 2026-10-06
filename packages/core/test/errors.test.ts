@@ -184,6 +184,14 @@ const SAMPLE_DETAILS = {
   expectedId: 'fm-service',
   actualId: 'acme-standards',
   destination: '.forge/modules/acme-mod',
+  // `RUN-118`..`RUN-126` (`specs/22` M16 P3): the observation engine's own typed refusals (a
+  // timeout, an output-cap breach, a malformed library probe, a scratch-worktree failure, a
+  // cleanliness snapshot failure) — `path`/`detail`/`vcsCode`/`vcsMessage`/`command` above already
+  // cover most of their keys; these four are new.
+  timeoutMs: 120_000,
+  capBytes: 8_000_000,
+  surface: 'process',
+  stream: 'stdout',
 } satisfies Record<string, unknown> as never;
 
 /**

@@ -143,6 +143,27 @@ export const ERROR_CODES = {
     remedy:
       'Set the command in `.forge/config.yaml` (or with `forge config set <key> "<command>"`) to the single shell command that runs that layer and exits non-zero on failure, then run the check again. A gate check with no command to run fails, or takes a recorded Waiver.',
   },
+  // `specs/22` M16 P3 (`13` F-TEST-9's observation bullets; `process/SPEC-QUESTIONS.md` Q295
+  // Decision 3, which hands this exact question to P3): `composeArgs`'s single-quote defense
+  // (`packages/cli/src/commands/parity/compose-args.ts`) is a correct, sufficient defense on a
+  // POSIX shell and not a safe one on `cmd.exe`, which never treats `'` as a quote character. This
+  // piece's own DECISION (its report has the full reasoning) is an explicit, scoped M16 limitation
+  // rather than an unproven platform-conditional composition: no Windows host exists in the
+  // environment this piece was built in to prove one safe, and composing something `cmd.exe`
+  // parses differently from what was reviewed is exactly the silent-latent-bug shape `specs/02`
+  // §2.7's "Windows first-class" promise exists to rule out. Refused before any process spawns.
+  'ENV-007': {
+    severity: 'fatal',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: () =>
+      "The parity observation engine composes a case's command line with a POSIX single-quote defense " +
+      '(specs/13 F-TEST-9) that cmd.exe does not parse safely, and this milestone does not yet compose ' +
+      'a Windows-safe equivalent (process/SPEC-QUESTIONS.md Q294/Q295).',
+    remedy:
+      'Run `forge parity capture`/`forge parity check` on a POSIX host (macOS or Linux) until a ' +
+      'future piece adds a Windows-safe composition; this platform is refused rather than risking a ' +
+      'declaration that composes into something other than what was reviewed.',
+  },
   'ADP-012': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,
@@ -2714,6 +2735,138 @@ export const ERROR_CODES = {
     remedy:
       'Fix the named key in the parity file (specs/13 F-TEST-9 shows the declaration and capture ' +
       'shapes), then reload it to see every remaining problem.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9's observation bullets): a case's command outlived its own
+  // `timeoutMs` (the case's own override, or `STORED_COMMAND_LIMITS`'s default) and was killed --
+  // "a case that times out ... is a typed, distinct failure your caller can act on, NEVER a
+  // truncated observation silently passed on as if it were complete."
+  'RUN-118': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { command: string; timeoutMs: number }) =>
+      `${show(d.command)} did not finish within ${show(d.timeoutMs)}ms and was killed.`,
+    remedy:
+      'Raise the case\'s own "timeoutMs" if the command genuinely needs longer, or fix the command ' +
+      'so it finishes sooner, then re-run the observation.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9): a case's command wrote more than its own output cap on a
+  // stream and was stopped -- the cap-breach half of the identical "typed, distinct failure, never a
+  // truncated observation" rule `RUN-118` states for a timeout.
+  'RUN-119': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { command: string; capBytes: number }) =>
+      `${show(d.command)}'s output exceeded its ${show(d.capBytes)}-byte cap and was cut off.`,
+    remedy:
+      'Raise the case\'s own "outputCapBytes" if the command genuinely needs to print more, or reduce ' +
+      'how much it prints, then re-run the observation.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9: "a destination that already exists in that tree makes the case
+  // `error`; it is never overwritten"). A RUNTIME fact the declaration loader cannot know at load
+  // time (P2's own `declaration.ts` doc comment: it checks the destination's shape only).
+  'RUN-120': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string }) =>
+      `The overlay destination ${show(d.path)} already exists in the tree being observed.`,
+    remedy:
+      'Remove the existing file at that path in the tree being observed before capturing or ' +
+      'checking, or change the case\'s own overlay "to" destination.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9: "An observation that contains a secret ... is refused at
+  // capture, before anything is stored"). Reuses the existing `SECRET_PATTERNS` set
+  // (`@forge/extensions/skills`), never a reinvented pattern list.
+  'RUN-121': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { surface: string; stream: string }) =>
+      `The ${show(d.surface)} surface's ${show(d.stream)} contains a secret-shaped value and is refused before storage.`,
+    remedy:
+      "Remove the secret from the command's own output or the file it writes, then re-run the " +
+      'observation.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9: "a text observation that does not decode as UTF-8" is refused
+  // at capture, before anything is stored). Decided on the RAW bytes `preserveRawOutput` hands back,
+  // never on whatever a lossy decode already did before this check ever saw it.
+  'RUN-122': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { surface: string; stream: string }) =>
+      `The ${show(d.surface)} surface's ${show(d.stream)} does not decode as UTF-8 and is refused before storage.`,
+    remedy:
+      'Fix the command so it prints valid UTF-8, or set the output\'s own declared mode to "bytes" ' +
+      'instead of "text", then re-run the observation.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9's library probe protocol: "Stdout that is not exactly one such
+  // object is `error`, never `match`").
+  'RUN-123': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { command: string; detail: string }) =>
+      `The library probe ${show(d.command)}'s stdout is not exactly one well-formed {"ok":...} JSON object: ${show(d.detail)}`,
+    remedy:
+      'Fix the probe script so it prints exactly one {"ok":true,"value":...} or ' +
+      '{"ok":false,"error":{"name":...,"message":...}} JSON object on stdout, then re-run.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9: the reference is observed "in a scratch worktree ... placed
+  // under the `.forge/state/` of the tree a capture runs in"). `@forge/vcs`'s own `createLaneWorktree`
+  // throws a `VcsError`; wrapped here the identical `vcsCode`/`vcsMessage` shape `RUN-037` already
+  // gives a lane-worktree failure on the engine's own run path.
+  'RUN-124': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string; vcsCode: string; vcsMessage: string }) =>
+      `Creating the reference's scratch worktree at ${show(d.path)} failed (${show(d.vcsCode)}): ${show(d.vcsMessage)}`,
+    remedy:
+      'Fix the underlying git failure (remove a stale ".forge/state/worktrees/" entry, free disk ' +
+      'space, or similar), then re-run the capture.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9: "a case whose output path passes through a symlink is
+  // `error`"). Checked component by component, without following links, before any cleaning happens.
+  'RUN-125': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string }) =>
+      `The declared output path ${show(d.path)} passes through a symlink in the tree being observed.`,
+    remedy:
+      "Remove the symlink from the path, or change the case's own declared output path, then re-run " +
+      'the observation.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9's unclean-detection bullet: "a snapshot that cannot be taken" is
+  // one of the harness's own `error` causes). The underlying `git status`/`rev-parse` failure is
+  // wrapped with the identical `vcsCode`/`vcsMessage` shape `RUN-124` above and `RUN-037` already use.
+  'RUN-126': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string; vcsCode: string; vcsMessage: string }) =>
+      `Taking a cleanliness snapshot of ${show(d.path)} failed (${show(d.vcsCode)}): ${show(d.vcsMessage)}`,
+    remedy:
+      'Fix the reason named above (not a git repository, no commits yet, a permission problem on ' +
+      '".git/index", or similar) in the tree being observed, then re-run the observation.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9: a surface's own `setup` "run only in the scratch tree, before
+  // the reference is observed", vetted exactly as `run` is). A `setup` command that fails (a
+  // non-zero exit, a timeout or an output-cap breach) means no case of that surface can be observed
+  // against a reference that was never successfully built.
+  'RUN-127': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { command: string; detail: string }) =>
+      `The reference's own setup command ${show(d.command)} failed: ${show(d.detail)}`,
+    remedy: 'Fix the setup command (or the tracked files it builds from), then re-run the capture.',
+  },
+  // `specs/22` M16 P3 (`13` F-TEST-9: "its inputs are overlaid files, copied from under
+  // `.forge/parity/`"). P2's loader checks an overlay `from`'s SHAPE only (`paths.ts`'s
+  // `unsafeOverlaySourceReason`, a pure string check with no filesystem of its own); whether the
+  // file genuinely exists on disk is a runtime fact only this piece, with a real tree, can see.
+  'RUN-128': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string }) =>
+      `The overlay source ${show(d.path)} under ".forge/parity/" could not be read (missing, a directory, or unreadable).`,
+    remedy:
+      'Add the missing file under ".forge/parity/", fix the case\'s own overlay "from" path, or ' +
+      'fix its permissions.',
   },
   'RUN-109': {
     // `PLAN-M14.md` P8, `SPEC-QUESTIONS.md` Q232 decision 2: a declared KB output (or `mode:
