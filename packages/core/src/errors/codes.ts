@@ -2677,6 +2677,27 @@ export const ERROR_CODES = {
       "Remove or rewrite the flagged text; skill and MCP content cannot alter FORGE's own " +
       'operating contract.',
   },
+  // `specs/22` M16 P2, `13` F-TEST-9: a parity declaration (`.forge/parity/<name>.parity.yaml`) or a
+  // parity capture (`.forge/parity/captures/<sha256>.json`) that cannot be trusted as the oracle it
+  // claims to be -- an unknown key, a missing `review`/`expires`, a `name` that is not the file
+  // stem, a malformed `reference.ref`, a `run`/`setup`/composed-argument line the engine's command
+  // vetting refuses, an unsafe output or overlay path, or a capture whose file name is not the
+  // sha256 of its own bytes. The identical "`file`, `key`, `detail`, and how many more problems
+  // follow" shape `GATE-506` already gives a malformed gate document, reused here rather than
+  // invented afresh, since both are "a reviewed, structured file this project ships is broken" --
+  // `declaration.ts`'s own `assertParityDeclarationValid` is this code's one real throw site.
+  'CFG-510': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; key: string; detail: string; more?: number }) =>
+      `Parity file ${show(d.file)} is invalid at ${show(d.key)}: ${show(d.detail)}` +
+      (typeof d.more === 'number' && d.more > 0
+        ? ` (${String(d.more)} more problem(s) follow it)`
+        : '.'),
+    remedy:
+      'Fix the named key in the parity file (specs/13 F-TEST-9 shows the declaration and capture ' +
+      'shapes), then reload it to see every remaining problem.',
+  },
   'RUN-109': {
     // `PLAN-M14.md` P8, `SPEC-QUESTIONS.md` Q232 decision 2: a declared KB output (or `mode:
     // swarm-review`'s own `ReviewReport`) needs a supervisor-reserved, collision-free id before its

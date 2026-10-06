@@ -30,7 +30,9 @@ import {
  */
 const SAMPLE_DETAILS = {
   // `GATE-506`/`GATE-507`/`GATE-508` (`PLAN-M13.md` P41): an unreadable gate document; an approval refused
-  // because checks fail; an approver the gate does not name.
+  // because checks fail; an approver the gate does not name. `CFG-510` (`specs/22` M16 P2) reuses the
+  // identical `file`/`key`/`detail` shape for an invalid parity declaration or capture, so it needs no
+  // keys of its own here.
   file: 'G-Verify.gate.yaml',
   key: 'checks.deterministic',
   failing: 'check test:run',
