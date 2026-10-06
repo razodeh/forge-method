@@ -21676,3 +21676,128 @@ install, typecheck, lint, schema-drift, and the scoped suite all clean; `-t "M16
 more pinned sentence, one more `it`).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q295`.
+
+## M16 P10 — Behavioural-binding failure kinds, timeouts, and a real orphan-process leak
+
+Two gauntlet rounds. Round 1: two independent fresh-context critics, both re-confirming every
+reported number by rerunning it before looking for anything else. Round 2 was the fix pass, verified
+directly against the pre-fix code rather than by a fresh critic round — a judgment call made for the
+same reason as `## M16 P2`: every round-1 finding was concrete, narrow, and already evidenced by a
+real reproduction, not an architectural question.
+
+**What the piece builds.** `TestFailureKind` (`'assertion'|'load'|'timeout'|'crash'`), additive to
+`TestOutcome` so every M15 caller that reads only `status` keeps working unchanged; a 20-minute
+default per-run timeout (`DEFAULT_TEST_RUN_TIMEOUT_MS`), overridable via `--timeout-ms` on both
+`forge test run` and `forge test binding`; and the vitest/pytest load-failure asymmetry fix — a whole
+pytest module that fails to collect is a pseudo-`<testcase>` whose `@_classname` is the empty string
+and whose `@_name` carries the real dotted module path, confirmed directly against real pytest 8.4.2
+output rather than assumed from its schema.
+
+**Critic round 1: two real, live-reproduced BLOCKING defects; the shared root cause behind one of
+them; a real CLI usability bug; two cheap fixes.**
+
+*BLOCKING, reproduced — `shell.ts`'s `killGroup` does not reach a detached grandchild.* `killGroup`
+signalled only the process GROUP the spawned command started with. A command that spawns a detached
+or new-session child (Node `detached: true`, Python `start_new_session=True`) before hanging leaves
+that child as the leader of its OWN new group, structurally unreachable by `process.kill(-pid,
+'SIGKILL')`. One critic built the real repro — a marker file, a real `ps` check — and found the
+grandchild still alive and burning CPU well past the declared timeout, fully orphaned (reparented to
+PID 1).
+
+*BLOCKING, reproduced — `runBindingCheck` had no guard against a test command that ran zero tests.*
+A test command that exits 0 having matched or collected no real tests at all read as a clean,
+`'completed'` binding pass — confirmed end to end through a real git repository, all three phases —
+despite `run.ts`'s own sibling `runDefaultRule` already refusing exactly this shape
+(`outcomes.length === 0`) for the non-binding path. Uncatchable by any gate's `failOn`, since nothing
+about the result looks like a failure.
+
+*MAJOR, the mechanism behind both of the above generalises — malformed tool output silently read as
+"zero outcomes," not as a tool error.* `outcomesFromVitestJson`/`outcomesFromJunitXml` never throw on
+syntactically-valid-but-wrong-shaped output (`{}`, an empty string, garbage XML) — confirmed directly
+for three real scenarios — so each silently produced `outcomes: []`, indistinguishable from a real,
+completed run that happened to collect nothing. The already-existing `'tool-error'`
+`RunAndNormalizeResult` variant, built for exactly "a tool that produces unparseable output," never
+fired.
+
+*MAJOR, real CLI bug, accidental-reachable — `--rule smoke`/`--rule contract` combined with
+`--timeout-ms` threw a wrong `USR-002`.* Confirmed by a real CLI run. Root cause: the layer-rule
+branch's own, separate `parseCommandFlags` call was never given `'--timeout-ms': true`, unlike the
+other branch (`--rule lint`/`typecheck`/`oracle-lint`), which already documents accepting and
+ignoring it. Not a safety issue — `smoke`/`contract` already have their own pre-existing
+`TEST_LAYER_LIMITS` bound — but undisclosed, and a real usage break for anyone combining the two
+flags.
+
+*Cheap, fixed.* Two new `describe`s in `binding-tool-error.test.ts` were tagged `(specs/22 M15 P3)`
+instead of `(specs/22 M16 P10)`, invisible to `-t "M16"`. No real fixture test existed for a hang
+isolated to only the restore stage (the baseline- and mutated-timeout cases each had one).
+
+**The fixes (round 2), plus one self-found third instance of the zero-outcomes bug.** `killGroup` now
+reads the real process tree from the spawned pid via `ps -eo pid=,ppid=` once, before any signal is
+sent anywhere — a process already killed reparents its children to PID 1 immediately, severing the
+`ppid` chain this walk relies on — then SIGKILLs every real descendant found, regardless of its own
+process-group id, in addition to the existing group kill. Reverted live to the pre-fix, group-only
+form: the new detached-grandchild test failed for exactly the right reason (a real orphan, confirmed
+via `ps`), restored and `cmp`-verified. `outcomesFromVitestJson`/`outcomesFromJunitXml` now validate
+the real top-level shape is present and throw otherwise, routing through the pre-existing try/catch
+into a real, diagnosable `'tool-error'`. `runBindingCheck` gained `'baseline-zero-outcomes'`/
+`'mutated-zero-outcomes'` outcomes, checked immediately after each phase's own tool-error/timeout
+checks and before the result is used for anything else. Implementing that guard surfaced a third,
+un-asked-for instance of the identical bug in the SAME function: the restore phase's own
+`outcomes.every(status === 'pass')` is vacuously `true` in JavaScript on an empty array, so a restore
+run matching zero tests would have read as "verified," having proven nothing — closed with one
+`outcomes.length > 0 &&` guard clause. `--timeout-ms` is now accepted by the layer-rule branch too (a
+documented no-op there, matching the existing `lint`/`typecheck`/`oracle-lint` precedent — confirmed
+directly that none of those three rule handlers read `options.timeoutMs` either) and genuinely wired
+through for `test run`/`test binding`. The two cheap items were fixed: the marker rename, and a new
+fixture test that isolates a hang to only the restore stage via an on-disk counter (baseline and
+mutated both complete fast and for real; only the third call hangs), confirming `restoreVerified:
+false`, never a false "verified" and never a hang.
+
+**Disclosed, not fixed — `confined-command.ts` has a byte-identical copy of the pre-fix `killGroup`,
+with the identical gap.** Deliberately left untouched by this piece (kept scoped to `shell.ts` alone,
+per the round-2 fix instruction) and handed to `M16 P3`'s own brief as an explicit requirement, citing
+this fix as the literal pattern to copy — avoiding file contention with the concurrently-building
+parity-oracle chain, which `P3` belongs to.
+
+**A real floor failure neither critic round caught, found only by this piece's own clean-worktree
+verification after both rounds had already closed.** `node scripts/run-tests.mjs run -t "M16"` run
+unscoped, across the whole repository (not the explicit file list above), failed one test:
+`test/spec-cli-examples.test.ts`'s own repo-wide "M16 naming rule" check (`M16 P1`), which requires
+every `describe` title containing "M16" to carry a marker whose parenthetical holds exactly
+`specs/22 M16 P<n>`, nothing else. Two of this piece's own new titles
+(`binding.test.ts`/`reporter.test.ts`) had written `(specs/22 M16 P10, 13 F-TEST-10)`, folding a
+second citation inside the same parenthetical as the marker — invisible to both critic rounds and to
+every scoped-file test run, including the builder's own 26-file sweep and this orchestrator's own
+broader 191-file sweep, because neither ever included `test/spec-cli-examples.test.ts` itself in
+their file list; only the unscoped, repository-wide `-t "M16"` run this verification step always does
+last actually exercises that specific check against the real, current file content. Fixed by giving
+the citation its own, separate parenthetical (`(specs/22 M16 P10) (13 F-TEST-10)`), matching the
+convention this same milestone's own P2 already established for the identical combination elsewhere.
+A small, separate, clearly-labelled third commit (`390d424`), not an amendment to the commit that
+introduced it, per this session's own standing never-amend discipline. Re-verified clean afterward,
+in a fresh worktree, a second time.
+
+**Verification.** 26 touched/adjacent test files green (976 tests) at the builder's own round-2
+checkpoint. Independently re-verified, broader still: the full `packages/cli/test/` +
+`packages/engine/test/dispatch/` + `packages/core/test/errors.test.ts` sweep is 191 files, 4237
+passed, one pre-existing unrelated skip, zero failures. `RUN-117`'s own `{flag, value}` detail shape
+already exists in `packages/core/test/errors.test.ts`'s shared `SAMPLE_DETAILS` bag (introduced by an
+earlier code), confirmed directly — no edit to that file was needed, not an oversight. Coverage:
+`binding.ts` 96.61%/88.23% (lines/branches), `reporter.ts` 98.29%/85.03%, `run.ts` 95.41%/91.2%,
+`shell.ts` 91.56%/86.53%, all at or above their floors; `shell.ts`'s function-coverage (83.33%, under
+the 90% critical-package bar) is a confirmed pre-existing gap — measured on the unmodified file, it
+was already 81.81% before this piece touched it (the two uncovered closures are each reachable only
+by a real OS signal delivered to a spawned child, invisible to the parent's own V8 coverage, the
+identical structural gap already found elsewhere in this same milestone's `bin-binding.test.ts`), and
+this piece's own new, fully-covered function improves the ratio rather than causing it. `pnpm
+typecheck`, `pnpm run boundaries`, `pnpm lint` clean. Independently re-verified in a clean worktree
+built from the committed, cherry-picked `HEAD` twice: once at `94f6b8d` (which is where the naming-rule
+failure above was actually found), and again after the fix, at `390d424`. One further, unrelated,
+transient failure during that second pass: `binding-sigkill.test.ts` (a pre-existing M15 file, outside
+this piece's own diff entirely) failed once with `kill EPERM`, under the same heavy, sustained
+concurrent host load this whole session's verification work had been generating for over an hour —
+re-run four times in immediate succession, alone, on a quiet host: clean every time, confirming a
+transient, load-induced flake rather than a real regression, consistent with this codebase's own
+documented history of this exact class of issue in other real-subprocess/real-timing tests.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q296`.

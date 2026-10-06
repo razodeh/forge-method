@@ -28099,3 +28099,80 @@ hide that it was wrong, and the one pinned sentence this touches (`test/spec-cli
 is split in two, the second half newly pinned where before it was not.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P2`.
+
+## Q296 — M16 P10: a process-group kill that could not reach a detached grandchild, and a binding
+check that could pass having run nothing
+
+**Context.** M15's binding engine classified a test outcome only as `'pass'`/`'fail'`/`'skip'`, had
+no per-run timeout, and left the vitest/pytest load-failure asymmetry (a whole file that fails to
+load credits differently between the two tools) exactly as planning found it. M16 P10's own Mandate:
+fix the gaps per-hunk work cannot tolerate. Two gauntlet rounds: round 1, two independent
+fresh-context critics; round 2, the fix pass, verified directly rather than by a fresh critic round.
+The critic-round narrative, the fix detail, and the verification numbers are in `GAUNTLET-LOG.md`'s
+own `## M16 P10` entry and are not repeated here.
+
+**Decision 1 — `killGroup` is fixed by walking the real process tree once, before any signal, and
+killing every descendant individually alongside the existing group kill — not by replacing the group
+kill, and not by retrying after the fact.** A process-group `SIGKILL` (`process.kill(-pid,
+'SIGKILL')`) cannot reach a descendant that started its own session (Node `detached: true`, Python
+`start_new_session=True`) before hanging, since that descendant becomes the leader of its own, new
+group the moment it starts. The fix does not replace the group kill — most real descendants stay in
+the original group and the group kill is the simplest way to reach them — it adds a second, targeted
+sweep for the ones that escaped it. That sweep must run BEFORE any signal is sent, not after: a
+process already killed has its own children reparented to PID 1 immediately, severing the `ppid`
+chain the walk depends on, so scanning after killing would silently miss exactly the processes this
+exists to find. Confirmed by real reproduction, not reasoned about: reverting the fix to its pre-fix,
+group-only form made a real detached grandchild survive past the declared timeout, confirmed alive
+and consuming CPU via a real `ps` check, not merely a thrown exception or a timed-out test.
+
+**Decision 2 — the zero-outcomes guard belongs in `runBindingCheck`, mirroring `run.ts`'s own
+`runDefaultRule`, and a third, self-found instance of the identical bug lived in the SAME function's
+restore phase.** A test command that exits 0 having matched or collected no real tests at all is a
+genuine, well-formed, empty report — not malformed (so `reporter.ts`'s own new shape-validation,
+Decision 3, correctly does not refuse it) and not a timeout — so it needed its own guard, placed at
+the one function that already decides what a phase's result means for the binding verdict, mirroring
+a guard `run.ts`'s sibling function already has for the non-binding path. Checked before either
+phase's outcomes are used for anything: crediting a zero-outcome baseline as `'completed'` with
+`namedTests: []` would read as "genuinely green, nothing to revert," and crediting a zero-outcome
+mutated run the identical way would read as "every test is non-binding," when in truth nothing ran at
+all to have an opinion either way. Implementing this surfaced a third instance in the same function,
+unasked for: the restore phase's own `outcomes.every(status === 'pass')` is vacuously `true` in
+JavaScript on an empty array — `[].every(...)` — so a restore run matching zero tests would have
+reported `restoreVerified: true` having verified nothing. Closed with one guard clause
+(`outcomes.length > 0 && outcomes.every(...)`) rather than a fourth, differently-shaped outcome
+variant, since a failed restore already has a real, correctly-handled signal (`restoreVerified:
+false`) that a vacuous one can simply join.
+
+**Decision 3 — a malformed-but-parseable tool report is a thrown error, routed into the
+already-existing `'tool-error'` result, never a silently-empty outcome list.** `JSON.parse` and
+`fast-xml-parser` both happily accept input that is valid JSON/XML but not a real vitest/pytest
+report at all (`{}`, an empty string, garbage XML) — confirmed directly, for three real scenarios,
+that neither library throws on any of them. Before this fix, each one silently produced
+`outcomes: []`, the identical shape a real, completed, zero-tests-collected run also produces,
+making the two indistinguishable downstream. The fix throws on a missing/wrong-shaped top-level field
+(vitest's `testResults` array; pytest's `testsuites`/`testsuite` structure) rather than returning a
+sentinel value, specifically because both real callers already wrap the parse in a try/catch that
+converts any thrown error into a real, diagnosable `'tool-error'` — reusing an existing mechanism
+rather than inventing a second way to report the same class of problem.
+
+**Decision 4 — `--timeout-ms` is accepted, and silently ignored, for `--rule smoke`/`--rule
+contract`, matching the existing `lint`/`typecheck`/`oracle-lint` precedent, rather than wired into
+`layer.ts`'s own pre-existing `TEST_LAYER_LIMITS`.** The bug was narrowly a CLI parsing gap — the
+layer-rule branch's own, separate `parseCommandFlags` call never had `'--timeout-ms': true` added, so
+the flag was refused outright rather than accepted or ignored. Wiring it through to actually override
+`TEST_LAYER_LIMITS` was considered and rejected: that would be a behavioural change to an existing,
+independently-scoped limit, outside this piece's own Mandate, and `smoke`/`contract` already have
+their own pre-existing timeout bound, so there is no safety gap to close, only a usage-consistency one
+— confirmed directly that none of `lint`/`typecheck`/`oracle-lint`'s own rule handlers read
+`options.timeoutMs` either, so this is the already-established pattern, not a new exception.
+
+**Decision 5 — `confined-command.ts`'s byte-identical copy of the pre-fix `killGroup` is deliberately
+left unfixed by this piece, and handed to `M16 P3`'s own brief as an explicit requirement.** The
+identical gap exists in `packages/engine/src/dispatch/confined-command.ts:1134-1147`, which is `P3`'s
+own future surface, not this piece's. Fixing it here would mean editing a file a concurrently-building
+sibling chain (the parity-oracle pieces) is about to depend on, for no benefit this piece's own
+Mandate needs — `shell.ts` is the file this piece's own callers actually use. `P3`'s brief now names
+this gap explicitly, citing this piece's own landed fix as the literal pattern to copy, so the fix is
+real and tested exactly once, by the piece that will actually exercise the fixed code path.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P10`.
