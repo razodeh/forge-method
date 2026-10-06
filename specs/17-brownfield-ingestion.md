@@ -155,6 +155,15 @@ planned rather than admired.
   gap counts. This is the ratchet reference — FORGE can then show whether the system is improving.
 - `G-Adopt` gate: KB lints clean, every `high`-impact claim is either verified or human-confirmed,
   the build and test verification results are recorded, and the gap report exists.
+- (Post-v1.0, `specs/22` M16.) The `BASELINE` tag is a legitimate `reference.ref` for a parity
+  declaration (`13` F-TEST-9): it marks the system as found, which is a valid reference for the
+  refactoring that follows adoption (§17.4, item 3). `adopt` creates the tag at HEAD as of that adoption,
+  and only when the pipeline reaches this phase and the repository has a commit: not under
+  `--depth quick`, not when a size-gated survey answers a run given no `--scope` with a scoped proposal,
+  and never again once a `BASELINE` tag exists, since an existing tag is neither recreated nor moved. A
+  declaration that names it therefore names the commit of the adoption that created it, and a
+  repository with no such tag has none to name. This builds no `adopt` wiring: `G-Adopt` is evaluated
+  in-process and has no gate file, and the `adopt` workflow gains no gate step.
 
 ## 17.3 Human confirmation
 
@@ -181,6 +190,11 @@ Adjustments FORGE makes for brownfield work, all of which matter:
    contract-freeze.
 3. **Characterisation tests before refactoring.** Untested code that must change gets tests capturing
    *current* behaviour first (differential oracle, `13` F-TEST-2 #5). Only then does it change.
+   (Post-v1.0, `specs/22` M16.) The system as found is a valid reference for that comparison, but only
+   as a *reviewed, immutable* one (`13` F-TEST-9): a parity declaration whose `reference.ref` names the
+   commit that holds the system as found, captured by a human act, never a recording the refactoring
+   agent makes of the code it is about to change. The `BASELINE` tag that adoption's phase 8 creates
+   (§17.2) is a legitimate `reference.ref`, where one exists.
 4. **The strangler-fig default.** New capability in a legacy area is built alongside and switched
    over behind a flag, rather than modifying in place — recorded as an ADR each time.
 5. **Narrower file claims.** Ownership globs are tighter than greenfield because unknown coupling is

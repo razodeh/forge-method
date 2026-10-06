@@ -481,12 +481,30 @@ definitional, making parity both necessary and sufficient), `migrate:expand`/`mi
 surface from the reference, replay it against the new implementation, and refuse the gate on
 divergence. It is also where per-test mutation precision, deferred from M15 P3, is earned.
 
+**The premise, corrected.** The paragraph above speaks of refusing "the gate" on divergence, and
+presumes a gate those three workflows already reach. None did. As M15 shipped them, `refactor`,
+`migrate` and `adopt` contained no `kind: gate` step, so there was no gate for a parity check to be
+wired into. `refactor` was `state-invariants` → `refactor-code` → `verify-invariants` (a plain `forge
+test run --json` command step) → `commit`. `migrate` ended in the same plain command (its
+`verify-migration` step), and its `migrate-data` step ran `forge migrate run`, which was not wired
+(`test/command-steps.test.ts` pins it as a known gap; Q213, Q202). `adopt` was an inventory command
+(`forge adopt inventory --json`, also pinned there as unwired; Q213) plus two agent steps, and its one
+gate, `G-Adopt`, was evaluated in-process with no gate file. M16 therefore creates the gate it was meant
+to feed: the **workflow-scoped gate `G-Parity`**, with one `behavior:parity` check, reached through
+explicit `kind: gate` steps (`10` §10.3 rule 8). The wiring is this: `refactor` must fail before any
+agent step runs when no declaration compares at least one surface, and again at a `verify-parity` gate
+between `verify-invariants` and `commit` (whether the first check is a leading `kind: gate` step or an
+entry preflight is the choice of `specs/22` M16 P9); `migrate` gets the same verification gate,
+unreachable until `forge migrate run` is wired; `adopt` gets no gate step, only the documented use of
+`BASELINE` (`17` §17.2). See `process/plans/PLAN-M16.md`.
+
 **Build:** a behaviour-parity harness over observable surfaces FORGE can capture without owning the
 app (process stdout/exit codes, HTTP request/response pairs, library call/return, file outputs);
-`forge parity capture` and `forge parity check --json`; a `behavior:parity` deterministic check wired
-into the gates those three workflows reach; parity evidence as an `EvidenceBundle` kind; per-hunk
-mutation raising M15's binding evidence from change-level to hunk-level attribution; an evidence
-retention policy, deferred from M15 P7.
+`forge parity capture` and `forge parity check --json`; the workflow-scoped gate `G-Parity`, whose one
+`behavior:parity` deterministic check is reached through explicit `kind: gate` steps in the workflows
+that have a reference; parity evidence as a registered `ParityEvidence` artifact type plus the additive
+optional `EvidenceBundle.parityEvidence` id list; per-hunk mutation raising M15's binding evidence from
+change-level to hunk-level attribution; an evidence retention policy, deferred from M15 P7.
 
 **Do not build:** visual/screenshot parity — FORGE is not UI-framework-specific and a pixel oracle
 needs a rendering target it does not own; a parity claim for greenfield work, which has no reference
@@ -494,9 +512,18 @@ by definition and must keep relying on M15's binding oracle.
 
 **Exit tests**
 ```
-pnpm test -- --grep "M16"
-forge parity check --json                   # against a fixture refactor with a deliberate behaviour change: refused
+node scripts/run-tests.mjs run -t "M16"
+forge parity check --json                   # fixture refactor, behaviour-preserving change: exits 0
+forge parity check --json                   # same fixture refactor, behaviour-changing change: exits non-zero
 ```
+
+Every M16 test's `describe` name carries `(specs/22 M16 P<n>)`, which is what `-t "M16"` selects on.
+That filter exits 0 when it selects nothing, so a green `-t "M16"` run is not by itself evidence that
+anything ran: the exit gate also requires that every piece that adds tests has at least one test
+carrying its own `(specs/22 M16 P<n>)` marker. The `forge parity check --json` exit tests run over one
+fixture refactor twice, once with a behaviour-preserving change (exit 0) and once with a
+behaviour-changing one (non-zero), so a check that never refuses and a check that always refuses each
+fail the gate.
 
 ---
 

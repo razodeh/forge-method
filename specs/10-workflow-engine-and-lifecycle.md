@@ -254,8 +254,9 @@ onReject:
    stdout and stderr, the waiver if one was used, the advisory checks as not run). A waiver excuses the checks that
    were failing when it was granted: it does not cover a check that fails later, and a gate that passes cannot be
    waived, and `forge gate waive` is held to the same `approval` block. Under the FORGE session marker (the run,
-   step and — where one exists — agent id every engine-spawned session and run-spawned shell command carries; an
-   honest-session signal, not a security boundary) the command tells an agent's own spawned session from a
+   step and — where one exists — agent id every engine-spawned session and run-spawned shell command carries, as
+   the environment variables `FORGE_RUN_ID`, `FORGE_STEP_ID` and `FORGE_AGENT_ID`; an honest-session signal, not a
+   security boundary) the command tells an agent's own spawned session from a
    person's own shell: with no marker, or one naming a different run than the one being approved, it is a person
    (`human`), and `--owner` is the person's own word regardless; naming this run and an agent id, `may_approve`
    and `alwaysHuman` bind that agent; naming this run with no agent id at all — a run's own `command` step, not a
@@ -271,6 +272,22 @@ onReject:
    1's failing deterministic check, which a valid waiver excuses — cannot be waived either: a waiver
    excuses a check that ran and genuinely failed, not proof that was never produced. Both `forge gate
    approve` and `forge gate waive` refuse with `RUN-112` when evidence does not resolve.
+8. (Post-v1.0, `specs/22` M16.) A gate may be **workflow-scoped**: a gate file with no lifecycle
+   `phase`, scheduled only by a workflow's `kind: gate` step (§10.1, Step kinds). `phase` is optional
+   in a gate document, so a phase-less gate file loads under rule 6's own strictness: an unknown key,
+   or no deterministic check, is still a load error. A workflow-scoped gate belongs to no lifecycle
+   phase: no phase transition evaluates it, and no path that enumerates every gate evaluates it. It is
+   still a gate, and a person can still name it: `forge gate check`, `approve` and `waive` resolve it
+   by id like any other, and `forge gate reject` records against the id it is given. It is not one of
+   the ten lifecycle gates of the catalogue below, which this rule does not extend. `G-Adopt` (`17`
+   §17.2) is a different kind of exception, a gate outside the lifecycle that is evaluated in-process
+   with no gate file and that no `kind: gate` step reaches; `G-Parity` (`13` F-TEST-9) is the first
+   workflow-scoped gate to have a file. Its one check, `behavior:parity`, is
+   `forge parity check --json --no-record --trusted refs/heads/main`: the trust anchor is an explicit
+   argument, trunk, and `--no-record` writes no `ParityEvidence`, because a gate check runs in the
+   integration worktree and a file it writes there leaves the worktree dirty, so that the next run
+   refuses to start (`VCS-INTEGRATION-DIRTY`). Run by hand, `forge gate check G-Parity` runs the same
+   command, so it compares with trunk too.
 
 **Check contract (normative; what a deterministic check must do to pass).** A check passes only if it shows
 success; anything the evaluator cannot read as success is a failure with a stated `reason`, and a failing check
@@ -287,6 +304,14 @@ can only be waived (rule 1):
   reports that as a failing count and a `reason`; it does not pass on "nothing found".
 - A check that is not applicable to a project is declared not applicable by the gate or the check
   (`appliesTo`, the module that ships it), never by a command that prints a passing result for nothing.
+- (Post-v1.0, `specs/22` M16.) A check against a reference oracle (`13` F-TEST-9) holds the same line
+  for its own inputs. A check with no declaration at all (`no-declarations`), a declaration with no
+  capture of its reference, an expired review or `unobservable` entry (a declaration's `expires` date, or an
+  entry's expiry, has been reached), an oracle that changed since its trust anchor (`oracle-changed`), and a
+  declaration that compares nothing, because it has no surface that is not exempt as `unobservable`
+  (`nothing-compared`), each fail with a stated `reason`: an absent reference is not parity, and an empty
+  comparison is not a match. A check that would print no passing and no failing case is refused (`ok: false`)
+  instead, so `failOn: "failing > 0"` can never read nothing as success.
 Every check's result records its stdout, its exit code and its stderr (stderr sanitised of secrets and control bytes,
 and capped) as the audit trail (rule 4); an approval or waiver event carries their digests.
 

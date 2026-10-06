@@ -29,6 +29,7 @@ gitignored space.
 │  ├─ manifest.yaml                  installed version, modules, overlay bundles, file checksums
 │  ├─ overrides/                     committed customization (see 15)
 │  ├─ overrides.local/               gitignored personal customization
+│  ├─ parity/                        committed: parity declarations, probes, captures (13 F-TEST-9)
 │  ├─ agents/ workflows/ frameworks/ templates/ checks/ skills/    resolved set (gitignored)
 │  ├─ backups/                       upgrade backups, last 5
 │  └─ state/                         gitignored
@@ -211,6 +212,21 @@ corruption and trigger `forge doctor`. The TUI, the ledger, the index and all re
 Redaction happens at write time: payloads pass through the secret redactor before serialisation, so
 secrets are never on disk even transiently.
 
+**Payload versioning (post-v1.0, `specs/22` M16).** `v` versions the envelope and nothing else: it is
+the field of `ForgeEvent` above, and a log whose events carry any other `v` is refused by the reader,
+not guessed at. No payload carries a version of its own. A payload's shape is selected by its event
+`type` and, for `CheckRun`, by its `kind` (`'binding'` and `'exemption-declared'` from M15, `'parity'`
+from M16), checked first and explicitly, never inferred from which other fields happen to be present.
+Adding a `kind`, or adding an optional field to an existing `kind`, is additive and leaves `v` at 1: a
+reader skips a `kind` it does not recognise, reads an optional field only when it is present and
+well-typed, and ignores a field it does not know. A change that is not additive (a field changing its
+meaning or its type, a required field appearing) takes a new `kind` and never reinterprets an existing
+one. A `'parity'` payload carries the count per verdict, the total, the evidence id (null for a check
+run with `--no-record`) and the declaration names, never an observation, and, like the other kinds, it
+is written only where the run's id reaches the command in `FORGE_RUN_ID` and the command can name
+the run's own project root; a hunk run's counts and `granularity` are optional fields on the
+existing `'binding'` payload.
+
 ## 18.5 The SQLite index (projection)
 
 Rebuildable via `forge doctor --rebuild-index`. Schema (abridged; migrations in
@@ -290,6 +306,7 @@ types:
   - { id: MutationEvidence, idPrefix: MUT, path: "reports/mutation/{story}-{ts}.md", parent: Story }
   - { id: EvidenceBundle, idPrefix: EVID, path: "reports/evidence/{id}-{story}.md", parent: Story }
   - { id: Disclosure, idPrefix: DISC, path: "kb/disclosures.md", collection: true }
+  - { id: ParityEvidence, idPrefix: PAR, path: "reports/parity/{id}-{slug}.md" }
 ```
 
 Adding a type requires: registry entry, JSON Schema, template, graph edge declarations, and a
@@ -308,13 +325,14 @@ every `forge test binding` run its own file; `EvidenceBundle`'s path
 (`reports/evidence/{id}-{story}.md`) carries its own real `EVID-####` id, so two assemblies for the
 same story — or two concurrent stories, `PLAN-M15.md` P7's own "Tests first" requirement — are two
 distinct files, never one file edited twice. "Superseded" means exactly what it means for an ADR
-(`08` §8.3/§8.4's `status: superseded` convention): an older instance stays on disk, readable, and a
-newer one exists; nothing here claims a bundle is a single revised document the way a Story is (an
-earlier draft of this entry wrongly claimed that — see `SPEC-QUESTIONS.md` Q280's round-2 record —
-and separately miscited `18` §18.8 as defining "superseded," which it does not; the real definition is
-`08`'s). The writer refuses an attempt to write to an already-existing path of either type
-(`PLAN-M15.md` P2's own "a bundle that edits an existing evidence record is refused" test) rather than
-relying on the naming scheme alone to make collision merely unlikely.
+(`08` §8.3/§8.4's `status: superseded` convention): an older instance stays on disk, readable, until
+`forge evidence prune` removes it (§18.7, Retention), and a newer one exists; nothing here claims a
+bundle is a single revised document the way a Story is (an earlier draft of this entry wrongly claimed
+that — see `SPEC-QUESTIONS.md` Q280's round-2 record — and separately miscited `18` §18.8 as defining
+"superseded," which it does not; the real definition is `08`'s). The writer refuses an attempt to write
+to an already-existing path of either type (`PLAN-M15.md` P2's own "a bundle that edits an existing
+evidence record is refused" test) rather than relying on the naming scheme alone to make collision
+merely unlikely.
 
 `MutationEvidence`'s own fields are decided here, not deferred, because `PLAN-M15.md`'s P2 Mandate
 already decides them in full: the story/piece id, the mutation kind (`revert-implementation` in v1),
@@ -354,10 +372,114 @@ engine's own merged verdict from `05` §5.7, written by the engine before the fi
 `blocked` verdict fails the swarm-review step that wrote it; a report with no `verdict` key (every one
 written before this field existed) still validates unchanged.
 
+`ParityEvidence` was added post-v1.0 (`specs/22` M16), the same way and by the same checklist: a real
+capability (`13` F-TEST-9's parity oracles) that needed a committed, typed artifact. It has the
+registry entry above, a JSON Schema, a template, and no graph edge declaration beyond an optional
+`story` id: like `MutationEvidence` and `EvidenceBundle` it is outside the traceability chain of `09`
+§9.4, and unlike them it has no `parent`. (What `{slug}` names is settled when the type is built,
+`specs/22` M16 P5.) It is **append-only** exactly as they are: one `forge parity check` invocation
+writes one `PAR-<n>` record, however many declarations it checks (none, when it is given
+`--no-record`, as the `G-Parity` gate's check is: `13` F-TEST-9), and a write to an existing path is
+refused, never an edit. The record's body carries a `declarations` list, in order of `name`, each
+entry holding the declaration's name and digest, the reference's ref and sha, the platform, the
+digest of the capture it selected, its verdict and, where that is not `match`, its `reason`, the
+verdict and content hashes of each case, and its exempt count. Beside that list the record holds the
+candidate's `headSha`, `dirty` flag and delta digest, `trusted` (the trust anchor's sha, or null:
+`13` F-TEST-9), the overall verdict, the check's own `reason` where the check itself stopped
+(`no-declarations`, `oracle-changed`), and tool versions. Its `story`, when `forge parity check` is
+given `--story <id>`, is its retention subject (Retention, below). It holds names, digests, verdicts
+and hashes, never an observed value (`13` F-TEST-9). The `platform` of a `declarations` entry is the
+operating system and architecture its capture was taken on, `<os>-<arch>`; it is not the agent
+platform of §18.3's `platform` block or the ledger's `platform` column. A parity capture is not a
+registry artifact: it is a content-addressed JSON file with no front matter under
+`.forge/parity/captures/` (§18.2), which the id scan never lists, because it reads `.md` files only
+and skips `.forge` (`packages/core/src/ids/scan.ts`). `specs/22` M16 P5 must show, by a test over a
+project holding both, that no validation or health check flags a `PAR` record or a capture, unless
+its text holds a `${secret:NAME}` reference: `forge doctor`'s `secret-references` check scans every
+`.yaml`, `.yml`, `.md` and `.json` file under `.forge/` (outside `.forge/state`) and `docs/forge/`
+for those, so a declaration, a capture or a record that holds one draws its warning.
+
+`EvidenceBundle` gains an optional `parityEvidence` list, the ids of the `ParityEvidence` records a
+bundle rests on, beside its `bindingEvidence`; a bundle without it stays valid, and M16 changes no
+bundle assembler, so nothing populates it yet. `MutationEvidence` gains
+a second shape for hunk-level mutation (`13` F-TEST-10), which its field list above already anticipated
+("the exact commit range or hunk set reverted"): its `mutationKind` has a second member,
+`revert-hunks`, beside `revert-implementation`, and a record of that kind carries, beyond what schema
+version 1 records, the base sha the hunks were taken against, the diff algorithm, the `granularity` used
+(`hunk`, `file` or `change`) and the hunk list: each hunk's id, path, ranges, content hash, verdict and
+`killedBy`. A hunk run is its own new record; an existing change-level record is never rewritten to add
+one.
+
+A record that uses a field schema version 1 lacks carries `schemaVersion: 2` (§18.6), and two migrations
+(§18.9) are added with those fields, both `1→2`: `MutationEvidence` and `EvidenceBundle`. Each sets
+`schemaVersion: 2` going up and changes nothing else (a version-1 record is otherwise already a
+valid version-2 record), is pure, and is covered by a golden-file test with a real "before" fixture,
+as §18.9 requires: the fixture's "after" differs from its "before" by `schemaVersion` at least.
+Whether either declares `reversible: true` is settled when it is written (`specs/22` M16 P5); one
+that does removes the version-2 fields and sets `schemaVersion: 1` going down, and a hunk-level
+`MutationEvidence` record has no version-1 form (`revert-hunks` is not a version-1 `mutationKind`),
+so that migration, if reversible, refuses such a record going down rather than stripping it. As
+built, the artifact-migration step of `forge upgrade` (`03` §3.4, step 4) lists only the documents
+under the specs root (`packages/cli/src/commands/upgrade/migrate-artifacts.ts`), so a record under
+`reports/` is not reached by it: version-1 evidence stays version 1 on disk. Until a migration has
+run, every reader of these two types must accept `schemaVersion` 1 and 2 (`specs/22` M16 P5).
+
+**Retention (post-v1.0, `specs/22` M16).** Evidence files accumulate: every run writes a new one and
+none is edited. `forge evidence prune` (`03` §3.2.5) is the retention policy `specs/22` M15 P7 deferred.
+
+- It manages three types, `MutationEvidence`, `EvidenceBundle` and `ParityEvidence`, and nothing else.
+  It never prunes a parity capture (the oracle's baseline, not its evidence), a collection-shaped
+  artifact, the event log, or the tombstones below.
+- It is a dry run by default: a dry run writes nothing and names what it would remove, and only
+  `--apply` removes anything.
+- `--apply` refuses whenever the FORGE session marker `FORGE_RUN_ID` is present, whichever run it
+  names (`10` §10.3 rule 6 defines the marker, an honest-session signal and not a security boundary),
+  because a prune is a human act, as `forge parity capture` is: a run must not be able to discard the
+  evidence about its own work. A dry run is always allowed.
+- `--keep <n>` keeps the newest `n` records per type and subject: the story id when the record was
+  written for a story, else the single shared subject `project`. Newest means highest id, compared as a
+  number (§18.8), never a file's modification time. `n` is an integer of at least 1 (0, a negative
+  number and a non-integer are refused) and defaults to 5, the precedent being `03` §3.4's retention of
+  the last 5 backups.
+- The highest id of each type is never pruned. `n` of at least 1 already implies it; it is stated on its
+  own because the allocator's no-reuse guarantee rests on it (§18.8: allocation is a scan of what
+  exists).
+- A record that anything still references is protected and reported with the reason. What survives is
+  computed to a fixed point: it starts from the records `--keep` and the highest-id rule keep, and
+  adds every record that a surviving record, or a store outside the evidence records, references,
+  until nothing more is added. A record referenced only by a record this prune removes is therefore
+  not protected, and the outcome does not depend on the order in which records are visited. The stores
+  that can hold an evidence id (a surviving `EvidenceBundle`, a gate approval or waiver under `10`
+  §10.3's evidence resolution, and whatever else the command's own enumeration finds) are enumerated
+  and tested when it is built (`specs/22` M16 P14).
+- A prune that cannot enumerate every store that can hold an evidence id, because one is unreadable or
+  does not parse, refuses and removes nothing: a reference it could not see is one it could break.
+- Pruning a record is two steps in a fixed order. A tombstone for its id
+  (`docs/forge/reports/pruned/<id>.json`: the id, the type, the subject, the record's sha256 and the
+  time) is created first, atomically (written whole to a temporary file beside it and renamed into
+  place, so one that exists is never partial); the record is removed second. A crash between the two
+  leaves a pending removal, a tombstone with its record still present. While both exist the record
+  wins: a reference to the id resolves to the record, never to "pruned". A later prune completes a
+  pending removal only if that record is still selected for removal by that prune; otherwise the
+  record stays. The stores are enumerated once more after the tombstones are written and before any
+  record is removed, and a record that has been referenced since the first enumeration is not
+  removed (its tombstone stays, a pending removal as above); a reference written after that second
+  enumeration is not seen, so `--apply` is not safe to run while a run or an approval that could
+  cite a record it removes is in progress. A repeated or concurrent prune is idempotent. A reference
+  to an id that has been pruned (its record removed) resolves to a distinct "pruned" answer that
+  names the tombstone, never to "dangling".
+- Whether the id allocator also reads the tombstones is decided when the command is built
+  (`specs/22` M16 P14); either way an id is never issued twice.
+
 ## 18.8 ID allocation
 
 - Per-type monotonic counters, zero-padded to `idWidth` (default 3, ADR 4).
 - **Never reused.** Deleted artifacts become `status: deprecated` and their files are retained.
+  (Post-v1.0, `specs/22` M16.) For the three retention-managed evidence types (§18.7, Retention),
+  "files are retained" holds until `forge evidence prune` removes a file, which it does only after
+  writing a tombstone for the id: the file may go, but the id stays spent, and the highest id of each
+  type is never pruned. A parity capture (`13` F-TEST-9) is not an artifact with an id; it is a
+  content-addressed file that `forge evidence prune` never touches and FORGE never deletes.
 - Truth is a **scan of existing artifacts** at startup; `ids.json` is a cache with a validity hash.
   This avoids the merge conflicts a committed counter file guarantees.
 - Concurrent allocation within a run is serialised through the supervisor. Lanes never allocate IDs

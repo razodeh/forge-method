@@ -63,6 +63,8 @@ import type { AbsolutePath } from '@forge/core';
 import { outputGlob, outputPathCoveredBy, resolveStepClaim } from '@forge/engine/dispatch';
 import { parseWorkflow, type WorkflowStep } from '@forge/engine/workflow';
 import { artifactTypeById } from '@forge/schemas/registry';
+import { evidenceBundleSchema, mutationEvidenceSchema } from '@forge/schemas/artifacts';
+import { MIGRATIONS } from '@forge/schemas/migrations';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { WORKFLOW_INDEX } from '@forge/templates';
 
@@ -359,5 +361,95 @@ describe('output contract: the known-gap inventory (P11 / Q208 finding 4)', () =
         }
       }
     }
+  });
+});
+
+/**
+ * What `specs/18` §18.7 names for M16 that the code does not have yet (`SPEC-QUESTIONS.md` Q294,
+ * `PLAN-M16.md` P1; P5 and P13 build them). A spec that names a registry type, a `mutationKind`, a bundle
+ * field or a migration the code lacks is a claim about the future, not an unknown: each test below reads
+ * the claim from the real spec text, checks it against the real shipped registry, schemas and migrations,
+ * and pins the difference. The day a piece builds one of them, the matching test fails until the pin is
+ * updated on purpose, the way the inventory above fails when a gap is added or removed.
+ *
+ * This file's structure covers artifact types, schemas and migrations, not commands: the four M16
+ * commands of `specs/03` §3.2.5 are pinned as not wired yet in `test/spec-cli-examples.test.ts`.
+ */
+const SPECIFIED_TYPES_NOT_REGISTERED: readonly string[] = ['ParityEvidence'];
+/** The second `MutationEvidence.mutationKind` (the schema's literal is `revert-implementation` only). */
+const HUNK_MUTATION_KIND = 'revert-hunks';
+/** The `EvidenceBundle` field the strict schema has no key for. */
+const BUNDLE_FIELD_NOT_IN_SCHEMA = 'parityEvidence';
+/** The two types §18.7 gives a `1→2` migration, in the order it names them; `MIGRATIONS` holds neither. */
+const V2_MIGRATIONS_NOT_WRITTEN: readonly string[] = ['MutationEvidence', 'EvidenceBundle'];
+
+/** `specs/18` §18.7, as written and with its whitespace collapsed (the spec wraps its sentences). */
+function registrySection(): { readonly raw: string; readonly flat: string } {
+  const text = readFileSync(
+    path.join(repoRoot, 'specs', '18-persistence-config-and-schemas.md'),
+    'utf8',
+  );
+  const marker = '\n## 18.7 Artifact type registry\n';
+  const start = text.indexOf(marker);
+  if (start === -1 || text.includes(marker, start + 1)) {
+    throw new Error('specs/18 must have exactly one "18.7 Artifact type registry" heading');
+  }
+  const next = text.indexOf('\n## ', start + marker.length);
+  const raw = text.slice(start, next === -1 ? undefined : next);
+  return { raw, flat: raw.replace(/\s+/g, ' ') };
+}
+
+describe('known gaps: what specs/18 names for M16 and the code does not have yet (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.md P1)', () => {
+  it('M16 specs/18 §18.7: the registry types the spec lists that the code registry does not know are exactly the pinned list', () => {
+    const listed = [...registrySection().raw.matchAll(/^\s*- \{ id: ([A-Za-z]+),/gm)].map(
+      (row) => row[1] ?? '',
+    );
+    expect(listed, 'the registry rows of §18.7 were read').toContain('MutationEvidence');
+    const unknownToCode = listed.filter((id) => artifactTypeById(id) === undefined);
+    expect(unknownToCode).toEqual(SPECIFIED_TYPES_NOT_REGISTERED);
+  });
+
+  it('M16 specs/18 §18.7: the spec names a second mutationKind, and the shipped MutationEvidence schema rejects it', () => {
+    const named = /`mutationKind` has a second member, `([a-z-]+)`/.exec(
+      registrySection().flat,
+    )?.[1];
+    expect(named).toBe(HUNK_MUTATION_KIND);
+    const kindIssues = (mutationKind: string) => {
+      const result = mutationEvidenceSchema.safeParse({ mutationKind });
+      return result.success
+        ? []
+        : result.error.issues.filter((issue) => issue.path.join('.') === 'mutationKind');
+    };
+    expect(kindIssues('revert-implementation'), 'the one kind v1 has is accepted').toEqual([]);
+    expect(kindIssues(HUNK_MUTATION_KIND).map((issue) => issue.code)).toEqual(['invalid_literal']);
+  });
+
+  it('M16 specs/18 §18.7: the spec names an EvidenceBundle parityEvidence list, and the shipped strict schema has no such key', () => {
+    const named = /`EvidenceBundle` gains an optional `([A-Za-z]+)` list/.exec(
+      registrySection().flat,
+    )?.[1];
+    expect(named).toBe(BUNDLE_FIELD_NOT_IN_SCHEMA);
+    const unrecognisedKeys = (key: string) => {
+      const result = evidenceBundleSchema.safeParse({ [key]: [] });
+      return result.success
+        ? []
+        : result.error.issues.flatMap((issue) =>
+            issue.code === 'unrecognized_keys' ? issue.keys : [],
+          );
+    };
+    expect(unrecognisedKeys('bindingEvidence'), 'a field v1 has is recognised').toEqual([]);
+    expect(unrecognisedKeys(BUNDLE_FIELD_NOT_IN_SCHEMA)).toEqual([BUNDLE_FIELD_NOT_IN_SCHEMA]);
+  });
+
+  it('M16 specs/18 §18.7: the spec names two 1→2 migrations, and the migration registry holds neither', () => {
+    const named = /both `1→2`: `([A-Za-z]+)` and `([A-Za-z]+)`/.exec(registrySection().flat);
+    expect([named?.[1], named?.[2]]).toEqual(V2_MIGRATIONS_NOT_WRITTEN);
+    const written = V2_MIGRATIONS_NOT_WRITTEN.filter((type) =>
+      MIGRATIONS.some(
+        (migration) =>
+          migration.from === 1 && migration.to === 2 && migration.types.some((t) => t === type),
+      ),
+    );
+    expect(written).toEqual([]);
   });
 });
