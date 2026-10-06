@@ -204,6 +204,11 @@ const IGNORED_PATHS = new Set([
   // `packages/engine/test/e2e/fixtures/run-engine-child.ts` above already establishes, for the
   // identical reason.
   'packages/cli/test/commands/loop/test/fixtures/binding-check-child.ts',
+  // `packages/cli/test/commands/parity/fixtures.ts` (`specs/22` M16 P2): shared, minimal
+  // `ParityDeclaration`/`ParityCapture` builders imported by this directory's own test files -- the
+  // identical "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming
+  // heuristic" shape every other entry in this set already establishes.
+  'packages/cli/test/commands/parity/fixtures.ts',
 ]);
 
 /**
