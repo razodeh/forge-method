@@ -35,6 +35,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { mutationEvidenceSchema } from '@forge/schemas';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
+import { readEvents } from '@forge/telemetry/events';
 
 const LAUNCHER = fileURLToPath(new URL('../../../../bin/forge.mjs', import.meta.url));
 
@@ -61,12 +62,16 @@ const TEST_COMMAND = `${process.execPath} ${resolveRealVitestEntry()} run --root
 function run(
   args: readonly string[],
   cwd: string,
+  envOverlay?: Readonly<Record<string, string>>,
 ): { readonly status: number; readonly stdout: string; readonly stderr: string } {
   const result = spawnSync(process.execPath, [LAUNCHER, ...args, '-C', cwd], {
     encoding: 'utf8',
     timeout: 30_000,
     maxBuffer: 16 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
+    // `specs/22` M16 P15: additive -- every pre-existing call here omits `envOverlay`, which keeps
+    // `spawnSync`'s own default of inheriting `process.env` as-is, byte for byte, unchanged.
+    ...(envOverlay === undefined ? {} : { env: { ...process.env, ...envOverlay } }),
   });
   return { status: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
@@ -313,6 +318,60 @@ describe('forge test binding --hunks — the written MutationEvidence record (sp
     const firstContentAfter = await readFile(firstFilePath, 'utf8');
     expect(firstContentAfter).toBe(firstContentBefore);
   }, 60_000);
+});
+
+// `specs/22` M16 P15: the real, spawned-subprocess proof that a genuine `--hunks` run's own counts
+// reach the EXISTING `CheckRun{kind:'binding'}` event additively -- `check-telemetry.test.ts`-shaped
+// assertions belong here, not in a new file, since this file already has the one real fixture
+// (`projectWithKilledAndUncoveredHunk`) that produces a genuine killed-and-uncovered hunk pair.
+describe('forge test binding --hunks — telemetry (specs/22 M16 P15)', () => {
+  it('a real FORGE_RUN_ID reaches a real CheckRun{kind:"binding"} event additively carrying the hunk counts and granularity', async () => {
+    const { dir, baseSha } = await projectWithKilledAndUncoveredHunk();
+
+    const result = run(
+      ['test', 'binding', '--story', 'STORY-001', '--hunks', '--base', baseSha, '--json'],
+      dir,
+      { FORGE_RUN_ID: 'run-hunks-telemetry' },
+    );
+    expect(result.status).toBe(0);
+
+    const events = [];
+    for await (const event of readEvents(dir, 'run-hunks-telemetry')) events.push(event);
+    const checkRuns = events.filter((event) => event.type === 'CheckRun');
+    expect(checkRuns).toHaveLength(1);
+    expect(checkRuns[0]?.payload).toMatchObject({
+      kind: 'binding',
+      storyId: 'STORY-001',
+      // Every pre-existing M15 field is unaffected by the new, additive hunk fields alongside it --
+      // `bound: 1` is the CHANGE-level verdict (M15, the whole file reverted at once: `adds` fails
+      // because `add` itself reverts too), a coarser, separate measure from the per-hunk verdicts
+      // below (where `sub`'s own hunk reads `uncovered`, never named by any test).
+      bound: 1,
+      granularity: 'hunk',
+      killedHunks: 1,
+      uncoveredHunks: 1,
+      invalidHunks: 0,
+      timeoutHunks: 0,
+      skippedHunks: 0,
+    });
+  }, 30_000);
+
+  it('the plain change-level check (no --hunks) carries none of the six hunk fields at all -- never present as zero', async () => {
+    const { dir } = await projectWithKilledAndUncoveredHunk();
+
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir, {
+      FORGE_RUN_ID: 'run-no-hunks-telemetry',
+    });
+    expect(result.status).toBe(0);
+
+    const events = [];
+    for await (const event of readEvents(dir, 'run-no-hunks-telemetry')) events.push(event);
+    const checkRuns = events.filter((event) => event.type === 'CheckRun');
+    expect(checkRuns).toHaveLength(1);
+    const payload = checkRuns[0]?.payload as Record<string, unknown>;
+    expect('granularity' in payload).toBe(false);
+    expect('killedHunks' in payload).toBe(false);
+  }, 30_000);
 });
 
 /**

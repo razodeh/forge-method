@@ -52,6 +52,50 @@ function bindingEvent(
   };
 }
 
+/** `specs/22` M16 P15's own additive hunk-mode fields, as a REAL `--hunks` run would set them (one
+ * killed, one uncovered hunk, at `granularity: 'hunk'`) -- spread onto `bindingEvent`'s own
+ * `payloadOverrides` by every test below that needs them. */
+const ONE_KILLED_ONE_UNCOVERED_HUNK = {
+  granularity: 'hunk',
+  killedHunks: 1,
+  uncoveredHunks: 1,
+  invalidHunks: 0,
+  timeoutHunks: 0,
+  skippedHunks: 0,
+};
+
+const ZERO_PARITY_VERDICT_COUNTS = {
+  invalid: 0,
+  expired: 0,
+  missing: 0,
+  ambiguous: 0,
+  error: 0,
+  unclean: 0,
+  unstable: 0,
+  mismatch: 0,
+  match: 0,
+};
+
+function parityEvent(
+  overrides: Partial<NewForgeEvent> = {},
+  payloadOverrides: Record<string, unknown> = {},
+): NewForgeEvent {
+  return {
+    ts: '2026-01-01T00:00:00.000Z',
+    runId: 'run-1',
+    type: 'CheckRun',
+    payload: {
+      kind: 'parity',
+      total: 1,
+      verdictCounts: { ...ZERO_PARITY_VERDICT_COUNTS, match: 1 },
+      evidenceId: 'PAR-001',
+      declarationNames: ['sample'],
+      ...payloadOverrides,
+    },
+    ...overrides,
+  };
+}
+
 describe('buildReport — metric 1, binding pass rate / non-binding count per story', () => {
   it('reports real zeroes, never throws, for a project with no real runs at all', async () => {
     const project = await createTestProject();
@@ -466,6 +510,187 @@ describe('buildReport — metric 6, KB reads preceding a decision artifact', () 
   });
 });
 
+describe('buildReport — metric 7, parity checks (specs/22 M16 P15)', () => {
+  it('a real CheckRun{kind:"parity"} event populates total/verdictCounts/checksRun/passRate', async () => {
+    const project = await createTestProject();
+    await appendEvent(project.dir, 'run-1', parityEvent());
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.parity).toEqual({
+      checksRun: 1,
+      totalDeclarations: 1,
+      verdictCounts: { ...ZERO_PARITY_VERDICT_COUNTS, match: 1 },
+      passRate: 1,
+    });
+  });
+
+  it('two real occurrences SUM, never dedup -- unlike binding, a parity check has no per-story state to collapse to', async () => {
+    const project = await createTestProject();
+    await appendEvent(
+      project.dir,
+      'run-1',
+      parityEvent(
+        { ts: '2026-01-01T00:00:00.000Z' },
+        {
+          total: 2,
+          verdictCounts: { ...ZERO_PARITY_VERDICT_COUNTS, match: 1, mismatch: 1 },
+          declarationNames: ['a', 'b'],
+        },
+      ),
+    );
+    await appendEvent(
+      project.dir,
+      'run-2',
+      parityEvent(
+        { runId: 'run-2', ts: '2026-01-02T00:00:00.000Z' },
+        { total: 1, verdictCounts: { ...ZERO_PARITY_VERDICT_COUNTS, match: 1 } },
+      ),
+    );
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.parity).toEqual({
+      checksRun: 2,
+      totalDeclarations: 3,
+      verdictCounts: { ...ZERO_PARITY_VERDICT_COUNTS, match: 2, mismatch: 1 },
+      passRate: 2 / 3,
+    });
+  });
+
+  it('a check with zero declarations (a real "no-declarations" occurrence) counts as a real checksRun with passRate 0, never NaN', async () => {
+    const project = await createTestProject();
+    await appendEvent(
+      project.dir,
+      'run-1',
+      parityEvent(
+        {},
+        { total: 0, verdictCounts: ZERO_PARITY_VERDICT_COUNTS, declarationNames: [] },
+      ),
+    );
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.parity).toEqual({
+      checksRun: 1,
+      totalDeclarations: 0,
+      verdictCounts: ZERO_PARITY_VERDICT_COUNTS,
+      passRate: 0,
+    });
+  });
+
+  it('no real parity event anywhere: report.parity is omitted entirely, never an all-zero object', async () => {
+    const project = await createTestProject();
+    await appendEvent(project.dir, 'run-1', bindingEvent());
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.parity).toBeUndefined();
+    expect('parity' in report).toBe(false);
+  });
+});
+
+describe('buildReport — metric 8, hunk-mode counts on a binding payload (specs/22 M16 P15)', () => {
+  it('a binding payload carrying real hunk fields populates report.hunks', async () => {
+    const project = await createTestProject();
+    await appendEvent(project.dir, 'run-1', bindingEvent({}, ONE_KILLED_ONE_UNCOVERED_HUNK));
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.hunks).toEqual({
+      checksRun: 1,
+      killedHunks: 1,
+      uncoveredHunks: 1,
+      invalidHunks: 0,
+      timeoutHunks: 0,
+      skippedHunks: 0,
+    });
+    // Additive: the EXISTING binding metric is wholly unaffected by the new fields riding its payload.
+    expect(report.binding.totalCount).toBe(1);
+  });
+
+  it('a plain binding payload with no hunk fields at all leaves report.hunks omitted', async () => {
+    const project = await createTestProject();
+    await appendEvent(project.dir, 'run-1', bindingEvent());
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.hunks).toBeUndefined();
+  });
+
+  it('two real --hunks occurrences SUM, never dedup to the latest, the identical "occurrence, not state" stance metric 7 above takes', async () => {
+    const project = await createTestProject();
+    await appendEvent(
+      project.dir,
+      'run-1',
+      bindingEvent(
+        { ts: '2026-01-01T00:00:00.000Z' },
+        { storyId: 'STORY-001', ...ONE_KILLED_ONE_UNCOVERED_HUNK },
+      ),
+    );
+    await appendEvent(
+      project.dir,
+      'run-2',
+      bindingEvent(
+        { runId: 'run-2', ts: '2026-01-02T00:00:00.000Z' },
+        {
+          storyId: 'STORY-002',
+          granularity: 'file',
+          killedHunks: 2,
+          uncoveredHunks: 0,
+          invalidHunks: 1,
+          timeoutHunks: 0,
+          skippedHunks: 0,
+        },
+      ),
+    );
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.hunks).toEqual({
+      checksRun: 2,
+      killedHunks: 3,
+      uncoveredHunks: 1,
+      invalidHunks: 1,
+      timeoutHunks: 0,
+      skippedHunks: 0,
+    });
+  });
+});
+
+describe('buildReport — golden: a pre-M16 log renders exactly as before this piece (specs/22 M16 P15)', () => {
+  it('a log with ordinary M15-shaped events (no parity event, no hunk field on any binding payload) produces a MilestoneScorecard with no "parity"/"hunks" key anywhere, not merely zero-valued ones', async () => {
+    const project = await createTestProject();
+    await appendEvent(project.dir, 'run-1', bindingEvent());
+    await appendEvent(project.dir, 'run-1', {
+      ts: '2026-01-01T00:00:01.000Z',
+      runId: 'run-1',
+      type: 'CheckRun',
+      payload: {
+        kind: 'exemption-declared',
+        exemptionId: 'EX-001',
+        testId: 'STORY-001#t1',
+        owner: 'alice',
+        expiry: '2026-12-31',
+      },
+    });
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect('parity' in report).toBe(false);
+    expect('hunks' in report).toBe(false);
+    expect(report.parity).toBeUndefined();
+    expect(report.hunks).toBeUndefined();
+    // The stronger, literal-byte proof: neither new word appears ANYWHERE in the serialised scorecard.
+    const serialised = JSON.stringify(report);
+    expect(serialised).not.toContain('parity');
+    expect(serialised).not.toContain('hunks');
+    // The pre-existing six metrics are themselves entirely unaffected.
+    expect(report.binding.totalCount).toBe(1);
+    expect(report.exemptions.opened).toBe(1);
+  });
+});
+
 describe('buildReport — forward compatibility: an unrecognised kind/code is skipped, never miscounted, never fatal', () => {
   it(
     'a CheckRun with a future, unrecognised "kind" does not crash the read and does not get counted ' +
@@ -589,6 +814,66 @@ describe('buildReport — forward compatibility: an unrecognised kind/code is sk
   );
 });
 
+describe('buildReport — forward compatibility, parity/hunks (specs/22 M16 P15)', () => {
+  it('a CheckRun carrying every real parity field but a DIFFERENT "kind" is never counted as a parity occurrence -- "kind" is checked first and explicitly, never inferred from field shape', async () => {
+    const project = await createTestProject();
+    // Deliberately carries every field a real `parity` payload has (the identical
+    // "differing ONLY in kind itself" shape the pre-existing binding forward-compatibility test
+    // above already establishes), so a projector that forgot to check `kind` at all would still
+    // misread this as one.
+    await appendEvent(
+      project.dir,
+      'run-1',
+      parityEvent({}, { kind: 'some-future-kind-this-piece-does-not-know-about' }),
+    );
+    await appendEvent(project.dir, 'run-1', parityEvent());
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.parity?.checksRun).toBe(1);
+  });
+
+  it('a CheckRun{kind:"parity"} with a malformed payload (verdictCounts missing a real key) is skipped entirely, never counted, never fatal', async () => {
+    const project = await createTestProject();
+    await appendEvent(project.dir, 'run-1', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-1',
+      type: 'CheckRun',
+      payload: {
+        kind: 'parity',
+        total: 1,
+        // Missing every other real verdict key -- not a well-formed `ParityVerdictCounts`.
+        verdictCounts: { match: 1 },
+        evidenceId: null,
+        declarationNames: ['sample'],
+      },
+    });
+    await appendEvent(project.dir, 'run-1', parityEvent());
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.parity?.checksRun).toBe(1);
+  });
+
+  it('a binding payload carrying only SOME of the six hunk fields is read as having none of them -- never a partial report.hunks', async () => {
+    const project = await createTestProject();
+    await appendEvent(
+      project.dir,
+      'run-1',
+      bindingEvent(
+        {},
+        // `granularity` and `killedHunks` only -- the other four real fields are missing.
+        { granularity: 'hunk', killedHunks: 1 },
+      ),
+    );
+
+    const report = await buildReport(contextFor(project.dir, project.paths));
+
+    expect(report.hunks).toBeUndefined();
+    expect(report.binding.totalCount).toBe(1);
+  });
+});
+
 describe('buildReport — --since filters', () => {
   it('excludes an event strictly before the cutoff, includes one exactly at it', async () => {
     const project = await createTestProject();
@@ -621,7 +906,7 @@ describe('buildReport — --since filters', () => {
     expect(report.binding.totalCount).toBe(0);
   });
 
-  it('filters ALL SIX metrics, not just binding -- a single old event per metric is excluded uniformly', async () => {
+  it('filters ALL EIGHT metrics, not just binding -- a single old event per metric is excluded uniformly (specs/22 M16 P15 widens this from SIX)', async () => {
     const project = await createTestProject();
     const dir = project.dir;
     const OLD = '2025-12-31T23:59:59.999Z';
@@ -629,8 +914,15 @@ describe('buildReport — --since filters', () => {
     await appendEvent(
       dir,
       'run-1',
-      bindingEvent({ ts: OLD, runId: 'run-1' }, { storyId: 'STORY-OLD' }),
+      // The SAME one binding event also carries the M16 P15 hunk fields, so this one occurrence
+      // exercises metric 1 (binding, unaffected) and the new hunk metric together, with no risk of
+      // the new event changing `binding.totalCount`'s own real story count below.
+      bindingEvent(
+        { ts: OLD, runId: 'run-1' },
+        { storyId: 'STORY-OLD', ...ONE_KILLED_ONE_UNCOVERED_HUNK },
+      ),
     );
+    await appendEvent(dir, 'run-1', parityEvent({ ts: OLD, runId: 'run-1' }));
     await appendEvent(dir, 'run-1', {
       ts: OLD,
       runId: 'run-1',
@@ -705,6 +997,8 @@ describe('buildReport — --since filters', () => {
     expect(unfiltered.exemptions.opened).toBe(1);
     expect(unfiltered.cost.totalUsd).toBe(5);
     expect(unfiltered.kbReads.artifactsCreated).toBe(1);
+    expect(unfiltered.parity?.checksRun).toBe(1);
+    expect(unfiltered.hunks?.checksRun).toBe(1);
 
     expect(filtered.binding.totalCount).toBe(0);
     expect(filtered.criticLoop.roundsConsumed).toBe(0);
@@ -712,6 +1006,8 @@ describe('buildReport — --since filters', () => {
     expect(filtered.exemptions.opened).toBe(0);
     expect(filtered.cost.totalUsd).toBe(0);
     expect(filtered.kbReads.artifactsCreated).toBe(0);
+    expect(filtered.parity).toBeUndefined();
+    expect(filtered.hunks).toBeUndefined();
   });
 });
 

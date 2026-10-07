@@ -47,6 +47,7 @@ import {
   type ProcessObservation,
   type SurfaceObservation,
 } from './capture.ts';
+import { emitParityCheckTelemetry, type ParityVerdictCounts } from './check-telemetry.ts';
 import { decideCaseVerdict, normalizeAndCheckStability, type MismatchLocation } from './compare.ts';
 import {
   countParityResults,
@@ -112,6 +113,14 @@ export interface RunParityCheckOptions {
   readonly clock?: Clock;
   readonly parentEnv: Readonly<Record<string, string | undefined>>;
   readonly vet?: VetCommand;
+  /** `specs/22` M16 P15: `process.env[FORGE_RUN_ID]` at the CLI boundary (`bin.ts`'s own dispatcher,
+   * the identical `realEnvSnapshot()[FORGE_RUN_ID]` read every other telemetry-gated command already
+   * takes) — `undefined` for a hand run outside any real `forge run`, or for an in-run `G-Parity` gate
+   * evaluation (Q294 Decision 5: a gate check's own project root is the integration worktree, never
+   * the run's own, so this field is moot there even on the rare run where the launcher shim did set
+   * `FORGE_RUN_ID` in the check's own env — see this piece's own report). Telemetry only: never used
+   * to name, gate or select anything about the check itself. */
+  readonly runId?: string | undefined;
 }
 
 /** One declaration's own outcome in the `--json` envelope, in the exact field order `13` F-TEST-9's
@@ -729,6 +738,28 @@ function compareByName(a: { readonly name: string }, b: { readonly name: string 
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
+/** `specs/22` M16 P15: tallies how many of THIS invocation's own declarations landed at each of `13`
+ * F-TEST-9's nine verdicts -- a frequency count over verdicts `envelopeDeclarations` (built from
+ * `countParityResults`'s own output, above) already decided, never a second opinion about what a
+ * declaration's own verdict IS. */
+function tallyParityVerdicts(
+  declarations: readonly RunParityCheckDeclarationResult[],
+): ParityVerdictCounts {
+  const counts: Record<DeclarationStopVerdict | CaseVerdict, number> = {
+    invalid: 0,
+    expired: 0,
+    missing: 0,
+    ambiguous: 0,
+    error: 0,
+    unclean: 0,
+    unstable: 0,
+    mismatch: 0,
+    match: 0,
+  };
+  for (const declaration of declarations) counts[declaration.verdict] += 1;
+  return counts;
+}
+
 /**
  * `forge parity check`'s own public entry point. See this module's own file header for the full
  * contract and boundary.
@@ -880,6 +911,21 @@ export async function runParityCheck(
     });
     evidenceId = written.id;
   }
+
+  // `specs/22` M16 P15: fired here, at this function's own tail, strictly AFTER the real
+  // `ParityEvidence` write above has already committed (when one happens at all) -- mirroring
+  // `appendExemption`'s own "only after the real write commits" discipline (`../loop/test/
+  // exemptions.ts`), never `runBindingCheck`'s own looser stance (see `check-telemetry.ts`'s own
+  // header comment for why the two call sites differ).
+  await emitParityCheckTelemetry({
+    projectRoot: options.projectRoot,
+    runId: options.runId,
+    clock,
+    total: envelopeDeclarations.length,
+    verdictCounts: tallyParityVerdicts(envelopeDeclarations),
+    evidenceId,
+    declarationNames: envelopeDeclarations.map((declaration) => declaration.name),
+  });
 
   return {
     ok: true,

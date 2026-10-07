@@ -115,6 +115,29 @@
  * @see specs/22 M15 P12
  * @see PLAN-M15.md P11
  * @see PLAN-M15.md P12
+ *
+ * **`specs/22` M16 P15 addendum.** Two new, fully ADDITIVE metrics ride this same projection:
+ * `parity` (every real `CheckRun{kind:'parity'}` occurrence) and `hunks` (the optional hunk-mode
+ * fields M16 P15 adds to the EXISTING `CheckRun{kind:'binding'}` payload, read here as one more
+ * optional group on `RecognizedBindingPayload`, exactly like `expiredExemptionIds` already is).
+ * Both are OCCURRENCE metrics (`ExemptionMetric.opened`'s own "every real event is counted, no dedup"
+ * stance), never a STATE metric keyed by story the way `BindingMetric` is: a parity check has no
+ * per-story subject in general (Decision 5's own shared `project` literal), and a later PLAIN
+ * `forge test binding` run for a story that was once checked with `--hunks` is a separate, later real
+ * fact about ordinary pass/fail state, never a reason to retroactively erase an earlier real hunk-mode
+ * investigation's own findings.
+ *
+ * **Golden compatibility (`18` §18.4's payload-versioning rule, pinned by P1 and this piece).** Both
+ * `MilestoneScorecard.parity`/`.hunks` are OPTIONAL fields, present if and only if this project has at
+ * least one real occurrence to report (`checksRun > 0`) — never present as an all-zero object. A
+ * pre-M16 event log (no `CheckRun{kind:'parity'}` event, no binding payload carrying a hunk field)
+ * therefore produces the IDENTICAL `MilestoneScorecard` object, and so the identical `--json` string
+ * and the identical human-text rendering (`bin.ts`'s own `runReportCommand`), that the pre-M16 code
+ * produced for that same log — never merely the same TEXT with an extra always-present `"parity":
+ * {...}`/`"hunks": {...}` key silently added to the JSON. `report.test.ts`'s own golden test proves
+ * this at the data level; `bin.test.ts`'s own proves it at the rendered-text level.
+ *
+ * @see specs/22 M16 P15
  */
 import type { Clock } from '@forge/core';
 import { ForgeError } from '@forge/core/errors';
@@ -222,6 +245,13 @@ export interface MilestoneScorecard {
   readonly exemptions: ExemptionMetric;
   readonly cost: CostMetric;
   readonly kbReads: KbReadMetric;
+  /** `specs/22` M16 P15, additive -- omitted (never present as an all-zero object) when this project
+   * has never run a real `forge parity check` with `FORGE_RUN_ID` set: see this module's own top doc
+   * comment for the full golden-compatibility reasoning. */
+  readonly parity?: ParityMetric;
+  /** `specs/22` M16 P15, additive -- omitted under the identical rule `parity` above states, for a
+   * project that has never run `forge test binding --hunks`. */
+  readonly hunks?: HunkMetric;
 }
 
 /** The identical "an unparseable `ts` must never be silently excluded by a `--since` cutoff" stance
@@ -296,6 +326,48 @@ interface RecognizedBindingPayload {
   readonly nonBinding: number;
   readonly exempted: number;
   readonly expiredExemptionIds?: readonly string[];
+  /** `specs/22` M16 P15, additive -- see {@link asHunkFields}. */
+  readonly hunks?: RecognizedHunkFields;
+}
+
+/** `specs/22` M16 P15's own additive hunk-mode fields on the EXISTING `kind: 'binding'` payload
+ * (`check-telemetry.ts`'s own `emitBindingCheckTelemetry`) -- present only when `forge test binding
+ * --hunks` genuinely ran the hunk-mutation engine for that check, never the plain change-level check.
+ * Read as one all-or-nothing group (the identical "never independently optional" stance
+ * `emitBindingCheckTelemetry`'s own `hunkMutation` input field already takes): a payload carrying only
+ * SOME of these six is forward-compatibility noise, not a future shape worth guessing at, so it is
+ * treated exactly like a payload with none of them. */
+interface RecognizedHunkFields {
+  readonly granularity: 'hunk' | 'file' | 'change';
+  readonly killedHunks: number;
+  readonly uncoveredHunks: number;
+  readonly invalidHunks: number;
+  readonly timeoutHunks: number;
+  readonly skippedHunks: number;
+}
+
+function asHunkFields(p: Readonly<Record<string, unknown>>): RecognizedHunkFields | undefined {
+  const granularity = p['granularity'];
+  if (granularity !== 'hunk' && granularity !== 'file' && granularity !== 'change') {
+    return undefined;
+  }
+  if (
+    !isFiniteNumber(p['killedHunks']) ||
+    !isFiniteNumber(p['uncoveredHunks']) ||
+    !isFiniteNumber(p['invalidHunks']) ||
+    !isFiniteNumber(p['timeoutHunks']) ||
+    !isFiniteNumber(p['skippedHunks'])
+  ) {
+    return undefined;
+  }
+  return {
+    granularity,
+    killedHunks: p['killedHunks'],
+    uncoveredHunks: p['uncoveredHunks'],
+    invalidHunks: p['invalidHunks'],
+    timeoutHunks: p['timeoutHunks'],
+    skippedHunks: p['skippedHunks'],
+  };
 }
 
 /** `kind` is checked FIRST and explicitly -- never inferred from "has these fields" -- so a future,
@@ -315,6 +387,7 @@ function asBindingPayload(payload: unknown): RecognizedBindingPayload | undefine
     return undefined;
   }
   const expiredExemptionIds = p['expiredExemptionIds'];
+  const hunks = asHunkFields(p);
   return {
     storyId: p['storyId'],
     testsNamed: p['testsNamed'],
@@ -322,7 +395,185 @@ function asBindingPayload(payload: unknown): RecognizedBindingPayload | undefine
     nonBinding: p['nonBinding'],
     exempted: p['exempted'],
     ...(isStringArray(expiredExemptionIds) ? { expiredExemptionIds } : {}),
+    ...(hunks === undefined ? {} : { hunks }),
   };
+}
+
+export interface HunkMetric {
+  /** Every real `CheckRun{kind:'binding'}` occurrence that carried real hunk-mode fields (`--hunks`
+   * genuinely ran), across every run -- no dedup, the identical "every real event is counted" stance
+   * `ExemptionMetric.opened` already establishes. */
+  readonly checksRun: number;
+  readonly killedHunks: number;
+  readonly uncoveredHunks: number;
+  readonly invalidHunks: number;
+  readonly timeoutHunks: number;
+  readonly skippedHunks: number;
+}
+
+function buildHunkMetric(events: readonly ForgeEvent[]): HunkMetric {
+  let checksRun = 0;
+  let killedHunks = 0;
+  let uncoveredHunks = 0;
+  let invalidHunks = 0;
+  let timeoutHunks = 0;
+  let skippedHunks = 0;
+  for (const event of events) {
+    if (event.type !== 'CheckRun') continue;
+    const hunks = asBindingPayload(event.payload)?.hunks;
+    if (hunks === undefined) continue;
+    checksRun += 1;
+    killedHunks += hunks.killedHunks;
+    uncoveredHunks += hunks.uncoveredHunks;
+    invalidHunks += hunks.invalidHunks;
+    timeoutHunks += hunks.timeoutHunks;
+    skippedHunks += hunks.skippedHunks;
+  }
+  return { checksRun, killedHunks, uncoveredHunks, invalidHunks, timeoutHunks, skippedHunks };
+}
+
+function isHunkMetric(value: unknown): value is HunkMetric {
+  return (
+    isPlainObject(value) &&
+    isFiniteNumber(value['checksRun']) &&
+    isFiniteNumber(value['killedHunks']) &&
+    isFiniteNumber(value['uncoveredHunks']) &&
+    isFiniteNumber(value['invalidHunks']) &&
+    isFiniteNumber(value['timeoutHunks']) &&
+    isFiniteNumber(value['skippedHunks'])
+  );
+}
+
+/** `13` F-TEST-9's nine verdicts -- `report.ts`'s own independent copy of the shape
+ * `parity/check-telemetry.ts`'s own `ParityVerdictCounts` already carries on the WRITE side: this
+ * module validates an event payload's `unknown` shape on its own terms (Decision 10: "the contract
+ * lives in... these tests"), the identical independence `RecognizedBindingPayload` already keeps from
+ * `BindingCheckTelemetryInput` -- never importing a sibling command's write-side type for a read this
+ * file must validate for itself regardless of what wrote it. */
+export interface ParityVerdictCounts {
+  readonly invalid: number;
+  readonly expired: number;
+  readonly missing: number;
+  readonly ambiguous: number;
+  readonly error: number;
+  readonly unclean: number;
+  readonly unstable: number;
+  readonly mismatch: number;
+  readonly match: number;
+}
+
+function isParityVerdictCounts(value: unknown): value is ParityVerdictCounts {
+  return (
+    isPlainObject(value) &&
+    isFiniteNumber(value['invalid']) &&
+    isFiniteNumber(value['expired']) &&
+    isFiniteNumber(value['missing']) &&
+    isFiniteNumber(value['ambiguous']) &&
+    isFiniteNumber(value['error']) &&
+    isFiniteNumber(value['unclean']) &&
+    isFiniteNumber(value['unstable']) &&
+    isFiniteNumber(value['mismatch']) &&
+    isFiniteNumber(value['match'])
+  );
+}
+
+interface RecognizedParityPayload {
+  readonly total: number;
+  readonly verdictCounts: ParityVerdictCounts;
+  readonly evidenceId: string | null;
+  readonly declarationNames: readonly string[];
+}
+
+/** `kind` checked FIRST and explicitly -- the identical forward-compatibility discriminator
+ * `asBindingPayload` already establishes. */
+function asParityPayload(payload: unknown): RecognizedParityPayload | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const p = payload as Record<string, unknown>;
+  if (p['kind'] !== 'parity') return undefined;
+  const evidenceId = p['evidenceId'];
+  if (
+    !isFiniteNumber(p['total']) ||
+    !isParityVerdictCounts(p['verdictCounts']) ||
+    !(evidenceId === null || isNonBlankString(evidenceId)) ||
+    !isStringArray(p['declarationNames'])
+  ) {
+    return undefined;
+  }
+  return {
+    total: p['total'],
+    verdictCounts: p['verdictCounts'],
+    evidenceId,
+    declarationNames: p['declarationNames'],
+  };
+}
+
+export interface ParityMetric {
+  /** Every real `CheckRun{kind:'parity'}` occurrence, across every run -- no dedup (the identical
+   * "every real event is counted" convention `ExemptionMetric.opened` already establishes): there is
+   * no natural per-subject state to dedup by the way `BindingMetric`'s own per-story metric has one. */
+  readonly checksRun: number;
+  /** Summed across every occurrence counted above. */
+  readonly totalDeclarations: number;
+  /** Summed across every occurrence counted above. */
+  readonly verdictCounts: ParityVerdictCounts;
+  /** `verdictCounts.match / totalDeclarations` -- `0` (never `NaN`) when `totalDeclarations` is `0`. */
+  readonly passRate: number;
+}
+
+function buildParityMetric(events: readonly ForgeEvent[]): ParityMetric {
+  let checksRun = 0;
+  let invalid = 0;
+  let expired = 0;
+  let missing = 0;
+  let ambiguous = 0;
+  let error = 0;
+  let unclean = 0;
+  let unstable = 0;
+  let mismatch = 0;
+  let match = 0;
+  for (const event of events) {
+    if (event.type !== 'CheckRun') continue;
+    const payload = asParityPayload(event.payload);
+    if (payload === undefined) continue;
+    checksRun += 1;
+    invalid += payload.verdictCounts.invalid;
+    expired += payload.verdictCounts.expired;
+    missing += payload.verdictCounts.missing;
+    ambiguous += payload.verdictCounts.ambiguous;
+    error += payload.verdictCounts.error;
+    unclean += payload.verdictCounts.unclean;
+    unstable += payload.verdictCounts.unstable;
+    mismatch += payload.verdictCounts.mismatch;
+    match += payload.verdictCounts.match;
+  }
+  const totalDeclarations =
+    invalid + expired + missing + ambiguous + error + unclean + unstable + mismatch + match;
+  return {
+    checksRun,
+    totalDeclarations,
+    verdictCounts: {
+      invalid,
+      expired,
+      missing,
+      ambiguous,
+      error,
+      unclean,
+      unstable,
+      mismatch,
+      match,
+    },
+    passRate: totalDeclarations === 0 ? 0 : match / totalDeclarations,
+  };
+}
+
+function isParityMetric(value: unknown): value is ParityMetric {
+  return (
+    isPlainObject(value) &&
+    isFiniteNumber(value['checksRun']) &&
+    isFiniteNumber(value['totalDeclarations']) &&
+    isParityVerdictCounts(value['verdictCounts']) &&
+    isFiniteNumber(value['passRate'])
+  );
 }
 
 function buildBindingMetric(events: readonly ForgeEvent[]): BindingMetric {
@@ -540,6 +791,8 @@ export async function buildReport(
   options: ReportOptions = {},
 ): Promise<MilestoneScorecard> {
   const events = await allEvents(ctx, options);
+  const parity = buildParityMetric(events);
+  const hunks = buildHunkMetric(events);
   return {
     v: 1,
     since: options.since === undefined ? null : options.since.toISOString(),
@@ -549,6 +802,10 @@ export async function buildReport(
     exemptions: buildExemptionMetric(events),
     cost: buildCostMetric(events),
     kbReads: buildKbReadMetric(events),
+    // `specs/22` M16 P15: omitted (never an all-zero object) when this project has no real occurrence
+    // to report -- see this module's own top doc comment for the full golden-compatibility reasoning.
+    ...(parity.checksRun === 0 ? {} : { parity }),
+    ...(hunks.checksRun === 0 ? {} : { hunks }),
   };
 }
 
@@ -648,7 +905,9 @@ function isMilestoneScorecard(value: unknown): value is MilestoneScorecard {
     isGateMetric(value['gates']) &&
     isExemptionMetric(value['exemptions']) &&
     isCostMetric(value['cost']) &&
-    isKbReadMetric(value['kbReads'])
+    isKbReadMetric(value['kbReads']) &&
+    (value['parity'] === undefined || isParityMetric(value['parity'])) &&
+    (value['hunks'] === undefined || isHunkMetric(value['hunks']))
   );
 }
 

@@ -18,6 +18,9 @@ import path from 'node:path';
 import { documentProblems } from '@forge/engine/dispatch';
 import { definitionForType } from '@forge/schemas';
 import { evaluateGate, type CheckRunner, type GateDefinition } from '@forge/engine/gates';
+import { pathExists, ProjectPaths } from '@forge/core/fs';
+import { readEvents } from '@forge/telemetry/events';
+import { SYSTEM_CLOCK } from '@forge/core';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -30,6 +33,7 @@ import {
   runParityCheck,
   type RunParityCheckOptions,
 } from '../../../src/commands/parity/check-command.ts';
+import { emitParityCheckTelemetry } from '../../../src/commands/parity/check-telemetry.ts';
 
 const PARITY_EVIDENCE_TYPE = definitionForType('ParityEvidence');
 
@@ -495,6 +499,157 @@ describe('runParityCheck: the ParityEvidence record (specs/22 M16 P7)', () => {
       .filter((l) => l !== '');
     expect(untrackedLines).toHaveLength(1);
     expect(untrackedLines[0]).toContain(String(result.evidenceId));
+  });
+});
+
+describe('runParityCheck: telemetry CheckRun{kind:"parity"} (specs/22 M16 P15)', () => {
+  async function readParityCheckRuns(
+    dir: string,
+    runId: string,
+  ): Promise<readonly Record<string, unknown>[]> {
+    const events = [];
+    for await (const event of readEvents(dir, runId)) events.push(event);
+    return events
+      .filter((event) => event.type === 'CheckRun')
+      .map((event) => event.payload as Record<string, unknown>)
+      .filter((payload) => payload['kind'] === 'parity');
+  }
+
+  it('with FORGE_RUN_ID (runId) set, a real check appends exactly one CheckRun{kind:"parity"} event with the expected counts and no observed content', async () => {
+    const dir = await freshProject();
+    await writeDeclaration(dir, 'sample');
+    await commitAll(dir, 'declare');
+    await runParityCapture(captureOptions(dir));
+    await writeBehavior(dir, CHANGED_BODY);
+
+    const result = await runParityCheck(checkOptions(dir, { runId: 'run-parity-telemetry' }));
+    expect(result.verdict).toBe('mismatch');
+
+    const parityRuns = await readParityCheckRuns(dir, 'run-parity-telemetry');
+    expect(parityRuns).toHaveLength(1);
+    expect(parityRuns[0]).toEqual({
+      kind: 'parity',
+      total: 1,
+      verdictCounts: {
+        invalid: 0,
+        expired: 0,
+        missing: 0,
+        ambiguous: 0,
+        error: 0,
+        unclean: 0,
+        unstable: 0,
+        mismatch: 1,
+        match: 0,
+      },
+      evidenceId: result.evidenceId,
+      declarationNames: ['sample'],
+    });
+    // Never an observation: the candidate's own changed output text appears NOWHERE in the event.
+    expect(JSON.stringify(parityRuns[0])).not.toContain('changed');
+  });
+
+  it('with no runId at all (the ordinary, standalone human invocation): no run directory is ever created', async () => {
+    const dir = await freshProject();
+    await writeDeclaration(dir, 'sample');
+    await commitAll(dir, 'declare');
+    await runParityCapture(captureOptions(dir));
+
+    await runParityCheck(checkOptions(dir, { noRecord: true }));
+
+    expect(await pathExists(new ProjectPaths(dir).resolveState('runs'))).toBe(false);
+  });
+
+  it('--no-record: the event ALSO carries evidenceId: null, matching the envelope', async () => {
+    const dir = await freshProject();
+    await writeDeclaration(dir, 'sample');
+    await commitAll(dir, 'declare');
+    await runParityCapture(captureOptions(dir));
+
+    const result = await runParityCheck(
+      checkOptions(dir, { runId: 'run-parity-no-record', noRecord: true }),
+    );
+    expect(result.evidenceId).toBeNull();
+
+    const parityRuns = await readParityCheckRuns(dir, 'run-parity-no-record');
+    expect(parityRuns).toHaveLength(1);
+    expect(parityRuns[0]?.['evidenceId']).toBeNull();
+  });
+
+  it('a real evidenceId (no --no-record) appears in the event, matching the envelope and the written record', async () => {
+    const dir = await freshProject();
+    await writeDeclaration(dir, 'sample');
+    await commitAll(dir, 'declare');
+    await runParityCapture(captureOptions(dir));
+
+    const result = await runParityCheck(checkOptions(dir, { runId: 'run-parity-evidence' }));
+    expect(result.evidenceId).toMatch(/^PAR-\d{3}$/);
+
+    const parityRuns = await readParityCheckRuns(dir, 'run-parity-evidence');
+    expect(parityRuns[0]?.['evidenceId']).toBe(result.evidenceId);
+  });
+
+  it('multiple declarations in one invocation are tallied together, never a second event', async () => {
+    const dir = await freshProject();
+    await writeDeclaration(dir, 'sample-a');
+    await writeDeclaration(dir, 'sample-b');
+    await commitAll(dir, 'declare');
+    await runParityCapture(captureOptions(dir));
+
+    const result = await runParityCheck(checkOptions(dir, { runId: 'run-parity-multi' }));
+    expect(result.verdict).toBe('match');
+    expect(result.declarations).toHaveLength(2);
+
+    const parityRuns = await readParityCheckRuns(dir, 'run-parity-multi');
+    expect(parityRuns).toHaveLength(1);
+    expect(parityRuns[0]).toMatchObject({
+      total: 2,
+      verdictCounts: expect.objectContaining({ match: 2 }) as unknown,
+      declarationNames: ['sample-a', 'sample-b'],
+    });
+  });
+
+  it('zero declarations (a real "no-declarations" occurrence) still emits one real event, never a non-event', async () => {
+    // `freshProject` itself already commits a clean tree with no `.forge/parity/` at all -- nothing
+    // further to declare or commit for this one.
+    const dir = await freshProject();
+
+    const result = await runParityCheck(checkOptions(dir, { runId: 'run-parity-empty' }));
+    expect(result.reason).toBe('no-declarations');
+
+    const parityRuns = await readParityCheckRuns(dir, 'run-parity-empty');
+    expect(parityRuns).toHaveLength(1);
+    expect(parityRuns[0]).toMatchObject({ total: 0, declarationNames: [] });
+  });
+
+  it('a secret-shaped declaration name is redacted at write time (the identical property check-telemetry.ts already proves for the binding payload)', async () => {
+    const dir = await freshProject();
+    const secret = `ghp_${'a'.repeat(36)}`;
+
+    await emitParityCheckTelemetry({
+      projectRoot: dir,
+      runId: 'run-parity-redaction',
+      clock: SYSTEM_CLOCK,
+      total: 1,
+      verdictCounts: {
+        invalid: 0,
+        expired: 0,
+        missing: 0,
+        ambiguous: 0,
+        error: 0,
+        unclean: 0,
+        unstable: 0,
+        mismatch: 0,
+        match: 1,
+      },
+      evidenceId: 'PAR-001',
+      declarationNames: [secret],
+    });
+
+    const parityRuns = await readParityCheckRuns(dir, 'run-parity-redaction');
+    expect(parityRuns).toHaveLength(1);
+    const names = parityRuns[0]?.['declarationNames'] as readonly string[];
+    expect(names[0]).not.toContain(secret);
+    expect(names[0]).toContain('[REDACTED]');
   });
 });
 

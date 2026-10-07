@@ -1292,9 +1292,14 @@ async function runParityCommand(
     // needs this project to have a valid `.forge/config.yaml` at all (`check-command.ts`'s own
     // `RunParityCheckOptions.reportsRoot` doc comment has the full reasoning).
     const reportsRoot = noRecord ? undefined : (await readConfig(paths)).paths.reports;
+    // `specs/22` M16 P15: one ambient environment read, reused for both `parentEnv` (the vet seam
+    // below already had) and the real `FORGE_RUN_ID` (telemetry only, `check-command.ts`'s own
+    // `RunParityCheckOptions.runId` doc comment has the full reasoning).
+    const env = realEnvSnapshot();
     const result = await runParityCheck({
       projectRoot,
-      parentEnv: realEnvSnapshot(),
+      parentEnv: env,
+      runId: env[FORGE_RUN_ID],
       ...(reportsRoot === undefined ? {} : { reportsRoot }),
       ...(name === undefined ? {} : { name }),
       ...(trusted === undefined ? {} : { trusted }),
@@ -1855,6 +1860,10 @@ async function runOneStoryBinding(
     nonBinding: rawNonBinding.length,
     exempted: rawNonBinding.length - application.nonBinding.length,
     expiredExemptionIds: application.expiredExemptions.map((exemption) => exemption.id),
+    // `specs/22` M16 P15: additive. Present only when `--hunks` genuinely ran the hunk-mutation engine
+    // for this check (never discover mode, which never sets `hunkOptions` at all, see this function's
+    // own parameter doc comment above).
+    ...(hunkMutation === undefined ? {} : { hunkMutation }),
   });
   const exemptionProblems = describeExemptionProblems(application);
   if (exemptionProblems.length > 0) {
@@ -3222,18 +3231,28 @@ async function runReportCommand(
     return EXIT_CODES.success;
   }
   const report = await buildReport(ctx, since === undefined ? {} : { since });
-  console.log(
-    json
-      ? JSON.stringify({ v: 1, report })
-      : [
-          `forge report: binding ${String(report.binding.passingCount)}/${String(report.binding.totalCount)} (${(report.binding.passRate * 100).toFixed(0)}%)`,
-          `  critic loop: ${String(report.criticLoop.roundsConsumed)} round(s) consumed, ${String(report.criticLoop.stopAndDiscloseCount)} stop-and-disclose`,
-          `  gates: ${String(report.gates.pairsWithCleanFirstPass)}/${String(report.gates.pairsEvaluated)} clean first pass, ${String(report.gates.totalRejectionsBeforeFirstPass)} rejection(s) total`,
-          `  exemptions: ${String(report.exemptions.opened)} opened, ${String(report.exemptions.expiredIds.length)} expired`,
-          `  cost: $${report.cost.totalUsd.toFixed(2)} across ${String(report.cost.byStory.length)} stor(y/ies)`,
-          `  kb reads: ${String(report.kbReads.precededByKbRead)}/${String(report.kbReads.artifactsCreated)} artifacts preceded by a real KB read (${(report.kbReads.rate * 100).toFixed(0)}%)`,
-        ].join('\n'),
-  );
+  // `specs/22` M16 P15: `parity`/`hunks` are pushed ONLY when the scorecard actually carries them
+  // (omitted for a project with no real occurrence, see `report.ts`'s own top doc comment) -- so a
+  // pre-M16 log renders this array, and so this command's own stdout, byte-for-byte as before.
+  const lines = [
+    `forge report: binding ${String(report.binding.passingCount)}/${String(report.binding.totalCount)} (${(report.binding.passRate * 100).toFixed(0)}%)`,
+    `  critic loop: ${String(report.criticLoop.roundsConsumed)} round(s) consumed, ${String(report.criticLoop.stopAndDiscloseCount)} stop-and-disclose`,
+    `  gates: ${String(report.gates.pairsWithCleanFirstPass)}/${String(report.gates.pairsEvaluated)} clean first pass, ${String(report.gates.totalRejectionsBeforeFirstPass)} rejection(s) total`,
+    `  exemptions: ${String(report.exemptions.opened)} opened, ${String(report.exemptions.expiredIds.length)} expired`,
+    `  cost: $${report.cost.totalUsd.toFixed(2)} across ${String(report.cost.byStory.length)} stor(y/ies)`,
+    `  kb reads: ${String(report.kbReads.precededByKbRead)}/${String(report.kbReads.artifactsCreated)} artifacts preceded by a real KB read (${(report.kbReads.rate * 100).toFixed(0)}%)`,
+  ];
+  if (report.parity !== undefined) {
+    lines.push(
+      `  parity: ${String(report.parity.verdictCounts.match)}/${String(report.parity.totalDeclarations)} declarations matched (${(report.parity.passRate * 100).toFixed(0)}%) across ${String(report.parity.checksRun)} check(s)`,
+    );
+  }
+  if (report.hunks !== undefined) {
+    lines.push(
+      `  hunks: ${String(report.hunks.killedHunks)} killed, ${String(report.hunks.uncoveredHunks)} uncovered, ${String(report.hunks.invalidHunks)} invalid, ${String(report.hunks.timeoutHunks)} timeout, ${String(report.hunks.skippedHunks)} skipped (${String(report.hunks.checksRun)} --hunks run(s))`,
+    );
+  }
+  console.log(json ? JSON.stringify({ v: 1, report }) : lines.join('\n'));
   return EXIT_CODES.success;
 }
 

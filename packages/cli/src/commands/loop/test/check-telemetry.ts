@@ -36,10 +36,26 @@
  * @see specs/22 M15 P11
  * @see PLAN-M15.md P11
  * @see PLAN-M15.md P7
+ *
+ * **`specs/22` M16 P15 addendum.** `BindingCheckTelemetryInput.hunkMutation`/`countHunkVerdicts` below
+ * are this piece's own ADDITIVE extension: `forge test binding --hunks`'s own already-landed
+ * `HunkMutationReport` (M16 P12/P13, `hunk-mutation.ts`) passed straight through, never re-derived —
+ * this module is simply a SECOND place that tallies an already-decided `HunkVerdict.kind` into counts,
+ * the identical "each call site derives its own already-known facts from the caller's own result"
+ * convention `testsNamed`/`bound`/`nonBinding`/`exempted` above already establish across this file's
+ * own two call sites (`bin.ts`'s `hunkMutationToJson` is the FIRST such tally, for the unrelated
+ * `--json` envelope; it is private to `bin.ts`, which exports nothing, so it cannot be reused here).
+ * `v` stays at 1 (`18` §18.4's payload-versioning rule, pinned by P1 and this piece): every field below
+ * is optional and additive, and an existing `kind: 'binding'` payload with none of them parses and
+ * renders identically to before (`report.ts`'s own golden test).
+ *
+ * @see specs/22 M16 P15
  */
 import type { Clock } from '@forge/core';
 import { SECRET_PATTERNS } from '@forge/extensions/skills';
 import { appendEvent } from '@forge/telemetry/events';
+
+import type { Granularity, HunkMutationReport, HunkVerdict } from './hunk-mutation.ts';
 
 export interface BindingCheckTelemetryInput {
   readonly projectRoot: string;
@@ -66,6 +82,38 @@ export interface BindingCheckTelemetryInput {
    * moment, inside the identical function call (`applyExemptions`). Omitted (not an empty array) when
    * none were found. */
   readonly expiredExemptionIds?: readonly string[];
+  /** `specs/22` M16 P15: present only when `forge test binding --hunks` genuinely ran the hunk-
+   * mutation engine for THIS check (`runOneStoryBinding`'s own `raw.hunkMutation`, `bin.ts`) — never
+   * the plain change-level check, and never set at all from `story.ts`'s own `checkBinding` call site,
+   * which has no `--hunks` surface. Passed through whole, never pre-counted by the caller: this
+   * module is the one place a `HunkMutationReport` becomes telemetry-shaped counts, so a caller and
+   * this file's own payload shape can never silently drift out of agreement about how a verdict is
+   * counted. */
+  readonly hunkMutation?: HunkMutationReport;
+}
+
+/** `specs/22` M16 P15: tallies an already-decided `HunkVerdict.kind` per hunk into the five counts
+ * `forge report`'s own new hunk line reads — a frequency count over verdicts `hunk-mutation.ts` already
+ * decided, never a second opinion about what a hunk's own verdict IS (that engine stays exactly where
+ * P12/P13 already built it). */
+function countHunkVerdicts(report: HunkMutationReport): {
+  readonly granularity: Granularity;
+  readonly killedHunks: number;
+  readonly uncoveredHunks: number;
+  readonly invalidHunks: number;
+  readonly timeoutHunks: number;
+  readonly skippedHunks: number;
+} {
+  const count = (kind: HunkVerdict['kind']): number =>
+    report.hunks.filter((hunk) => hunk.verdict.kind === kind).length;
+  return {
+    granularity: report.granularity,
+    killedHunks: count('killed'),
+    uncoveredHunks: count('uncovered'),
+    invalidHunks: count('invalid'),
+    timeoutHunks: count('timeout'),
+    skippedHunks: count('skipped'),
+  };
 }
 
 /** `specs/22` M15 P11 metrics 1 and 4b. Scoped to the two real "check this story's binding status" call
@@ -92,6 +140,7 @@ export async function emitBindingCheckTelemetry(input: BindingCheckTelemetryInpu
         ...(input.expiredExemptionIds === undefined || input.expiredExemptionIds.length === 0
           ? {}
           : { expiredExemptionIds: input.expiredExemptionIds }),
+        ...(input.hunkMutation === undefined ? {} : countHunkVerdicts(input.hunkMutation)),
       },
     },
     { valuePatterns: SECRET_PATTERNS },

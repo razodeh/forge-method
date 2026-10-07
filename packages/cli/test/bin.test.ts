@@ -18,8 +18,8 @@ import { existsSync } from 'node:fs';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { execa } from 'execa';
-import { ProjectPaths } from '@forge/core/fs';
-import { appendEvent } from '@forge/telemetry/events';
+import { pathExists, ProjectPaths } from '@forge/core/fs';
+import { appendEvent, readEvents } from '@forge/telemetry/events';
 
 import { acquireRunLock } from '../src/commands/run/lock.ts';
 import { FakePlatformAdapter } from '@forge/testkit';
@@ -2015,6 +2015,83 @@ describe('forge cost (real subprocess dispatch, PLAN-M12.md P2)', () => {
   });
 });
 
+// `specs/22` M16 P15: the real, spawned-subprocess proof that `bin.ts`'s own `runParityCommand`
+// dispatcher reads a real `FORGE_RUN_ID` from `process.env` (via `realEnvSnapshot`) and threads it
+// into `runParityCheck`'s own telemetry -- `check-command.test.ts`'s own direct-call suite already
+// proves the payload's CONTENT thoroughly (verdict tallying, multi-declaration, redaction, ...); this
+// file is the one place that proves the CLI boundary itself actually reads the env var, the identical
+// split `bin-binding.test.ts`'s own "telemetry" describe block already establishes for the binding
+// case. A project with zero declarations (`--trusted` omitted too) is deliberately the minimal real
+// fixture: it still reaches a real, non-trivial payload (a real evidence id, `total: 0`) through the
+// real dispatcher, without needing a capture/declaration/reference setup this file does not otherwise
+// carry.
+// `runInit` (`realProject`'s own fixture) only `git init`s -- no commit -- and `runParityCheck`'s own
+// `takeTreeSnapshot` (run before any declaration, even a "no-declarations" one) needs a real `HEAD`
+// commit to exist at all (`RUN-126` otherwise), the identical real gap this file's own
+// `RUN_FAILING_GATE`/`merge` fixtures above already work around with one `git commit --quiet`.
+async function committedRealProject(): Promise<string> {
+  const dir = await realProject();
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '-m', 'fixture'], { cwd: dir });
+  return dir;
+}
+
+describe('forge parity check — telemetry, real subprocess dispatch (specs/22 M16 P15)', () => {
+  it('a real FORGE_RUN_ID in the environment reaches a real CheckRun{kind:"parity"} event on disk', async () => {
+    const dir = await committedRealProject();
+    const result = run(['parity', 'check', '--json', '-C', dir], {
+      FORGE_RUN_ID: 'run-cli-parity',
+    });
+
+    expect(result.status).not.toBe(0); // zero declarations: a real failing (non-refusal) verdict.
+    const events = [];
+    for await (const event of readEvents(dir, 'run-cli-parity')) events.push(event);
+    const checkRuns = events.filter((event) => event.type === 'CheckRun');
+    expect(checkRuns).toHaveLength(1);
+    const parsed = JSON.parse(result.stdout) as { readonly evidenceId: string | null };
+    expect(checkRuns[0]?.payload).toEqual({
+      kind: 'parity',
+      total: 0,
+      verdictCounts: {
+        invalid: 0,
+        expired: 0,
+        missing: 0,
+        ambiguous: 0,
+        error: 0,
+        unclean: 0,
+        unstable: 0,
+        mismatch: 0,
+        match: 0,
+      },
+      evidenceId: parsed.evidenceId,
+      declarationNames: [],
+    });
+    expect(parsed.evidenceId).toMatch(/^PAR-\d{3}$/);
+  });
+
+  it('--no-record: the event carries evidenceId: null too', async () => {
+    const dir = await committedRealProject();
+    const result = run(['parity', 'check', '--no-record', '--json', '-C', dir], {
+      FORGE_RUN_ID: 'run-cli-parity-no-record',
+    });
+
+    expect(result.status).not.toBe(0);
+    const events = [];
+    for await (const event of readEvents(dir, 'run-cli-parity-no-record')) events.push(event);
+    const checkRuns = events.filter((event) => event.type === 'CheckRun');
+    expect(checkRuns).toHaveLength(1);
+    expect(checkRuns[0]?.payload).toMatchObject({ kind: 'parity', evidenceId: null });
+  });
+
+  it('no FORGE_RUN_ID at all (the ordinary, standalone human invocation): no run directory is ever created', async () => {
+    const dir = await committedRealProject();
+    const result = run(['parity', 'check', '--json', '-C', dir]);
+
+    expect(result.status).not.toBe(0);
+    expect(await pathExists(new ProjectPaths(dir).resolveState('runs'))).toBe(false);
+  });
+});
+
 describe('forge report (real subprocess dispatch, specs/22 M15 P12)', () => {
   it('runs `forge report --json` for real, exiting 0 with a real, zeroed scorecard against a project with no real runs', async () => {
     const dir = await realProject();
@@ -2123,6 +2200,112 @@ describe('forge report (real subprocess dispatch, specs/22 M15 P12)', () => {
       };
     };
     expect(parsed.report.binding).toMatchObject({ passingCount: 1, totalCount: 1 });
+  });
+});
+
+describe('forge report — parity/hunks rendering, real subprocess dispatch (specs/22 M16 P15)', () => {
+  it('renders a real parity line for a real CheckRun{kind:"parity"} event -- human (non-json) output', async () => {
+    const dir = await realProject();
+    await appendEvent(dir, 'run-1', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-1',
+      type: 'CheckRun',
+      payload: {
+        kind: 'parity',
+        total: 2,
+        verdictCounts: {
+          invalid: 0,
+          expired: 0,
+          missing: 0,
+          ambiguous: 0,
+          error: 0,
+          unclean: 0,
+          unstable: 0,
+          mismatch: 1,
+          match: 1,
+        },
+        evidenceId: 'PAR-001',
+        declarationNames: ['a', 'b'],
+      },
+    });
+
+    const result = run(['report', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trimEnd()).toBe(
+      [
+        'forge report: binding 0/0 (0%)',
+        '  critic loop: 0 round(s) consumed, 0 stop-and-disclose',
+        '  gates: 0/0 clean first pass, 0 rejection(s) total',
+        '  exemptions: 0 opened, 0 expired',
+        '  cost: $0.00 across 0 stor(y/ies)',
+        '  kb reads: 0/0 artifacts preceded by a real KB read (0%)',
+        '  parity: 1/2 declarations matched (50%) across 1 check(s)',
+      ].join('\n'),
+    );
+  });
+
+  it('renders a real hunk line for a binding payload carrying real hunk fields -- human (non-json) output', async () => {
+    const dir = await realProject();
+    await appendEvent(dir, 'run-1', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-1',
+      type: 'CheckRun',
+      payload: {
+        kind: 'binding',
+        storyId: 'STORY-001',
+        testsNamed: 1,
+        bound: 1,
+        nonBinding: 0,
+        exempted: 0,
+        granularity: 'hunk',
+        killedHunks: 1,
+        uncoveredHunks: 1,
+        invalidHunks: 0,
+        timeoutHunks: 0,
+        skippedHunks: 0,
+      },
+    });
+
+    const result = run(['report', '-C', dir]);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trimEnd()).toBe(
+      [
+        'forge report: binding 1/1 (100%)',
+        '  critic loop: 0 round(s) consumed, 0 stop-and-disclose',
+        '  gates: 0/0 clean first pass, 0 rejection(s) total',
+        '  exemptions: 0 opened, 0 expired',
+        '  cost: $0.00 across 0 stor(y/ies)',
+        '  kb reads: 0/0 artifacts preceded by a real KB read (0%)',
+        '  hunks: 1 killed, 1 uncovered, 0 invalid, 0 timeout, 0 skipped (1 --hunks run(s))',
+      ].join('\n'),
+    );
+  });
+
+  // `specs/22` M16 P15's own golden requirement: a pre-M16 project (no parity event, no hunk field on
+  // any binding payload -- here, no event at all) renders BYTE FOR BYTE as it did before this piece,
+  // in both the human-text and the `--json` forms: neither new, additive line/key appears at all.
+  it('a pre-M16 (zero-event) project renders byte-for-byte as before this piece — no parity/hunks line, no parity/hunks JSON key', async () => {
+    const dir = await realProject();
+
+    const textResult = run(['report', '-C', dir]);
+    expect(textResult.status).toBe(0);
+    expect(textResult.stdout.trimEnd()).toBe(
+      [
+        'forge report: binding 0/0 (0%)',
+        '  critic loop: 0 round(s) consumed, 0 stop-and-disclose',
+        '  gates: 0/0 clean first pass, 0 rejection(s) total',
+        '  exemptions: 0 opened, 0 expired',
+        '  cost: $0.00 across 0 stor(y/ies)',
+        '  kb reads: 0/0 artifacts preceded by a real KB read (0%)',
+      ].join('\n'),
+    );
+
+    const jsonResult = run(['report', '--json', '-C', dir]);
+    expect(jsonResult.status).toBe(0);
+    expect(jsonResult.stdout).not.toContain('parity');
+    expect(jsonResult.stdout).not.toContain('hunks');
   });
 });
 
