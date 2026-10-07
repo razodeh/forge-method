@@ -28598,3 +28598,38 @@ any future second-pass-style check over this same candidate/reference-graph shap
 fixed point from the start, not add one only after a critic finds the single-pass version wrong.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P14`.
+
+## Q306 — M16 P8: the HTTP surface — `http`'s own `run` starts a server, not a command that finishes,
+so its own dispatch needed a genuinely new shape
+
+**Context.** `PLAN-M16.md` P8's own Mandate: the fourth parity surface, an in-process client against a
+loopback server the harness itself starts, controls and tears down. The critic-round narrative, the
+fix detail, and the verification numbers are in `GAUNTLET-LOG.md`'s own `## M16 P8` entry and are not
+repeated here.
+
+**Decision — `observeAgainstRoot` dispatches `http` to a genuinely new top-level branch, not a stretch
+of the existing per-case loop, because the surface's own `run` has a fundamentally different lifecycle
+than the other three.** `process`/`file`/`library` all share `observeOneCase`: compose a case's own
+`args` onto the surface's `run`, run it ONCE PER CASE, read the result. An `http` surface's own `run`
+starts a SERVER that must stay alive across every one of its cases — there is no "compose and run
+once" that makes sense for it. The piece's own brief deliberately left this restructuring undictated,
+as the builder's own real design decision; the shape it chose (start once, loop cases each sending one
+real request, kill the whole group in a `finally` wrapping the entire loop) was independently
+confirmed correct by both gauntlet critics via real subprocess repros — including a real external
+harness process SIGKILL'd mid-request, after which the orphaned server genuinely survives and the
+very next `startHttpServer` call against the same port is what catches it, never a silent comparison
+against the wrong process.
+
+**Decision — the client-level host-refusal and request hardening are defence in depth, proven
+necessary by what the gauntlet actually found, not merely a cautious restatement of what the schema
+already prevents.** A header name or request path that passes `declaration.ts`'s own load-time checks
+can still reach a real, synchronous Node-level validation Node itself performs inside `http.request`'s
+own constructor — confirmed twice over this piece's own two gauntlet rounds (a colon in a header name,
+round 1; a space in a path, found independently during round 2's own fix verification) — and Node
+throws for this SYNCHRONOUSLY, unwrapped, in a way that would otherwise crash an entire surface's
+observation rather than failing one case. `http-client.ts`'s own `try`/`catch` around the real
+`http.request` call converts ANY such throw into the identical typed refusal every other per-request
+failure already becomes, closing a class of gap — not a single instance of one — that the load-time
+schema check alone cannot fully anticipate.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P8`.

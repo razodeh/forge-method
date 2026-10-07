@@ -22534,3 +22534,85 @@ outside the evidence/prune subsystem entirely, independently re-confirmed clean 
 afterward).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q305`.
+
+## M16 P8 — The HTTP surface: a genuinely new dispatch shape, and a synchronous Node throw neither
+spec text nor the existing per-case error handling anticipated
+
+The most architecturally novel piece this milestone: `process`/`file`/`library` all share one
+per-case dispatch (`observeOneCase`, composing a case's own `args` onto a surface's `run` and running
+it once per case), which does not fit `http` at all — an `http` surface's own `run` starts a SERVER
+that must stay alive across every one of its cases, never a command run once per case or once and
+discarded. `observeAgainstRoot` gained a genuinely new top-level branch for `http` rather than a
+forced stretch of the existing shape, composed from the same real, already-hardened primitives
+(`confined-command.ts`'s own `killGroup`/`listDescendantPids`/`scrubbedEnvironment`, exported for
+reuse rather than independently reinvented a third time) the engine's own process-kill logic already
+is — a deliberate, well-justified DECISION, confirmed correct by both gauntlet critics via real
+subprocess repros, not merely read and reasoned about.
+
+**Round 1 (two critics, each in a dedicated worktree, the builder's own uncommitted files copied in):
+one real, confirmed MODERATE-HIGH bug, and a strong, independent convergence on a documentation
+overclaim.** Critic 2 found: a header NAME containing a character outside the real HTTP token set (no
+ASCII control character — a colon is not one) passed `declaration.ts`'s own load-time check (which
+only ever scanned for control characters), then reached `http-client.ts`'s `sendHttpRequest`, where
+Node's own `ClientRequest` constructor throws a SYNCHRONOUS, unwrapped `TypeError
+[ERR_INVALID_HTTP_TOKEN]` — never a `ForgeError`, so `observe-http.ts`'s own `isForgeError` check
+failed and the exception propagated out of the ENTIRE surface's cases loop rather than failing the one
+malformed case. Independently confirmed by the orchestrator via direct `node -e` reproduction against
+real `node:http` before accepting either critic's report. The `finally` around the whole cases loop
+still ran (the server was still correctly killed) — a scoping/typing gap, not a process-safety one, but
+a real, confirmed `QUALITY-BAR.md` R2/R6 violation regardless. BOTH critics, independently, also found
+that the readiness loop's own doc comment ("checked both before and after every probe attempt...
+reported PROMPTLY") overclaimed what was actually demonstrated: mutating away the SECOND `hasExited()`
+check alone, restored and `cmp`-verified by both, never failed a single test, because the real
+mechanism catching a mid-probe death in every scenario either critic could construct was the FIRST
+check, on the next loop iteration — not a functional bug (the single surviving check still genuinely
+catches everything within the suite's own generous timing bounds), but a real "the comment claims more
+than the suite proves" gap. Both critics further, independently, hit the same underlying bug from
+different angles (critic 2 isolated it fully: a shared "decoy holder" test fixture's `net.Server`
+`close()` callback never fires once a real connection was made and `.end()`'d against it, making the
+port-check-skip mutation test hang 60 seconds instead of failing fast; critic 1 hit the identical
+symptom under forked-worker vitest specifically and confirmed the underlying error throws fast in
+isolation without fully isolating why the same file still hung — flagged honestly as unresolved rather
+than guessed at). A fourth, low/cosmetic, fully-proven-inert gap (a `path` value with two leading
+slashes, accepted since the load-time check only required ONE leading slash) was left to the fix
+pass's own judgment.
+
+**Round 2 (one focused fix pass, verified directly — no third critic round).** Fixed the header-name
+gap at BOTH layers, deliberately: a new RFC 7230 token-charset check at load time (closing the specific
+colon-shaped case before it ever reaches the observer), AND a `try`/`catch` around `http.request(...)`
+itself in `http-client.ts`, converting any synchronous throw into the identical typed `RUN-150` every
+other per-request failure already becomes — defence in depth, not redundant caution: the fix pass's own
+verification found a SECOND, independent way to reach the identical synchronous-throw path that the
+load-time fix alone does not close (a `request.path` containing a literal space — `node:http`'s own
+`ERR_UNESCAPED_CHARACTERS`, confirmed by the orchestrator via direct reproduction), proving the
+client-level hardening is closing a real, present gap today, not merely guarding a hypothetical future
+one. Also fixed: the readiness-loop doc comment, corrected to state plainly which check is actually
+demonstrated to matter rather than claiming both are, independently; the decoy-holder fixture
+(`socket.end()` → `socket.destroy()`), confirmed with a real before/after timing comparison (a 60011ms
+hang became an 83ms clean failure) — and confirmed, by deliberately reproducing the exact scenario both
+critics each partially described, that critic 1's and critic 2's own framings were the IDENTICAL root
+cause, not two separate bugs; and the double-leading-slash path gap, tightened (the fix pass's own
+judgment call, applied consistently to both the case path AND the readiness path, closing an identical,
+undisclosed sibling gap in the latter the brief had not even named).
+
+**Verification, independently re-run by the orchestrator at every stage, not just trusted from
+either report.** Core architecture, server-lifecycle code (port-check-before-spawn; the readiness
+loop's dual liveness checks; `stop()` awaiting the killed subprocess before returning, not a
+fire-and-forget signal), client code (the host refusal checked first, directly, against the real
+argument) and the declaration schema's own DECISION-documented choices (method as an upper-case
+token; `responseHeaders` defaulting to NONE, deliberately, since an ordinary response's own volatile
+`Date` header would make an honest fixture `unstable` on its first declaration under the stability
+probe's byte-exact-agreement rule; readiness accepting ANY status, since the spec names no status
+contract) were all read directly by the orchestrator before critics were ever dispatched. One
+contention-only test failure surfaced during the post-fix clean re-verification (`confined-command.
+test.ts`'s own pre-existing, P8-unrelated "a huge tree" glob-expansion test, timing out at exactly its
+60-second bound) — confirmed via real concurrent-host-load evidence (5 node processes independently
+observed each saturating a full CPU core, from `M16 P15`'s own concurrently-running builder) and
+cleared by two clean re-runs in isolation (one at 52.58s, close to but under the bound; one full
+re-run of the whole scoped suite fully clean) — `confined-command.ts`'s own P8 diff is confirmed,
+independently, to be `export` keyword additions only, zero logic changes, so this could not have been
+a P8 regression regardless. Final numbers: scoped suite 1558/1558 (up from the pre-fix 1537); the
+repo-wide naming-rule and workspace-floor tests 532/532; the full `-t "M16"` sweep 1553/1553 (up from
+1532 pre-fix); `pnpm typecheck`/`lint`/`boundaries` all clean. Clean cherry-pick onto `main`.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q306`.
