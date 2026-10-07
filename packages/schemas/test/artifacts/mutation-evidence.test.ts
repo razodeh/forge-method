@@ -203,7 +203,7 @@ function validHunkRun(): Record<string, unknown> {
           64,
         ),
         verdict: 'killed',
-        killedBy: 'STORY-014: AC-014-1',
+        killedBy: ['STORY-014: AC-014-1'],
       },
     ],
   };
@@ -375,5 +375,106 @@ describe('mutationEvidenceSchema — revert-hunks (specs/22 M16 P5) (13 F-TEST-1
     expect(revertedRange['fromSha']).toBe(hunkRun['baseSha']);
     const result = mutationEvidenceSchema.safeParse(data);
     expect(result.success, result.success ? '' : JSON.stringify(result.error.issues)).toBe(true);
+  });
+});
+
+/**
+ * `killedBy` as a real, non-empty ARRAY of test names, not a single string (`specs/22` M16 P13).
+ *
+ * `M16 P5`'s own first cut of `hunkEntrySchema` (this file, before this piece) declared `killedBy:
+ * z.string().min(1).optional()` — written before `M16 P12`'s own real hunk-mutation engine
+ * (`hunk-mutation.ts`) existed to produce a real value for it. That engine's own `HunkVerdict`
+ * discriminated union carries `killedBy: readonly string[]` — a REAL array — because reversing one
+ * hunk can make MORE than one baseline-passing test fail at once: `hunk-mutation.test.ts`'s own
+ * "degrades to granularity file" case already exercises exactly two
+ * (`killedBy: ['adds', 'subtracts']`), gauntleted and landed before this piece ever ran. A singular
+ * `killedBy` cannot represent that without either silently dropping every killing test but one (real
+ * binding evidence lost) or inventing an unparsed joined string a reader would have to re-split —
+ * exactly the "a raw string a consumer must re-parse" shape this very file's own `hunkRangeSchema`
+ * doc comment (above) already argues against for ranges. DECISION (`specs/22` M16 P13): widened to a
+ * non-empty array, matching the real producer's own shape losslessly — a narrow, additive correction
+ * to a sub-field of a shape no real code had ever written a record through until this piece (P5's own
+ * fixtures used a placeholder string; nothing in production ever constructed one).
+ */
+describe('mutationEvidenceSchema — hunk killedBy is an array (specs/22 M16 P13)', () => {
+  it('accepts a killed hunk naming more than one killing test (one hunk reversal can fail several baseline-passing tests)', () => {
+    const data = validRevertHunksRecord();
+    const hunkRun = data['hunkRun'] as Record<string, unknown>;
+    const hunks = hunkRun['hunks'] as Record<string, unknown>[];
+    const hunk = { ...hunks[0], killedBy: ['adds', 'subtracts'] };
+    const result = mutationEvidenceSchema.safeParse({
+      ...data,
+      hunkRun: { ...hunkRun, hunks: [hunk] },
+    });
+    expect(result.success, result.success ? '' : JSON.stringify(result.error.issues)).toBe(true);
+  });
+
+  it('rejects an empty killedBy array (a killed hunk must name at least one real test)', () => {
+    const data = validRevertHunksRecord();
+    const hunkRun = data['hunkRun'] as Record<string, unknown>;
+    const hunks = hunkRun['hunks'] as Record<string, unknown>[];
+    const hunk = { ...hunks[0], killedBy: [] };
+    const result = mutationEvidenceSchema.safeParse({
+      ...data,
+      hunkRun: { ...hunkRun, hunks: [hunk] },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.path).toEqual(['hunkRun', 'hunks', 0, 'killedBy']);
+    }
+  });
+
+  it('rejects killedBy as a bare string, even a non-empty one (the pre-P13 shape; the field is an array now)', () => {
+    const data = validRevertHunksRecord();
+    const hunkRun = data['hunkRun'] as Record<string, unknown>;
+    const hunks = hunkRun['hunks'] as Record<string, unknown>[];
+    const hunk = { ...hunks[0], killedBy: 'STORY-014: AC-014-1' };
+    const result = mutationEvidenceSchema.safeParse({
+      ...data,
+      hunkRun: { ...hunkRun, hunks: [hunk] },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.path).toEqual(['hunkRun', 'hunks', 0, 'killedBy']);
+    }
+  });
+
+  it('rejects a killedBy array containing an empty string (every killing test name is real and non-empty)', () => {
+    const data = validRevertHunksRecord();
+    const hunkRun = data['hunkRun'] as Record<string, unknown>;
+    const hunks = hunkRun['hunks'] as Record<string, unknown>[];
+    const hunk = { ...hunks[0], killedBy: ['adds', ''] };
+    const result = mutationEvidenceSchema.safeParse({
+      ...data,
+      hunkRun: { ...hunkRun, hunks: [hunk] },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+/**
+ * `hunkRun.hunks` is `.min(1)` (round-2 gauntlet fix, `specs/22` M16 P13): defence in depth for the
+ * same real gap `runHunkMutationCheck`'s own engine-level fix closes (`hunk-mutation.ts`) — a
+ * `--base` resolved further back than the implementation's own last real change makes `computeHunks`
+ * find ZERO real hunks while the change-level check still reaches `'completed'`. The engine-level fix
+ * omits `hunkMutation` entirely rather than ever constructing a `revert-hunks` record this way, so no
+ * REAL caller through `forge test binding --hunks` reaches this schema with `hunks: []` — but an
+ * earlier version of this file's own comment (above, on `mutationKind`) asserted "there is no hunk
+ * run with zero hunks to speak of" as though the schema already enforced it, which it did not
+ * (`z.array(hunkEntrySchema)` alone accepts an empty array). This test, and the `.min(1)` it exercises,
+ * make that comment's claim actually true here too, not only true of today's one real caller.
+ */
+describe('mutationEvidenceSchema — hunkRun.hunks is never empty (specs/22 M16 P13)', () => {
+  it('rejects hunkRun.hunks: [] -- a revert-hunks record with nothing to report is not a valid record', () => {
+    const data = validRevertHunksRecord();
+    const hunkRun = data['hunkRun'] as Record<string, unknown>;
+    const result = mutationEvidenceSchema.safeParse({
+      ...data,
+      hunkRun: { ...hunkRun, hunks: [] },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.path).toEqual(['hunkRun', 'hunks']);
+    }
   });
 });

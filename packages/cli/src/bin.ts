@@ -1778,6 +1778,11 @@ async function runOneStoryBinding(
     toolVersions: detectToolVersions(ecosystem),
     result,
     clock,
+    // `specs/22` M16 P13: additive. Writing is unconditional on `hunkMutation` being present, the
+    // identical convention this call's own writing is already unconditional on `result` existing at
+    // all (no `--no-record`-style flag exists anywhere on `forge test binding`, confirmed against
+    // this command's own real flag surface before choosing this).
+    ...(hunkMutation === undefined ? {} : { hunkMutation }),
   });
   return {
     kind: 'completed',
@@ -1968,6 +1973,18 @@ async function runSingleStoryBindingCommand(
         `evidence=${outcome.evidenceId}.`,
     );
     for (const name of outcome.nonBinding) console.error(`non-binding: ${name}`);
+    // `specs/22` M16 P13: human output lists every NON-killed hunk (uncovered/invalid/timeout/
+    // skipped) by id and path with its verdict -- killed hunks are the expected, good case and are
+    // not listed, the identical "list what is wrong, not what is fine" stance `non-binding` above
+    // already takes. `outcome.hunkMutation` is present only when `--hunks` ran AND the change-level
+    // check reached `'completed'` (`HunkMutationCheckResult`'s own doc comment).
+    if (outcome.hunkMutation !== undefined) {
+      for (const hunk of outcome.hunkMutation.hunks) {
+        if (hunk.verdict.kind !== 'killed') {
+          console.error(`hunk ${hunk.verdict.kind}: ${hunk.id} ${hunk.path}`);
+        }
+      }
+    }
   }
   // Report-only (`13` F-TEST-10): the exit code follows `incomplete` alone, exactly as it does without
   // `--hunks` -- a hunk's own verdict, whatever it is, never reaches this line.

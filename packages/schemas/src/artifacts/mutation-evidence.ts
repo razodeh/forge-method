@@ -28,6 +28,12 @@
  *   above, and storing it separately would be redundant data that could drift out of sync.
  * - `ranAt`: a real ISO instant, distinct from the base front matter's date-only `created` — the
  *   identical reason `gate-report.ts`'s own `evaluatedAt` exists apart from `created`.
+ * - `hunkRun.hunks[].killedBy` (`specs/22` M16 P13): widened from this field's own M16 P5 first cut
+ *   (a bare `z.string()`) to a non-empty array once the real producer (`hunk-mutation.ts`, M16 P12)
+ *   existed and was found to genuinely need more than one name — see `hunkEntrySchema`'s own doc
+ *   comment below for the full reasoning. The first, SINGULAR cut was never exercised by any real
+ *   caller (M16 P13 is the first piece to write a `hunkRun` through this schema at all), so widening
+ *   it is a correction to an unused sub-field, not a break to shipped behaviour.
  *
  * One file per `forge test binding` run (`reports/mutation/{story}-{ts}.md`, `specs/18` §18.7) — never
  * revisited after it is written. The path template alone makes a COLLISION unlikely (two runs of the
@@ -79,6 +85,20 @@ const hunkRangeSchema = z
  * hex digest of the hunk's own reversed content, never the content itself — the identical
  * content-hash-only discipline `parity-evidence.ts`'s own case entries use, for the same reason (`13`
  * F-TEST-9/F-TEST-10's shared information boundary: evidence carries hashes, never source text).
+ *
+ * `killedBy` is a non-empty ARRAY of test names (`specs/22` M16 P13, widened from this field's own
+ * first cut — a bare `z.string()` — written before M16 P12's own real hunk-mutation engine
+ * (`hunk-mutation.ts`) existed to produce a real value for it). That engine's own `HunkVerdict`
+ * carries `killedBy: readonly string[]`: reversing ONE hunk can make MORE than one baseline-passing
+ * test fail (`hunk-mutation.test.ts`'s own "degrades to granularity file" case already exercises
+ * `killedBy: ['adds', 'subtracts']`, two real killing tests from one whole-file revert). A singular
+ * `killedBy` cannot hold that without either dropping every killing test but one (real binding
+ * evidence lost) or forcing an unparsed joined string a reader would have to re-split — the identical
+ * "a raw string a consumer must re-parse" shape `hunkRangeSchema`'s own doc comment above already
+ * argues against for ranges. Widened losslessly to match the real producer's own shape: no real
+ * record had ever been written through this exact sub-shape before M16 P13 (P5's own fixtures used a
+ * placeholder string that no production code had ever actually constructed), so this is a narrow,
+ * additive correction to an as-yet-unused field, not a break to anything shipped.
  */
 const hunkEntrySchema = z
   .object({
@@ -87,7 +107,7 @@ const hunkEntrySchema = z
     ranges: z.object({ old: hunkRangeSchema, new: hunkRangeSchema }).strict(),
     contentHash: z.string().regex(/^[0-9a-f]{64}$/),
     verdict: z.enum(['killed', 'uncovered', 'invalid', 'timeout', 'skipped']),
-    killedBy: z.string().min(1).optional(),
+    killedBy: z.array(z.string().min(1)).min(1).optional(),
   })
   .strict()
   .superRefine((entry, ctx) => {
@@ -121,7 +141,18 @@ const hunkRunSchema = z
     baseSha: z.string().regex(/^[0-9a-f]{40}$/),
     diffAlgorithm: z.string().min(1),
     granularity: z.enum(['hunk', 'file', 'change']),
-    hunks: z.array(hunkEntrySchema),
+    // `.min(1)` (`specs/22` M16 P13, round-2 gauntlet fix, defence in depth): a plain
+    // `z.array(hunkEntrySchema)` accepted `hunks: []`, which this file's own comment on `mutationKind`
+    // below asserted could not happen ("there is no hunk run with zero hunks to speak of") without
+    // this schema ever actually enforcing it. It can happen: `--base` resolved further back than the
+    // implementation's own last real change makes `computeHunks` find zero real hunks while the
+    // change-level check still reaches `'completed'` (`hunk-mutation.ts`'s own `runHunkMutationCheck`
+    // now omits `hunkMutation` entirely for exactly that reason, so no real caller reaches this schema
+    // with an empty list) — but a `revert-hunks` record with nothing in its own hunk list is not a
+    // valid record on its own terms either way, the identical "a declaration with no surface that is
+    // not exempt is `nothing-compared`, never a vacuous pass" stance `13` F-TEST-9's own counting
+    // algebra already takes for the parity oracle.
+    hunks: z.array(hunkEntrySchema).min(1),
   })
   .strict();
 
@@ -156,9 +187,18 @@ export const mutationEvidenceSchema = baseFrontMatterShape
       });
     }
     // `specs/22` M16 P5: `hunkRun` is `revert-hunks`' own shape; a `revert-implementation` record
-    // carries no hunk list to report, and a `revert-hunks` record always has one (there is no hunk
-    // run with zero hunks to speak of -- `13` F-TEST-10's own cost accounting, "N hunks cost N + 3
-    // runs", presumes N is at least the hunks a real `--hunks` invocation found).
+    // carries no hunk list to report, and a `revert-hunks` record always has one.
+    //
+    // CORRECTED (`specs/22` M16 P13, round-2 gauntlet fix): this comment used to go on to claim
+    // "there is no hunk run with zero hunks to speak of", inferred from `13` F-TEST-10's own cost
+    // accounting ("N hunks cost N + 3 runs" presumes N is at least 1) -- but that was never actually
+    // enforced by this schema (a plain `z.array(hunkEntrySchema)` accepts `[]`), and the inference
+    // itself turned out to be false: `--base` resolved further back than the implementation's own
+    // last real change makes the real engine (`hunk-mutation.ts`'s `computeHunks`) find zero real
+    // hunks while the change-level check still reaches `'completed'`. Now closed at both ends:
+    // `hunkRunSchema.hunks` is `.min(1)` (see its own doc comment above) so this schema can no longer
+    // accept the empty-hunks shape at all, and `runHunkMutationCheck` omits `hunkMutation` entirely
+    // in that state, so no real caller ever constructs one to begin with.
     if (data.mutationKind === 'revert-hunks' && data.hunkRun === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -93,14 +93,75 @@ export type HunkVerdict =
   | { readonly kind: 'timeout' }
   | { readonly kind: 'skipped'; readonly reason: string };
 
+/** One hunk's own old/new range (`specs/22` M16 P13) — field for field the same shape
+ * `packages/schemas/src/artifacts/mutation-evidence.ts`'s own `hunkRangeSchema` validates
+ * (`{start, length}`), so a caller building a `hunkRun` record never has to re-shape this. @see
+ * specs/22 M16 P13 */
+export interface HunkRange {
+  readonly start: number;
+  readonly length: number;
+}
+
 /** One real hunk `computeHunks` returned, paired with the verdict the mutation engine actually
  * computed for it — `id`/`path` are `hunks.ts`'s own (`TextHunk`/`FileHunk` alike), the natural way to
  * identify a hunk `03` §3.2.5's own row 117 already anticipates ("per-hunk verdict plus whatever
- * identifies it — the hunk's own id from P11 is the natural choice"). @see specs/22 M16 P12 */
+ * identifies it — the hunk's own id from P11 is the natural choice").
+ *
+ * `ranges`/`contentHash` (`specs/22` M16 P13, additive: every caller of this module before this piece
+ * constructed an entry with exactly `{id, path, verdict}`, and `hunk-mutation.test.ts`'s own pre-
+ * existing suite, read in full before this change, asserts only `.verdict`/`.id`/`.path` individually
+ * or an array's own length — never the whole entry via `toEqual`/`toMatchObject` — so adding fields
+ * here breaks no existing assertion). `specs/18` §18.7's own hunk-list bullet names exactly
+ * "id, path, ranges, content hash, verdict and killedBy" for the persisted `MutationEvidence` record
+ * (`specs/22` M16 P13's own writer, `binding-evidence.ts`), which this module did not previously
+ * expose at all — those two values lived only on the `Hunk` (`TextHunk`/`FileHunk`) objects
+ * `computeHunks` returns, consumed here for their verdict alone and then discarded.
+ *
+ * A `TextHunk`-driven entry's `ranges`/`contentHash` are that hunk's own real `oldStart`/`oldCount`/
+ * `newStart`/`newCount`/`contentHash` (`hunks.ts`) — zero re-derivation, zero additional git calls,
+ * the identical data `runHunkMutants` already holds from its own `computeHunks` call.
+ *
+ * A `FileHunk`-driven entry (added/deleted/binary/mode-only/type-changed/submodule —
+ * `FileHunkReason`) has NEITHER a sub-file range NOR a reversed hunk BODY to hash at all: `FileHunk`
+ * itself (`hunks.ts`, M16 P11 — not this piece's file to edit, see this piece's own report) carries
+ * only `{kind, id, path, reason}`, no blob ids, no line counts. Rather than fabricate numbers nothing
+ * ever computed, or add a second git call this module's own cost budget ("zero additional git calls
+ * needed") does not ask for, a `FileHunk`-driven entry's `ranges` is the stated sentinel
+ * `{old: {0,0}, new: {0,0}}` — "no sub-file range: the whole file is the one unit of change," a value
+ * no REAL `TextHunk` can ever also produce, since a genuine text hunk always changes at least one
+ * side's own `length` — and its `contentHash` REUSES the `FileHunk`'s own `id` (already a real sha256
+ * digest of `path`+`reason`+old/new git blob ids, `makeFileHunk`, `hunks.ts`) rather than a second,
+ * redundant or invented hash: a file-level mutant's own identity IS its own answer to "what changed,"
+ * there being no narrower one to compute. DECISION, reported in full by this piece.
+ *
+ * @see specs/18 §18.7
+ * @see specs/22 M16 P13
+ */
 export interface HunkMutationEntry {
   readonly id: string;
   readonly path: string;
+  readonly ranges: { readonly old: HunkRange; readonly new: HunkRange };
+  readonly contentHash: string;
   readonly verdict: HunkVerdict;
+}
+
+/** `HunkMutationEntry.ranges`/`.contentHash` for one real hunk `computeHunks` returned — see that
+ * field's own doc comment for the full reasoning, including the `FileHunk` sentinel. Zero git calls:
+ * every value read here is already a field of `hunk` itself. @see specs/22 M16 P13 */
+function hunkIdentity(hunk: Hunk): Pick<HunkMutationEntry, 'ranges' | 'contentHash'> {
+  if (hunk.kind === 'text') {
+    return {
+      ranges: {
+        old: { start: hunk.oldStart, length: hunk.oldCount },
+        new: { start: hunk.newStart, length: hunk.newCount },
+      },
+      contentHash: hunk.contentHash,
+    };
+  }
+  return {
+    ranges: { old: { start: 0, length: 0 }, new: { start: 0, length: 0 } },
+    contentHash: hunk.id,
+  };
 }
 
 /** How the text changes were actually mutated (`13` F-TEST-10): one mutant per hunk, one per file, or
@@ -126,25 +187,47 @@ export interface HunkMutationReport {
  * `input` (this piece's own golden-equivalence test proves it byte-for-byte) — and governs the exit
  * code exactly as it does without `--hunks` (`13` F-TEST-10's own "report-only").
  *
- * `hunkMutation` is present if and only if `outcome.outcome === 'completed'`: every other outcome
- * (`no-test-paths`, `baseline-not-green`, a tool-error, a timeout, a zero-outcomes run) means the
- * change-level check stopped before any mutant was ever attempted — `runHunkMutants` (and the
- * `computeHunks`/`chooseGranularity` call inside it) is never even reached (`runHunkMutationCheck`'s
- * own body returns right after `runChangeLevelCheck`, before the hunk loop). The REAL reason this
- * omits `hunkMutation` rather than reporting every real hunk `skipped` is therefore not that the
- * shas are unavailable (`runChangeLevelCheck` resolves `toSha`/`fromSha` before the baseline test run
- * even executes, so they ARE already known even when baseline then fails) — it is that no `granularity`
- * was ever actually chosen or acted on: reporting one anyway would misleadingly imply a mutation
- * strategy had been decided and run, when none was. This is a DECISION, recorded and justified in the
- * builder's own report, not a reading `13` F-TEST-10's text forces by itself. The practical margin is
- * wider than either framing suggests: `bin.ts`'s own pre-existing outer shape (unrelated to this
- * decision, shared with the non-hunks path) already collapses the WHOLE envelope to the minimal
- * `{v, ok, problem}` shape for every non-`'completed'` outcome — `incomplete`/`passed`/`uncoveredHunks`
- * are absent too — so omitting `hunkMutation` here versus reporting every hunk `skipped` would be
- * observably identical to a caller either way.
+ * `hunkMutation` is present only when `outcome.outcome === 'completed'` AND at least one real hunk
+ * was found (`specs/22` M16 P13 narrows this from the original M16 P12 "if and only if `'completed'`"
+ * — see the second paragraph below for why that was not quite right either).
+ *
+ * **Every other change-level outcome** (`no-test-paths`, `baseline-not-green`, a tool-error, a
+ * timeout, a zero-outcomes run) means the change-level check stopped before any mutant was ever
+ * attempted — `runHunkMutants` (and the `computeHunks`/`chooseGranularity` call inside it) is never
+ * even reached (`runHunkMutationCheck`'s own body returns right after `runChangeLevelCheck`, before
+ * the hunk loop). The REAL reason this omits `hunkMutation` rather than reporting every real hunk
+ * `skipped` is therefore not that the shas are unavailable (`runChangeLevelCheck` resolves
+ * `toSha`/`fromSha` before the baseline test run even executes, so they ARE already known even when
+ * baseline then fails) — it is that no `granularity` was ever actually chosen or acted on: reporting
+ * one anyway would misleadingly imply a mutation strategy had been decided and run, when none was.
+ * This is a DECISION, recorded and justified in the builder's own report, not a reading `13`
+ * F-TEST-10's text forces by itself. The practical margin is wider than either framing suggests:
+ * `bin.ts`'s own pre-existing outer shape (unrelated to this decision, shared with the non-hunks path)
+ * already collapses the WHOLE envelope to the minimal `{v, ok, problem}` shape for every
+ * non-`'completed'` outcome — `incomplete`/`passed`/`uncoveredHunks` are absent too — so omitting
+ * `hunkMutation` here versus reporting every hunk `skipped` would be observably identical to a caller
+ * either way.
+ *
+ * **`outcome.outcome === 'completed'` with ZERO real hunks found** (`specs/22` M16 P13, a round-2
+ * gauntlet fix): reachable in ordinary use — `--base` resolved further back than the implementation's
+ * own last real change (checking whether a newly-added test binds code that has not itself changed
+ * since that earlier point) makes `computeHunks` return `hunks: []` over `implementationPaths` while
+ * the change-level check above still reaches `'completed'` (reverting an UNCHANGED path is a real
+ * no-op, so every named test correctly reads non-binding at the change level — a real, honest signal
+ * `incomplete`/`nonBinding` already carries). `hunkMutation` is omitted here too, for a DIFFERENT but
+ * related reason than the paragraph above: a `HunkMutationReport` with `hunks: []` would still carry a
+ * real `granularity` and four all-zero verdict counts, observably IDENTICAL — to a project-authored
+ * `failOn: 'uncoveredHunks > 0'` check reading only that one field — to "every hunk is genuinely
+ * covered". Omitting it makes that field absent rather than falsely zero: `evaluateGate`'s own
+ * `unreliableFailOn` treats a missing path as unable to show success, so such a check fails closed
+ * instead of silently passing on nothing — the identical stance `13` F-TEST-9's own parity-oracle
+ * counting algebra already takes ("a check that would print no passing and no failing case is
+ * refused"), reapplied here. See `runHunkMutationCheck`'s own body for where this is decided.
  *
  * @see specs/13 F-TEST-10
+ * @see specs/13 F-TEST-9
  * @see specs/22 M16 P12
+ * @see specs/22 M16 P13
  */
 export interface HunkMutationCheckResult {
   readonly outcome: BindingCheckOutcome;
@@ -406,7 +489,12 @@ async function runHunkMutants(
       forHunkMode.mutatedOutcomes,
     );
     const verdict = toHunkVerdict(failedByName, true);
-    entries = parsed.hunks.map((hunk) => ({ id: hunk.id, path: hunk.path, verdict }));
+    entries = parsed.hunks.map((hunk) => ({
+      id: hunk.id,
+      path: hunk.path,
+      ...hunkIdentity(hunk),
+      verdict,
+    }));
   } else if (granularity === 'file') {
     const byPath = groupByPath(parsed.hunks);
     const verdictByPath = new Map<string, HunkVerdict>();
@@ -431,7 +519,7 @@ async function runHunkMutants(
           `forge/hunk-mutation: unreachable: "${hunk.path}" was grouped but never run.`,
         );
       }
-      return { id: hunk.id, path: hunk.path, verdict };
+      return { id: hunk.id, path: hunk.path, ...hunkIdentity(hunk), verdict };
     });
   } else {
     const built: HunkMutationEntry[] = [];
@@ -448,7 +536,7 @@ async function runHunkMutants(
               forHunkMode,
             )
           : await runTextHunkAlone(lane, input, hunk, testPaths, forHunkMode);
-      built.push({ id: hunk.id, path: hunk.path, verdict });
+      built.push({ id: hunk.id, path: hunk.path, ...hunkIdentity(hunk), verdict });
     }
     entries = built;
   }
@@ -505,6 +593,21 @@ export async function runHunkMutationCheck(
       changeLevel.forHunkMode,
       options,
     );
+    // `specs/22` M16 P13 (round-2 gauntlet fix): `computeHunks` (inside `runHunkMutants`) found ZERO
+    // real hunks over `implementationPaths` -- reachable in ordinary use whenever `--base` resolves
+    // further back than the implementation's own last real change (checking whether a newly-added
+    // test binds code that has not itself changed since that earlier point; the change-level check
+    // above already reports the real signal for that case, `failedUnderMutation: []`, since reverting
+    // an unchanged path is a no-op). A `HunkMutationReport` with `hunks: []` would still carry a
+    // `granularity` and four all-zero verdict counts -- observably IDENTICAL, to a project-authored
+    // `failOn: 'uncoveredHunks > 0'` check reading only that one field, to "every hunk is genuinely
+    // covered". See `HunkMutationCheckResult`'s own doc comment for the full DECISION: omitted
+    // entirely, the identical treatment the change-level-never-reached-'completed' branch above
+    // already gets, so a reader of either the `--json` envelope or a written `MutationEvidence`
+    // record never sees a `revert-hunks` shape with nothing in it.
+    if (hunkMutation.hunks.length === 0) {
+      return { outcome: changeLevel.outcome };
+    }
     return { outcome: changeLevel.outcome, hunkMutation };
   } finally {
     await removeLaneWorktree(input.projectRoot, lane, { retain: false });

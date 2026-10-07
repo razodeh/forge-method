@@ -418,6 +418,79 @@ describe('runHunkMutationCheck — a change-level outcome that never reaches "co
   });
 });
 
+/**
+ * Round-2 gauntlet fix (`specs/22` M16 P13). A real, reachable state the first round missed: `--base`
+ * resolved further back than the story's own implementation last really changed (checking whether a
+ * newly-added test binds code that has not itself changed since that earlier point) makes
+ * `computeHunks` find ZERO real hunks over `implementationPaths` while the change-level check still
+ * reaches `'completed'` — the revert of an UNCHANGED path is a real no-op, so every named test reads
+ * non-binding at the CHANGE level too (a real, correct signal the change-level check already gives),
+ * but nothing before this fix stopped `runHunkMutants` from still returning a well-formed
+ * `HunkMutationReport` with `hunks: []`. That report's own counts (`uncoveredHunks`, `invalidHunks`,
+ * `timeoutHunks`, `skippedHunks`) are then ALL zero — observably IDENTICAL, to a project-authored
+ * `failOn: 'uncoveredHunks > 0'` check reading only that one field, to "every hunk is genuinely
+ * covered". `hunkRunSchema.hunks` has no `.min(1)` of its own (defence in depth is added there too,
+ * `mutation-evidence.ts`), so nothing short of this engine-level guard previously stopped a real
+ * `schemaVersion: 2`/`revert-hunks` record from being written in this exact state.
+ *
+ * DECISION: treated the identical way a change-level outcome that never reaches `'completed'` already
+ * is (the describe block just above) — `hunkMutation` is omitted entirely, never a `revert-hunks`
+ * record or a `--json` envelope with an empty `hunks: []`. This is a narrower, more honest signal than
+ * "ran, found nothing": a project-authored check reading `uncoveredHunks` off a MISSING field fails
+ * closed (`evaluateGate`'s own `unreliableFailOn`: a path the check output does not have can never
+ * show success), the identical fail-closed stance `13` F-TEST-9's own parity-oracle counting algebra
+ * already takes for "a check that would print no passing and no failing case" — reapplied here rather
+ * than invented fresh. Rejected: writing `hunks: []` anyway (the exact vacuous-pass bug this fix
+ * closes); a distinct new field such as `hunksComputed: 0` to let a careful gate author tell "nothing
+ * to check" apart from "fully covered" (real schema/envelope surface for a case `--hunks` mode's own
+ * report-only contract does not need to distinguish, since the change-level `incomplete`/`nonBinding`
+ * fields already carry the real signal for this exact scenario, as the test below confirms); and a
+ * typed refusal of the whole command (removes a real, legitimate diagnostic use — checking whether a
+ * test binds code from an earlier point in history — for no compensating benefit).
+ *
+ * @see specs/13 F-TEST-10
+ * @see specs/22 M16 P13
+ */
+describe('runHunkMutationCheck — zero real hunks (specs/22 M16 P13)', () => {
+  it('omits hunkMutation entirely when --base resolves further back than the implementation itself last changed, even though the change-level check reaches completed', async () => {
+    const dir = await freshRepo();
+    await writeFiles(dir, { 'impl.js': 'export function add(a, b) {\n  return a + b;\n}\n' });
+    const baseSha = await commit(
+      dir,
+      'base: a correct implementation already exists, untouched by this story',
+    );
+    await writeFiles(dir, {
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\n" +
+        "import { add } from './impl.js';\n" +
+        "test('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story: only a new test lands; impl.js is byte-identical to baseSha');
+
+    const result = await runHunkMutationCheck(
+      {
+        ...baseInput(dir, 'STORY-ZERO-HUNKS', baseSha),
+        filesExpected: ['impl.js', 'impl.test.js'],
+      },
+      { maxHunks: DEFAULT_MAX_HUNKS },
+    );
+
+    if (result.outcome.outcome !== 'completed') {
+      throw new Error(`expected 'completed', got ${result.outcome.outcome}`);
+    }
+    // The change-level check already gives the real, honest signal for this scenario: the test is
+    // non-binding, because nothing was actually reverted (impl.js has zero diff over this range) --
+    // a genuinely different fact from "every hunk is covered", which `incomplete > 0` (`bin.ts`)
+    // correctly reports regardless of this fix.
+    expect(result.outcome.namedTests).toEqual(['adds']);
+    expect(result.outcome.failedUnderMutation).toEqual([]);
+    // The real fix: no hunkMutation at all -- never a revert-hunks record or a --json envelope whose
+    // all-zero counts would read as "fully covered" to a failOn: 'uncoveredHunks > 0' project check.
+    expect(result.hunkMutation).toBeUndefined();
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
+  }, 30_000);
+});
+
 describe('runHunkMutationCheck — a newly-added file (specs/22 M16 P12) (13 F-TEST-10)', () => {
   it('is one FileHunk, killed by its own load failure -- hunk mode cannot attribute finer than the file (pinned, disclosed)', async () => {
     const dir = await freshRepo();
@@ -528,6 +601,81 @@ describe('runHunkMutationCheck — the lane is reset between mutants (specs/22 M
     // never BOTH killed, which is exactly what a skipped reset between mutants would produce (hunk
     // A's own lingering break making hunk B's unrelated test fail too).
     expect(kinds).toEqual(['killed', 'uncovered']);
+  }, 30_000);
+});
+
+describe('runHunkMutationCheck — ranges and contentHash on every entry (specs/22 M16 P13)', () => {
+  it('a TextHunk-driven entry carries its own real oldStart/oldCount/newStart/newCount and contentHash, zero re-derivation', async () => {
+    const dir = await freshRepo();
+    await writeFiles(dir, {
+      'impl.js':
+        'export function add(a, b) {\n  return 0;\n}\n\nexport function sub(a, b) {\n  return 0;\n}\n',
+    });
+    const baseSha = await commit(dir, 'base: both functions are buggy stubs');
+    await writeFiles(dir, {
+      'impl.js':
+        'export function add(a, b) {\n  return a + b;\n}\n\nexport function sub(a, b) {\n  return a - b;\n}\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\n" +
+        "import { add } from './impl.js';\n" +
+        "test('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story: fix add() and sub(), but only add() is tested');
+
+    const result = await runHunkMutationCheck(
+      {
+        ...baseInput(dir, 'STORY-RANGES-TEXT', baseSha),
+        filesExpected: ['impl.js', 'impl.test.js'],
+      },
+      { maxHunks: DEFAULT_MAX_HUNKS },
+    );
+
+    if (result.outcome.outcome !== 'completed' || result.hunkMutation === undefined) {
+      throw new Error(`expected 'completed' with a report, got ${result.outcome.outcome}`);
+    }
+    const implHunks = byPath(result.hunkMutation.hunks, 'impl.js');
+    expect(implHunks).toHaveLength(2);
+    for (const entry of implHunks) {
+      // Real numeric ranges, never a sentinel -- this is the TextHunk case.
+      expect(entry.ranges.old.start).toBeGreaterThanOrEqual(0);
+      expect(entry.ranges.new.start).toBeGreaterThanOrEqual(0);
+      expect(entry.ranges.new.length).toBeGreaterThan(0);
+      expect(entry.contentHash).toMatch(/^[0-9a-f]{64}$/);
+    }
+    // The two real hunks (add's own line, sub's own line) never share a contentHash or a range.
+    expect(implHunks[0]?.contentHash).not.toBe(implHunks[1]?.contentHash);
+    expect(implHunks[0]?.ranges).not.toEqual(implHunks[1]?.ranges);
+  }, 30_000);
+
+  it("a FileHunk-driven entry (a newly added file) carries the stated sentinel ranges {0,0}/{0,0} and reuses the FileHunk's own id as contentHash -- there is no sub-file range or separate hunk body to hash", async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\n" +
+        "import { add } from './impl.js';\n" +
+        "test('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story: adds a brand new module and its own test file');
+
+    const result = await runHunkMutationCheck(
+      {
+        ...baseInput(dir, 'STORY-RANGES-FILE', baseSha),
+        filesExpected: ['impl.js', 'impl.test.js'],
+      },
+      { maxHunks: DEFAULT_MAX_HUNKS },
+    );
+
+    if (result.outcome.outcome !== 'completed' || result.hunkMutation === undefined) {
+      throw new Error(`expected 'completed' with a report, got ${result.outcome.outcome}`);
+    }
+    expect(result.hunkMutation.hunks).toHaveLength(1);
+    const entry = result.hunkMutation.hunks[0];
+    if (entry === undefined) throw new Error('expected one entry');
+    expect(entry.ranges).toEqual({ old: { start: 0, length: 0 }, new: { start: 0, length: 0 } });
+    expect(entry.contentHash).toBe(entry.id);
+    expect(entry.contentHash).toMatch(/^[0-9a-f]{64}$/);
   }, 30_000);
 });
 

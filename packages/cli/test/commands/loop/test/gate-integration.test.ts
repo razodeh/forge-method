@@ -386,3 +386,165 @@ describe('G-Verify.gate.yaml — test:binding (specs/22 M15 P5)', () => {
     expect(bindingCheck?.stdout).toContain('"bound":["STORY-001: adds"]');
   }, 30_000);
 });
+
+/**
+ * A project-authored check on `uncoveredHunks`, proven through the REAL `evaluateGate` (`specs/22`
+ * M16 P13) — `13` F-TEST-10's own words: "No default threshold ships... a project that wants one
+ * authors a check over the `--json` envelope under `10` §10.3's check contract." This is that check,
+ * hand-authored here exactly as a real project's own `*.gate.yaml` would declare it (never a shipped
+ * FORGE gate — `G-Verify`/`G-Parity` name no such check), run through the identical `evaluateGate` the
+ * two describe blocks above already use.
+ *
+ * @see specs/13-frameworks-testing-and-debugging.md F-TEST-10
+ * @see specs/22 M16 P13
+ * @see process/SPEC-QUESTIONS.md Q294 Decision 8
+ */
+function uncoveredHunksGate(storyId: string, base: string): GateDefinition {
+  return {
+    id: 'G-ProjectAuthored-UncoveredHunks',
+    checks: {
+      deterministic: [
+        {
+          id: 'hunk:uncovered',
+          run: `forge test binding --story ${storyId} --hunks --base ${base} --json`,
+          parser: 'forge-json',
+          failOn: 'uncoveredHunks > 0',
+        },
+      ],
+      advisory: [],
+    },
+    openQuestionsPolicy: 'warn',
+  };
+}
+
+/** Two real hunks in one file, `add` tested (killed on reversal) and `sub` untested (uncovered) — the
+ * identical `bin-binding-hunks-mutation.test.ts`'s own `projectWithOneUncoveredHunk` shape (M16 P12),
+ * replicated here (this file owns its own fixture independently): the ONE named test (`adds`) binds
+ * the whole change, so the change-level result PASSES (exit 0, `incomplete: 0`) while `sub`'s own
+ * hunk still reads `uncovered` -- the fixture both proves "a project-authored check on
+ * `uncoveredHunks` fails on a real uncovered hunk" and "it fails independent of the change-level exit
+ * code", in one shot. */
+async function fixtureWithOneUncoveredHunk(): Promise<Fixture & { readonly baseSha: string }> {
+  const { dir, runner } = await fixtureWithRealForgeOnPath();
+  await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+  await execa('git', ['config', 'user.email', 'fixture@example.com'], { cwd: dir });
+  await execa('git', ['config', 'user.name', 'Fixture'], { cwd: dir });
+  await setTestCommand(dir, 'unit', REAL_VITEST_CMD);
+  await mkdir(path.join(dir, 'docs/forge/specs/stories'), { recursive: true });
+  await writeFile(
+    path.join(dir, 'docs/forge/specs/stories/STORY-001-fixture.md'),
+    doneStoryFixture('STORY-001', ['impl.js', 'impl.test.js']),
+    'utf8',
+  );
+  await writeFile(
+    path.join(dir, 'impl.js'),
+    'export function add(a, b) {\n  return 0;\n}\n\nexport function sub(a, b) {\n  return 0;\n}\n',
+    'utf8',
+  );
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '-m', 'base: two buggy stubs'], { cwd: dir });
+  const { stdout: baseSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
+  await writeFile(
+    path.join(dir, 'impl.js'),
+    'export function add(a, b) {\n  return a + b;\n}\n\nexport function sub(a, b) {\n  return a - b;\n}\n',
+    'utf8',
+  );
+  await writeFile(
+    path.join(dir, 'impl.test.js'),
+    "import { test, expect } from 'vitest';\n" +
+      "import { add } from './impl.js';\n" +
+      "test('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+    'utf8',
+  );
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '-m', 'the story: fix both, only add() is tested'], {
+    cwd: dir,
+  });
+  return { dir, runner, baseSha: baseSha.trim() };
+}
+
+/** Both hunks genuinely tested (`add` AND `sub`): `uncoveredHunks` is 0 and the project-authored
+ * check must pass. */
+async function fixtureFullyCovered(): Promise<Fixture & { readonly baseSha: string }> {
+  const { dir, runner } = await fixtureWithRealForgeOnPath();
+  await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+  await execa('git', ['config', 'user.email', 'fixture@example.com'], { cwd: dir });
+  await execa('git', ['config', 'user.name', 'Fixture'], { cwd: dir });
+  await setTestCommand(dir, 'unit', REAL_VITEST_CMD);
+  await mkdir(path.join(dir, 'docs/forge/specs/stories'), { recursive: true });
+  await writeFile(
+    path.join(dir, 'docs/forge/specs/stories/STORY-001-fixture.md'),
+    doneStoryFixture('STORY-001', ['impl.js', 'impl.test.js']),
+    'utf8',
+  );
+  await writeFile(
+    path.join(dir, 'impl.js'),
+    'export function add(a, b) {\n  return 0;\n}\n\nexport function sub(a, b) {\n  return 0;\n}\n',
+    'utf8',
+  );
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '-m', 'base: two buggy stubs'], { cwd: dir });
+  const { stdout: baseSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
+  await writeFile(
+    path.join(dir, 'impl.js'),
+    'export function add(a, b) {\n  return a + b;\n}\n\nexport function sub(a, b) {\n  return a - b;\n}\n',
+    'utf8',
+  );
+  await writeFile(
+    path.join(dir, 'impl.test.js'),
+    "import { test, expect } from 'vitest';\n" +
+      "import { add, sub } from './impl.js';\n" +
+      "test('adds', () => { expect(add(1, 2)).toBe(3); });\n" +
+      "test('subtracts', () => { expect(sub(3, 1)).toBe(2); });\n",
+    'utf8',
+  );
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '-m', 'the story: fix both, both tested'], { cwd: dir });
+  return { dir, runner, baseSha: baseSha.trim() };
+}
+
+describe('a project-authored check on uncoveredHunks, through the real evaluateGate (specs/22 M16 P13) (13 F-TEST-10)', () => {
+  it('fails (failOn: "uncoveredHunks > 0") on a real fixture with one genuinely uncovered hunk', async () => {
+    const { dir, runner, baseSha } = await fixtureWithOneUncoveredHunk();
+    const gate = uncoveredHunksGate('STORY-001', baseSha);
+
+    const result = await evaluateGate(gate, dir, runner);
+
+    expect(result.passed).toBe(false);
+    const check = result.checks.find((c) => c.checkId === 'hunk:uncovered');
+    expect(check?.passed).toBe(false);
+    expect(check?.stdout).toContain('"uncoveredHunks":1');
+  }, 30_000);
+
+  it('passes the identical check on a fully-covered fixture', async () => {
+    const { dir, runner, baseSha } = await fixtureFullyCovered();
+    const gate = uncoveredHunksGate('STORY-001', baseSha);
+
+    const result = await evaluateGate(gate, dir, runner);
+
+    expect(result.passed).toBe(true);
+    const check = result.checks.find((c) => c.checkId === 'hunk:uncovered');
+    expect(check?.passed).toBe(true);
+    expect(check?.stdout).toContain('"uncoveredHunks":0');
+  }, 30_000);
+
+  it('still fails even though the change-level result itself passed (exit 0) -- failOn reads the parsed envelope, independent of the exit code', async () => {
+    const { dir, runner, baseSha } = await fixtureWithOneUncoveredHunk();
+    const gate = uncoveredHunksGate('STORY-001', baseSha);
+
+    const result = await evaluateGate(gate, dir, runner);
+
+    const check = result.checks.find((c) => c.checkId === 'hunk:uncovered');
+    // "Nothing is failing by M15's own binding standard": the check's own real exit code, from THIS
+    // evaluation, is 0 -- the ONE named test (`adds`) bound the whole change, so the change-level
+    // result passed. `failOn` still read the parsed envelope's own `uncoveredHunks` field and found
+    // it real, so the check -- and the gate -- fail regardless. Checked against the same `stdout`
+    // `evaluateGate` itself parsed, never a second, separate invocation (which would dirty this
+    // fixture's own tree with a second evidence file before the real evaluation ran).
+    expect(check?.exitCode).toBe(0);
+    const envelope = JSON.parse(check?.stdout ?? '{}') as { readonly passed: boolean };
+    expect(envelope.passed).toBe(true);
+    expect(result.passed).toBe(false);
+    expect(check?.passed).toBe(false);
+  }, 30_000);
+});

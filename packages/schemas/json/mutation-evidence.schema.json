@@ -80,8 +80,12 @@
                 "type": "string"
               },
               "killedBy": {
-                "minLength": 1,
-                "type": "string"
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
               },
               "path": {
                 "minLength": 1,
@@ -138,6 +142,7 @@
             ],
             "type": "object"
           },
+          "minItems": 1,
           "type": "array"
         }
       },

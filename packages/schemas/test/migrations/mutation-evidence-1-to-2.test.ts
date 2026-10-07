@@ -76,7 +76,7 @@ function hunkLevel(): MigratableDocument {
               64,
             ),
             verdict: 'killed',
-            killedBy: 'STORY-014: AC-014-1',
+            killedBy: ['STORY-014: AC-014-1'],
           },
         ],
       },
