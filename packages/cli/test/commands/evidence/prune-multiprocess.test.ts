@@ -97,6 +97,56 @@ async function seedMutationEvidence(dir: string, id: string, story: string): Pro
   await writeFile(absolute, text, 'utf8');
 }
 
+/** The identical real, schema-valid `EvidenceBundle` shape `prune.test.ts`'s own `seedEvidenceBundle`
+ * fixture uses — duplicated here (this file has its own, separate fixture-writing style, matching
+ * `seedMutationEvidence` immediately above) rather than imported, since the two test files are not
+ * meant to share test-only helpers across their own module boundary. */
+function evidenceBundleFrontMatter(
+  id: string,
+  story: string,
+  bindingEvidence: readonly string[],
+): Record<string, unknown> {
+  return {
+    id,
+    type: 'EvidenceBundle',
+    schemaVersion: 1,
+    title: `Evidence — ${story}`,
+    status: 'recorded',
+    created: '2026-10-01',
+    updated: '2026-10-01',
+    revision: 1,
+    author: 'engine',
+    changelog: [],
+    story,
+    verify: {
+      phase: 'verify',
+      passed: true,
+      errors: 0,
+      checks: [{ check: 'c', status: 'pass', message: 'ok' }],
+    },
+    coverage: { acCoveragePercent: 100, ratchetRegressions: 0 },
+    bindingEvidence,
+    reviews: [{ id: 'REVIEW-001', verdict: 'clear' }],
+    gates: [],
+    exemptions: [],
+    cost: { totalUsd: 0, estimated: true },
+    assembledAt: '2026-10-01T00:00:00.000Z',
+  };
+}
+
+async function seedEvidenceBundle(
+  dir: string,
+  id: string,
+  story: string,
+  bindingEvidence: readonly string[],
+): Promise<void> {
+  const relPath = `${REPORTS_ROOT}/evidence/${id}.md`;
+  const absolute = path.join(dir, relPath);
+  await mkdir(path.dirname(absolute), { recursive: true });
+  const text = `---\n${YAML.stringify(evidenceBundleFrontMatter(id, story, bindingEvidence))}---\n\n<fixture>\n`;
+  await writeFile(absolute, text, 'utf8');
+}
+
 /** The real `IdAllocator` + `writeNewFileAtomic` append pattern `binding-evidence.ts` uses in
  * production (`specs/22` M16 brief §2, point 2/3) — exercised here directly so this test's own append
  * claim is about the REAL allocator, not a stand-in for it. */
@@ -178,11 +228,84 @@ process.stdout.write(JSON.stringify({ id }));
 `;
 }
 
+/** The real prune worker for the fixed-point race below — `keep: 1` (not `pruneWorkerSource`'s own
+ * hardcoded `keep: 5`), and its own result also reports `pending`, so the test can tell "survived as a
+ * still-referenced candidate" apart from "was never a candidate at all". */
+function pruneKeep1WorkerSource(): string {
+  return `
+import { existsSync } from 'node:fs';
+import { ProjectPaths } from '@forge/core/fs';
+import { SYSTEM_CLOCK } from '@forge/core';
+import { runEvidencePrune } from ${JSON.stringify(PRUNE_MODULE_PATH)};
+
+const [, , dir, gatePath] = process.argv;
+const paths = new ProjectPaths(dir);
+const deadline = Date.now() + 10_000;
+while (!existsSync(gatePath)) {
+  if (Date.now() > deadline) throw new Error('gate file never appeared');
+}
+try {
+  const result = await runEvidencePrune({ paths, clock: SYSTEM_CLOCK, keep: 1, apply: true, marker: undefined });
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    removedIds: result.removed.map((e) => e.id),
+    pendingIds: result.pending.map((e) => e.id),
+  }));
+} catch (error) {
+  process.stdout.write(JSON.stringify({ ok: false, error: String(error && error.message) }));
+}
+`;
+}
+
+/**
+ * The racer: polls for `tombstonePath` (a candidate's own real tombstone file — a genuine production
+ * side effect of `runEvidencePrune`'s own step 2, written before the second enumeration pass ever
+ * runs), then, the instant it appears, writes a brand-new gate definition citing that same candidate by
+ * specific id — a real file, written by a genuinely separate OS process, with no test hook of any kind
+ * standing in for the real race window.
+ */
+function racerWorkerSource(): string {
+  return `
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import * as YAML from 'yaml';
+
+const [, , dir, tombstonePath, gatePath] = process.argv;
+const deadline = Date.now() + 10_000;
+while (!existsSync(gatePath)) {
+  if (Date.now() > deadline) throw new Error('gate file never appeared');
+}
+const tombstoneDeadline = Date.now() + 10_000;
+while (!existsSync(tombstonePath)) {
+  if (Date.now() > tombstoneDeadline) throw new Error('tombstone file never appeared');
+}
+const doc = {
+  id: 'G-Race',
+  checks: {
+    deterministic: [
+      {
+        id: 'always-pass',
+        run: 'node -e "console.log(JSON.stringify({failing:0}))"',
+        parser: 'forge-json',
+        failOn: 'failing > 0',
+      },
+    ],
+  },
+  openQuestionsPolicy: 'block',
+  evidence: [{ artifact: 'EvidenceBundle(EVID-001)' }],
+};
+const checksDir = path.join(dir, '.forge/checks');
+mkdirSync(checksDir, { recursive: true });
+writeFileSync(path.join(checksDir, 'G-Race.gate.yaml'), YAML.stringify(doc), 'utf8');
+process.stdout.write(JSON.stringify({ wrote: true, at: Date.now() }));
+`;
+}
+
 describe('forge evidence prune — real cross-process concurrency (specs/22 M16 P14)', () => {
   /**
-   * `workerCount`/`total` below (20/25) are the level this test runs at on every real invocation —
-   * repeatedly confirmed clean (5/5 real runs, no flake) at 20-way AND at 30-way AND at 50-way real
-   * concurrency during this piece's own build, not merely at the number committed here. This is a
+   * `workerCount`/`total` below (50/110) are the level this test runs at on every real invocation.
+   * Originally committed at 20-way/25-records (repeatedly confirmed clean, 5/5 real runs, no flake, at
+   * 20-way AND at 30-way AND at 50-way real concurrency during this piece's own initial build) — a
    * materially different empirical result from `withCollectionLock`'s own disclosed ceiling
    * (`GAUNTLET-LOG.md` `## M15 P6`: clean at 20, intermittent loss from 25-30): at 30-way, a REAL
    * defect surfaced — not in this piece's own tombstone/removal ORDER, but in `removeRecord`'s own
@@ -190,14 +313,28 @@ describe('forge evidence prune — real cross-process concurrency (specs/22 M16 
    * `realpathOfDeepestExistingAncestor`) calls `fs.realpathSync` on a path a concurrent process could
    * delete in the narrow window between that function's own `existsSync` and its `realpathSync` —
    * throwing a raw, never-wrapped `ENOENT` one layer BELOW where `rm`'s own `{ force: true }` could
-   * ever catch it. Fixed in `removeRecord` itself (fully this piece's own Surface); re-run clean 3/3
-   * at 30-way and 3/3 at 50-way afterward. This piece's report names this precisely: a found, real,
-   * cross-process race, fixed within Surface, not merely disclosed — and still never claims safety at
-   * arbitrary concurrency beyond what was actually run.
+   * ever catch it. Fixed in `removeRecord` itself (fully this piece's own Surface).
+   *
+   * RAISED to 50-way/110-records in this fix pass: the 20-way/25-record level this test originally
+   * shipped at only INTERMITTENTLY exercises that same race once `removeRecord`'s own fix is reverted
+   * (a regression there could pass CI many times before being caught). Confirmed, by deliberately
+   * reverting `removeRecord`'s own fix and re-running this exact test at 50-way/110-records 5 real
+   * times: 3/5 real runs failed (a real, substantial, majority catch rate — never claimed as 100%, and
+   * never tuned past what was actually observed); with the real fix restored (byte-for-byte,
+   * `cmp`-verified): every real run clean (8/8 across this fix pass's own verification), ~19-20s/run
+   * without coverage instrumentation. This piece's report names the exact before/after counts.
+   *
+   * The 240s timeout (well above the ~20s real run time) exists because `--coverage`'s own
+   * instrumentation was empirically observed, during this fix pass, to roughly TRIPLE this specific
+   * test's real wall-clock time (one real `pnpm test`-shaped run hit ~64s under `--coverage` and
+   * nearly tripped the previous 60s timeout, which would have killed the test mid-flight and left
+   * orphaned child OS processes still writing into the project directory `afterEach` was concurrently
+   * trying to remove — a real `ENOTEMPTY` observed from exactly that). A generous timeout here is
+   * cheap; a flaky one under coverage is not.
    */
   it('several concurrent --apply processes against one store end in the same state as one prune, with exactly one tombstone per pruned id and no process error', async () => {
     const dir = await freshProjectDir();
-    const total = 25;
+    const total = 110;
     const keep = 5;
     for (let index = 1; index <= total; index += 1) {
       await seedMutationEvidence(dir, `MUT-${String(index).padStart(3, '0')}`, 'STORY-001');
@@ -208,7 +345,7 @@ describe('forge evidence prune — real cross-process concurrency (specs/22 M16 
     await writeWorker(workerPath, pruneWorkerSource());
     const gatePath = path.join(workerDir, 'gate');
 
-    const workerCount = 20;
+    const workerCount = 50;
     const launches = Array.from({ length: workerCount }, (_unused, index) =>
       execFileAsync(
         process.execPath,
@@ -261,7 +398,7 @@ describe('forge evidence prune — real cross-process concurrency (specs/22 M16 
       const tombstone = await readTombstone(new ProjectPaths(dir), REPORTS_ROOT, id);
       expect(tombstone?.id, `expected a real tombstone for ${id}`).toBe(id);
     }
-  }, 60_000);
+  }, 240_000);
 
   it('a concurrent evidence append during a real prune is never lost, and is never given a duplicate id', async () => {
     const dir = await freshProjectDir();
@@ -314,6 +451,103 @@ describe('forge evidence prune — real cross-process concurrency (specs/22 M16 
     // The appended record is the new highest id of its type — never itself pruned, by the highest-id
     // rule, whichever of the two processes the real OS scheduled first.
     expect(pruneParsed.removedIds).not.toContain('MUT-007');
+  }, 30_000);
+});
+
+describe('forge evidence prune — a late gate citation from a genuinely separate OS process, no test hook (specs/22 M16 P14)', () => {
+  /**
+   * The real, hook-free, two-process version of the fixed-point claim `prune.test.ts`'s own
+   * `afterTombstonesForTest`-based tests prove in-process: EVID-001 is a genuine candidate (EVID-002
+   * outranks it as both newest and highest-id) whose own `bindingEvidence` cites MUT-001 (also a
+   * genuine candidate). Nothing in this test ever calls `afterTombstonesForTest` — a second, wholly
+   * separate real OS process (`racerWorkerSource`) instead polls for EVID-001's own real tombstone file
+   * to appear (a genuine side effect of `runEvidencePrune`'s own step 2, written before step 3's second
+   * enumeration pass ever runs) and, the instant it does, writes a brand-new gate definition citing
+   * `EvidenceBundle(EVID-001)` directly — racing the real prune process's own second enumeration pass
+   * exactly the way a human concurrently approving a gate against a record mid-prune would.
+   *
+   * The 60 decoy `MUT-1xx` records under an unrelated subject exist only to widen the real wall-clock
+   * window the second enumeration pass's own directory walk takes (more real files to list, read and
+   * parse, and — since `evidence/` sorts before `mutation/` — more real tombstone writes still ahead of
+   * EVID-001's own, pushing the vulnerable window open wider) so the racer's own tight `existsSync`
+   * poll has a genuine, non-instantaneous target to land inside, without any sleep of any duration on
+   * either side. Confirmed over repeated real runs during this fix's own build (see this piece's
+   * report for the exact count and outcome on both the unfixed and fixed `computeStillReferenced`).
+   */
+  it("a brand-new gate citation written by a second real process, timed off the real tombstone file's own appearance, also spares what the newly-cited bundle itself references", async () => {
+    const dir = await freshProjectDir();
+    await seedMutationEvidence(dir, 'MUT-001', 'STORY-001');
+    await seedMutationEvidence(dir, 'MUT-002', 'STORY-001');
+    await seedEvidenceBundle(dir, 'EVID-001', 'STORY-001', ['MUT-001']);
+    await seedEvidenceBundle(dir, 'EVID-002', 'STORY-001', []);
+    for (let index = 1; index <= 60; index += 1) {
+      await seedMutationEvidence(dir, `MUT-${String(100 + index).padStart(3, '0')}`, 'STORY-DECOY');
+    }
+
+    const workerDir = await mkdtemp(path.join(SCRATCH_ROOT, 'prune-race-gate-'));
+    dirs.push(workerDir);
+    const prunePath = path.join(workerDir, 'prune-worker.mts');
+    const racerPath = path.join(workerDir, 'racer-worker.mts');
+    await writeWorker(prunePath, pruneKeep1WorkerSource());
+    await writeWorker(racerPath, racerWorkerSource());
+    const gatePath = path.join(workerDir, 'gate');
+    const tombstonePath = path.join(dir, REPORTS_ROOT, 'pruned', 'EVID-001.json');
+
+    const pruneLaunch = execFileAsync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--disable-warning=ExperimentalWarning',
+        prunePath,
+        dir,
+        gatePath,
+      ],
+      { cwd: workerDir },
+    );
+    const racerLaunch = execFileAsync(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--disable-warning=ExperimentalWarning',
+        racerPath,
+        dir,
+        tombstonePath,
+        gatePath,
+      ],
+      { cwd: workerDir },
+    );
+    await writeFile(gatePath, 'go', 'utf8');
+    const [pruneResult, racerResult] = await Promise.all([pruneLaunch, racerLaunch]);
+
+    const pruneParsed = JSON.parse(pruneResult.stdout) as {
+      readonly ok: boolean;
+      readonly error?: string;
+      readonly removedIds?: readonly string[];
+      readonly pendingIds?: readonly string[];
+    };
+    const racerParsed = JSON.parse(racerResult.stdout) as { readonly wrote: boolean };
+
+    expect(pruneParsed.ok, `prune process failed: ${String(pruneParsed.error)}`).toBe(true);
+    expect(racerParsed.wrote).toBe(true);
+    // The real, load-bearing assertion: the separate racer process's own gate citation beat the real
+    // prune process's own second enumeration pass — EVID-001 survives (a direct citation), and MUT-001
+    // survives too, purely because EVID-001 — not actually removed — cites it. Before this fix,
+    // EVID-001 alone would survive (`computeStillReferenced`'s gate-citation branch never depended on
+    // `deadBundleIds`) while MUT-001 was removed regardless — the exact corruption this test exists to
+    // catch.
+    expect(pruneParsed.removedIds).not.toContain('EVID-001');
+    expect(pruneParsed.removedIds).not.toContain('MUT-001');
+    expect(pruneParsed.pendingIds).toContain('EVID-001');
+    expect(pruneParsed.pendingIds).toContain('MUT-001');
+    const paths = new ProjectPaths(dir);
+    expect(
+      await pathExists(paths.resolveWithin(`${REPORTS_ROOT}/evidence/EVID-001.md`)),
+      'EVID-001 should still be on disk: a real, separate process cited it before the second enumeration pass ran',
+    ).toBe(true);
+    expect(
+      await pathExists(paths.resolveWithin(`${REPORTS_ROOT}/mutation/MUT-001.md`)),
+      'MUT-001 should still be on disk: EVID-001 (not actually removed) cites it',
+    ).toBe(true);
   }, 30_000);
 });
 

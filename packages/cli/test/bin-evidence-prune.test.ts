@@ -159,4 +159,30 @@ describe('forge evidence prune — real CLI dispatch (specs/22 M16 P14)', () => 
       rm(path.join(dir, 'docs/forge/reports/mutation/MUT-001.md'), { force: false }),
     ).resolves.toBeUndefined();
   });
+
+  it('THE CONTRACT: `removed` names the same candidate ids whether `applied` is false or true — only `applied` tells a consumer whether they are a forecast ("would remove") or something that already happened on disk ("did remove"); `removed`\'s own shape never signals which', async () => {
+    const dir = await freshProjectWithRecords(7);
+    const dryRun = forge(['evidence', 'prune', '--keep', '5', '--json'], dir);
+    const applied = forge(['evidence', 'prune', '--apply', '--keep', '5', '--json'], dir);
+    const dryEnvelope = lastJsonLine(dryRun.stdout) as {
+      readonly applied: boolean;
+      readonly removed: readonly { readonly id: string }[];
+    };
+    const appliedEnvelope = lastJsonLine(applied.stdout) as {
+      readonly applied: boolean;
+      readonly removed: readonly { readonly id: string }[];
+    };
+    // Same ids, same shape, in `removed` either way — a consumer that reads `removed` alone, without
+    // also checking `applied`, cannot tell a forecast from a fact.
+    expect(dryEnvelope.removed.map((entry) => entry.id).sort()).toEqual(['MUT-001', 'MUT-002']);
+    expect(appliedEnvelope.removed.map((entry) => entry.id).sort()).toEqual(['MUT-001', 'MUT-002']);
+    expect(dryEnvelope.applied).toBe(false);
+    expect(appliedEnvelope.applied).toBe(true);
+    // The real, load-bearing difference is on disk, not in `removed`'s own shape: the dry run (run
+    // first, before the real `--apply` call above) left every record exactly where it was; `--apply`
+    // actually removed them.
+    await expect(
+      rm(path.join(dir, 'docs/forge/reports/mutation/MUT-001.md'), { force: false }),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 });

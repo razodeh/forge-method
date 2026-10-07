@@ -137,7 +137,9 @@ export function computeProtection(
  * Whether each of `candidateIds` is referenced by a store this enumeration finds, EXCLUDING any
  * `EvidenceBundle` whose own id is in `deadBundleIds` (a bundle this very prune is about to remove:
  * its own citations never counted at pass one either, by the identical "only a surviving record
- * propagates" rule `computeProtection` enforces, so they must not count here either).
+ * propagates" rule `computeProtection` enforces, so they must not count here either) — UNLESS that
+ * bundle turns out to be referenced too, in which case it is not actually going away, and its own
+ * references must count after all.
  *
  * `18` §18.7: "The stores are enumerated once more after the tombstones are written and before any
  * record is removed... a record referenced since the first enumeration is not removed." This is that
@@ -145,6 +147,18 @@ export function computeProtection(
  * `--keep`/highest-id seeding, a question pass one already, permanently, answered): it asks only
  * whether a store now cites one of pass one's own candidates, off a FRESH enumeration taken after the
  * tombstones were written.
+ *
+ * This needs its own fixed point, for the identical reason `computeProtection`'s seed-then-propagate
+ * split does: `deadBundleIds` is `runEvidencePrune`'s own STATIC classification from pass one, taken
+ * before this function has run at all, but whether a `deadBundleIds` member is actually removed is
+ * decided AFTERWARD, by the caller, from THIS function's own result (`stillReferenced.has(record.id)`).
+ * A bundle D that turns out to be referenced here survives (becomes `pending`, kept on disk) — so
+ * excluding D's own references forever, just because pass one guessed it would be gone, would silently
+ * drop whatever D itself cites, even though D is sitting right there on disk, not removed. Once D is
+ * known to survive, it must stop being excluded, and the whole computation must re-run: unexcluding D
+ * can newly reference some OTHER `deadBundleIds` member (D cites X, X cites W — a two-hop chain), so
+ * this loops to a full fixed point, not one extra pass, mirroring `computeProtection`'s own
+ * `while (grew)` loop exactly, including its "no dependency on visit order" property.
  */
 export function computeStillReferenced(
   enumeration: EvidenceEnumeration,
@@ -152,14 +166,36 @@ export function computeStillReferenced(
   deadBundleIds: ReadonlySet<string>,
 ): ReadonlySet<string> {
   const referenced = new Set<string>();
-  for (const record of enumeration.records) {
-    if (record.type !== 'EvidenceBundle' || deadBundleIds.has(record.id)) continue;
-    for (const referencedId of record.references) {
-      if (candidateIds.has(referencedId)) referenced.add(referencedId);
+  // A `deadBundleIds` member moves here once it is itself found to be referenced (so it will NOT
+  // actually be removed this run) — monotonically growing, exactly like `protectedIds` in
+  // `computeProtection`, never un-spared once added.
+  const spared = new Set<string>();
+  const isExcluded = (id: string): boolean => deadBundleIds.has(id) && !spared.has(id);
+
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const record of enumeration.records) {
+      if (record.type !== 'EvidenceBundle' || isExcluded(record.id)) continue;
+      for (const referencedId of record.references) {
+        if (!candidateIds.has(referencedId) || referenced.has(referencedId)) continue;
+        referenced.add(referencedId);
+        grew = true;
+      }
+    }
+    for (const citation of enumeration.gateCitations) {
+      if (candidateIds.has(citation.id) && !referenced.has(citation.id)) {
+        referenced.add(citation.id);
+        grew = true;
+      }
+    }
+    for (const id of deadBundleIds) {
+      if (!spared.has(id) && referenced.has(id)) {
+        spared.add(id);
+        grew = true;
+      }
     }
   }
-  for (const citation of enumeration.gateCitations) {
-    if (candidateIds.has(citation.id)) referenced.add(citation.id);
-  }
+
   return referenced;
 }

@@ -88,10 +88,20 @@ function sha256Hex(text: string): string {
 /** The numeric part of a retention-managed `id` (e.g. `7` from `"MUT-007"`), parsed against `type`'s
  * own registered `idPrefix` — never a bare regex re-derived at each call site, so a future `idPrefix`
  * change (there is none planned; `18` §18.7's registry is append-only) could not silently desync this
- * from the real registry. `undefined` when `id` does not actually match `type`'s own prefix — this
- * function trusts the CALLER to have already confirmed `type` via the document's own validated schema
- * (`checkIdMatchesRegisteredType`, which every one of the three schemas already enforces), so this is
- * truly unreachable in production and exists only so the function has a total, honest return type. */
+ * from the real registry. `undefined` in two distinct cases, only one of which is actually reachable:
+ *
+ * - `id` does not even match `type`'s own prefix at all — this function trusts the CALLER to have
+ *   already confirmed `type` via the document's own validated schema (`checkIdMatchesRegisteredType`,
+ *   which every one of the three schemas already enforces), so THIS case is truly unreachable in
+ *   production and exists only so the function has a total, honest return type.
+ * - `id` matches the prefix but what follows is not purely `/^\d+$/` — real and reachable: the
+ *   registry's own base id regex (`front-matter.ts`) accepts an OPTIONAL `-\d+` sub-id suffix for
+ *   every registered type (e.g. `"MUT-001-2"`), which no real `IdAllocator` call ever allocates but a
+ *   schema-valid, hand-edited or hand-authored file legitimately can. This function cannot parse a
+ *   "newest" ordering out of such an id, so a record shaped this way is silently excluded from this
+ *   whole scan — neither counted as kept nor as a removal candidate, and therefore never prunable by
+ *   this command at all. Disclosed and tested precisely as such in `prune.test.ts`'s own "a sub-id...
+ *   is silently excluded from retention" describe block, not merely implied by a passing test. */
 function numericIdOf(id: string, type: RetentionType): number | undefined {
   const prefix = definitionForType(type).idPrefix;
   if (!id.startsWith(`${prefix}-`)) return undefined;

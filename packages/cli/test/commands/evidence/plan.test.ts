@@ -312,4 +312,89 @@ describe('computeStillReferenced (specs/22 M16 P14)', () => {
     );
     expect(stillReferenced.size).toBe(0);
   });
+
+  it('a dead-classified bundle that is itself spared by a late gate citation must also spare what IT references — the second pass needs its own fixed point, not a single pass', () => {
+    // EVID-001 was classified "dead" by the FIRST enumeration pass (it is one of `deadBundleIds`) —
+    // but a gate citation arriving before the SECOND enumeration names it directly, so it actually
+    // survives this run (`stillReferenced.has('EVID-001')` must be true). Once that is known, its own
+    // reference to MUT-001 must count too: a single pass that permanently excludes every
+    // `deadBundleIds` member (the committed bug) would report MUT-001 as unreferenced and let it be
+    // removed, even though the record that cites it — EVID-001 — is sitting right there on disk, not
+    // actually gone. This is the exact scenario `prune.test.ts`'s own end-to-end repro proves against
+    // real files; this is its pure, direct-unit-level twin.
+    const records = [
+      record({ id: 'EVID-001', type: 'EvidenceBundle', numericId: 1, references: ['MUT-001'] }),
+      record({ id: 'MUT-001', type: 'MutationEvidence', numericId: 1 }),
+    ];
+    const gateCitations = [
+      {
+        gateId: 'G-Late',
+        ref: 'EvidenceBundle(EVID-001)',
+        type: 'EvidenceBundle' as const,
+        id: 'EVID-001',
+      },
+    ];
+    const candidateIds = new Set(['EVID-001', 'MUT-001']);
+    const deadBundleIds = new Set(['EVID-001']);
+    const stillReferenced = computeStillReferenced(
+      enumeration(records, gateCitations),
+      candidateIds,
+      deadBundleIds,
+    );
+    expect(stillReferenced.has('EVID-001')).toBe(true);
+    // The real, load-bearing assertion: MUT-001 survives too, purely because EVID-001 — which turns
+    // out not to be removed after all — cites it.
+    expect(stillReferenced.has('MUT-001')).toBe(true);
+  });
+
+  it('the correction chains across two hops: D is newly cited, which spares X (D references X), which in turn spares W (X references W) — neither X nor W is cited directly by anything', () => {
+    // Today's real schemas never let an EvidenceBundle reference another EvidenceBundle (the identical
+    // fact `computeProtection`'s own two-hop test above states for the first pass), so this exact shape
+    // cannot arise from real on-disk files — it is constructed here, the same way, to prove the `while`
+    // loop genuinely reaches a fixed point rather than stopping after one "unexclude and redo" pass,
+    // which would only be enough for a one-hop chain and would silently under-protect a deeper one.
+    const recordD = record({
+      id: 'EVID-D',
+      type: 'EvidenceBundle',
+      numericId: 1,
+      references: ['EVID-X'],
+    });
+    const recordX = record({
+      id: 'EVID-X',
+      type: 'EvidenceBundle',
+      numericId: 2,
+      references: ['MUT-W'],
+    });
+    const recordW = record({ id: 'MUT-W', type: 'MutationEvidence', numericId: 1 });
+    const gateCitations = [
+      {
+        gateId: 'G-Late',
+        ref: 'EvidenceBundle(EVID-D)',
+        type: 'EvidenceBundle' as const,
+        id: 'EVID-D',
+      },
+    ];
+    const candidateIds = new Set(['EVID-D', 'EVID-X', 'MUT-W']);
+    const deadBundleIds = new Set(['EVID-D', 'EVID-X']);
+    for (const records of [
+      [recordD, recordX, recordW],
+      [recordX, recordD, recordW],
+      [recordW, recordX, recordD],
+    ]) {
+      const stillReferenced = computeStillReferenced(
+        enumeration(records, gateCitations),
+        candidateIds,
+        deadBundleIds,
+      );
+      expect(stillReferenced.has('EVID-D')).toBe(true);
+      // EVID-X is cited by nothing directly — it survives ONLY because EVID-D (itself only just now
+      // known to survive) references it.
+      expect(stillReferenced.has('EVID-X')).toBe(true);
+      // MUT-W is cited by nothing directly either — it survives ONLY via EVID-X's own reference, two
+      // hops from the one real citation, regardless of the order records are visited in (`18` §18.7:
+      // "the outcome does not depend on the order in which records are visited" — stated for the first
+      // pass, proven here to hold for the second too).
+      expect(stillReferenced.has('MUT-W')).toBe(true);
+    }
+  });
 });

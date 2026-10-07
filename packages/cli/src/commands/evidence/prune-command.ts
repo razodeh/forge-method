@@ -63,12 +63,14 @@ export interface RunEvidencePruneInput {
   /**
    * Test-only synchronization hook, called (when present) after every candidate's tombstone has been
    * written and before the second enumeration pass runs. Never set by `bin.ts`'s own real CLI
-   * dispatch — its only real caller is `prune.test.ts`'s own "a record referenced for the first time
-   * between the two enumeration passes" test, which has no other reliable way to land a real write
-   * inside this exact, genuinely narrow window without a racy, flaky sleep (the REAL cross-process
-   * version of this same claim is proven for real, with no hook of any kind, in
-   * `prune-multiprocess.test.ts`). A production call never passes this, so it is always a no-op
-   * (`?? (async () => {})`) outside a test.
+   * dispatch — its real callers are `prune.test.ts`'s own "a record referenced for the first time
+   * between the two enumeration passes" test and its own "a dead-classified EvidenceBundle spared by a
+   * late gate citation" test, neither of which has any other reliable way to land a real write inside
+   * this exact, genuinely narrow window without a racy, flaky sleep (the REAL cross-process version of
+   * this same claim — no hook of any kind, a genuinely separate OS process racing the real tombstone
+   * file's own appearance — is proven for real in `prune-multiprocess.test.ts`'s own "a late gate
+   * citation from a genuinely separate OS process, no test hook" describe block). A production call
+   * never passes this, so it is always a no-op (`?? (async () => {})`) outside a test.
    */
   readonly afterTombstonesForTest?: () => Promise<void>;
 }

@@ -697,8 +697,10 @@ describe('forge evidence prune — the fixed point and the second enumeration pa
     // every candidate's tombstone is written and before the second enumeration pass) writes a BRAND
     // NEW `EvidenceBundle` citing MUT-001 at exactly that point, through the real `runEvidencePrune`
     // call itself — not a reimplementation of its own two-pass logic. The genuinely racy, real
-    // two-process version of this same claim (no hook of any kind) is proven separately in
-    // `prune-multiprocess.test.ts`.
+    // two-process version of this same claim (no hook of any kind — a genuinely separate OS process
+    // polling for the real tombstone file's own appearance) is proven separately in
+    // `prune-multiprocess.test.ts`'s own "a late gate citation from a genuinely separate OS process, no
+    // test hook" describe block.
     const result = await runEvidencePrune({
       paths: project.paths,
       clock: fakeClock(),
@@ -719,6 +721,45 @@ describe('forge evidence prune — the fixed point and the second enumeration pa
     // from "never a candidate at all".
     const tombstone = await readTombstone(project.paths, REPORTS_ROOT, 'MUT-001');
     expect(tombstone?.id).toBe('MUT-001');
+  });
+
+  it('a dead-classified EvidenceBundle spared by a late gate citation also spares what IT references — the second pass needs its own fixed point', async () => {
+    const project = await createTestProject();
+    // MUT-001 is a genuine candidate (nothing protects it on its own); MUT-002 is the newest/highest
+    // MUT id, protected outright.
+    await seedMutationEvidence(project, 'MUT-001', 'STORY-001');
+    await seedMutationEvidence(project, 'MUT-002', 'STORY-001');
+    // EVID-001 is ALSO a genuine candidate (EVID-002 outranks it as both newest and highest-id for
+    // EvidenceBundle) — its own bindingEvidence cites MUT-001, but that citation does not count toward
+    // `computeProtection`'s first pass because EVID-001 itself is not protected there either.
+    await seedEvidenceBundle(project, 'EVID-001', 'STORY-001', { bindingEvidence: ['MUT-001'] });
+    await seedEvidenceBundle(project, 'EVID-002', 'STORY-001', { bindingEvidence: [] });
+    // Between the two enumeration passes, a brand-new gate definition arrives citing EVID-001 by
+    // specific id — the one real, on-disk mechanism that can cite an EvidenceBundle at all (no other
+    // record's own `bindingEvidence`/`parityEvidence` field can name another EvidenceBundle's id).
+    const result = await runEvidencePrune({
+      paths: project.paths,
+      clock: fakeClock(),
+      keep: 1,
+      apply: true,
+      marker: undefined,
+      afterTombstonesForTest: () => seedGate(project, 'G-Late', ['EvidenceBundle(EVID-001)']),
+    });
+    // EVID-001 survives — a late, direct gate citation names it. This much already worked before this
+    // fix (`computeStillReferenced`'s own gate-citation branch never depended on `deadBundleIds`).
+    expect(result.removed.map((entry) => entry.id)).not.toContain('EVID-001');
+    expect(result.pending.map((entry) => entry.id)).toContain('EVID-001');
+    expect(
+      await pathExists(project.paths.resolveWithin(`${REPORTS_ROOT}/evidence/EVID-001.md`)),
+    ).toBe(true);
+    // The real, load-bearing assertion (the bug this fix closes): MUT-001 must ALSO survive — EVID-001
+    // is not actually gone, so its own citation of MUT-001 must count, exactly as it would have if
+    // EVID-001 had been classified a survivor from the very first enumeration pass.
+    expect(result.removed.map((entry) => entry.id)).not.toContain('MUT-001');
+    expect(result.pending.map((entry) => entry.id)).toContain('MUT-001');
+    expect(
+      await pathExists(project.paths.resolveWithin(`${REPORTS_ROOT}/mutation/MUT-001.md`)),
+    ).toBe(true);
   });
 });
 
