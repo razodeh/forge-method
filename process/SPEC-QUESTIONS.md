@@ -28633,3 +28633,32 @@ failure already becomes, closing a class of gap — not a single instance of one
 schema check alone cannot fully anticipate.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P8`.
+
+## Q307 — M16 P15: telemetry — omitting an environment key and explicitly unsetting it are not the
+same thing, once something downstream merges rather than replaces
+
+**Context.** `PLAN-M16.md` P15's own Mandate: ride `M15 P11`'s already-shipped `CheckRun` telemetry
+machinery for a parity-check emitter and additive per-hunk binding counts. The critic-round narrative,
+the fix detail, and the verification numbers are in `GAUNTLET-LOG.md`'s own `## M16 P15` entry and are
+not repeated here.
+
+**Decision — `launcher-shim.ts`'s `commandEnvFor` must explicitly set `FORGE_RUN_ID` to `undefined` as
+its own property for the ad hoc gate-check shim, never merely leave the key out, because the function
+one layer below it merges rather than replaces.** `execa`'s own `env` option, under its default
+`extendEnv: true`, computes the child's real environment as a plain object spread,
+`{...process.env, ...envOption}` — so a key `envOption` never mentions at all falls straight through
+to whatever `process.env` already has, and (confirmed by direct, repeated experiment against the
+repo's real `execa` 9.6.1, independently re-confirmed by the orchestrator) `delete`-ing that key from
+`envOption` beforehand produces the IDENTICAL resulting object shape as never having added it — both
+leak an already-ambient value straight through. Only an explicit `undefined` own property on
+`envOption` wins the spread (a later spread's own key, even `undefined`-valued, always overwrites an
+earlier one) and is then dropped from the real child environment entirely by Node's own spawn
+machinery, never coerced to the literal string `"undefined"` — also confirmed by direct experiment,
+not assumed, since the opposite (coercion to a literal string) was the a priori more plausible risk
+and turned out not to be the real one. This is the general shape of a mistake worth naming precisely
+for future code in this area: "I didn't add this key" and "I actively don't want this key to survive a
+downstream merge" are two different intentions that look identical in the object literal itself and
+only diverge in behavior once something downstream chooses to extend rather than replace — a choice
+this function's own caller makes, not this function.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P15`.

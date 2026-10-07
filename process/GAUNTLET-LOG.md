@@ -22616,3 +22616,84 @@ repo-wide naming-rule and workspace-floor tests 532/532; the full `-t "M16"` swe
 1532 pre-fix); `pnpm typecheck`/`lint`/`boundaries` all clean. Clean cherry-pick onto `main`.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q306`.
+
+## M16 P15 — Telemetry: `kind: 'parity'`, additive hunk counts, and `forge report` — an overclaim
+about FORGE_RUN_ID that two critics closed from two different real angles
+
+A small, contained piece riding `M15 P11`'s already-shipped `check-telemetry.ts` machinery exactly —
+the real engineering interest turned out to be in what the piece's own safety narrative claimed about
+WHEN its new emitter can fire, not in the emitter itself.
+
+**Build.** `emitParityCheckTelemetry` (new, mirrors the existing `kind: 'binding'`/
+`kind: 'exemption-declared'` emitters' shape and `runId === undefined` early-return gate exactly) and
+additive, optional hunk fields on the existing `kind: 'binding'` payload. `forge report` gains a
+parity line and a hunk line, both occurrence-counted (no dedup) and omitted entirely — from both the
+human text AND the `--json` envelope, confirmed stricter than the Mandate's own literal wording, which
+could be read as human-text only — when nothing of that kind has ever been recorded. While
+investigating when a `CheckRun{kind:'parity'}` event CAN be emitted from a `G-Parity` gate check, the
+builder found and fixed two real bugs along the way (a `runInit` fixture with no real commit, caught
+by `RUN-126`; a change-level-vs-hunk-level credit distinction in an existing test), and confirmed, by
+reading the real dispatch code directly (`steps.ts`'s `runGateStep` passes `ctx.integrationPath`,
+never `ctx.projectRoot`, and `commandStepEnvironment` — the one mechanism that recovers a real project
+root — is called only from `kind: command` steps, never near the gate path), that an in-run `G-Parity`
+evaluation can never itself produce a `ParityEvidence` id, and wrote this up as "a `CheckRun`
+{kind:'parity'} event can never be emitted from an in-run gate evaluation."
+
+**This piece landed BEFORE its own critic review** (the clean, automatic 3-way merge with `M16 P8`'s
+own same-file edit to `check-command.ts` — confirmed by the orchestrator to correctly preserve both
+pieces' additions — made landing first, then critiquing, the practical choice, the same deviation
+`M16 P14` used, disclosed the same way).
+
+**Both critics, independently, attacked the "can never be emitted" claim and found it overclaims —
+via two DIFFERENT real mechanisms, not the same one restated.** Critic 1: the IN-RUN path itself
+(`runGateStep`) really can write a real event when `FORGE_RUN_ID` is ambient (confirmed: `commandEnvFor`
+stamps it when a real run passes one, and `execa`'s own `env` option extends `process.env` rather than
+replacing it) — but it lands in the gate's own integration worktree's `.forge/state/runs/`, a location
+`forge report` never reads from: a real, previously-undisclosed side effect, but a mostly-harmless
+one. Critic 1 also flagged, honestly as unconfirmed rather than asserted, that the identical mechanism
+likely affects the pre-existing `M15` binding emitter via `G-Verify`'s own real gate wiring — a real,
+plausible, two-milestones-removed concern, left disclosed rather than chased.
+
+**Critic 2 found a more severe, different real path.** The STANDALONE `forge gate check <id>` CLI
+command (`gate-commands.ts`'s `evaluateFresh`) runs with `ctx.projectRoot` — the REAL project root —
+and `ctx.commandEnv`, confirmed directly by the orchestrator reading that exact call. If `FORGE_RUN_ID`
+happens to be ambient in the CALLING shell (left over from an earlier `forge run` in the same
+terminal, or an agent step's own spawned shell), a standalone gate check that is not part of any
+workflow run at all silently writes a real, MISATTRIBUTED `CheckRun{kind:'parity'}` event into the
+REAL project's own event log — exactly where `forge report` reads from. Critic 2 built and confirmed
+this end to end: a real scratch project, a real gate file, `FORGE_RUN_ID` set only in the calling
+shell, a real event landing in the real log. This is a genuine data-integrity risk (`forge report`'s
+own scorecard polluted with a spurious, misattributed occurrence), not merely a stray, unread file.
+
+**Both critics also independently found the identical second issue**: the commit message's own claim
+("packages/telemetry's own redaction guarantee had never been re-proven at the CLI call-site level for
+the existing binding emitter... added here") was false — the only new test exercised the NEW parity
+emitter's own payload, never the EXISTING binding emitter's. Both confirmed directly, by calling the
+real emitter with a secret-shaped value, that redaction mechanically works regardless (not a live
+security bug) — a false self-report claim and a missing test, not a defect in the product.
+
+**Round 2 (one focused fix pass, verified directly).** Fixed `launcher-shim.ts`'s `commandEnvFor` to
+EXPLICITLY set `FORGE_RUN_ID` to `undefined` as its own property when no `runId` is given, rather than
+merely omitting the key — closing critic 2's real misattribution risk at its root. The fix required a
+genuinely counter-intuitive empirical finding, independently re-confirmed by the orchestrator against
+the repo's real `execa` 9.6.1: omitting the key and explicitly `delete`-ing it are BOTH indistinguishable,
+for `execa`'s own `extendEnv` merge (a plain object spread), from never having added the key at all —
+only an explicit `undefined` own property wins the spread and is then dropped from the real child
+environment entirely, never coerced to the literal string `"undefined"`. Proven with a real `execa`
+subprocess regression test, confirmed to fail with the exact leaked value when run against the
+reverted, pre-fix code. The in-run stray-write gap (critic 1's own primary finding) stays disclosed,
+not fixed — closing it would mean threading real project-root awareness through `runGateStep`/
+`createGateEvaluator`'s own shared dispatch code, well beyond this piece's own surface. Also added the
+missing binding-emitter redaction test, and corrected the false test title and commit-message framing.
+
+**Verification, independently re-run by the orchestrator at every stage.** The core `execa`
+`undefined`-vs-`delete`-vs-omit finding re-confirmed directly, byte-for-byte matching the fix pass's
+own report, before accepting it. 73/73 on the fix's own scoped files; the legitimate (`runId`-defined)
+path confirmed unaffected by the fix pass's own re-run of `run.test.ts`/`resume.test.ts`'s real
+in-run-dispatch tests. `pnpm typecheck`/`lint`/`boundaries` all clean. One transient 2-failure flake on
+the very first clean-worktree M16 sweep (`observe-http.test.ts`'s own, unrelated P8 SIGKILL test,
+"the server never wrote its own pid marker" — a startup-latency timeout under confirmed heavy
+concurrent CPU contention from `M16 P9`'s own concurrently-running builder) cleared on a clean,
+isolated re-run (1585/1585). Clean cherry-pick onto `main`, both commits.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q307`.
