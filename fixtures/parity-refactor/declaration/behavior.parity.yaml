@@ -1,0 +1,16 @@
+name: behavior
+reference:
+  ref: __REFERENCE_SHA__
+review:
+  by: fixture-author
+  basis: read reference/sum.mjs by hand; it is three lines
+  at: 2026-01-01
+expires: 2999-01-01
+surfaces:
+  process:
+    run: "node sum.mjs"
+    stability:
+      runs: 2
+    cases:
+      - args: ["2", "3"]
+      - args: ["10", "-4"]

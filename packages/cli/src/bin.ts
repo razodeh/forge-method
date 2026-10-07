@@ -200,6 +200,7 @@ import {
 } from './commands/module.ts';
 import { overlayAdd, type OverlayCommandContext } from './commands/overlay.ts';
 import { runParityCapture, type ParityCaptureMarker } from './commands/parity/capture-command.ts';
+import { parityCheckExitCode, runParityCheck } from './commands/parity/check-command.ts';
 import {
   presetApply,
   presetEject,
@@ -1249,18 +1250,23 @@ async function runGateSubcommand(
   return report.passed ? EXIT_CODES.success : EXIT_CODES.gateFailed;
 }
 
-/** `forge parity <sub>` (`PLAN-M16.md` P6, `13` F-TEST-9, Q294 Amendment A8). `capture` is the one
- * real sub-verb today; `check` is a separately-gauntleted future piece's own addition to this same
- * dispatcher. `runParityCapture` itself returns plain data (no `v`): this dispatcher adds the
- * envelope's `v: 1` on `--json`, the identical "the command returns data; the dispatcher adds the
- * envelope" split `runGateSubcommand`'s own `check`/`approve`/`waive` branches already use above.
+/** `forge parity <sub>` (`PLAN-M16.md` P6/P7, `13` F-TEST-9, Q294 Amendments A8/A9). `capture` and
+ * `check` are the two real sub-verbs. Both `runParityCapture` and `runParityCheck` return plain data
+ * (no `v`): this dispatcher adds the envelope's `v: 1` on `--json`, the identical "the command
+ * returns data; the dispatcher adds the envelope" split `runGateSubcommand`'s own
+ * `check`/`approve`/`waive` branches already use above.
  *
  * The FORGE session marker is read here, once, via `gateCommandMarker`'s own existing
  * `realEnvSnapshot()`-based extraction (`QUALITY-BAR.md` R10's one ambient environment read), reused
  * rather than re-implemented: `forge parity capture` refuses under ANY marker at all — an agent id,
  * or a bare run/step only — exactly as `forge adr accept/reject/supersede`'s own `KB-017` refusal
  * does (`adr.ts`'s own `refuseUnderMarker` doc comment: "presence alone is the whole test"), since a
- * capture has no "the run this command targets" of its own to compare a marker's `runId` against. */
+ * capture has no "the run this command targets" of its own to compare a marker's `runId` against.
+ * `forge parity check` carries no such fence (Q294 names no marker-based refusal for it): its own
+ * exit code is governed entirely by {@link parityCheckExitCode}, never `EXIT_CODES.usage`, so that
+ * `--trusted`/`--name` refusals (thrown as `ForgeError`s with `exitCode: EXIT_CODES.failure` in their
+ * own registry rows) and an ordinary failing verdict both land on the `10` §10.3 check contract's own
+ * "0 or 1 only" — this dispatcher adds no translation of its own. */
 async function runParityCommand(
   paths: ProjectPaths,
   projectRoot: string,
@@ -1268,8 +1274,47 @@ async function runParityCommand(
   rest: readonly string[],
   json: boolean,
 ): Promise<number> {
+  if (sub === 'check') {
+    const { values, flags, positionals } = parseCommandFlags(rest, {
+      '--name': true,
+      '--trusted': true,
+      '--story': true,
+      '--no-record': false,
+    });
+    assertNoArgs(positionals);
+    const name = values.get('--name');
+    const trusted = values.get('--trusted');
+    const story = values.get('--story');
+    const noRecord = flags.has('--no-record');
+    // Read only when a record will actually be written: `G-Parity`'s own gate check always passes
+    // `--no-record` (`10` §10.3 rule 8), and a human `--no-record` run is common too, so neither
+    // needs this project to have a valid `.forge/config.yaml` at all (`check-command.ts`'s own
+    // `RunParityCheckOptions.reportsRoot` doc comment has the full reasoning).
+    const reportsRoot = noRecord ? undefined : (await readConfig(paths)).paths.reports;
+    const result = await runParityCheck({
+      projectRoot,
+      parentEnv: realEnvSnapshot(),
+      ...(reportsRoot === undefined ? {} : { reportsRoot }),
+      ...(name === undefined ? {} : { name }),
+      ...(trusted === undefined ? {} : { trusted }),
+      ...(story === undefined ? {} : { story }),
+      ...(noRecord ? { noRecord: true } : {}),
+    });
+    if (json) {
+      console.log(JSON.stringify({ v: 1, ...result }));
+    } else {
+      const detail = result.declarations
+        .map((entry) => `${entry.name}: ${entry.verdict}`)
+        .join(', ');
+      console.log(
+        `forge parity check: ${String(result.passing)} passing, ${String(result.failing)} failing` +
+          `${detail === '' ? '' : ` (${detail})`}.`,
+      );
+    }
+    return parityCheckExitCode(result);
+  }
   if (sub !== 'capture') {
-    console.error('forge: "parity" needs a real subcommand (capture).');
+    console.error('forge: "parity" needs a real subcommand (capture, check).');
     return EXIT_CODES.usage;
   }
   const { values, positionals } = parseCommandFlags(rest, { '--name': true });

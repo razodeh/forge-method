@@ -3240,6 +3240,50 @@ export const ERROR_CODES = {
       `Fix the reference-side command so it always writes the declared output, or remove that ` +
       'declared output from the case, then re-run the capture.',
   },
+  // `specs/22` M16 P7, `13` F-TEST-9/`03` §3.5's check contract: `forge parity check --name <name>`
+  // where `<name>` matches no real declaration -- the identical "a given identifier names nothing
+  // real" shape `RUN-132` already gives `forge parity capture`'s own `--name`, but NOT reused: `check`
+  // must exit 0 or 1 only (`10` §10.3's check contract), while `RUN-132` is registered at
+  // `EXIT_CODES.usage` (2), which would violate that for this command alone (`exitCode` is a property
+  // of the CODE, not something a caller can override per call site) -- see this piece's own report.
+  'RUN-140': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { name: string; detail: string }) =>
+      `"forge parity check" was given --name ${show(d.name)}, which matches no declaration under ` +
+      `".forge/parity/" (${show(d.detail)}).`,
+    remedy:
+      'Pass the exact declaration name --name names, or omit --name to check every declaration.',
+  },
+  // `specs/22` M16 P7, `13` F-TEST-9/Q294 Decision 3: `--trusted <ref>` that is not a full commit sha
+  // or an accepted `refs/` name, or that does not resolve in this repository (`trust-anchor.ts`'s own
+  // `resolveTrustedRef`) -- one code for the whole refusal family (malformed shape, a rejected
+  // `check-ref-format`, no such ref, a tag object's id, a branch-shadowed bare name), the identical
+  // "several triggers share one code with a `detail` parameter" shape `CFG-514`/`CFG-515` already use.
+  'RUN-141': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { ref: string; detail: string }) =>
+      `"forge parity check"'s --trusted ${show(d.ref)} cannot be used as the trust anchor: ${show(d.detail)}`,
+    remedy:
+      'Pass --trusted a full commit sha or a name that begins "refs/" and that names a real commit ' +
+      '(for example "refs/heads/main"), then re-run the check.',
+  },
+  // `specs/22` M16 P7, `13` F-TEST-9: "a check that would print 0 passing and 0 failing case is
+  // refused (ok: false)" -- unreachable from a well-formed input by `counting.ts`'s own stated
+  // invariant (every declaration that was not stopped has a surface that is not exempt, and runs at
+  // least one case), checked here anyway rather than assumed, so a later change to that algebra
+  // cannot reopen the hole silently without this refusal firing.
+  'RUN-142': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: () =>
+      '"forge parity check" has nothing to print: every declaration it ran produced neither a ' +
+      'passing nor a failing case.',
+    remedy:
+      'Check that every declared surface lists at least one case, then re-run the check; if this ' +
+      'persists, report it as a defect in the counting algebra itself.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

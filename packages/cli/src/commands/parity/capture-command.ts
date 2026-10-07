@@ -199,8 +199,16 @@ async function listDeclarationNames(paths: ProjectPaths): Promise<readonly strin
  * command's own selection purposes rather than refusing the whole invocation over it — a DECISION
  * (see this piece's report): a pre-existing, already-broken capture is `invalid` regardless of
  * anything this command does with it, and `forge parity capture`'s own job is writing a new, correct
- * one, never auditing the rest of the corpus (that is `forge parity check`'s, P7, separately). */
-async function listExistingCaptures(paths: ProjectPaths): Promise<readonly ParityCapture[]> {
+ * one, never auditing the rest of the corpus (that is `forge parity check`'s, P7, separately).
+ *
+ * **Exported as of M16 P7**, a narrow, additive exception to "do not edit a landed piece's own
+ * file" (that piece's own brief, section 2): `forge parity check` (`check-command.ts`) needs this
+ * identical "list and parse every capture file" logic to build its own `selectCapture` candidate
+ * list, and P2's own `capture.ts` already owns the real per-file parser (`parseCapture`) this
+ * function is a directory-listing wrapper over — reimplementing that wrapper a third time, rather
+ * than reusing the one P6 already wrote, is exactly the duplication `PLAN-M16.md` P7's own brief
+ * names this export to avoid. No other change to this file. */
+export async function listExistingCaptures(paths: ProjectPaths): Promise<readonly ParityCapture[]> {
   const dir = paths.resolveWithin(CAPTURES_DIR);
   if (!(await pathExists(dir))) return [];
   const entries = await listDirSorted(dir);
