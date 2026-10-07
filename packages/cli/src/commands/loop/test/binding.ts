@@ -62,6 +62,7 @@ import {
   resetLaneWorktree,
   resolveRevision,
   revertPathsToRevision,
+  type LaneHandle,
 } from '@forge/vcs';
 
 import { runAndNormalize, type TestOutcome } from './reporter.ts';
@@ -226,6 +227,210 @@ export function splitImplementationAndTestPaths(filesExpected: readonly string[]
   return { implementationPaths, testPaths };
 }
 
+/**
+ * Creates the one scratch lane `runBindingCheck` and (`specs/22` M16 P12) the hunk-mutation engine
+ * both run their own real work against — extracted so both create it identically, from one call
+ * shape, rather than two independently-drifting `createLaneWorktree` calls. The caller owns removal
+ * (`removeLaneWorktree`, in its own `try`/`finally` around whatever it does with the lane this
+ * returns) — this function's own job is creation alone, so that EITHER caller's exception-safety
+ * guarantee ("the lane is removed on every exit path, normal or thrown") lives in exactly the frame
+ * that holds the handle, never split across two functions that could disagree about who cleans up.
+ *
+ * @see specs/22 M15 P3
+ * @see specs/22 M16 P12
+ */
+export async function createBindingLane(input: BindingCheckInput): Promise<LaneHandle> {
+  return createLaneWorktree(input.projectRoot, {
+    runId: input.runId,
+    stepId: `${BINDING_LANE_STEP_ID}-${input.storyId}`,
+    integrationBase: input.integrationBase,
+  });
+}
+
+/**
+ * Everything a hunk-mode caller (`specs/22` M16 P12's own `hunk-mutation.ts`) needs, beyond the plain
+ * `BindingCheckOutcome`, to keep mutating the SAME already-open lane once the change-level check
+ * reaches `'completed'` — present only then (every other outcome means there is no trustworthy green
+ * baseline to mutate against at all, so hunk mode stops at the identical point `runBindingCheck`
+ * itself would have returned early). `toSha`/`fromSha` are the resolved shas the restore step has
+ * already reset the lane back to and reverted from, respectively — a hunk mutant's own "fresh
+ * reset-to-HEAD tree" (`13` F-TEST-10) is `resetLaneWorktree(lane, toSha)`, the identical call this
+ * function's own restore phase already made once. `namedTestsByFile`/`knownNames` are the identical
+ * baseline-derived maps `namesFailedUnderMutation` already closes over, re-exposed (not re-computed)
+ * so a hunk's own per-test, per-KIND attribution can reuse the SAME name/file-matching mechanism
+ * without this file's own private helper having to change its return type to carry a `kind` the
+ * change-level verdict never needed. `mutatedOutcomes` is the raw outcomes of the already-completed,
+ * whole-change mutant run — the one a `granularity: 'change'` hunk report relabels rather than
+ * re-running (`specs/22` M16 P12's own Mandate: "just runBindingCheck's own existing single mutant,
+ * relabelled, not a new code path").
+ */
+export interface ForHunkMode {
+  readonly toSha: string;
+  readonly fromSha: string;
+  readonly namedTestsByFile: ReadonlyMap<string, readonly string[]>;
+  readonly knownNames: ReadonlySet<string>;
+  readonly mutatedOutcomes: readonly TestOutcome[];
+}
+
+/** `runChangeLevelCheck`'s own return shape: the plain outcome every caller (hunked or not) reports,
+ * plus (`specs/22` M16 P12) `forHunkMode`, populated if and only if `outcome.outcome === 'completed'`. */
+export interface ChangeLevelCheckResult {
+  readonly outcome: BindingCheckOutcome;
+  readonly forHunkMode?: ForHunkMode;
+}
+
+/**
+ * Runs M15's own three-phase change-level check (baseline/revert/restore) against an ALREADY-OPEN
+ * lane — the exact body `runBindingCheck`'s own `try` block used to run directly, extracted
+ * (`specs/22` M16 P12) so a caller that wants to keep running MORE mutants against the SAME lane
+ * afterward (the hunk-mutation engine) can call this directly, once, inside its own
+ * `createBindingLane`/`removeLaneWorktree` pair, instead of going through `runBindingCheck` (which
+ * would create a SECOND lane and re-run these same three phases a second time — exactly the
+ * "N + 3 runs," never "N + 6," cost `13` F-TEST-10 states). Never creates or removes `lane` itself:
+ * if this throws, the lane is left open for the CALLER's own `finally` to reclaim, identically to how
+ * `runBindingCheck`'s own `finally` already reclaims a throw from this exact body today.
+ *
+ * @see specs/22 M15 P3
+ * @see specs/22 M16 P12
+ */
+export async function runChangeLevelCheck(
+  lane: LaneHandle,
+  input: BindingCheckInput,
+  implementationPaths: readonly string[],
+  testPaths: readonly string[],
+): Promise<ChangeLevelCheckResult> {
+  const toSha = await resolveRevision(lane.path, 'HEAD');
+  const fromSha = await resolveRevision(lane.path, input.baseRevision);
+
+  const baseline = await runAndNormalize(
+    input.testCommand,
+    lane.path,
+    input.ecosystem,
+    input.createTempPath,
+    undefined,
+    undefined,
+    testPaths,
+    input.timeoutMs,
+  );
+  if (baseline.outcome === 'tool-error') {
+    return { outcome: { outcome: 'baseline-tool-error', message: baseline.message } };
+  }
+  // Checked BEFORE `namedTests` is even computed (`specs/22` M16 P10): a baseline timeout means the
+  // named tests this check would discover never finished running at all — there is no "already
+  // failing" fact here the way `'baseline-not-green'` reports one, so that outcome would misreport
+  // what actually happened.
+  if (baseline.report.outcomes.some((outcome) => outcome.kind === 'timeout')) {
+    return { outcome: { outcome: 'baseline-timeout' } };
+  }
+  // `specs/22` M16 P10 (a fresh critic round): a real vitest/pytest run that matched or collected
+  // ZERO tests is a genuine, well-formed, EMPTY report — not malformed (`reporter.ts`'s own
+  // shape-validation does not and should not refuse it) and not a timeout — so neither check above
+  // catches it. Confirmed directly: `testPaths` naming a file vitest's own positional matching
+  // fails to resolve to anything reports exactly this. Reported as `'completed'` with
+  // `namedTests: []` it would read as "genuinely green, nothing to revert" -- a vacuous pass this
+  // check must refuse the same way `run.ts`'s own identical `outcomes.length === 0` guard already
+  // does for `forge test run`.
+  if (baseline.report.outcomes.length === 0) {
+    return { outcome: { outcome: 'baseline-zero-outcomes' } };
+  }
+  const namedTests = baseline.report.outcomes.map((outcome) => outcome.name);
+  const failingAtBaseline = baseline.report.outcomes
+    .filter((outcome) => outcome.status === 'fail')
+    .map((outcome) => outcome.name);
+  if (failingAtBaseline.length > 0) {
+    return { outcome: { outcome: 'baseline-not-green', failing: failingAtBaseline } };
+  }
+  const knownNames = new Set(namedTests);
+  const namedTestsByFile = new Map<string, string[]>();
+  for (const outcome of baseline.report.outcomes) {
+    if (outcome.file === undefined) continue;
+    const existing = namedTestsByFile.get(outcome.file);
+    if (existing === undefined) namedTestsByFile.set(outcome.file, [outcome.name]);
+    else existing.push(outcome.name);
+  }
+
+  await revertPathsToRevision(lane, fromSha, implementationPaths);
+  const mutated = await runAndNormalize(
+    input.testCommand,
+    lane.path,
+    input.ecosystem,
+    input.createTempPath,
+    undefined,
+    undefined,
+    testPaths,
+    input.timeoutMs,
+  );
+  if (mutated.outcome === 'tool-error') {
+    return { outcome: { outcome: 'mutated-tool-error', message: mutated.message } };
+  }
+  // Checked BEFORE `namesFailedUnderMutation` is ever called (`specs/22` M16 P10): a mutated run
+  // that times out proves nothing about any test — crediting it as `'completed'` with an empty
+  // `failedUnderMutation` would read as "every test is non-binding," which is a different, false
+  // claim from "this check could not finish." See `BindingCheckOutcome.mutated-timeout`'s own doc
+  // comment for the fuller reasoning, and `namesFailedUnderMutation`'s own doc comment for why it
+  // needs no matching guard of its own: this check already keeps it from ever seeing one.
+  if (mutated.report.outcomes.some((outcome) => outcome.kind === 'timeout')) {
+    return { outcome: { outcome: 'mutated-timeout' } };
+  }
+  // `specs/22` M16 P10: the identical "a well-formed, genuinely empty report proves nothing" fact
+  // the baseline check above already refuses -- here, crediting it as `'completed'` with
+  // `failedUnderMutation: []` would read as "every test kept passing under mutation" (non-binding,
+  // by name), when in truth NONE of them ran at all to even have an opinion.
+  if (mutated.report.outcomes.length === 0) {
+    return { outcome: { outcome: 'mutated-zero-outcomes' } };
+  }
+  const failedUnderMutation = namesFailedUnderMutation(
+    namedTestsByFile,
+    knownNames,
+    mutated.report.outcomes,
+  );
+
+  await resetLaneWorktree(lane, toSha);
+  const restored = await runAndNormalize(
+    input.testCommand,
+    lane.path,
+    input.ecosystem,
+    input.createTempPath,
+    undefined,
+    undefined,
+    testPaths,
+    input.timeoutMs,
+  );
+  if (restored.outcome === 'tool-error') {
+    return { outcome: { outcome: 'restore-verification-tool-error', message: restored.message } };
+  }
+  // A restore-run timeout gets no dedicated outcome of its own: its own synthetic outcome's
+  // `status: 'fail'` already makes `.every(... === 'pass')` false below, the identical "a real,
+  // disclosed engine problem" signal a genuinely failed restore already reports via
+  // `restoreVerified: false` (`BindingCheckCompleted`'s own doc comment) — a caller cannot mistake
+  // either case for binding evidence, since `restoreVerified` never feeds `failedUnderMutation`.
+  // The `.length > 0` guard (`specs/22` M16 P10, a fresh critic round) closes the identical
+  // zero-outcomes gap the baseline and mutated phases both got a dedicated outcome for, here folded
+  // into the boolean instead: `[].every(...)` is VACUOUSLY true in JS, so a restore run that
+  // matched zero tests would otherwise report "verified" having proven nothing at all.
+  const restoreVerified =
+    restored.report.outcomes.length > 0 &&
+    restored.report.outcomes.every((outcome) => outcome.status === 'pass');
+
+  return {
+    outcome: {
+      outcome: 'completed',
+      namedTests,
+      failedUnderMutation,
+      restoreVerified,
+      revertedRange: { fromSha, toSha },
+      ranAt: input.clock.now(),
+    },
+    forHunkMode: {
+      toSha,
+      fromSha,
+      namedTestsByFile,
+      knownNames,
+      mutatedOutcomes: mutated.report.outcomes,
+    },
+  };
+}
+
 export async function runBindingCheck(input: BindingCheckInput): Promise<BindingCheckOutcome> {
   const { implementationPaths, testPaths } = splitImplementationAndTestPaths(input.filesExpected);
   // Checked before any lane exists: `runAndNormalize`'s own `files` parameter treats `[]` identically
@@ -236,133 +441,10 @@ export async function runBindingCheck(input: BindingCheckInput): Promise<Binding
     return { outcome: 'no-test-paths' };
   }
 
-  const lane = await createLaneWorktree(input.projectRoot, {
-    runId: input.runId,
-    stepId: `${BINDING_LANE_STEP_ID}-${input.storyId}`,
-    integrationBase: input.integrationBase,
-  });
+  const lane = await createBindingLane(input);
   try {
-    const toSha = await resolveRevision(lane.path, 'HEAD');
-    const fromSha = await resolveRevision(lane.path, input.baseRevision);
-
-    const baseline = await runAndNormalize(
-      input.testCommand,
-      lane.path,
-      input.ecosystem,
-      input.createTempPath,
-      undefined,
-      undefined,
-      testPaths,
-      input.timeoutMs,
-    );
-    if (baseline.outcome === 'tool-error') {
-      return { outcome: 'baseline-tool-error', message: baseline.message };
-    }
-    // Checked BEFORE `namedTests` is even computed (`specs/22` M16 P10): a baseline timeout means the
-    // named tests this check would discover never finished running at all — there is no "already
-    // failing" fact here the way `'baseline-not-green'` reports one, so that outcome would misreport
-    // what actually happened.
-    if (baseline.report.outcomes.some((outcome) => outcome.kind === 'timeout')) {
-      return { outcome: 'baseline-timeout' };
-    }
-    // `specs/22` M16 P10 (a fresh critic round): a real vitest/pytest run that matched or collected
-    // ZERO tests is a genuine, well-formed, EMPTY report — not malformed (`reporter.ts`'s own
-    // shape-validation does not and should not refuse it) and not a timeout — so neither check above
-    // catches it. Confirmed directly: `testPaths` naming a file vitest's own positional matching
-    // fails to resolve to anything reports exactly this. Reported as `'completed'` with
-    // `namedTests: []` it would read as "genuinely green, nothing to revert" -- a vacuous pass this
-    // check must refuse the same way `run.ts`'s own identical `outcomes.length === 0` guard already
-    // does for `forge test run`.
-    if (baseline.report.outcomes.length === 0) {
-      return { outcome: 'baseline-zero-outcomes' };
-    }
-    const namedTests = baseline.report.outcomes.map((outcome) => outcome.name);
-    const failingAtBaseline = baseline.report.outcomes
-      .filter((outcome) => outcome.status === 'fail')
-      .map((outcome) => outcome.name);
-    if (failingAtBaseline.length > 0) {
-      return { outcome: 'baseline-not-green', failing: failingAtBaseline };
-    }
-    const knownNames = new Set(namedTests);
-    const namedTestsByFile = new Map<string, string[]>();
-    for (const outcome of baseline.report.outcomes) {
-      if (outcome.file === undefined) continue;
-      const existing = namedTestsByFile.get(outcome.file);
-      if (existing === undefined) namedTestsByFile.set(outcome.file, [outcome.name]);
-      else existing.push(outcome.name);
-    }
-
-    await revertPathsToRevision(lane, fromSha, implementationPaths);
-    const mutated = await runAndNormalize(
-      input.testCommand,
-      lane.path,
-      input.ecosystem,
-      input.createTempPath,
-      undefined,
-      undefined,
-      testPaths,
-      input.timeoutMs,
-    );
-    if (mutated.outcome === 'tool-error') {
-      return { outcome: 'mutated-tool-error', message: mutated.message };
-    }
-    // Checked BEFORE `namesFailedUnderMutation` is ever called (`specs/22` M16 P10): a mutated run
-    // that times out proves nothing about any test — crediting it as `'completed'` with an empty
-    // `failedUnderMutation` would read as "every test is non-binding," which is a different, false
-    // claim from "this check could not finish." See `BindingCheckOutcome.mutated-timeout`'s own doc
-    // comment for the fuller reasoning, and `namesFailedUnderMutation`'s own doc comment for why it
-    // needs no matching guard of its own: this check already keeps it from ever seeing one.
-    if (mutated.report.outcomes.some((outcome) => outcome.kind === 'timeout')) {
-      return { outcome: 'mutated-timeout' };
-    }
-    // `specs/22` M16 P10: the identical "a well-formed, genuinely empty report proves nothing" fact
-    // the baseline check above already refuses -- here, crediting it as `'completed'` with
-    // `failedUnderMutation: []` would read as "every test kept passing under mutation" (non-binding,
-    // by name), when in truth NONE of them ran at all to even have an opinion.
-    if (mutated.report.outcomes.length === 0) {
-      return { outcome: 'mutated-zero-outcomes' };
-    }
-    const failedUnderMutation = namesFailedUnderMutation(
-      namedTestsByFile,
-      knownNames,
-      mutated.report.outcomes,
-    );
-
-    await resetLaneWorktree(lane, toSha);
-    const restored = await runAndNormalize(
-      input.testCommand,
-      lane.path,
-      input.ecosystem,
-      input.createTempPath,
-      undefined,
-      undefined,
-      testPaths,
-      input.timeoutMs,
-    );
-    if (restored.outcome === 'tool-error') {
-      return { outcome: 'restore-verification-tool-error', message: restored.message };
-    }
-    // A restore-run timeout gets no dedicated outcome of its own: its own synthetic outcome's
-    // `status: 'fail'` already makes `.every(... === 'pass')` false below, the identical "a real,
-    // disclosed engine problem" signal a genuinely failed restore already reports via
-    // `restoreVerified: false` (`BindingCheckCompleted`'s own doc comment) — a caller cannot mistake
-    // either case for binding evidence, since `restoreVerified` never feeds `failedUnderMutation`.
-    // The `.length > 0` guard (`specs/22` M16 P10, a fresh critic round) closes the identical
-    // zero-outcomes gap the baseline and mutated phases both got a dedicated outcome for, here folded
-    // into the boolean instead: `[].every(...)` is VACUOUSLY true in JS, so a restore run that
-    // matched zero tests would otherwise report "verified" having proven nothing at all.
-    const restoreVerified =
-      restored.report.outcomes.length > 0 &&
-      restored.report.outcomes.every((outcome) => outcome.status === 'pass');
-
-    return {
-      outcome: 'completed',
-      namedTests,
-      failedUnderMutation,
-      restoreVerified,
-      revertedRange: { fromSha, toSha },
-      ranAt: input.clock.now(),
-    };
+    const result = await runChangeLevelCheck(lane, input, implementationPaths, testPaths);
+    return result.outcome;
   } finally {
     // Never retained: unlike `loop/debug.ts`'s own RCA lane (which keeps a *recorded fix* for human
     // review), nothing this function ever produces is worth keeping a worktree alive for -- a caller

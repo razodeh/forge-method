@@ -872,3 +872,125 @@ describe('--base governs the whole run (specs/22 M16 P11)', () => {
     expect(withExplicitBase).toEqual(withoutBase);
   });
 });
+
+// --- specs/22 M16 P12: the one, narrowly-scoped, additive `includePatches` export this piece's own
+// brief authorised (the DECISION is recorded in the builder's own report) --------------------------
+
+describe('computeHunks — includePatches (specs/22 M16 P12)', () => {
+  it('omitted (every M16 P11 caller): every TextHunk is byte-identical to before this option existed, patch included (absent, not undefined)', async () => {
+    const dir = await freshRepo();
+    await writeFiles(dir, { 'a.txt': 'line1\nline2\nline3\n' });
+    const baseSha = await commit(dir, 'base');
+    await writeFiles(dir, { 'a.txt': 'line1\nline2-CHANGED\nline3\n' });
+    const head = await commit(dir, 'head');
+
+    const withDefault = await computeHunks({
+      cwd: dir,
+      baseSha,
+      headSha: head,
+      implementationPaths: ['a.txt'],
+    });
+    const withExplicitFalse = await computeHunks({
+      cwd: dir,
+      baseSha,
+      headSha: head,
+      implementationPaths: ['a.txt'],
+      includePatches: false,
+    });
+    expect(withDefault).toEqual(withExplicitFalse);
+    const hunks = textHunks(withDefault.hunks);
+    expect(hunks).toHaveLength(1);
+    expect(hunks[0]?.patch).toBeUndefined();
+    expect(Object.keys(hunks[0] ?? {})).not.toContain('patch');
+  });
+
+  it('true: every TextHunk carries a real patch that, applied for real with "git apply -R --unidiff-zero" (no --check), actually reverses THAT ONE HUNK alone against the real head tree', async () => {
+    const dir = await freshRepo();
+    // Two hunks in one file, far enough apart that `-U0` never merges them -- proves `patch` is
+    // scoped to its OWN hunk alone, never the whole file's combined diff.
+    const lines = Array.from({ length: 12 }, (_, i) => `line${String(i + 1)}`);
+    await writeFiles(dir, { 'two.txt': `${lines.join('\n')}\n` });
+    const baseSha = await commit(dir, 'base');
+    const changed = [...lines];
+    changed[1] = 'line2-CHANGED';
+    changed[10] = 'line11-CHANGED';
+    await writeFiles(dir, { 'two.txt': `${changed.join('\n')}\n` });
+    const head = await commit(dir, 'head');
+
+    const result = await computeHunks({
+      cwd: dir,
+      baseSha,
+      headSha: head,
+      implementationPaths: ['two.txt'],
+      includePatches: true,
+    });
+    const hunks = textHunks(result.hunks);
+    expect(hunks).toHaveLength(2);
+
+    for (const hunk of hunks) {
+      if (hunk.patch === undefined) throw new Error('expected a real patch, got undefined');
+      // Applied against a FRESH checkout of head each time (never stacked on the other hunk's own
+      // reversal) -- the exact precondition the hunk-mutation engine itself relies on (a fresh
+      // reset-to-HEAD tree per hunk).
+      await execa('git', ['checkout', head, '--', 'two.txt'], { cwd: dir });
+      await execa('git', ['apply', '-R', '--unidiff-zero'], {
+        cwd: dir,
+        input: Buffer.from(hunk.patch, 'latin1'),
+      });
+      const reverted = await readFile(path.join(dir, 'two.txt'), 'utf8');
+      if (hunk.oldStart === 2) {
+        expect(reverted).toBe(`${lines.join('\n')}\n`.replace('line11', 'line11-CHANGED'));
+      } else {
+        expect(reverted).toBe(`${lines.join('\n')}\n`.replace('line2', 'line2-CHANGED'));
+      }
+    }
+    await execa('git', ['checkout', head, '--', 'two.txt'], { cwd: dir });
+  });
+
+  it('true: a CRLF file reverses byte-exactly through patch (latin1 round-trip), the identical fixture class hunks.ts itself was built against', async () => {
+    const dir = await freshRepo();
+    await writeFiles(dir, { 'crlf.txt': 'line1\r\nline2\r\nline3\r\n' });
+    const baseSha = await commit(dir, 'base');
+    await writeFiles(dir, { 'crlf.txt': 'line1\r\nline2-CHANGED\r\nline3\r\n' });
+    const head = await commit(dir, 'head');
+
+    const result = await computeHunks({
+      cwd: dir,
+      baseSha,
+      headSha: head,
+      implementationPaths: ['crlf.txt'],
+      includePatches: true,
+    });
+    const hunks = textHunks(result.hunks);
+    expect(hunks).toHaveLength(1);
+    const hunk = hunks[0];
+    if (hunk?.patch === undefined) throw new Error('expected a real patch, got undefined');
+
+    await execa('git', ['apply', '-R', '--unidiff-zero'], {
+      cwd: dir,
+      input: Buffer.from(hunk.patch, 'latin1'),
+    });
+    const reverted = await readFile(path.join(dir, 'crlf.txt'));
+    expect(reverted).toEqual(Buffer.from('line1\r\nline2\r\nline3\r\n', 'utf8'));
+  });
+
+  it('a FileHunk (added file) carries no patch field at all -- there is no per-hunk text to apply for it', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, { 'new.txt': 'brand new file\n' });
+    const head = await commit(dir, 'adds new.txt');
+
+    const result = await computeHunks({
+      cwd: dir,
+      baseSha,
+      headSha: head,
+      implementationPaths: ['new.txt'],
+      includePatches: true,
+    });
+    const files = fileHunks(result.hunks);
+    expect(files).toHaveLength(1);
+    const fileHunk = files[0];
+    if (fileHunk === undefined) throw new Error('expected exactly one FileHunk');
+    expect('patch' in fileHunk).toBe(false);
+  });
+});

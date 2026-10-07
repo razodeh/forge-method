@@ -86,8 +86,22 @@ describe('forge test binding --hunks/--base — CLI dispatch (specs/22 M16 P11)'
 
   it('refuses an unresolvable --base given with --hunks: exit 2, USR-005, naming the real ref it could not resolve', async () => {
     const dir = await freshGitRepo();
+    // `--story` given (`specs/22` M16 P12's own "hunks-without-story" precondition is checked FIRST,
+    // at the dispatch boundary, before `--base` is ever resolved — the identical ordering
+    // `freshGitRepo`'s own doc comment already states for this file as a whole: "before any config or
+    // story is read") so this test still isolates `--base`'s OWN resolution failure, exactly as it did
+    // before that precondition existed; the story need not resolve to a real one, since story
+    // resolution itself happens later, inside `runSingleStoryBindingCommand`, never reached here.
     const result = run(
-      ['test', 'binding', '--hunks', '--base', 'this-ref-does-not-exist-anywhere'],
+      [
+        'test',
+        'binding',
+        '--story',
+        'STORY-DOES-NOT-EXIST',
+        '--hunks',
+        '--base',
+        'this-ref-does-not-exist-anywhere',
+      ],
       dir,
     );
 
@@ -117,11 +131,17 @@ describe('forge test binding --hunks/--base — CLI dispatch (specs/22 M16 P11)'
 
   it('accepts --base HEAD together with --hunks as far as flag validation goes (a real, resolvable ref) — a later, genuine refusal is a DIFFERENT one than USR-005', async () => {
     const dir = await freshGitRepo();
-    // No story named at all, and no `.forge/config.yaml` exists -- `resolveHunkModeBase` resolves
-    // `--base` successfully (proving the wiring reached it and it did its job), and the run fails
-    // LATER, for an unrelated, already-shipped reason (`RUN-111`'s own "no real test ecosystem"),
-    // never USR-005, proving `--base`/`--hunks` themselves were never the problem here.
-    const result = run(['test', 'binding', '--hunks', '--base', 'HEAD', '--json'], dir);
+    // `--story` given (`specs/22` M16 P12's own "hunks-without-story" precondition, checked first, at
+    // the dispatch boundary) so this run reaches `resolveHunkModeBase` at all; the story need not
+    // resolve to a real one, since story resolution happens later, well after the ecosystem/config
+    // checks this test is actually about. No `.forge/config.yaml` exists -- `resolveHunkModeBase`
+    // resolves `--base` successfully (proving the wiring reached it and it did its job), and the run
+    // fails LATER, for an unrelated, already-shipped reason (`RUN-111`'s own "no real test
+    // ecosystem"), never USR-005, proving `--base`/`--hunks` themselves were never the problem here.
+    const result = run(
+      ['test', 'binding', '--story', 'STORY-DOES-NOT-EXIST', '--hunks', '--base', 'HEAD', '--json'],
+      dir,
+    );
 
     expect(result.status).not.toBe(0);
     const lines = result.stdout

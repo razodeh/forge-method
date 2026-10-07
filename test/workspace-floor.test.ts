@@ -209,6 +209,12 @@ const IGNORED_PATHS = new Set([
   // identical "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming
   // heuristic" shape every other entry in this set already establishes.
   'packages/cli/test/commands/parity/fixtures.ts',
+  // `packages/cli/test/commands/loop/test/fixtures/hunk-mutation-check-child.ts` (`specs/22` M16
+  // P12): the real `runHunkMutationCheck` fixture child `hunk-mutation-sigkill.test.ts` spawns via
+  // `node --experimental-strip-types` and `SIGKILL`s as a process group -- the identical "real child
+  // process, never imported, never run as a vitest suite, unrecognised by `TEST_FILE`'s naming
+  // heuristic" shape `binding-check-child.ts` above already establishes, for the identical reason.
+  'packages/cli/test/commands/loop/test/fixtures/hunk-mutation-check-child.ts',
 ]);
 
 /**

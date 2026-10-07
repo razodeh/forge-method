@@ -599,11 +599,29 @@ export const ERROR_CODES = {
     // resolve to a real commit -- the plan leaves this case open ("What a `--base` that does not
     // resolve to a commit does is not in the spec; P11 settles it") and Q294 Decision 8 names a typed
     // refusal as the expected answer.
+    //
+    // `specs/22` M16 P12 adds two more causes to the SAME code, never a new one, because both are the
+    // identical shape of mistake (a hunk-mode-only flag used inconsistently with a partner flag its
+    // own meaning depends on), the same reason P11's own three causes already share one code rather
+    // than three: `03` §3.2.5 row 117's own literal signature is
+    // `forge test binding --story <id> --hunks --base <ref> [--max-hunks <n>]` -- `--hunks` without
+    // `--story` has no single story to mutate against (hunk mode is explicitly single-story, `13`
+    // F-TEST-10's own cost disclosure: "attribution is bounded by the story's own declared tests"), and
+    // `--max-hunks` without `--hunks` governs a mode that is not running at all, the identical
+    // "a flag with no effect outside hunk mode" shape `base-without-hunks` already refuses. Both are
+    // raised directly from `bin.ts`'s own dispatch (never from `hunks.ts`'s `resolveHunkModeBase`,
+    // which knows nothing of `--story`/`--max-hunks` at all), at the identical dispatch-boundary point
+    // the other three causes are already raised from, before any config or story is ever read.
     severity: 'fatal',
     exitCode: EXIT_CODES.usage,
     message: (d: {
       value: string;
-      reason: 'hunks-without-base' | 'base-without-hunks' | 'base-unresolvable';
+      reason:
+        | 'hunks-without-base'
+        | 'base-without-hunks'
+        | 'base-unresolvable'
+        | 'hunks-without-story'
+        | 'max-hunks-without-hunks';
     }) => {
       if (d.reason === 'hunks-without-base') {
         return '--hunks was given without --base: --hunks requires an explicit --base <ref>.';
@@ -611,11 +629,18 @@ export const ERROR_CODES = {
       if (d.reason === 'base-without-hunks') {
         return `--base ${show(d.value)} was given without --hunks: --base has no effect outside hunk mode.`;
       }
+      if (d.reason === 'hunks-without-story') {
+        return '--hunks was given without --story: hunk mode mutates one story at a time.';
+      }
+      if (d.reason === 'max-hunks-without-hunks') {
+        return `--max-hunks ${show(d.value)} was given without --hunks: --max-hunks has no effect outside hunk mode.`;
+      }
       return `--base ${show(d.value)} does not resolve to a real commit in this repository.`;
     },
     remedy:
-      'Pass --hunks together with --base <ref> naming a commit that exists in this repository ' +
-      '(for example --base HEAD~1), or drop both flags to run the plain change-level check.',
+      'Pass --hunks together with --story <id> and --base <ref> naming a commit that exists in this ' +
+      'repository (for example --base HEAD~1); --max-hunks is only meaningful alongside --hunks; or ' +
+      'drop --hunks/--base/--max-hunks together to run the plain change-level check.',
   },
   'RUN-131': {
     // `specs/22` M16 P11 round-2 fix (adversarial critic): `computeHunks` zips the `-U0` diff's own
@@ -637,6 +662,33 @@ export const ERROR_CODES = {
       'Check for an external diff driver or textconv filter configured for one of these paths ' +
       '(.gitattributes, diff.<name>.command) and disable it, then retry; if none is configured, ' +
       'report this as a forge defect.',
+  },
+  'RUN-139': {
+    // `specs/22` M16 P12: originally taken as `RUN-132` (the live ceiling at the time this piece's
+    // worktree was cut); renumbered to `RUN-139` in round 2 once `RUN-132`-`RUN-138` (and
+    // `CFG-514`/`CFG-515`) landed on `main` from a concurrently-building sibling piece (M16 P6,
+    // `forge parity capture`) -- confirmed against a fresh read of `main`'s own `codes.ts` immediately
+    // before this fix, no gap below 139. `--max-hunks <n>` (`03` §3.2.5 row 117), parsed locally in
+    // `bin.ts`'s own
+    // `test binding` dispatch the identical "not a global flag" way `--timeout-ms`/`--rule` already
+    // are. Distinct from `RUN-117` (which this piece could have reused: both are a malformed,
+    // per-command numeric CLI flag) because `RUN-117`'s own message/remedy are hardcoded to "a
+    // positive integer number of MILLISECONDS" -- `--max-hunks` is a positive integer COUNT of hunks,
+    // a different unit this piece's own message states, never silently reusing text that would read
+    // oddly ("...milliseconds") for a flag that counts hunks. `n` is an integer of at least 1 (0, a
+    // negative number and a non-integer are all refused) -- the identical "at least 1" rule
+    // `process/SPEC-QUESTIONS.md` Q294 Decision 9 already gives `forge evidence prune --keep <n>`, for
+    // the identical reason: a bound of 0 would degrade every run straight to `change` granularity
+    // before any real hunk was ever even attempted, which is not what an operator asking for a bound
+    // of zero most plausibly means, and makes the floor an explicit, named decision rather than an
+    // accident of `0 <= 0` happening to type-check.
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { flag: string; value: string }) =>
+      `${show(d.flag)}'s value (${show(d.value)}) is not a positive integer count of hunks.`,
+    remedy:
+      'Pass a positive whole number of hunks (for example, --max-hunks 25), or omit the flag to use ' +
+      'the built-in default.',
   },
   'CFG-003': {
     // `specs/02` §2.5: every write goes through @forge/core/fs, which enforces containment. A path

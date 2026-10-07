@@ -119,8 +119,24 @@ export type FileHunkReason =
  * the current content of `path` in the tree `computeHunks` was given (never dropped when `false` — a
  * caller that cannot mutate this hunk still needs to know it exists, `specs/13` F-TEST-10).
  *
+ * `patch` (`specs/22` M16 P12, additive) is the identical, byte-exact single-hunk unified diff text
+ * (`header + hunkText`, `'latin1'`-decoded exactly as `parseTextSection` already decodes every other
+ * substring of the real diff bytes it slices) that `reversible` above is already computed from and
+ * then discards — kept, instead, only when `computeHunks` is called with `includePatches: true`
+ * (`ComputeHunksOptions`), so a caller that actually needs to APPLY this one hunk's own reversal for
+ * real (M16 P12's own hunk-mutation engine: `git apply -R --unidiff-zero`, the identical call minus
+ * `--check`) does not have to re-derive the latin1/CRLF-correct patch bytes a second time, independently
+ * of this file's own already-proven round-trip logic (this file's own header comment: two full gauntlet
+ * rounds to get right). `undefined` for every EXISTING caller (every one omits `includePatches`, and
+ * every hunk it ever produced keeps the identical shape it always had — `toEqual`/`toMatchObject`
+ * against a literal with no `patch` key still passes, since `undefined` and absent compare equal) —
+ * populated only for a caller that opts in. Converting back to the identical bytes `git apply` needs is
+ * `Buffer.from(hunk.patch, 'latin1')`, the same bijective decode this file's own header comment already
+ * establishes for every other byte-exact round trip here.
+ *
  * @see specs/13 F-TEST-10
  * @see specs/22 M16 P11
+ * @see specs/22 M16 P12
  */
 export interface TextHunk {
   readonly kind: 'text';
@@ -132,6 +148,7 @@ export interface TextHunk {
   readonly newCount: number;
   readonly contentHash: string;
   readonly reversible: boolean;
+  readonly patch?: string;
 }
 
 /**
@@ -179,13 +196,23 @@ export interface HunkParseResult {
  * `specs/22` M16 P11's own Mandate: "the change's own implementation paths only") — this module never
  * re-derives it and never looks at a test path.
  *
+ * `includePatches` (`specs/22` M16 P12, additive): `false`/omitted (every caller before this option
+ * existed) keeps `computeHunks`'s own output byte-for-byte as it always was — `TextHunk.patch` stays
+ * `undefined` on every hunk, and no extra work happens. `true` additionally retains, on every returned
+ * `TextHunk`, the identical solo-patch bytes already computed internally to answer `reversible` (see
+ * `TextHunk.patch`'s own doc comment) — the one, narrow, additive surface the hunk-mutation engine
+ * needs to apply a hunk's own reversal for real, without this module's own classification logic,
+ * `TextHunk`'s existing fields, or any EXISTING caller's observed behaviour changing at all.
+ *
  * @see specs/22 M16 P11
+ * @see specs/22 M16 P12
  */
 export interface ComputeHunksOptions {
   readonly cwd: string;
   readonly baseSha: string;
   readonly headSha: string;
   readonly implementationPaths: readonly string[];
+  readonly includePatches?: boolean;
 }
 
 /** One `git diff --raw --no-renames` entry: a path's status, its old/new blob ids, and its old/new
@@ -428,11 +455,17 @@ async function isPatchReversible(cwd: string, patch: Buffer): Promise<boolean> {
  * comment) — every substring this function slices out of it (a hunk's own header-plus-body text, the
  * shared file header reused for each solo reversibility check) is therefore still byte-exact, and is
  * converted back to real bytes with `Buffer.from(x, 'latin1')` at the one place that matters: the
- * patch handed to `git apply`. */
+ * patch handed to `git apply`.
+ *
+ * `includePatches` (`specs/22` M16 P12): when `true`, every returned `TextHunk` additionally carries
+ * its own `patch` — the identical `header + hunkText` string `soloPatch` below is already built from,
+ * kept instead of discarded once `isPatchReversible` has used it. `false` (every caller before this
+ * option existed) keeps every returned hunk exactly as it always was. */
 async function parseTextSection(
   cwd: string,
   sectionText: string,
   path: string,
+  includePatches: boolean,
 ): Promise<readonly TextHunk[]> {
   const hunkStarts: number[] = [];
   const hunkStartRe = /^@@ /gm;
@@ -473,13 +506,26 @@ async function parseTextSection(
       `${path}\0${String(range.oldStart)},${String(range.oldCount)}` +
         `\0${String(range.newStart)},${String(range.newCount)}\0${contentHash}`,
     );
-    const soloPatch = Buffer.from(header + hunkText, 'latin1');
+    const patchText = header + hunkText;
+    const soloPatch = Buffer.from(patchText, 'latin1');
     // Each hunk's own `git apply --check` runs one at a time, deliberately: it is cheap and
     // independent, and running N of them concurrently would spawn N subprocesses against the same
     // working tree for no real benefit at the hunk counts this mode is bounded to (about two dozen,
     // `specs/13` F-TEST-10's own cost disclosure).
     const reversible = await isPatchReversible(cwd, soloPatch);
-    hunks.push({ kind: 'text', id, path, ...range, contentHash, reversible });
+    hunks.push({
+      kind: 'text',
+      id,
+      path,
+      ...range,
+      contentHash,
+      reversible,
+      // Omitted (never `patch: undefined`) when not requested -- `exactOptionalPropertyTypes` and
+      // this codebase's own established convention (`reporter.ts`'s `makeOutcome`) both treat the two
+      // differently, and only genuine omission keeps every EXISTING caller's own `toEqual`/
+      // `toMatchObject` assertions (none of which ever expects a `patch` key) trivially unaffected.
+      ...(includePatches ? { patch: patchText } : {}),
+    });
   }
   return hunks;
 }
@@ -499,7 +545,7 @@ function makeFileHunk(path: string, reason: FileHunkReason, entry: RawDiffEntry)
  * @see specs/22 M16 P11
  */
 export async function computeHunks(options: ComputeHunksOptions): Promise<HunkParseResult> {
-  const { cwd, baseSha, headSha, implementationPaths } = options;
+  const { cwd, baseSha, headSha, implementationPaths, includePatches = false } = options;
 
   if (implementationPaths.length === 0) {
     // `git diff <base> <head> --` with a trailing `--` and NOTHING after it diffs the WHOLE
@@ -587,7 +633,7 @@ export async function computeHunks(options: ComputeHunksOptions): Promise<HunkPa
       // Each file's own hunks are parsed (and solo reversibility-checked) one section at a time,
       // deliberately — see `parseTextSection`'s own loop for the identical reasoning against running
       // every check concurrently instead.
-      const hunks = await parseTextSection(cwd, section, sectionPath);
+      const hunks = await parseTextSection(cwd, section, sectionPath, includePatches);
       textHunksByPath.set(sectionPath, hunks);
     }
   }

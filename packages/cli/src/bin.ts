@@ -227,6 +227,13 @@ import { test as runTestRefusal } from './commands/loop/test.ts';
 import { runBindingCheck, type BindingCheckCompleted } from './commands/loop/test/binding.ts';
 import { assembleAndWriteMutationEvidence } from './commands/loop/test/binding-evidence.ts';
 import { resolveHunkModeBase } from './commands/loop/test/hunks.ts';
+import {
+  DEFAULT_MAX_HUNKS,
+  runHunkMutationCheck,
+  type HunkMutationEntry,
+  type HunkMutationOptions,
+  type HunkMutationReport,
+} from './commands/loop/test/hunk-mutation.ts';
 import { emitBindingCheckTelemetry } from './commands/loop/test/check-telemetry.ts';
 import {
   appendExemption,
@@ -1478,6 +1485,25 @@ function parseTimeoutMsFlag(raw: string | undefined): number | undefined {
   return value;
 }
 
+/** Parses `--max-hunks`'s raw string value into a real, positive hunk count (`specs/22` M16 P12; `03`
+ * §3.2.5 row 117). `undefined` when the flag was not given at all, in which case the caller applies
+ * `DEFAULT_MAX_HUNKS`. A flag that WAS given but does not parse as a positive whole number is a real,
+ * typed `RUN-139` refusal — the identical `^[0-9]+$` pre-check, and the identical reason for it,
+ * `parseTimeoutMsFlag` just above already gives for `--timeout-ms`; a DIFFERENT code
+ * (`RUN-139`, not a reused `RUN-117`) because `RUN-117`'s own message/remedy are hardcoded to "a
+ * positive integer number of MILLISECONDS", which would read wrongly for a flag that counts hunks. */
+function parseMaxHunksFlag(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  if (!/^[0-9]+$/.test(raw)) {
+    throw new ForgeError('RUN-139', { flag: '--max-hunks', value: raw });
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ForgeError('RUN-139', { flag: '--max-hunks', value: raw });
+  }
+  return value;
+}
+
 /** `test:run`/`test:lint`/`test:typecheck` (`G-Verify.gate.yaml`) each shell `forge test run
  * [--rule lint|typecheck] --json` and read back a top-level numeric `failed` or `errors` field
  * (`failOn: 'failed > 0'` / `'errors > 0'`) — `testRun`'s own return value already carries both,
@@ -1566,6 +1592,12 @@ async function runRawBindingCheck(
   // `--hunks`/`--base` given, or `runTestExemptCommand`'s own pre-check call, which has no `--base`
   // of its own to thread) keeps the M15-shipped default exactly as it was.
   baseRevision?: string,
+  // `specs/22` M16 P12: given if and only if `--hunks` was given (the dispatch boundary's own
+  // `hunks-without-story` refusal guarantees this is never set for discover mode's own call, so
+  // `runDiscoverModeBindingCommand` never has to thread it at all). `undefined` (every call before
+  // this option existed, and `runTestExemptCommand`'s own pre-check call) runs the IDENTICAL plain
+  // `runBindingCheck` this function always ran — byte-identical behaviour, not merely "intended to be".
+  hunkOptions?: HunkMutationOptions,
 ): Promise<
   | { readonly kind: 'skipped' }
   | { readonly kind: 'problem'; readonly problem: string }
@@ -1574,10 +1606,11 @@ async function runRawBindingCheck(
       readonly runId: string;
       readonly result: BindingCheckCompleted;
       readonly rawNonBinding: readonly string[];
+      readonly hunkMutation?: HunkMutationReport;
     }
 > {
   const runId = `test-binding-${story.id}-${clock.now().replace(/[^0-9]/g, '')}`;
-  const result = await runBindingCheck({
+  const input = {
     projectRoot,
     runId,
     storyId: story.id,
@@ -1589,7 +1622,17 @@ async function runRawBindingCheck(
     clock,
     createTempPath: () => createSystemTempPath('forge-test-binding'),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
-  });
+  } as const;
+  // `hunkOptions === undefined` calls the EXACT SAME `runBindingCheck` this function always called,
+  // with the EXACT SAME `input` shape — no new code path for an existing caller (`13` F-TEST-10's own
+  // "every M15 field is unchanged" requirement starts here, at the one place both modes fork). Only a
+  // caller that opted into hunk mode (`bin.ts`'s own `--hunks` dispatch) ever reaches the ELSE branch,
+  // which creates and runs through its OWN lane (`runHunkMutationCheck`'s own doc comment) rather than
+  // a second, independent `runBindingCheck` lane — never N+6 runs for the identical story.
+  const { outcome: result, hunkMutation } =
+    hunkOptions === undefined
+      ? { outcome: await runBindingCheck(input), hunkMutation: undefined }
+      : await runHunkMutationCheck(input, hunkOptions);
   if (result.outcome === 'no-test-paths') return { kind: 'skipped' };
   if (result.outcome !== 'completed') {
     // `baseline-not-green`/`*-tool-error`: a genuine engine problem, never a binding verdict (never
@@ -1614,7 +1657,13 @@ async function runRawBindingCheck(
   const rawNonBinding = result.namedTests.filter(
     (name) => !result.failedUnderMutation.includes(name),
   );
-  return { kind: 'completed', runId, result, rawNonBinding };
+  return {
+    kind: 'completed',
+    runId,
+    result,
+    rawNonBinding,
+    ...(hunkMutation === undefined ? {} : { hunkMutation }),
+  };
 }
 
 /** One story's own binding check, factored out of `runTestBindingCommand` so both its single-story
@@ -1657,6 +1706,11 @@ async function runOneStoryBinding(
   // `specs/22` M16 P11: threaded straight through to `runRawBindingCheck`'s own identically-named,
   // identically-optional parameter.
   baseRevision?: string,
+  // `specs/22` M16 P12: threaded straight through to `runRawBindingCheck`'s own identically-named,
+  // identically-optional parameter. Only `runSingleStoryBindingCommand` ever sets this — the dispatch
+  // boundary's own `hunks-without-story` refusal guarantees `--hunks` is never reachable from discover
+  // mode's own call to this function.
+  hunkOptions?: HunkMutationOptions,
 ): Promise<
   | {
       readonly kind: 'completed';
@@ -1667,6 +1721,7 @@ async function runOneStoryBinding(
       readonly tests: readonly TestOutcomeEntry[];
       readonly restoreVerified: boolean;
       readonly evidenceId: string;
+      readonly hunkMutation?: HunkMutationReport;
     }
   | { readonly kind: 'skipped' }
   | { readonly kind: 'problem'; readonly storyId: string; readonly problem: string }
@@ -1679,10 +1734,11 @@ async function runOneStoryBinding(
     clock,
     timeoutMs,
     baseRevision,
+    hunkOptions,
   );
   if (raw.kind === 'skipped') return { kind: 'skipped' };
   if (raw.kind === 'problem') return { kind: 'problem', storyId: story.id, problem: raw.problem };
-  const { runId, result, rawNonBinding } = raw;
+  const { runId, result, rawNonBinding, hunkMutation } = raw;
   const application = applyExemptions(
     story.id,
     rawNonBinding,
@@ -1732,6 +1788,7 @@ async function runOneStoryBinding(
     tests,
     restoreVerified: result.restoreVerified,
     evidenceId: written.id,
+    ...(hunkMutation === undefined ? {} : { hunkMutation }),
   };
 }
 
@@ -1750,8 +1807,58 @@ async function resolveStoryById(paths: ProjectPaths, storyId: string): Promise<S
   return parsedStory.data;
 }
 
+/** One `hunks[]` entry's own JSON shape (`specs/22` M16 P12; `03` §3.2.5 row 117) — flattens
+ * `HunkVerdict`'s discriminated union down to the plain, flat `{id, path, verdict, killedBy?,
+ * reason?}` shape this family's own envelopes already use elsewhere (`ParityEvidence`'s own
+ * `declarations` entries: "verdict and, where that is not match, its reason"). `killedBy` only for
+ * `kind: 'killed'`, `reason` only for `kind: 'invalid'`/`'skipped'` — omitted, never `undefined` as a
+ * value, matching this file's own established `exactOptionalPropertyTypes` convention throughout. */
+function hunkEntryToJson(entry: HunkMutationEntry): {
+  readonly id: string;
+  readonly path: string;
+  readonly verdict: string;
+  readonly killedBy?: readonly string[];
+  readonly reason?: string;
+} {
+  const { verdict } = entry;
+  return {
+    id: entry.id,
+    path: entry.path,
+    verdict: verdict.kind,
+    ...(verdict.kind === 'killed' ? { killedBy: verdict.killedBy } : {}),
+    ...(verdict.kind === 'invalid' || verdict.kind === 'skipped' ? { reason: verdict.reason } : {}),
+  };
+}
+
+/** The `--json` envelope's own additive hunk-mode fields (`specs/22` M16 P12; `13` F-TEST-10:
+ * "`hunks[]`... a count per non-killed verdict, and `granularity`") — spread into the plain envelope
+ * `runSingleStoryBindingCommand` already prints, never replacing any M15 field. The four counts are
+ * named `<verdict>Hunks` (`process/SPEC-QUESTIONS.md` Q294 Decision 8's own worked `failOn` example,
+ * `'uncoveredHunks > 0'`, fixes this exact spelling as a top-level numeric field a gate check can
+ * read directly, the identical flat-field convention `test:binding`'s own `incomplete` and
+ * `test:run`'s own `failed` already establish). */
+function hunkMutationToJson(report: HunkMutationReport): {
+  readonly hunks: readonly ReturnType<typeof hunkEntryToJson>[];
+  readonly granularity: HunkMutationReport['granularity'];
+  readonly uncoveredHunks: number;
+  readonly invalidHunks: number;
+  readonly timeoutHunks: number;
+  readonly skippedHunks: number;
+} {
+  const count = (kind: 'uncovered' | 'invalid' | 'timeout' | 'skipped'): number =>
+    report.hunks.filter((entry) => entry.verdict.kind === kind).length;
+  return {
+    hunks: report.hunks.map(hunkEntryToJson),
+    granularity: report.granularity,
+    uncoveredHunks: count('uncovered'),
+    invalidHunks: count('invalid'),
+    timeoutHunks: count('timeout'),
+    skippedHunks: count('skipped'),
+  };
+}
+
 /** `--story <id>` given: `specs/22` M15 P4's own single-story behavior, unchanged byte-for-byte since
- * that piece's own gauntlet. */
+ * that piece's own gauntlet; `specs/22` M16 P12 adds `hunkOptions`, additive. */
 async function runSingleStoryBindingCommand(
   paths: ProjectPaths,
   projectRoot: string,
@@ -1767,6 +1874,10 @@ async function runSingleStoryBindingCommand(
   // `specs/22` M16 P11: threaded straight through to `runOneStoryBinding`'s own identically-named,
   // identically-optional parameter.
   baseRevision: string | undefined,
+  // `specs/22` M16 P12: threaded straight through to `runOneStoryBinding`'s own identically-named,
+  // identically-optional parameter. `undefined` for every bare `forge test binding --story <id>`
+  // invocation (no `--hunks`) — the exact, unchanged M15 call shape.
+  hunkOptions: HunkMutationOptions | undefined,
 ): Promise<number> {
   const story = await resolveStoryById(paths, storyId);
   const outcome = await runOneStoryBinding(
@@ -1781,6 +1892,7 @@ async function runSingleStoryBindingCommand(
     runId,
     timeoutMs,
     baseRevision,
+    hunkOptions,
   );
   if (outcome.kind === 'skipped') {
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
@@ -1844,6 +1956,9 @@ async function runSingleStoryBindingCommand(
         evidenceId: outcome.evidenceId,
         restoreVerified: outcome.restoreVerified,
         tests: outcome.tests,
+        // `specs/22` M16 P12: additive only, present iff `--hunks` ran AND the change-level check
+        // reached 'completed' -- every M15 field above is unchanged either way (`13` F-TEST-10).
+        ...(outcome.hunkMutation === undefined ? {} : hunkMutationToJson(outcome.hunkMutation)),
       }),
     );
   } else {
@@ -1854,6 +1969,8 @@ async function runSingleStoryBindingCommand(
     );
     for (const name of outcome.nonBinding) console.error(`non-binding: ${name}`);
   }
+  // Report-only (`13` F-TEST-10): the exit code follows `incomplete` alone, exactly as it does without
+  // `--hunks` -- a hunk's own verdict, whatever it is, never reaches this line.
   return incomplete === 0 ? EXIT_CODES.success : EXIT_CODES.failure;
 }
 
@@ -1990,8 +2107,14 @@ async function runDiscoverModeBindingCommand(
  * function is ever called) — `undefined` for a bare invocation, in which case the `'HEAD~1'` default
  * above is untouched; given, it REPLACES that default for the whole run, the change-level portion
  * included, exactly as `13` F-TEST-10 requires ("it governs the whole run... so the two halves of one
- * `--json` envelope describe one range"). This function never parses `--base`/`--hunks` itself and
- * never calls `resolveHunkModeBase` — a single resolution at the boundary, never one per story. */
+ * `--json` envelope describe one range"). This function never parses `--base`/`--hunks`/`--max-hunks`
+ * itself and never calls `resolveHunkModeBase` — a single resolution at the boundary, never one per
+ * story.
+ *
+ * `hunkOptions` (`specs/22` M16 P12): `undefined` for every bare invocation (no `--hunks`) — threaded
+ * ONLY to single-story mode, never to discover mode, because the dispatch boundary's own
+ * `hunks-without-story` refusal (`USR-005`) already guarantees `--hunks` can never reach this function
+ * with `storyId === undefined` in the first place. */
 async function runTestBindingCommand(
   paths: ProjectPaths,
   projectRoot: string,
@@ -1999,6 +2122,7 @@ async function runTestBindingCommand(
   json: boolean,
   timeoutMs: number | undefined,
   resolvedBaseRevision: string | undefined,
+  hunkOptions: HunkMutationOptions | undefined,
 ): Promise<number> {
   await assertCleanWorkingTree(projectRoot);
 
@@ -2052,6 +2176,7 @@ async function runTestBindingCommand(
     runId,
     timeoutMs,
     resolvedBaseRevision,
+    hunkOptions,
   );
 }
 
@@ -5143,7 +5268,8 @@ async function main(): Promise<number> {
   }
   if (command === 'test' && sub === 'binding') {
     // `specs/22` M16 P11 (`13` F-TEST-10): `--base <ref>` and `--hunks` are new here. `--hunks` takes
-    // no value (`false`), unlike every other flag this command already recognises.
+    // no value (`false`), unlike every other flag this command already recognises. `specs/22` M16 P12
+    // adds `--max-hunks <n>` (`03` §3.2.5 row 117).
     const {
       values,
       flags: bindingFlags,
@@ -5153,9 +5279,25 @@ async function main(): Promise<number> {
       '--timeout-ms': true,
       '--base': true,
       '--hunks': false,
+      '--max-hunks': true,
     });
     assertNoArgs(positionals);
     const timeoutMs = parseTimeoutMsFlag(values.get('--timeout-ms'));
+    const storyId = values.get('--story');
+    const hunksRequested = bindingFlags.has('--hunks');
+    const rawMaxHunks = values.get('--max-hunks');
+    // `specs/22` M16 P12: `--hunks` mutates one story at a time (`13` F-TEST-10's own "attribution is
+    // bounded by the story's own declared tests"), and `--max-hunks` means nothing outside hunk mode
+    // — both are the identical shape of mistake P11's own `--base`-without-`--hunks` refusal already
+    // covers, so both share its code (`USR-005`), raised directly here rather than from
+    // `resolveHunkModeBase` (which knows nothing of `--story`/`--max-hunks` at all), before any config
+    // or story is ever read, the identical ordering the other three causes already get.
+    if (hunksRequested && storyId === undefined) {
+      throw new ForgeError('USR-005', { value: '', reason: 'hunks-without-story' });
+    }
+    if (!hunksRequested && rawMaxHunks !== undefined) {
+      throw new ForgeError('USR-005', { value: rawMaxHunks, reason: 'max-hunks-without-hunks' });
+    }
     // Resolved ONCE, here, at the dispatch boundary, before either binding mode runs — never
     // per-story, and never inside `runTestBindingCommand` itself (see that function's own doc
     // comment). A typed `USR-005` refusal (both usage-error directions, and an unresolvable
@@ -5164,15 +5306,20 @@ async function main(): Promise<number> {
     const resolvedBaseRevision = await resolveHunkModeBase({
       cwd: projectRoot,
       base: values.get('--base'),
-      hunks: bindingFlags.has('--hunks'),
+      hunks: hunksRequested,
     });
+    const maxHunks = parseMaxHunksFlag(rawMaxHunks);
+    const hunkOptions: HunkMutationOptions | undefined = hunksRequested
+      ? { maxHunks: maxHunks ?? DEFAULT_MAX_HUNKS }
+      : undefined;
     return runTestBindingCommand(
       paths,
       projectRoot,
-      values.get('--story'),
+      storyId,
       flags.json,
       timeoutMs,
       resolvedBaseRevision,
+      hunkOptions,
     );
   }
   if (command === 'test' && sub === 'exempt') {
