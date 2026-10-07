@@ -192,6 +192,10 @@ const SAMPLE_DETAILS = {
   capBytes: 8_000_000,
   surface: 'process',
   stream: 'stdout',
+  // `RUN-130` (`specs/22` M16 P4): a normalise rule that could not be applied to one case's own
+  // observation (`surface` above, shared with M16 P3's own entries, already covers this code's
+  // own `surface` key; `rule` names the normalize rule, distinct from `policy`/`feature` above).
+  rule: 'json-canonical',
 } satisfies Record<string, unknown> as never;
 
 /**
@@ -203,7 +207,7 @@ const SAMPLE_DETAILS = {
  * remedies are "do the thing again after fixing it".
  */
 const IMPERATIVE_VERBS =
-  /^(Run|Re-run|Set|Add|Remove|Rename|Move|Check|Install|Upgrade|Update|Configure|Choose|Delete|Edit|Pass|Reduce|Raise|Wait|Retry|Resolve|Split|Merge|Replace|Provide|Create|Restore|Approve|Waive|Stop|Free|Point|Supersede|Address|Verify|Re-verify|Write|Fix|Widen|Commit)\b/;
+  /^(Run|Re-run|Set|Add|Remove|Rename|Move|Check|Install|Upgrade|Update|Configure|Choose|Delete|Edit|Pass|Reduce|Raise|Wait|Retry|Resolve|Split|Merge|Replace|Provide|Create|Restore|Approve|Waive|Stop|Free|Point|Supersede|Address|Verify|Re-verify|Write|Fix|Widen|Commit|Simplify)\b/;
 
 /** CSI introducer. Written as an escape so the source stays free of control characters. */
 const ESC = '[';

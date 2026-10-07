@@ -2905,6 +2905,98 @@ export const ERROR_CODES = {
       'Free numbers by archiving or renumbering existing documents of this type (never reusing one ' +
       'still in use), or raise the type’s `idWidth` in the artifact type registry.',
   },
+  // `specs/22` M16 P4, `13` F-TEST-9: a `replace` rule whose pattern the piece's own conservative
+  // nested-quantifier lint flags as catastrophic-backtracking shaped, checked once per declaration by
+  // `packages/cli/src/commands/parity/replace-lint.ts`'s own `assertParityDeclarationPatternsSafe`
+  // (declaration.ts's own `readNormalizeRule` comment says this lint is "PLAN-M16.md P4's own job...
+  // not this pure loader's", so it is this code's one throw site rather than a second home for
+  // `CFG-510`). The identical `file`/`key`/`detail`/`more` shape `CFG-510` already gives an invalid
+  // parity file, reused here rather than invented afresh, since both are "this reviewed file cannot
+  // be trusted at this key" -- a pathological pattern makes a declaration `invalid`, exactly as an
+  // unvettable `run` already does.
+  'CFG-511': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; key: string; detail: string; more?: number }) =>
+      `Parity file ${show(d.file)} is invalid at ${show(d.key)}: ${show(d.detail)}` +
+      (typeof d.more === 'number' && d.more > 0
+        ? ` (${String(d.more)} more problem(s) follow it)`
+        : '.'),
+    remedy:
+      'Simplify the pattern so no quantified group contains another quantified atom (for example, ' +
+      'replace `(a+)+` with `a+`), or remove the rule and filter the difference another way.',
+  },
+  // `specs/22` M16 P4, `13` F-TEST-9, Q294 Decision 7 (round 3): two or more CONTENT-DISCARDING
+  // normalise rules (`replace`, `sort-lines`, `trim-trailing-whitespace`) sharing one effective scope
+  // (a named stream/file, or the implicit "every scope" an unscoped rule hits) can compound to erase
+  // two genuinely different observations down to the identical bytes, even though neither rule alone
+  // trips the erase-everything guard -- a round-2 fix closed the single-rule whole-match case; this
+  // is the structural, declaration-level restriction a round-3 critic's own chained-rule repro forced
+  // instead of a second detection heuristic (full provenance tracking through every rule being the
+  // only fully general fix, and a conservative structural refusal being safer to trust than another
+  // clever heuristic after the first one's own gap). The identical `file`/`key`/`detail`/`more` shape
+  // `CFG-510`/`CFG-511` already give an invalid parity file, reused here for the same reason, with its
+  // own dedicated remedy (see `CFG-511`'s neighbouring comment for why this is a new code rather than
+  // a reuse of that one): `replace-lint.ts`'s own `assertNoConflictingContentDiscardingRules` is this
+  // code's one throw site.
+  'CFG-512': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; key: string; detail: string; more?: number }) =>
+      `Parity file ${show(d.file)} is invalid at ${show(d.key)}: ${show(d.detail)}` +
+      (typeof d.more === 'number' && d.more > 0
+        ? ` (${String(d.more)} more problem(s) follow it)`
+        : '.'),
+    remedy:
+      'Reduce the content-discarding rules (replace, sort-lines, trim-trailing-whitespace) that ' +
+      'apply to one stream or file to at most one, or scope each to a different stream or file.',
+  },
+  // `specs/22` M16 P4, `13` F-TEST-9, Q294 Decision 7 (round 5): the SAME normalise rule kind -- any
+  // of the seven, not only the three content-discarding ones -- applied more than once to the same
+  // effective scope. Round 4 narrowed `strip-ansi`'s own final-byte range; a round-5 critic then
+  // found that `strip-ansi` applied TWICE to one scope is not idempotent regardless of that
+  // narrowing (a dangling, never-completed `ESC[<params>` prefix can become adjacent to new literal
+  // text once a first pass removes whatever sat between it and a LATER, complete CSI sequence, and a
+  // second pass then reads that literal text as the dangling prefix's own final byte -- a sequence
+  // that did not exist in the original bytes at all). `CFG-512` never counted `strip-ansi` (not a
+  // content-discarding kind), so nothing before this stopped it. Rather than patch this one
+  // mechanism, the restriction generalises to all seven kinds: no kind may repeat on one scope,
+  // full stop, since four straight rounds have each found a new, specific way around a narrower
+  // guard. The identical `file`/`key`/`detail`/`more` shape `CFG-510`/`CFG-511`/`CFG-512` already
+  // give an invalid parity file, reused here with its OWN dedicated remedy (see `CFG-512`'s
+  // neighbouring comment, and `replace-lint.ts`'s own `assertNoRepeatedRuleKindInScope`, for why this
+  // is a new code rather than an extension of `CFG-512`'s own fixed remedy string): that function is
+  // this code's one throw site.
+  'CFG-513': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; key: string; detail: string; more?: number }) =>
+      `Parity file ${show(d.file)} is invalid at ${show(d.key)}: ${show(d.detail)}` +
+      (typeof d.more === 'number' && d.more > 0
+        ? ` (${String(d.more)} more problem(s) follow it)`
+        : '.'),
+    remedy:
+      'Remove the duplicate occurrence of this rule within its scope, or move it to a different ' +
+      'stream or file so each occurrence applies to a separate target.',
+  },
+  // `specs/22` M16 P4, `13` F-TEST-9: a `json-canonical` or `ignore-json-pointers` rule that cannot be
+  // applied to this case's own observation on one side of the comparison, because that observation
+  // does not parse as JSON -- a DIFFERENT failure than an ordinary content `mismatch`, since the
+  // declaration asked for JSON handling and did not get it (`13` F-TEST-9's own normalisation
+  // bullet). `detail` deliberately never echoes `JSON.parse`'s own thrown message, which can include a
+  // fragment of the offending text (V8's own `SyntaxError` text names the unexpected character): this
+  // is the one place `QUALITY-BAR.md` R2's "include the observed value" guidance is deliberately
+  // narrowed, because F-TEST-9's information boundary ("never what the text was") outranks it here --
+  // `compare.ts`'s own `decideCaseVerdict` is this code's one throw site.
+  'RUN-130': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { surface: string; index: number; rule: string; detail: string }) =>
+      `Surface ${show(d.surface)} case ${show(d.index)}'s ${show(d.rule)} rule could not be applied: ${show(d.detail)}.`,
+    remedy:
+      'Remove the named rule from this case’s "normalize" list, or confirm the observation it ' +
+      'runs against is valid JSON before comparison.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */
