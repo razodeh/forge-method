@@ -196,6 +196,10 @@ const SAMPLE_DETAILS = {
   // observation (`surface` above, shared with M16 P3's own entries, already covers this code's
   // own `surface` key; `rule` names the normalize rule, distinct from `policy`/`feature` above).
   rule: 'json-canonical',
+  // `RUN-131` (`specs/22` M16 P11, round-2 fix): the `-U0` diff's own file-section count disagreeing
+  // with the number of text paths `computeHunks` expected it to describe.
+  sectionCount: 3,
+  pathCount: 4,
 } satisfies Record<string, unknown> as never;
 
 /**

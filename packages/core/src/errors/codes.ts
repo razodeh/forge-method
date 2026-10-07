@@ -590,6 +590,54 @@ export const ERROR_CODES = {
       'Check the file by hand, or re-run `forge report --baseline` to overwrite it with a fresh, ' +
       'valid snapshot if the old one cannot be recovered.',
   },
+  'USR-005': {
+    // `specs/22` M16 P11 (`13` F-TEST-10; `process/SPEC-QUESTIONS.md` Q294 Decision 8): hunk-mode
+    // binding (`forge test binding --hunks`) needs an explicit `--base <ref>` governing the whole
+    // run; `--hunks` without it, and `--base` without `--hunks`, are both usage errors ("`--hunks`
+    // without it is a usage error, and so is `--base` without `--hunks`"). A third, distinct cause
+    // shares this code: `--base` given alongside `--hunks` but naming a ref this repository cannot
+    // resolve to a real commit -- the plan leaves this case open ("What a `--base` that does not
+    // resolve to a commit does is not in the spec; P11 settles it") and Q294 Decision 8 names a typed
+    // refusal as the expected answer.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: {
+      value: string;
+      reason: 'hunks-without-base' | 'base-without-hunks' | 'base-unresolvable';
+    }) => {
+      if (d.reason === 'hunks-without-base') {
+        return '--hunks was given without --base: --hunks requires an explicit --base <ref>.';
+      }
+      if (d.reason === 'base-without-hunks') {
+        return `--base ${show(d.value)} was given without --hunks: --base has no effect outside hunk mode.`;
+      }
+      return `--base ${show(d.value)} does not resolve to a real commit in this repository.`;
+    },
+    remedy:
+      'Pass --hunks together with --base <ref> naming a commit that exists in this repository ' +
+      '(for example --base HEAD~1), or drop both flags to run the plain change-level check.',
+  },
+  'RUN-131': {
+    // `specs/22` M16 P11 round-2 fix (adversarial critic): `computeHunks` zips the `-U0` diff's own
+    // per-file sections against the text paths it already resolved from the structurally unquoted
+    // `--raw -z` listing, POSITIONALLY -- never by re-parsing a path out of the human-readable "+++
+    // b/<path>" line, which git C-quotes unconditionally for a path holding a control character,
+    // backslash or `"` (confirmed directly; `core.quotePath=false` does not suppress that). The zip
+    // is sound because both listings share one sorted (tree) order for the identical base/head
+    // inputs (confirmed directly with a real multi-file, weird-named fixture), but it is still an
+    // invariant across two separate git invocations, not a fact checkable at every call site, so a
+    // mismatched count is this typed refusal rather than a silent misattribution of one path's own
+    // hunks to a different path's name.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { sectionCount: number; pathCount: number }) =>
+      `the unified diff produced ${show(d.sectionCount)} file section(s) for ${show(d.pathCount)} ` +
+      'text path(s), which should always match.',
+    remedy:
+      'Check for an external diff driver or textconv filter configured for one of these paths ' +
+      '(.gitattributes, diff.<name>.command) and disable it, then retry; if none is configured, ' +
+      'report this as a forge defect.',
+  },
   'CFG-003': {
     // `specs/02` §2.5: every write goes through @forge/core/fs, which enforces containment. A path
     // that resolves outside the project root — by traversal, by being absolute, or by a symlink —

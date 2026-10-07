@@ -225,6 +225,7 @@ import { templateValidateAll } from './commands/template.ts';
 import { test as runTestRefusal } from './commands/loop/test.ts';
 import { runBindingCheck, type BindingCheckCompleted } from './commands/loop/test/binding.ts';
 import { assembleAndWriteMutationEvidence } from './commands/loop/test/binding-evidence.ts';
+import { resolveHunkModeBase } from './commands/loop/test/hunks.ts';
 import { emitBindingCheckTelemetry } from './commands/loop/test/check-telemetry.ts';
 import {
   appendExemption,
@@ -1512,6 +1513,12 @@ async function runRawBindingCheck(
   // check makes. Optional, and the last parameter, so `runTestExemptCommand`'s own pre-check call
   // (which has no `--timeout-ms` of its own to thread) keeps compiling unchanged.
   timeoutMs?: number,
+  // `specs/22` M16 P11 (`13` F-TEST-10, `--base`): the resolved sha `resolveHunkModeBase` returns for
+  // a hunk-mode invocation, replacing the `'HEAD~1'` default below -- `--base` governs the WHOLE run,
+  // the change-level portion included, so this is where that threading lands. `undefined` (no
+  // `--hunks`/`--base` given, or `runTestExemptCommand`'s own pre-check call, which has no `--base`
+  // of its own to thread) keeps the M15-shipped default exactly as it was.
+  baseRevision?: string,
 ): Promise<
   | { readonly kind: 'skipped' }
   | { readonly kind: 'problem'; readonly problem: string }
@@ -1531,7 +1538,7 @@ async function runRawBindingCheck(
     testCommand,
     ecosystem,
     integrationBase: 'HEAD',
-    baseRevision: 'HEAD~1',
+    baseRevision: baseRevision ?? 'HEAD~1',
     clock,
     createTempPath: () => createSystemTempPath('forge-test-binding'),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -1600,6 +1607,9 @@ async function runOneStoryBinding(
   // `specs/22` M16 P10: threaded straight through to `runRawBindingCheck`'s own identically-named,
   // identically-optional parameter.
   timeoutMs?: number,
+  // `specs/22` M16 P11: threaded straight through to `runRawBindingCheck`'s own identically-named,
+  // identically-optional parameter.
+  baseRevision?: string,
 ): Promise<
   | {
       readonly kind: 'completed';
@@ -1621,6 +1631,7 @@ async function runOneStoryBinding(
     ecosystem,
     clock,
     timeoutMs,
+    baseRevision,
   );
   if (raw.kind === 'skipped') return { kind: 'skipped' };
   if (raw.kind === 'problem') return { kind: 'problem', storyId: story.id, problem: raw.problem };
@@ -1706,6 +1717,9 @@ async function runSingleStoryBindingCommand(
   json: boolean,
   runId: string | undefined,
   timeoutMs: number | undefined,
+  // `specs/22` M16 P11: threaded straight through to `runOneStoryBinding`'s own identically-named,
+  // identically-optional parameter.
+  baseRevision: string | undefined,
 ): Promise<number> {
   const story = await resolveStoryById(paths, storyId);
   const outcome = await runOneStoryBinding(
@@ -1719,6 +1733,7 @@ async function runSingleStoryBindingCommand(
     exemptions,
     runId,
     timeoutMs,
+    baseRevision,
   );
   if (outcome.kind === 'skipped') {
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
@@ -1829,6 +1844,10 @@ async function runDiscoverModeBindingCommand(
   json: boolean,
   runId: string | undefined,
   timeoutMs: number | undefined,
+  // `specs/22` M16 P11: threaded straight through to `runOneStoryBinding`'s own identically-named,
+  // identically-optional parameter, uniformly with every other story this mode checks — whether hunk
+  // mode itself is meaningful without `--story` is P12's own call (this piece only threads the flag).
+  baseRevision: string | undefined,
 ): Promise<number> {
   const doneStories = await loadDoneStories(paths, specsRoot);
   const outcomes = await Promise.all(
@@ -1844,6 +1863,7 @@ async function runDiscoverModeBindingCommand(
         exemptions,
         runId,
         timeoutMs,
+        baseRevision,
       ),
     ),
   );
@@ -1911,18 +1931,27 @@ async function runDiscoverModeBindingCommand(
 /** `forge test binding [--story <id>] [--json]` (`specs/22` M15 P4, extended by M15 P5): refuses a
  * dirty tree before any git work, then dispatches to single-story mode (`--story` given, M15 P4,
  * unchanged) or discover mode (no `--story`, M15 P5 — `G-Verify.gate.yaml`'s own real invocation
- * shape). `baseRevision` (what the implementation is reverted BACK TO) is `HEAD~1` — a real, disclosed
- * v1 simplification (`PLAN-M15.md` P3's own research found no existing convention for "the commit
- * before this story's implementation landed," and this Mandate's own CLI signature takes no flag to
- * override it): correct for the common case of one story landing as one commit, not for a story whose
- * implementation spans several. `integrationBase` is always `'HEAD'` — the current state, implementation
- * included, is the only state a bare CLI invocation can reasonably mean by "this story's own work." */
+ * shape). `baseRevision` (what the implementation is reverted BACK TO) is `HEAD~1` by default — a
+ * real, disclosed v1 simplification (`PLAN-M15.md` P3's own research found no existing convention for
+ * "the commit before this story's implementation landed"): correct for the common case of one story
+ * landing as one commit, not for a story whose implementation spans several. `integrationBase` is
+ * always `'HEAD'` — the current state, implementation included, is the only state a bare CLI
+ * invocation can reasonably mean by "this story's own work."
+ *
+ * `resolvedBaseRevision` (`specs/22` M16 P11, `13` F-TEST-10): the caller's own already-validated,
+ * already-resolved `--base` sha (`resolveHunkModeBase`, run once at the dispatch boundary before this
+ * function is ever called) — `undefined` for a bare invocation, in which case the `'HEAD~1'` default
+ * above is untouched; given, it REPLACES that default for the whole run, the change-level portion
+ * included, exactly as `13` F-TEST-10 requires ("it governs the whole run... so the two halves of one
+ * `--json` envelope describe one range"). This function never parses `--base`/`--hunks` itself and
+ * never calls `resolveHunkModeBase` — a single resolution at the boundary, never one per story. */
 async function runTestBindingCommand(
   paths: ProjectPaths,
   projectRoot: string,
   storyId: string | undefined,
   json: boolean,
   timeoutMs: number | undefined,
+  resolvedBaseRevision: string | undefined,
 ): Promise<number> {
   await assertCleanWorkingTree(projectRoot);
 
@@ -1960,6 +1989,7 @@ async function runTestBindingCommand(
       json,
       runId,
       timeoutMs,
+      resolvedBaseRevision,
     );
   }
   return runSingleStoryBindingCommand(
@@ -1974,6 +2004,7 @@ async function runTestBindingCommand(
     json,
     runId,
     timeoutMs,
+    resolvedBaseRevision,
   );
 }
 
@@ -5064,13 +5095,38 @@ async function main(): Promise<number> {
     return runTestFlakyCommand(paths, flags.json);
   }
   if (command === 'test' && sub === 'binding') {
-    const { values, positionals } = parseCommandFlags(rest, {
+    // `specs/22` M16 P11 (`13` F-TEST-10): `--base <ref>` and `--hunks` are new here. `--hunks` takes
+    // no value (`false`), unlike every other flag this command already recognises.
+    const {
+      values,
+      flags: bindingFlags,
+      positionals,
+    } = parseCommandFlags(rest, {
       '--story': true,
       '--timeout-ms': true,
+      '--base': true,
+      '--hunks': false,
     });
     assertNoArgs(positionals);
     const timeoutMs = parseTimeoutMsFlag(values.get('--timeout-ms'));
-    return runTestBindingCommand(paths, projectRoot, values.get('--story'), flags.json, timeoutMs);
+    // Resolved ONCE, here, at the dispatch boundary, before either binding mode runs — never
+    // per-story, and never inside `runTestBindingCommand` itself (see that function's own doc
+    // comment). A typed `USR-005` refusal (both usage-error directions, and an unresolvable
+    // `--base`) is thrown from here, before `runTestBindingCommand`'s own `assertCleanWorkingTree`
+    // or config loading ever runs.
+    const resolvedBaseRevision = await resolveHunkModeBase({
+      cwd: projectRoot,
+      base: values.get('--base'),
+      hunks: bindingFlags.has('--hunks'),
+    });
+    return runTestBindingCommand(
+      paths,
+      projectRoot,
+      values.get('--story'),
+      flags.json,
+      timeoutMs,
+      resolvedBaseRevision,
+    );
   }
   if (command === 'test' && sub === 'exempt') {
     const { values, positionals } = parseCommandFlags(rest, {
