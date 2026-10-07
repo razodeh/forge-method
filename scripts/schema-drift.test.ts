@@ -40,9 +40,9 @@ function fixtureJsonDir(files: Readonly<Record<string, string>>): {
 describe('runEmitSchemas', () => {
   it('emits exactly one file per registered artifact type, plus one for config', () => {
     const schemas = runEmitSchemas();
-    // 26 registry types (specs/18 §18.7, post-v1.0 M15: + MutationEvidence, EvidenceBundle, Exemption,
-    // Disclosure) + configSchema.
-    expect(schemas.size).toBe(27);
+    // 27 registry types (specs/18 §18.7, post-v1.0 M15: + MutationEvidence, EvidenceBundle, Exemption,
+    // Disclosure; post-v1.0 M16: + ParityEvidence) + configSchema.
+    expect(schemas.size).toBe(28);
     expect(schemas.has('config.schema.json')).toBe(true);
   });
 

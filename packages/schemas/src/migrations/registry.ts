@@ -1,21 +1,26 @@
 /**
  * `MIGRATIONS`, `validateMigrationRegistry` — the real migration set and its registration rule.
  *
- * `MIGRATIONS` is empty at M1: `18` §18.6's `schemaVersion` starts at `1` for every type, so there is
- * nothing yet to migrate from. This piece delivers the runner and its own tests, per `PLAN-M1.md` P10.
+ * `MIGRATIONS` was empty at M1: `18` §18.6's `schemaVersion` starts at `1` for every type, so there
+ * was nothing yet to migrate from. `specs/22` M16 P5 adds its first two real entries, both `1→2`
+ * (`18` §18.9, `process/plans/PLAN-M16.md` P5): `mutationEvidence1To2` and `evidenceBundle1To2`.
  *
  * @see specs/18 §18.9
  * @see PLAN-M1.md P10
+ * @see process/plans/PLAN-M16.md P5
  */
 import type { ArtifactTypeId } from '../registry/artifact-types.ts';
+import { evidenceBundle1To2 } from './evidence-bundle-1-to-2.ts';
+import { mutationEvidence1To2 } from './mutation-evidence-1-to-2.ts';
 import type {
   Migration,
   MigrationRegistryFailureReason,
   ValidateMigrationRegistryResult,
 } from './types.ts';
 
-/** The real, committed migration chain. Empty at M1 — see this file's doc comment. */
-export const MIGRATIONS: readonly Migration[] = [];
+/** The real, committed migration chain — `specs/22` M16 P5's own two `1→2` migrations, its first
+ * real entries (see this file's doc comment). */
+export const MIGRATIONS: readonly Migration[] = [mutationEvidence1To2, evidenceBundle1To2];
 
 /**
  * Refuses a malformed migration registry — "at registration" per `PLAN-M1.md` P10's Check, i.e.

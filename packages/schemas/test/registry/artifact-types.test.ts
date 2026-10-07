@@ -143,12 +143,19 @@ const SPEC_TABLE: readonly Omit<ArtifactTypeDefinition, 'requiredSections'>[] = 
     idWidth: 3,
     collection: true,
   },
+  // Added post-v1.0 (`specs/22` M16, `PLAN-M16.md` P5) -- see `artifact-types.ts`'s own trailing entry.
+  {
+    id: 'ParityEvidence',
+    idPrefix: 'PAR',
+    pathTemplate: 'reports/parity/{id}-{slug}.md',
+    idWidth: 3,
+  },
 ];
 
 describe('specs/18 §18.7 — the registry table', () => {
-  it('has exactly 26 types (21 original + ReviewReport, MutationEvidence, EvidenceBundle, Exemption, Disclosure, each added post-v1.0)', () => {
-    expect(SPEC_TABLE).toHaveLength(26);
-    expect(ARTIFACT_TYPES).toHaveLength(26);
+  it('has exactly 27 types (21 original + ReviewReport, MutationEvidence, EvidenceBundle, Exemption, Disclosure, ParityEvidence, each added post-v1.0)', () => {
+    expect(SPEC_TABLE).toHaveLength(27);
+    expect(ARTIFACT_TYPES).toHaveLength(27);
   });
 
   it('matches the spec table row-for-row, in order', () => {
@@ -301,8 +308,8 @@ describe('definitionForType', () => {
  * makes to `outputGlob` (`@forge/engine`) has a full, independent ground truth to be built on top of;
  * `packages/engine/test/dispatch/outputs.test.ts`'s own `outputGlob` table asserts the composed result
  * (this tail plus a configured root) is unchanged for every one of these same types — 22 at the time of
- * the P33 refactor itself, now all 25 including `MutationEvidence`/`EvidenceBundle`/`Exemption`
- * (post-v1.0 M15).
+ * the P33 refactor itself, now all 27 including `MutationEvidence`/`EvidenceBundle`/`Exemption`
+ * (post-v1.0 M15) and `ParityEvidence` (post-v1.0 M16 P5).
  */
 describe('registryTail (P33)', () => {
   const EXPECTED: Readonly<Record<ArtifactTypeId, string>> = {
@@ -332,6 +339,7 @@ describe('registryTail (P33)', () => {
     MutationEvidence: 'mutation/*-*.md',
     EvidenceBundle: 'evidence/EVID-*-*.md',
     Disclosure: 'kb/disclosures.md',
+    ParityEvidence: 'parity/PAR-*.md',
   };
 
   it('enumerates every registered type (a floor against a vacuous pass)', () => {

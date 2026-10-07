@@ -16,7 +16,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../
 const templatesDir = path.join(repoRoot, 'packages', 'templates', 'templates', 'artifacts');
 
 /**
- * The 25 `@forge/templates` stubs, read directly off disk rather than imported: `@forge/core` has no
+ * The 27 `@forge/templates` stubs, read directly off disk rather than imported: `@forge/core` has no
  * `@forge/templates` dependency (`02` §2.2), and a plain filesystem read of a sibling package's data
  * files is not a package import the boundary rule has any opinion about.
  */
@@ -25,8 +25,8 @@ const templateFiles = readdirSync(templatesDir)
   .sort();
 
 describe('ArtifactDocument.parse — round-trip corpus', () => {
-  it('found all 26 @forge/templates stubs to test against', () => {
-    expect(templateFiles).toHaveLength(26);
+  it('found all 27 @forge/templates stubs to test against', () => {
+    expect(templateFiles).toHaveLength(27);
   });
 
   it.each(templateFiles)('%s round-trips byte-for-byte with no edits', (fileName) => {

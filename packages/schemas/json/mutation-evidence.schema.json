@@ -48,12 +48,116 @@
       },
       "type": "array"
     },
+    "hunkRun": {
+      "additionalProperties": false,
+      "properties": {
+        "baseSha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "type": "string"
+        },
+        "diffAlgorithm": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "granularity": {
+          "enum": [
+            "hunk",
+            "file",
+            "change"
+          ],
+          "type": "string"
+        },
+        "hunks": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "contentHash": {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "killedBy": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "path": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "ranges": {
+                "additionalProperties": false,
+                "properties": {
+                  "new": {
+                    "$ref": "#/properties/hunkRun/properties/hunks/items/properties/ranges/properties/old"
+                  },
+                  "old": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "length": {
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "start": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "start",
+                      "length"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "old",
+                  "new"
+                ],
+                "type": "object"
+              },
+              "verdict": {
+                "enum": [
+                  "killed",
+                  "uncovered",
+                  "invalid",
+                  "timeout",
+                  "skipped"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "path",
+              "ranges",
+              "contentHash",
+              "verdict"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "baseSha",
+        "diffAlgorithm",
+        "granularity",
+        "hunks"
+      ],
+      "type": "object"
+    },
     "id": {
       "pattern": "^[A-Z]+-\\d{3,4}(-\\d+)?$",
       "type": "string"
     },
     "mutationKind": {
-      "const": "revert-implementation",
+      "enum": [
+        "revert-implementation",
+        "revert-hunks"
+      ],
       "type": "string"
     },
     "namedTests": {

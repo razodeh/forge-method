@@ -3,7 +3,7 @@
  * type, per `PLAN-M1.md` P11.
  *
  * This package cannot import `@forge/schemas` (`02` §2.2: `templates: []`, zero `@forge/*`
- * dependencies), so `TemplateArtifactTypeId` is its own, independently declared 24-member union
+ * dependencies), so `TemplateArtifactTypeId` is its own, independently declared 27-member union
  * rather than `@forge/schemas`'s `ArtifactTypeId` — the two are kept in sync by a test at the
  * repository root (`test/templates.test.ts`), the one place allowed to depend on both packages.
  * See `SPEC-QUESTIONS.md` Q28.
@@ -19,9 +19,9 @@ import { PLANNING_BRIEFS } from './content/briefs-planning.ts';
 import { PROMPTS_A } from './content/prompts-a.ts';
 import { PROMPTS_B } from './content/prompts-b.ts';
 
-/** The 26 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
- * `MutationEvidence`, `EvidenceBundle`, `Exemption` and `Disclosure`, each added post-v1.0),
- * transcribed independently — see above. */
+/** The 27 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
+ * `MutationEvidence`, `EvidenceBundle`, `Exemption`, `Disclosure` and `ParityEvidence`, each added
+ * post-v1.0), transcribed independently — see above. */
 export type TemplateArtifactTypeId =
   | 'Vision'
   | 'Capability'
@@ -48,7 +48,8 @@ export type TemplateArtifactTypeId =
   | 'ReviewReport'
   | 'MutationEvidence'
   | 'EvidenceBundle'
-  | 'Disclosure';
+  | 'Disclosure'
+  | 'ParityEvidence';
 
 /**
  * Resolves a type to its template file, as a path relative to this package's own root
@@ -280,6 +281,7 @@ export const TEMPLATE_INDEX: Readonly<Record<TemplateArtifactTypeId, string>> = 
   ReviewReport: 'templates/artifacts/ReviewReport.md',
   MutationEvidence: 'templates/artifacts/MutationEvidence.md',
   EvidenceBundle: 'templates/artifacts/EvidenceBundle.md',
+  ParityEvidence: 'templates/artifacts/ParityEvidence.md',
 };
 
 /** `15` §15.4.4's own six-group built-in skill library table, one real skill per named example

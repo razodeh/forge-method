@@ -97,9 +97,20 @@
  * (`reports/evidence/{id}-{story}.md`, never a second write to an existing path — `writeNewFileAtomic`,
  * `RUN-114`, the identical primitive `mutationEvidenceSchema`'s own writer uses).
  *
+ * **`parityEvidence` (post-v1.0, `specs/22` M16 P5, `18` §18.7).** An optional list of
+ * `ParityEvidence` ids a bundle rests on, beside its `bindingEvidence` — the identical
+ * `z.array(z.string().min(1))` loose cross-reference shape that field already uses (not the base
+ * `id` regex: this names a DIFFERENT artifact's id, the identical reason `story` is not re-validated
+ * either). A bundle without it still validates (`schemaVersion: 1`, untouched); M16 changes no bundle
+ * assembler, so nothing populates it yet (`18` §18.7: "nothing populates it yet"). A record that
+ * CARRIES it must be `schemaVersion: 2` or higher — the `1→2` migration below is what gets an
+ * existing version-1 bundle there — enforced below rather than left as an unstated convention, the
+ * same reason `checkIdMatchesRegisteredType` is enforced rather than merely documented.
+ *
  * @see specs/18-persistence-config-and-schemas.md §18.7
  * @see PLAN-M15.md P2, P7
- * @see SPEC-QUESTIONS.md Q280, Q286
+ * @see PLAN-M16.md P5
+ * @see SPEC-QUESTIONS.md Q280, Q286, Q294 Decision 10
  */
 import { z } from 'zod';
 
@@ -149,6 +160,7 @@ export const evidenceBundleSchema = baseFrontMatterShape
       })
       .strict(),
     bindingEvidence: z.array(z.string().min(1)),
+    parityEvidence: z.array(z.string().min(1)).optional(),
     reviews: z.array(evidenceReviewSchema).min(1),
     gates: z.array(evidenceGateSchema),
     exemptions: z.array(z.string().min(1)),
@@ -170,6 +182,16 @@ export const evidenceBundleSchema = baseFrontMatterShape
         code: z.ZodIssueCode.custom,
         path: ['reviews'],
         message: `review ${missingVerdict.id} has no verdict recorded -- an EvidenceBundle cannot reference an unverdicted review.`,
+      });
+    }
+    // `specs/22` M16 P5 (`18` §18.6/§18.7): "a record that uses a field version 1 lacks carries
+    // schemaVersion: 2" -- the inverse holds too, or a schemaVersion: 1 record could carry a field
+    // version 1 never defined, which is exactly the versioning discipline this check exists for.
+    if (data.parityEvidence !== undefined && data.schemaVersion < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['schemaVersion'],
+        message: `parityEvidence is present but schemaVersion is ${String(data.schemaVersion)}; a record carrying it must be schemaVersion 2 or higher.`,
       });
     }
   });

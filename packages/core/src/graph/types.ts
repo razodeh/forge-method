@@ -72,8 +72,8 @@ export const REQUIRED_EDGES: readonly EdgeRule[] = [
 ] as const;
 
 /**
- * The node kinds `SpecGraph` actually ingests. A subset of the 25 registered artifact types (the
- * other 17 — `DataModel`, `Diagram`, `Risk`, `ReviewReport`, `MutationEvidence`, `EvidenceBundle`,
+ * The node kinds `SpecGraph` actually ingests. A subset of the 27 registered artifact types (the
+ * other 19 — `DataModel`, `Diagram`, `Risk`, `ReviewReport`, `MutationEvidence`, `EvidenceBundle`,
  * `Exemption`, … — are not part of `09` §9.4's traceability chain) plus `AC` and `TEST`, synthesised
  * from a `Story`
  * document's own `acceptance`/

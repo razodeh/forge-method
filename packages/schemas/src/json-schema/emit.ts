@@ -40,6 +40,7 @@ import {
   mutationEvidenceSchema,
   nfrSchema,
   openQuestionSchema,
+  parityEvidenceSchema,
   rcaSchema,
   reviewReportSchema,
   riskSchema,
@@ -65,7 +66,7 @@ export type SchemaFileName = `${string}.schema.json`;
 /**
  * Exported (not module-private) so a per-type zod schema is available without a second, hand-kept
  * `ArtifactTypeId -> schema` map elsewhere — `PLAN-M2.md` P6's `requiredFieldsFor` reads `.schema`
- * off this same table rather than re-importing and re-listing all 25 artifact schemas itself.
+ * off this same table rather than re-importing and re-listing all 27 artifact schemas itself.
  */
 export const ARTIFACT_SCHEMAS: Record<ArtifactTypeId, { fileStem: string; schema: z.ZodTypeAny }> =
   {
@@ -95,6 +96,7 @@ export const ARTIFACT_SCHEMAS: Record<ArtifactTypeId, { fileStem: string; schema
     ReviewReport: { fileStem: 'review-report', schema: reviewReportSchema },
     MutationEvidence: { fileStem: 'mutation-evidence', schema: mutationEvidenceSchema },
     EvidenceBundle: { fileStem: 'evidence-bundle', schema: evidenceBundleSchema },
+    ParityEvidence: { fileStem: 'parity-evidence', schema: parityEvidenceSchema },
   };
 
 /**

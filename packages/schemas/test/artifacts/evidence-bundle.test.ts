@@ -223,3 +223,43 @@ describe('evidenceBundleSchema — invalid, each asserting the error path', () =
     if (!result.success) expect(result.error.issues[0]?.path).toEqual(['assembledAt']);
   });
 });
+
+describe('evidenceBundleSchema — parityEvidence (specs/22 M16 P5) (18 §18.7)', () => {
+  it('a schemaVersion: 1 bundle with no parityEvidence still validates untouched', () => {
+    const result = evidenceBundleSchema.safeParse(validEvidenceBundle());
+    expect(result.success, result.success ? '' : JSON.stringify(result.error.issues)).toBe(true);
+  });
+
+  it('a schemaVersion: 2 bundle carrying parityEvidence validates', () => {
+    const result = evidenceBundleSchema.safeParse({
+      ...validEvidenceBundle(),
+      schemaVersion: 2,
+      parityEvidence: ['PAR-001', 'PAR-002'],
+    });
+    expect(result.success, result.success ? '' : JSON.stringify(result.error.issues)).toBe(true);
+  });
+
+  it('a schemaVersion: 2 bundle with no parityEvidence (the field stays optional at v2) validates', () => {
+    const result = evidenceBundleSchema.safeParse({ ...validEvidenceBundle(), schemaVersion: 2 });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a schemaVersion: 1 bundle that carries parityEvidence', () => {
+    const result = evidenceBundleSchema.safeParse({
+      ...validEvidenceBundle(),
+      schemaVersion: 1,
+      parityEvidence: ['PAR-001'],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['schemaVersion']);
+  });
+
+  it('accepts an empty parityEvidence list (a bundle assembled with none)', () => {
+    const result = evidenceBundleSchema.safeParse({
+      ...validEvidenceBundle(),
+      schemaVersion: 2,
+      parityEvidence: [],
+    });
+    expect(result.success).toBe(true);
+  });
+});

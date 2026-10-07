@@ -8,13 +8,15 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { readArtifact } from '@forge/core/artifacts';
+import { ArtifactDocument, readArtifact } from '@forge/core/artifacts';
+import { mutationEvidence1To2 } from '@forge/schemas/migrations';
 import type { Migration, MigratableDocument } from '@forge/schemas/migrations';
 
 import { specNew } from '../../../src/commands/spec.ts';
 import {
   applyArtifactMigrations,
   planArtifactMigrations,
+  type PlannedDocumentMigration,
 } from '../../../src/commands/upgrade/migrate-artifacts.ts';
 import { cleanupAll, createTestProject, SPECS_ROOT } from './helpers.ts';
 
@@ -241,5 +243,83 @@ describe('applyArtifactMigrations', () => {
 
     const untouched = await readArtifact(project.paths, doc.path);
     expect(untouched.toString()).toBe(doc.toString());
+  });
+});
+
+/**
+ * `specs/22` M16 P5 — `mutationEvidence1To2`'s own hunk-level `down` refusal, through the real,
+ * already-shipped `applyArtifactMigrations` wrapping (`CFG-019`), round-2 critic-requested.
+ *
+ * **Why this is a HAND-BUILT `PlannedDocumentMigration`, never one `planArtifactMigrations` itself
+ * produces.** `latestSchemaVersionFor` (this file) only ever RAISES its running `latest` value
+ * (`if (migration.to > latest) latest = migration.to`), so `target` passed to `planMigrations` is
+ * always `>= current`, which `planMigrations` always resolves as a `direction: 'up'` plan (or a
+ * no-op). There is today, and was before this piece, no code path through `planArtifactMigrations`
+ * that can ever request `direction: 'down'` for ANY type -- confirmed by reading this file's own
+ * `latestSchemaVersionFor`, not assumed. So the only way to prove `applyArtifactMigrations`'s own
+ * `CFG-019` wrapping actually fires for a `down`-direction failure is to construct the
+ * `PlannedDocumentMigration` directly, the way a future caller with a real reason to migrate
+ * downward (not built by any M16 piece) eventually would.
+ */
+describe('applyArtifactMigrations — mutationEvidence1To2 down, hunk-level refusal (specs/22 M16 P5)', () => {
+  it('rejects with a real, typed CFG-019 ForgeError, never a bare throw or a silent no-op', async () => {
+    const project = await createTestProject();
+    const hunkLevelSource = `---
+id: MUT-001
+type: MutationEvidence
+schemaVersion: 2
+title: forge test binding --hunks -- STORY-014
+status: recorded
+created: 2026-09-30
+updated: 2026-09-30
+revision: 1
+author: engine
+changelog: []
+story: STORY-014
+mutationKind: revert-hunks
+revertedRange:
+  fromSha: a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+  toSha: f6e5d4c3b2a1f6e5d4c3b2a1f6e5d4c3b2a1f6e5
+hunkRun:
+  baseSha: a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+  diffAlgorithm: git diff -U0 --no-renames (myers)
+  granularity: hunk
+  hunks:
+    - id: src/search.ts#1
+      path: src/search.ts
+      ranges: { old: { start: 10, length: 2 }, new: { start: 10, length: 3 } }
+      contentHash: '4444444444444444444444444444444444444444444444444444444444444444'
+      verdict: killed
+      killedBy: 'STORY-014: AC-014-1'
+namedTests:
+  - 'STORY-014: AC-014-1'
+failedUnderMutation:
+  - 'STORY-014: AC-014-1'
+restoreVerified: true
+toolVersions:
+  vitest: 4.1.11
+ranAt: '2026-09-30T12:00:00.000Z'
+---
+
+<Nothing further.>
+`;
+    const docPath = 'docs/forge/reports/mutation/STORY-014-hunk.md';
+    const doc = ArtifactDocument.parse(hunkLevelSource, docPath);
+
+    const planned: PlannedDocumentMigration = {
+      doc,
+      migrationPlan: { direction: 'down', steps: [mutationEvidence1To2] },
+      summary: {
+        path: docPath,
+        type: 'MutationEvidence',
+        fromSchemaVersion: 2,
+        toSchemaVersion: 1,
+        stepCount: 1,
+      },
+    };
+
+    await expect(applyArtifactMigrations(project.paths, [planned])).rejects.toMatchObject({
+      code: 'CFG-019',
+    });
   });
 });

@@ -282,6 +282,21 @@ describe('IdAllocator concurrency', () => {
     expect(mutationNumbers).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
     expect(evidenceNumbers).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
   });
+
+  // `specs/22` M16 P5: the identical in-process concurrency proof for the newly-registered
+  // `ParityEvidence`/`PAR` prefix, reusing this file's own concurrent-allocation pattern rather than
+  // hand-rolling a new one.
+  it('50 concurrent allocate("ParityEvidence") calls return 50 distinct, contiguous ids (specs/22 M16 P5)', async () => {
+    const paths = freshProject();
+    const allocator = new IdAllocator({ paths, clock: fakeClock() });
+    const ids = await Promise.all(
+      Array.from({ length: 50 }, () => allocator.allocate('ParityEvidence')),
+    );
+    expect(new Set(ids).size).toBe(50);
+    expect(ids.every((id) => id.startsWith('PAR-'))).toBe(true);
+    const numbers = ids.map((id) => Number(id.split('-')[1])).sort((a, b) => a - b);
+    expect(numbers).toEqual(Array.from({ length: 50 }, (_, i) => i + 1));
+  });
 });
 
 describe('IdAllocator — the injected clock, not Date.now()', () => {

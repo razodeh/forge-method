@@ -24,6 +24,7 @@ import {
   mutationEvidenceSchema,
   nfrSchema,
   openQuestionSchema,
+  parityEvidenceSchema,
   rcaSchema,
   reviewReportSchema,
   riskSchema,
@@ -77,6 +78,7 @@ const SCHEMA_BY_TYPE: Record<ArtifactTypeId, z.ZodTypeAny> = {
   EvidenceBundle: evidenceBundleSchema,
   Exemption: exemptionSchema,
   Disclosure: disclosureSchema,
+  ParityEvidence: parityEvidenceSchema,
 };
 
 /** The real registry: every type's real schema and its real `requiredSections`. */
@@ -122,7 +124,7 @@ function isArtifactTypeId(
 }
 
 /**
- * `registry` defaults to the real 25-type registry; a caller (a test, mainly) may pass a smaller one.
+ * `registry` defaults to the real 27-type registry; a caller (a test, mainly) may pass a smaller one.
  */
 export function validateArtifact(
   doc: ArtifactDocument,

@@ -25,6 +25,14 @@ describe('renderArtifactPath — success', () => {
     });
   });
 
+  // `specs/22` M16 P5: `ParityEvidence`'s own `{id}-{slug}.md` path template, the identical shape
+  // `Story`/`ADR`/`DataModel`/... already use, proving `{slug}` resolves for this newly-registered
+  // type too, not merely for the types that existed when this mechanism was last pinned.
+  it('substitutes {id} and {slug} for ParityEvidence (M16 P5)', () => {
+    const result = renderArtifactPath('ParityEvidence', { id: 'PAR-001', slug: 'search-api' });
+    expect(result).toEqual({ success: true, path: 'reports/parity/PAR-001-search-api.md' });
+  });
+
   it('substitutes an id in the suffixed sub-id form ({id}-{n})', () => {
     // Both the base regex and the per-type check in baseFrontMatterSchema allow a trailing `-\d+`
     // (a sub-id, e.g. a split acceptance criterion); this proves renderArtifactPath treats the whole

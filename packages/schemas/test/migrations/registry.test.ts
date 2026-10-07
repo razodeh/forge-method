@@ -30,9 +30,24 @@ const irreversibleWithoutDown: Migration = {
   up: (doc) => doc,
 };
 
-describe('MIGRATIONS', () => {
-  it('is empty at M1 — every artifact type starts at schemaVersion 1', () => {
-    expect(MIGRATIONS).toEqual([]);
+describe('MIGRATIONS (specs/22 M16 P5)', () => {
+  it('was empty at M1, and now carries exactly its first two real entries, both 1->2', () => {
+    expect(MIGRATIONS).toHaveLength(2);
+    expect(MIGRATIONS.map((migration) => [migration.types, migration.from, migration.to])).toEqual([
+      [['MutationEvidence'], 1, 2],
+      [['EvidenceBundle'], 1, 2],
+    ]);
+  });
+
+  it('is itself a well-formed registry (no reversible-without-down, no duplicate step)', () => {
+    expect(validateMigrationRegistry(MIGRATIONS)).toEqual({ success: true });
+  });
+
+  it('both real migrations declare reversible: true and define a down', () => {
+    for (const migration of MIGRATIONS) {
+      expect(migration.reversible, migration.description).toBe(true);
+      expect(migration.down !== undefined, migration.description).toBe(true);
+    }
   });
 });
 

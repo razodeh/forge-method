@@ -175,14 +175,26 @@ const RAW_ARTIFACT_TYPES = [
     idWidth: 3,
     collection: true,
   },
+  // `specs/22` M16 P5 (`13` F-TEST-9, `18` §18.7): one record per `forge parity check` invocation
+  // (never for `--no-record`), append-only via the identical `writeNewFileAtomic`/`RUN-114` mechanism
+  // `MutationEvidence`/`EvidenceBundle` already use. No `parent`: like `MutationEvidence` and
+  // `EvidenceBundle` it is outside the `09` §9.4 traceability chain, and unlike them it has no `story`-
+  // shaped required cross-reference at all (its own `story` field is optional -- see
+  // `parity-evidence.ts`). `{slug}` resolves from the declaration name (settled at this piece).
+  {
+    id: 'ParityEvidence',
+    idPrefix: 'PAR',
+    pathTemplate: 'reports/parity/{id}-{slug}.md',
+    idWidth: 3,
+  },
 ] as const;
 
-/** The 26 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
- * `MutationEvidence`, `EvidenceBundle`, `Exemption` and `Disclosure`, each added post-v1.0 -- see this
- * array's own trailing entries for the full record). `Disclosure` (`specs/22` M15 P10) is now
- * code-registered here, alongside the real disclosure ledger it names (`kb-disclosures.ts`,
- * `@forge/cli`) -- the earlier "spec-registered but not yet code-registered" asymmetry this comment
- * once described is resolved as of this piece. */
+/** The 27 artifact type names `specs/18` §18.7 registers (21 original + `ReviewReport`,
+ * `MutationEvidence`, `EvidenceBundle`, `Exemption`, `Disclosure` and `ParityEvidence`, each added
+ * post-v1.0 -- see this array's own trailing entries for the full record). `Disclosure` (`specs/22`
+ * M15 P10) is now code-registered here, alongside the real disclosure ledger it names
+ * (`kb-disclosures.ts`, `@forge/cli`) -- the earlier "spec-registered but not yet code-registered"
+ * asymmetry this comment once described is resolved as of this piece. */
 export type ArtifactTypeId = (typeof RAW_ARTIFACT_TYPES)[number]['id'];
 
 /**

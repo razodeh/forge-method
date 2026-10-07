@@ -158,6 +158,13 @@ describe('outputGlob (18 §18.7 path templates under the configured roots)', () 
     expect(outputGlob('Exemption', ROOTS)).toBe('docs/forge/reports/exemptions.md');
   });
 
+  // `ParityEvidence` (post-v1.0, `specs/18` §18.7 M16 P5): the same generic `registryTail` mechanism,
+  // now 27 registered types, not 26 -- no workflow step declares it as an `outputs:` entry yet (this
+  // piece registers the TYPE; `specs/22` M16 P6/P7 are its first real readers/writers).
+  it('composes the correct glob for ParityEvidence', () => {
+    expect(outputGlob('ParityEvidence', ROOTS)).toBe('docs/forge/reports/parity/PAR-*.md');
+  });
+
   it('honours a project that relocated its docs (paths.specs etc.)', () => {
     expect(outputGlob('Epic', { ...ROOTS, specs: 'documentation/specs' })).toBe(
       'documentation/specs/epics/EPIC-*.md',
