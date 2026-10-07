@@ -28406,3 +28406,47 @@ meaningfully represent), a symlink's content IS its target string — the generi
 already the correct mechanism, not a coincidental pass.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P11`.
+
+## Q301 — M16 P6: `forge parity capture` — two enforcement gaps P2 had already named and left open,
+and when "fail-fast, not transactional" still owes a caller more than it gave
+
+**Context.** `PLAN-M16.md` P6's own Mandate: the first real `forge parity` CLI verb, orchestrating
+M16 P2/P3/P4's own already-landed primitives into a working `capture` command. Two gauntlet rounds;
+the critic-round narrative, the fix detail, and the verification numbers are in `GAUNTLET-LOG.md`'s
+own `## M16 P6` entry and are not repeated here.
+
+**Decision 1 — enforcing a reference run's own `expect` (exit code, non-empty observation) and
+refusing a declared `file` output that never materialises are both real, required gap-fills, not
+invented scope.** Confirmed directly, not assumed: `specs/13` F-TEST-9's own text states both
+requirements in full ("a reference that did not do what was expected is not an oracle either"), and
+`declaration-types.ts`'s own `ExpectedExit` doc comment (P2, already landed) explicitly says
+"enforcing this is capture-time behaviour (P3/P4)" — naming the very gap this piece closes, which
+neither of the two cited pieces ever actually filled. A grep of every other already-landed parity
+file confirmed independently (by both round-1 critics, separately) that nothing enforces either
+requirement anywhere else. P6, as the first piece to actually run a capture end to end, is the only
+architecturally sound place left to close it.
+
+**Decision 2 — a declared `file` output absent from the reference observation is refused
+(`RUN-138`), not silently stored as empty, because the capture format itself cannot represent the
+difference.** `capture.ts`'s own `FileObservationContent` (P2, frozen, not this piece's file to
+change) has only `text`/`bytes` content modes — no `absent`. Storing absence as empty text would
+conflate two facts `observe-types.ts`'s own doc comment already warns must stay distinct. The
+alternatives considered and rejected: omitting the output entirely (no existing convention makes this
+safe to interpret later), or deferring the refusal to `forge parity check` (P7) time (moves the same
+problem later, less actionable, and would need its own schema-level fix at the P2 layer regardless).
+Capture-time refusal, naming the concrete remedy (fix the reference command, or drop the declared
+output), is the earliest and most honest point to catch this.
+
+**Decision 3 — multi-declaration processing is fail-fast, not transactional, and (after round 2) now
+says so honestly to a caller.** The Mandate's own silence on what happens when one declaration among
+several fails left this open. Fail-fast — an already-written capture for an earlier declaration stays
+written, never rolled back by a later declaration's own refusal — is the right reading: a
+transactional alternative would mean either staging writes and renaming them in afterward (real added
+complexity nothing requires) or deleting an already-correct, independently content-addressed capture
+because an unrelated declaration failed, which `specs/13`'s own retention rule forbids outright
+("FORGE itself never deletes a capture"). What round 1 found genuinely missing was not the design but
+its own honesty: the thrown error, on a partial-batch failure, said nothing about what had already
+succeeded. Closed by threading the accumulated progress onto the error's own details — the design
+stands, its own observability now matches it.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P6`.

@@ -22166,3 +22166,80 @@ cross-attribution test built with three distinctly-shaped paths. Coverage 91.47%
 cherry-picked commit rather than trusted from the report alone.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q300`.
+
+## M16 P6 — `forge parity capture`
+
+Two gauntlet rounds, two independent critics both rounds.
+
+**What the piece builds.** The first real `forge parity` CLI verb. Pure orchestration over M16
+P2/P3/P4's own already-landed primitives: loads and validates a declaration, resolves
+`reference.ref` to a commit under the trust anchor's own exactness rules, observes the reference in a
+scratch worktree the stability probe's own repeat count, normalises and stability-checks each case,
+writes the resulting content-addressed capture through the atomic append-only writer. An identical
+re-capture is a silent no-op; a differing re-capture is refused, naming the existing file.
+Multi-declaration (`--name` omitted) processing is fail-fast, not transactional. Fills two real
+enforcement gaps `specs/13` F-TEST-9 states but no earlier M16 piece implements — confirmed directly:
+P2's own `declaration-types.ts` explicitly defers `expect` enforcement to "capture-time behaviour
+(P3/P4)," and neither landed piece ever did it. 9 new error codes (`CFG-514`, `CFG-515`,
+`RUN-132`..`RUN-138`).
+
+**Incident, disclosed and closed.** While building, a test-fixture cleanup bug (`path.dirname()` of a
+marker path resolving to the whole shared OS temp root instead of the test's own `mkdtemp` directory)
+caused a recursive delete against that shared root for several minutes before being caught and
+killed. Root cause fixed immediately; both new test files audited for the same pattern (clean).
+Reported to the project owner directly, independently investigated by the orchestrator (the root
+survives with hundreds of thousands of entries intact, including month-old untouched system daemon
+temp directories — strong, not absolute, evidence of no real loss), and recorded as a standing lesson
+for any future subagent-authored test harness.
+
+**Critic round 1 (two independent critics): one MAJOR, one real coverage gap, one coverage-only MINOR
+both critics found independently.**
+
+*MAJOR, fixed — multi-declaration failures gave a caller no way to learn an earlier declaration had
+already succeeded.* Both critics independently constructed the same real fixture (three declarations,
+sorted order, the second one failing): the first declaration's capture genuinely lands on disk, the
+third's reference command is never invoked, and the thrown error names only the failing declaration —
+nothing in it says the first one already succeeded. The design itself (fail-fast, already-written
+captures stay written, confirmed idempotent on retry by both critics) was never in question; the gap
+was purely that a caller catching the error had no way to distinguish "one already succeeded" from
+"nothing happened" short of a separate filesystem check. The two critics' own verdicts on whether this
+rose to a real finding differed in framing — resolved by the orchestrator in favor of fixing it, since
+the cost is one small, purely additive change with no downside.
+
+*Real, fixed — a coverage gap, not a logic defect.* `RUN-135`'s "ambiguous" sub-case (two-or-more
+pre-existing, genuinely-differing captures under one selection key) had zero test coverage in either
+new test file. A critic built its own fixture to check correctness before flagging it as a gap: the
+real behavior was already right (refuses, naming both conflicting files, writes nothing new) — fixed
+by adding the missing test, not by changing any logic.
+
+*MINOR, found independently by BOTH critics, fixed.* `readDigestFileBytes` built its own path via raw
+string concatenation instead of `node:path.join`, contradicting its own doc comment's claim of being
+"functionally identical" to `observe.ts`'s real precedent, which does use `path.join`. Not
+exploitable today (upstream validation already blocks unsafe relative paths), but a real R11
+deviation and an avoidable inconsistency — fixed in one line.
+
+**Round 2 (the fix pass, verified directly): both the MAJOR and the coverage gap closed, plus two
+more coverage gaps closed opportunistically.** Partial progress (`captured`/`unchanged`/`captures` so
+far) is now threaded onto any thrown error via a new `withPartialProgress` helper, proven via a real
+alpha/beta/gamma fixture and an explicit idempotent-retry test. The ambiguous-capture case got its own
+test. `readDigestFileBytes` now uses `path.join`. Two more untested statements a critic found (a
+library surface's `setup`-only probe path; a case's own observation failure propagating unmodified)
+got their own tests too — building the first of these surfaced a real, previously-undocumented
+asymmetry in the already-landed `observe.ts` (a `setup`-only probe must already be tracked at the
+reference commit, unlike a `run` probe, which is overlaid just-in-time regardless of git status) —
+not a bug, disclosed for the record.
+
+**Verification.** 268 tests across the two new files (up from 35 at round 1), 550/550 in
+`packages/core/test/errors.test.ts` after this piece's own 9-code addition. Coverage
+(`capture-command.ts`) 98.23%/86.84%/96.35%/100% (lines/branches/statements/functions). `pnpm
+typecheck`, `pnpm run boundaries`, `pnpm lint` clean. Both critics independently triggered all 9 error
+codes via real fixtures (including combined-fault ordering tests confirming `FORGE_RUN_ID` fires
+before every other refusal, constructed multiple ways by each critic independently) and pushed the
+content-addressing/no-op logic harder than the builder's own tests (a digest-excluded field change
+still reads `unchanged`; a canonical-byte, never-intermediate-shape comparison confirmed by reading
+`capture.ts`'s own self-consistency guarantee). One real merge conflict at cherry-pick time, in
+`packages/core/test/errors.test.ts`'s shared `SAMPLE_DETAILS` fixture — both `M16 P11` and this piece
+independently added a new key to the same object at the same point; resolved by keeping both pieces'
+own keys, re-verified at 550/550 after resolution.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q301`.
