@@ -22375,3 +22375,78 @@ hunk-level write's own failure mode, confirmed via the mutation table by both cr
 Clean cherry-pick onto `main`, no conflict.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q303`.
+
+## M16 P7 — `forge parity check --json`, and the exit-test fixtures
+
+Two gauntlet rounds, two independent critics each round, each critic in its own dedicated worktree
+(the first piece after `## M16 P6`'s own collision to run under that policy end to end).
+
+**What the piece builds.** The piece that makes the whole parity oracle real end to end: for each
+selected declaration, selects its capture (`M16 P2`), observes the candidate in place (`M16 P3`),
+normalises and compares against the selected capture (`M16 P4`), rolls every declaration's result
+into one overall verdict, and, unless `--no-record`, writes exactly one `ParityEvidence` record for
+the invocation (`M16 P5`'s schema, written for real for the first time). Before any of that: a
+brand-new trust-anchor mechanism with no earlier precedent — compares the real, on-disk
+`.forge/parity/` tree against a `--trusted <ref>` via git's own object-store hashing, never the index
+or `git status`, catching a silent rewrite of the oracle itself.
+
+**A real merge-safety issue, resolved at the integration level, not the builder's fault.** This
+piece's own worktree predated `M16 P12`/`P13`'s landing. A real `git rebase` onto current `main` —
+correctly preserving both sides' functional code, confirmed by direct inspection — hid a genuine
+duplicate `'RUN-139'` error-code key (`M16 P12`'s real one, plus this piece's own, landing in
+non-overlapping file regions with no conflict marker). Renumbered this piece's own three codes to
+`RUN-140`/`141`/`142`. One critic's own worktree-copy artifact (built before this fix, never updated)
+independently reproduced the same symptom from a different angle, correctly clarified as the same
+issue rather than two: a critic worktree assembled by copying a builder's own uncommitted files onto
+a fresh checkout of current `main` can show a misleadingly literal "deletes a sibling's work" diff
+when the builder's own base predates that sibling's landing — a real rebase of the builder's actual
+commit, not a file-copy, is what proves (or disproves) a real regression.
+
+**Critic round 1: two real MAJORs, each confirmed by both critics independently via different real
+repros.**
+
+*Fixed — an uncaught filesystem race crashed the whole check with zero JSON output.* A per-entry
+`lstat` inside the new trust-anchor's recursive walk had no try/catch, unlike its own sibling calls a
+few lines away. One critic reproduced this with a real, tight concurrent-rename stress test (~310
+iterations in 8s); the fix, once actually attempted, turned out to need THREE call sites fixed, not
+one — `paths.resolveWithin`'s own internal `realpathSync` walk and `listDirSorted` both throw the
+identical class of error one level up from the single `lstat` either critic named directly. Fixed at
+the root: `ENOTDIR` is now classified the identical way `ENOENT` already is (including one level
+through a wrapped error's own `.cause`), and the recursive walk is skipped outright once the ancestor
+check has already confirmed `.forge/parity` is not usable as a directory, rather than letting a
+doomed call reach it at all.
+
+*Fixed — `compareTrustAnchor` threw a bare `Error` instead of a `ForgeError` when an ancestor is a
+plain file.* Caught only incidentally by unrelated step ordering today; a plausible future reordering
+would have made it live. Fixed alongside the race fix above, by the same root-cause change.
+
+*Confirmed real, disclosed precisely rather than coded around.* Both critics independently
+constructed a real, deterministic repro: a case whose own command reads, tampers, and restores a file
+under `.forge/parity/` synchronously within its own run — invisible to both the trust anchor's own
+second comparison and the pre-existing `unclean` check. Not a new category of defect: the concrete,
+now-demonstrated form of an already-disclosed `Q294` Decision 7 boundary, pinned as a real regression
+test rather than left as prose.
+
+**Round 2 (the fix pass, verified directly): all real findings closed**, plus a tautological
+`CRLF`/`.gitattributes` test (`eol=crlf` never rewrites bytes on a plain commit, only on checkout)
+replaced with a real `git clone -c core.autocrlf=true` test that actually exercises the claim, and an
+overclaiming test comment corrected with the real numbers.
+
+**Decision 1, confirmed against the real spec text.** `--trusted` is optional, not required, despite
+this piece's own brief paraphrasing it as required — `specs/13` lines 288-289 state plainly: "without
+`--trusted` the check makes no comparison... `trusted: null`," which wins over the brief's own
+imprecise summary.
+
+**Also disclosed, not fixed (out of this piece's own scope).** `M16 P6`'s already-landed
+`capture-command.ts` never filters by `unobservable` before observing a reference, unlike this
+piece's own candidate-side filtering — confirmed real by reading the actual call site, a genuine
+cross-piece conformance gap worth a future look, not this piece's own file to touch.
+
+**Verification.** 1771+ tests across the parity/`bin-parity-check` suite, including two round-2
+regression tests (a 300-iteration concurrent-rename stress test; the pinned self-reverting-tamper
+disclosure). Coverage (`check-command.ts`) 95.38%/81.58%/97.96%; (`trust-anchor.ts`)
+92.31%/88.35%/100% — both clear the `packages/cli` 85%/80% floor. `gitBlobId`'s own git-object
+hashing confirmed byte-exact against a real `git hash-object` run, independently, by the orchestrator.
+`pnpm typecheck`, `pnpm run boundaries`, `pnpm lint` clean. Clean cherry-pick onto `main`.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q304`.

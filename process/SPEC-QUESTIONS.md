@@ -28533,3 +28533,38 @@ a missing field already does the right thing once the field is genuinely absent,
 code needed in the envelope or writer layers.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P13`.
+
+## Q304 — M16 P7: `forge parity check` — the brief said `--trusted` was required, the spec says
+otherwise, and the spec wins
+
+**Context.** `PLAN-M16.md` P7's own Mandate: make the whole parity oracle real end to end, including
+a brand-new trust-anchor comparison mechanism with no earlier precedent. Two gauntlet rounds; the
+critic-round narrative, the fix detail, and the verification numbers are in `GAUNTLET-LOG.md`'s own
+`## M16 P7` entry and are not repeated here.
+
+**Decision 1 — `--trusted` is optional, not required, because the normative spec text says so
+explicitly, overriding this piece's own brief paraphrase.** The piece's own brief states "`--trusted`
+is a required, explicit argument." Read directly against the real, controlling sources instead:
+`specs/03` §3.2.5's own bracketed `[--trusted <ref>]`, and `specs/13` lines 288-289, in full: "without
+`--trusted` the check makes no comparison and the evidence records `trusted: null`." Per this
+milestone's own standing precedence rule (specs > Q294 > the amended plan > a brief's own paraphrase
+of any of them), the spec's explicit "without `--trusted`..." sentence controls. The brief's own
+"required" wording most likely meant "never defaulted or sniffed from the environment" (which the
+real `G-Parity` gate check's own explicit `--trusted refs/heads/main` argument already satisfies) —
+the piece correctly flagged the tension rather than silently resolving it either way, and the
+orchestrator confirmed the spec reading directly before accepting it.
+
+**Decision 2 — a candidate `file` output's absence is represented by a fixed, reserved sentinel
+hash, flowing through the unmodified comparison pipeline rather than a new content-model case.** A
+captured reference file is never absent (`M16 P6`'s own `RUN-138` already refuses that at capture
+time); a candidate file genuinely can be. Rather than add an `'absent'` case to `compare.ts`'s own
+`FileObservationContent` union (which `M16 P2`'s own already-landed, already-gauntleted type does not
+have, and which this piece is not authorized to change), an absent candidate is represented as
+`{mode: 'bytes', sha256: <a fixed, reserved sentinel>}` — defeated by a mode mismatch alone against
+any real `text`-mode reference, and by genuine hash inequality against any real `bytes`-mode
+reference. Both critics independently tried to construct a real-file collision against the sentinel
+and could not (a correct expectation: it is a SHA-256 digest of a fixed, descriptive string, a
+cryptographically implausible preimage target), and both independently confirmed the mode-mismatch
+path is what actually does the work in the common case, not the sentinel's own value.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P7`.
