@@ -22450,3 +22450,87 @@ hashing confirmed byte-exact against a real `git hash-object` run, independently
 `pnpm typecheck`, `pnpm run boundaries`, `pnpm lint` clean. Clean cherry-pick onto `main`.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q304`.
+
+## M16 P14 — Evidence retention: `forge evidence prune`, tombstones, and a real second-pass bug both
+critics found independently
+
+Landed in an unusual order: this piece's own worktree was cut before `M16 P7`, and the real `git
+rebase` onto `M16 P7`'s own landed tip produced genuine conflict markers (not a silent collision like
+`M16 P7`'s own against `M16 P12`) in both `bin.ts` (two import lines inserted at the same point,
+trivial) and `codes.ts` (a real 4-way id collision: this piece's own `RUN-140`-`RUN-143` all collided
+with `M16 P7`'s own, different, already-landed `RUN-140`-`RUN-142`). Resolved by hand, renumbering
+this piece's own four codes to `RUN-143`-`RUN-146`, re-verified clean (tests/typecheck/lint/
+boundaries), squashed to one commit, and landed on `main` BEFORE critic review — a deliberate,
+disclosed deviation from this milestone's usual order, driven by the rebase work, stated plainly in
+the critic brief itself so neither critic was confused reviewing something already committed.
+
+**Round 1 (two critics, each in a dedicated worktree cut from the landed commit): both converged,
+independently, on the identical real HIGH-severity bug**, each with a different real repro.
+`computeStillReferenced` (`plan.ts`) excludes an `EvidenceBundle` candidate's own references from
+counting toward "still referenced" whenever that bundle is itself one of pass one's own
+`deadBundleIds` — reasoning: "it's about to be removed too, so its citations don't matter." But
+`deadBundleIds` is `runEvidencePrune`'s own STATIC classification from pass one, fixed before
+`computeStillReferenced` ever runs, while whether a `deadBundleIds` member is actually removed is
+decided AFTERWARD, from this same function's own result. A bundle D that turns out to be referenced
+(a brand-new gate citation naming D arrives between the two enumeration passes) correctly survives as
+`pending` — but D's own on-disk reference to some other candidate X was already excluded by the time
+`computeStillReferenced` ran, and that exclusion never gets corrected once D's own survival is known.
+X is permanently removed even though D, sitting right there on disk, unremoved, still cites it — a
+real, silent violation of `18` §18.7's "a record that anything still references is protected,"
+confirmed by both critics with real end-to-end on-disk repros (one via the existing test hook; the
+other additionally built a real, hook-free, two-separate-OS-process version, racing a write against
+the real tombstone file's own appearance) and by `forge doctor` running clean afterward on the
+resulting corruption either way — completely silent in the product today. Independently confirmed by
+the orchestrator via direct code trace alone, no repro needed: the ordering in the source is airtight.
+This is structurally the identical "needs a fixed point, not one pass" problem `computeProtection`
+(pass one) already solved correctly with its own `while (grew)` loop — `computeStillReferenced` (pass
+two) never got the analogous treatment.
+
+Both critics also independently found three lower-severity, real issues: a false doc-comment claim
+(`prune-command.ts`/`prune.test.ts` both claimed the real, hook-free cross-process version of the
+"pending" claim was already proven in `prune-multiprocess.test.ts` — it wasn't; that file's own
+"concurrent append" test proves a different, adjacent claim, a new record surviving by being the
+newest id, never touching the `computeStillReferenced` path at all); the committed TOCTOU regression
+test for `removeRecord`'s own, separately-correct fix (a real, different bug, already fixed in the
+original build) only intermittently reproduced the race it exists to guard at its original 20-way
+concurrency (both critics independently confirmed via mutation testing, 1-in-3 to 1-in-5 trials); and
+`enumerate.ts`'s `numericIdOf` doc comment claiming its sub-id gap was "truly unreachable in
+production" when the piece's own already-committed tests already disclose and test it as real and
+reachable. A fourth, lower-severity, convergent note: the `--json` `removed`-means-"would
+remove"-on-a-dry-run-or-"did remove"-on-`--apply` shape (distinguished only by the sibling `applied`
+field) was judged correct and spec-consistent by both critics, but under-tested as a contract.
+
+**Round 2 (one focused fix pass, verified directly — no third critic round, the same judgment call
+this milestone has made for an unambiguous, well-specified fix before).** `computeStillReferenced`
+rewritten to the identical `while (grew)` fixed-point idiom `computeProtection` already uses: a
+`spared` set that monotonically grows whenever a dead-classified bundle is found to be referenced,
+un-excluding it so its own references are scanned on the next iteration — proven to chain correctly
+through a multi-hop reference graph (D cites X cites W; only D is newly cited; both X and W must
+survive), not just the one-hop case, with a dedicated order-independent 2-hop unit test alongside the
+1-hop case. Also fixed in the same pass: the real, missing, hook-free two-process test was added to
+`prune-multiprocess.test.ts` (closing the false-claim gap with real coverage rather than just editing
+the comment); the TOCTOU regression test raised from 20-way/25-records to 50-way/110-records, verified
+by the fix-pass builder personally reverting `removeRecord`'s own fix, confirming the raised test now
+fails reliably (3 of 5 real runs), restoring, and `cmp`-verifying the restore byte-exact; the
+`numericIdOf` comment corrected to split the genuinely-unreachable case (a prefix mismatch) from the
+real, disclosed, reachable one (a schema-legal sub-id suffix); and a new test stating the `--json`
+`applied`-governs-`removed` contract explicitly.
+
+**Verification, independently re-run by the orchestrator, not just trusted from the fix-pass report:**
+the fix's own logic re-traced directly against the source (the `spared`/`isExcluded` mechanism
+correctly re-admits a bundle's own references once it's known to survive, and the "spare" check inside
+the same `while` iteration lets a multi-hop correction chain across iterations); the real two-process
+racer test confirmed to use actual separate `execFile`-spawned `node` subprocesses, `Promise.all` only
+ever joining two already-independently-launched real processes, never simulating concurrency within
+one; scoped suite re-run clean (4 files, 63/63); the repo-wide naming-rule test clean (499/499); the
+full `-t "M16"` sweep clean (1450/1450, up from 1445 pre-fix); `pnpm typecheck`/`pnpm lint`/`pnpm run
+boundaries` all clean. The fix-pass builder also self-disclosed, transparently, a benign operational
+mistake made while verifying under its own concurrent background test load (deleting its own
+worktree-scoped `.forge-test-scratch` root — confirmed by the orchestrator to resolve via
+`import.meta.url` strictly within that one worktree, nothing like the earlier, more severe
+shared-`$TMPDIR` incident this milestone already has its own standing lesson for — while another
+background run of its own may still have been using it, producing 3 contention-flake test failures
+outside the evidence/prune subsystem entirely, independently re-confirmed clean in isolation
+afterward).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q305`.

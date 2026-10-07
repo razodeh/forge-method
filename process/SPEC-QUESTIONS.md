@@ -28568,3 +28568,33 @@ cryptographically implausible preimage target), and both independently confirmed
 path is what actually does the work in the common case, not the sentinel's own value.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P7`.
+
+## Q305 — M16 P14: `forge evidence prune` — a second enumeration pass needs its own fixed point, the
+identical reason the first pass already has one
+
+**Context.** `PLAN-M16.md` P14's own Mandate: reachability-based retention for the three
+retention-managed evidence types, with a tombstone-first, two-enumeration-pass design so a reference
+arriving between the two passes is not broken. Landed before its own critic review this time (the
+rebase work needed to resolve a real `codes.ts` collision with the already-landed `M16 P7` came first);
+the critic-round narrative, the fix detail, and the verification numbers are in `GAUNTLET-LOG.md`'s own
+`## M16 P14` entry and are not repeated here.
+
+**Decision — the second pass (`computeStillReferenced`) needed the identical `while (grew)` fixed-point
+treatment the first pass (`computeProtection`) already had, not a single check.** The original build
+correctly gave `computeProtection` a fixed point specifically because a single union can miss indirect
+protection (a bundle kept only by a citation must still protect what it references) — `18` §18.7's own
+worked example. The identical reasoning applies symmetrically to the second pass, which the original
+build did not give the same treatment: whether a `deadBundleIds` member is actually removed is decided
+from `computeStillReferenced`'s own output, AFTER that function already decided, statically, to exclude
+its references. Both gauntlet critics found this independently, each with a different real repro (one
+via the existing test hook, one via two genuinely separate OS processes racing the real tombstone
+file's own appearance); the orchestrator independently confirmed it by direct code trace alone before
+accepting either report, since the ordering bug is visible in the source without needing to run
+anything. Fixed by mirroring `computeProtection`'s own idiom exactly (a monotonically-growing `spared`
+set, re-admitting a bundle's own references once it is known to survive, looped to a full fixed point
+so a multi-hop correction chains correctly) — the identical pattern, not a new mechanism, which is the
+real reason this is being recorded as its own decision rather than left as an implementation detail:
+any future second-pass-style check over this same candidate/reference-graph shape should default to a
+fixed point from the start, not add one only after a critic finds the single-pass version wrong.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P14`.
