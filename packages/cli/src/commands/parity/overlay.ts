@@ -17,6 +17,7 @@
  */
 import { createHash } from 'node:crypto';
 import { chmod, lstat, readFile, rm } from 'node:fs/promises';
+import path from 'node:path';
 
 import { ForgeError, isForgeError } from '@forge/core/errors';
 import { ProjectPaths, writeFileAtomic, writeNewFileAtomic } from '@forge/core/fs';
@@ -81,6 +82,33 @@ async function containsSymlinkComponent(root: string, relativePath: string): Pro
     if (stats.isSymbolicLink()) return true;
   }
   return false;
+}
+
+/**
+ * Reads the bytes of an overlay source (a case's own `inputs[].from`, or a `library` surface's
+ * probe) from `overlayRoot`'s own `.forge/parity/`. Every failure to read it — missing, a directory,
+ * unreadable — is wrapped as the identical `RUN-128`: from the observing case's own point of view,
+ * "this byte source could not be read" is one actionable fact regardless of the OS-level reason, and
+ * never a raw, unwrapped `fs` exception escaping this piece's own `ForgeError` discipline
+ * (`QUALITY-BAR.md` R2).
+ *
+ * **Shared as of `specs/22` M16 P8.** Originally `observe.ts`'s own private helper; moved here
+ * (rather than exported FROM `observe.ts`) so that module and `observe-http.ts` — the `http`
+ * surface's own dispatch branch, which `observe.ts` calls INTO — can both import this from one place
+ * with no import cycle between the two. `capture-command.ts`/`check-command.ts` each re-implement
+ * this same logic privately rather than importing it (their own doc comments say so, a DECISION made
+ * before any shared export of it existed); this piece does not revisit either of those already-landed
+ * files, and this export is for the new code this piece writes, not a retrofit of theirs.
+ */
+export async function readOverlaySourceBytes(
+  overlayRoot: string,
+  relativePath: string,
+): Promise<Uint8Array> {
+  try {
+    return await readFile(path.join(overlayRoot, relativePath));
+  } catch (cause) {
+    throw new ForgeError('RUN-128', { path: relativePath }, { cause });
+  }
 }
 
 /**

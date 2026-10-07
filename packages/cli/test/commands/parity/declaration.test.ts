@@ -331,9 +331,17 @@ describe('validateParityDeclaration — http surface requires network: loopback 
     ).toBe(true);
   });
 
-  it('accepts an http surface that declares network: loopback', () => {
+  it("accepts a fully-formed http surface (network, a literal port, a readiness probe, and each case's own request -- the fields a later piece of this milestone added)", () => {
     const raw = rawDeclaration({
-      surfaces: { http: { run: 'node server.js', network: 'loopback', cases: [{}] } },
+      surfaces: {
+        http: {
+          run: 'node server.js',
+          network: 'loopback',
+          port: 4123,
+          readiness: { path: '/healthz', timeoutMs: 5000 },
+          cases: [{ request: { method: 'GET', path: '/' } }],
+        },
+      },
     });
     expect(validateParityDeclaration(raw, FILE).problems).toEqual([]);
   });
@@ -347,6 +355,421 @@ describe('validateParityDeclaration — http surface requires network: loopback 
         (p) => p.key === 'surfaces.process.network',
       ),
     ).toBe(true);
+  });
+});
+
+function httpSurface(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    run: 'node server.js',
+    network: 'loopback',
+    port: 4123,
+    readiness: { path: '/healthz', timeoutMs: 5000 },
+    cases: [{ request: { method: 'GET', path: '/' } }],
+    ...overrides,
+  };
+}
+
+describe('validateParityDeclaration — http surface: a literal port (specs/22 M16 P8) (Q294 Decision 7)', () => {
+  it('is required on an http surface', () => {
+    const raw = rawDeclaration({ surfaces: { http: httpSurface({ port: undefined }) } });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some((p) => p.key === 'surfaces.http.port'),
+    ).toBe(true);
+  });
+
+  it.each([0, -1, 1.5, 65_536, 'nope', null])(
+    'rejects an out-of-range or non-integer port (%s)',
+    (bad) => {
+      const raw = rawDeclaration({ surfaces: { http: httpSurface({ port: bad }) } });
+      expect(
+        validateParityDeclaration(raw, FILE).problems.some((p) => p.key === 'surfaces.http.port'),
+      ).toBe(true);
+    },
+  );
+
+  it('accepts the boundary ports 1 and 65535', () => {
+    for (const port of [1, 65_535]) {
+      const raw = rawDeclaration({ surfaces: { http: httpSurface({ port }) } });
+      expect(validateParityDeclaration(raw, FILE).problems).toEqual([]);
+    }
+  });
+
+  it('is rejected on every non-http surface', () => {
+    const raw = rawDeclaration({ surfaces: { process: { run: 'x', port: 4123, cases: [{}] } } });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some((p) => p.key === 'surfaces.process.port'),
+    ).toBe(true);
+  });
+});
+
+describe('validateParityDeclaration — http surface: the readiness probe (specs/22 M16 P8)', () => {
+  it('is required on an http surface', () => {
+    const raw = rawDeclaration({ surfaces: { http: httpSurface({ readiness: undefined }) } });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.http.readiness',
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a path that does not start with "/"', () => {
+    const raw = rawDeclaration({
+      surfaces: { http: httpSurface({ readiness: { path: 'healthz', timeoutMs: 1000 } }) },
+    });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.http.readiness.path',
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a path carrying a CRLF (request-line injection shape)', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({ readiness: { path: '/healthz\r\nX-Injected: 1', timeoutMs: 1000 } }),
+      },
+    });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.http.readiness.path',
+      ),
+    ).toBe(true);
+  });
+
+  it.each([0, -1, 1.5, 'nope', null])('rejects a non-positive-integer timeoutMs (%s)', (bad) => {
+    const raw = rawDeclaration({
+      surfaces: { http: httpSurface({ readiness: { path: '/healthz', timeoutMs: bad } }) },
+    });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.http.readiness.timeoutMs',
+      ),
+    ).toBe(true);
+  });
+
+  it('refuses an unknown key inside readiness, with a "did you mean" suggestion', () => {
+    const raw = rawDeclaration({
+      surfaces: { http: httpSurface({ readiness: { path: '/healthz', timeoutM: 1000 } }) },
+    });
+    const problem = validateParityDeclaration(raw, FILE).problems.find(
+      (p) => p.key === 'surfaces.http.readiness.timeoutM',
+    );
+    expect(problem?.message).toMatch(/did you mean "timeoutMs"/);
+  });
+
+  it('is rejected on every non-http surface', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        process: { run: 'x', readiness: { path: '/x', timeoutMs: 1000 }, cases: [{}] },
+      },
+    });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.process.readiness',
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('validateParityDeclaration — http case: the request (specs/22 M16 P8)', () => {
+  it('is required on every http case', () => {
+    const raw = rawDeclaration({ surfaces: { http: httpSurface({ cases: [{}] }) } });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.http.cases[0].request',
+      ),
+    ).toBe(true);
+  });
+
+  it('is rejected on every non-http case', () => {
+    const raw = rawDeclaration({
+      surfaces: { process: { run: 'x', cases: [{ request: { method: 'GET', path: '/' } }] } },
+    });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.process.cases[0].request',
+      ),
+    ).toBe(true);
+  });
+
+  it.each(['args', 'outputs', 'expect'])(
+    'refuses "%s" on an http case -- it has no coherent meaning for a request/response pair',
+    (key) => {
+      const raw = rawDeclaration({
+        surfaces: {
+          http: httpSurface({
+            cases: [{ request: { method: 'GET', path: '/' }, [key]: key === 'expect' ? 0 : [] }],
+          }),
+        },
+      });
+      expect(
+        validateParityDeclaration(raw, FILE).problems.some(
+          (p) => p.key === `surfaces.http.cases[0].${key}`,
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it('accepts "inputs" and "timeoutMs"/"outputCapBytes" on an http case (the generic per-case fields that DO still apply)', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({
+          cases: [
+            {
+              request: { method: 'GET', path: '/' },
+              inputs: [{ from: 'a.txt', to: 'b.txt' }],
+              timeoutMs: 1000,
+              outputCapBytes: 1000,
+            },
+          ],
+        }),
+      },
+    });
+    expect(validateParityDeclaration(raw, FILE).problems).toEqual([]);
+  });
+
+  it('rejects a method that is not an upper-case HTTP token', () => {
+    for (const method of ['get', 'Get', '', 'G E T']) {
+      const raw = rawDeclaration({
+        surfaces: { http: httpSurface({ cases: [{ request: { method, path: '/' } }] }) },
+      });
+      expect(
+        validateParityDeclaration(raw, FILE).problems.some(
+          (p) => p.key === 'surfaces.http.cases[0].request.method',
+        ),
+        `expected "${method}" to be refused`,
+      ).toBe(true);
+    }
+  });
+
+  it('accepts real HTTP method tokens', () => {
+    for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) {
+      const raw = rawDeclaration({
+        surfaces: { http: httpSurface({ cases: [{ request: { method, path: '/' } }] }) },
+      });
+      expect(validateParityDeclaration(raw, FILE).problems).toEqual([]);
+    }
+  });
+
+  it('rejects a path that does not start with "/"', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({ cases: [{ request: { method: 'GET', path: 'no-slash' } }] }),
+      },
+    });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.http.cases[0].request.path',
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a path or header value carrying a CR/LF (request/header-injection shape)', () => {
+    const pathRaw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({
+          cases: [{ request: { method: 'GET', path: '/a\r\nX-Injected: 1' } }],
+        }),
+      },
+    });
+    expect(
+      validateParityDeclaration(pathRaw, FILE).problems.some(
+        (p) => p.key === 'surfaces.http.cases[0].request.path',
+      ),
+    ).toBe(true);
+
+    const headerRaw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({
+          cases: [
+            {
+              request: {
+                method: 'GET',
+                path: '/',
+                headers: { 'x-trace': 'a\r\nX-Injected: 1' },
+              },
+            },
+          ],
+        }),
+      },
+    });
+    expect(
+      validateParityDeclaration(headerRaw, FILE).problems.some((p) =>
+        p.key.startsWith('surfaces.http.cases[0].request.headers'),
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts a body that is an empty string (a GET-shaped case with an explicitly empty body is not "missing")', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({ cases: [{ request: { method: 'GET', path: '/', body: '' } }] }),
+      },
+    });
+    expect(validateParityDeclaration(raw, FILE).problems).toEqual([]);
+  });
+
+  it('lower-cases every declared responseHeaders entry at load', () => {
+    const { declaration } = validateParityDeclaration(
+      rawDeclaration({
+        surfaces: {
+          http: httpSurface({
+            cases: [
+              {
+                request: {
+                  method: 'GET',
+                  path: '/',
+                  responseHeaders: ['X-Flavor', 'Content-Type'],
+                },
+              },
+            ],
+          }),
+        },
+      }),
+      FILE,
+    );
+    expect(declaration?.surfaces.http?.cases[0]?.request?.responseHeaders).toEqual([
+      'x-flavor',
+      'content-type',
+    ]);
+  });
+
+  it('refuses an unknown key inside a request, with a "did you mean" suggestion', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({ cases: [{ request: { method: 'GET', path: '/', heeaders: {} } }] }),
+      },
+    });
+    const problem = validateParityDeclaration(raw, FILE).problems.find(
+      (p) => p.key === 'surfaces.http.cases[0].request.heeaders',
+    );
+    expect(problem?.message).toMatch(/did you mean "headers"/);
+  });
+});
+
+describe('validateParityDeclaration — http header NAME must be a valid HTTP token, not merely free of control characters (specs/22 M16 P8)', () => {
+  // M16 P8 round-2 fix pass, MUST-FIX 1. Node's own `http.request` enforces the RFC 7230 `tchar`
+  // charset on a header NAME internally (`validateHeaderName`) and throws a SYNCHRONOUS, unwrapped
+  // `TypeError [ERR_INVALID_HTTP_TOKEN]` for anything outside it -- confirmed by direct experiment
+  // (this piece's own report): `node -e "require('node:http').request({host:'127.0.0.1',port:9999,
+  // path:'/',method:'GET',headers:{'X-Foo: Bar-Injected':'x'}},()=>{})"` throws exactly that, before
+  // `declaration.ts`'s own loader was hardened here. Before this fix, a header name such as
+  // `"X-Foo: Bar-Injected"` had NO control character (a colon is not one), so it passed load-time
+  // validation and reached `sendHttpRequest` -- this describe block proves it is now refused AT LOAD
+  // instead, with a specific, named reason.
+  it('rejects a header name containing a colon, even though a colon is not an ASCII control character', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({
+          cases: [
+            {
+              request: {
+                method: 'GET',
+                path: '/',
+                headers: { 'X-Foo: Bar-Injected': 'x' },
+              },
+            },
+          ],
+        }),
+      },
+    });
+    const problems = validateParityDeclaration(raw, FILE).problems;
+    const problem = problems.find((p) =>
+      p.key.startsWith('surfaces.http.cases[0].request.headers'),
+    );
+    expect(problem, 'expected the malformed header name to be refused at load').toBeDefined();
+    expect(problem?.message).toMatch(/HTTP header-name token/);
+  });
+
+  it.each([' ', ',', '(', ')', '@', '/', '[', ']', '{', '}', '"', '?', '='])(
+    'rejects a header name containing %j -- outside the RFC 7230 tchar set, and not a control character either',
+    (badChar) => {
+      const raw = rawDeclaration({
+        surfaces: {
+          http: httpSurface({
+            cases: [
+              {
+                request: { method: 'GET', path: '/', headers: { [`X-Foo${badChar}Bar`]: 'x' } },
+              },
+            ],
+          }),
+        },
+      });
+      expect(
+        validateParityDeclaration(raw, FILE).problems.some((p) =>
+          p.key.startsWith('surfaces.http.cases[0].request.headers'),
+        ),
+        `expected a header name containing ${JSON.stringify(badChar)} to be refused`,
+      ).toBe(true);
+    },
+  );
+
+  it('still accepts every ordinary header name shape already in use (letters, digits, hyphen, and the rest of the tchar set)', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({
+          cases: [
+            {
+              request: {
+                method: 'GET',
+                path: '/',
+                headers: {
+                  'X-Trace-Id': 'abc',
+                  'content-type': 'text/plain',
+                  'X-Weird+Token.Name!': 'still valid',
+                },
+              },
+            },
+          ],
+        }),
+      },
+    });
+    expect(validateParityDeclaration(raw, FILE).problems).toEqual([]);
+  });
+});
+
+describe('validateParityDeclaration — http request/readiness path: exactly one leading "/" (specs/22 M16 P8)', () => {
+  // M16 P8 round-2 fix pass, judgment-call fix 4. Both critics independently proved a "//"-prefixed
+  // path is byte-for-byte inert on the wire (the request always lands on loopback regardless; the
+  // text travels as one literal request-target token, never interpreted as a protocol-relative URL)
+  // -- not an exploit, but it reads like one on review. Tightened rather than merely documented: the
+  // check is cheap, and no legitimate declaration needs a literal double-leading-slash path.
+  it('rejects a case request path with two leading slashes', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({
+          cases: [{ request: { method: 'GET', path: '//attacker.example/evil-path' } }],
+        }),
+      },
+    });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.http.cases[0].request.path',
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects a readiness probe path with two leading slashes', () => {
+    const raw = rawDeclaration({
+      surfaces: { http: httpSurface({ readiness: { path: '//evil', timeoutMs: 1000 } }) },
+    });
+    expect(
+      validateParityDeclaration(raw, FILE).problems.some(
+        (p) => p.key === 'surfaces.http.readiness.path',
+      ),
+    ).toBe(true);
+  });
+
+  it('still accepts an ordinary single-leading-slash path for both', () => {
+    const raw = rawDeclaration({
+      surfaces: {
+        http: httpSurface({
+          readiness: { path: '/healthz', timeoutMs: 1000 },
+          cases: [{ request: { method: 'GET', path: '/widgets' } }],
+        }),
+      },
+    });
+    expect(validateParityDeclaration(raw, FILE).problems).toEqual([]);
   });
 });
 

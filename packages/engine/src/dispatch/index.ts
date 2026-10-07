@@ -116,8 +116,12 @@ export {
 } from './output-ids.ts';
 export {
   commandWords,
+  CONFINED_ENV_ALLOWLIST,
+  killGroup,
+  listDescendantPids,
   PROPOSED_ENV_FIXED,
   runConfinedCommand,
+  scrubbedEnvironment,
   STORED_COMMAND_LIMITS,
   vetStoredCommand,
   type CommandRefusal,

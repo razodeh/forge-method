@@ -205,6 +205,13 @@ const SAMPLE_DETAILS = {
   // but one; `name` (a parity declaration's own name, distinct from `GateCommandContext`'s `gateId` or
   // any other identifier already in this bag) is the sole new key these seven codes need.
   name: 'sample',
+  // `RUN-147`..`RUN-151` (`specs/22` M16 P8): the http surface's own typed refusals --
+  // `command`/`detail`/`path`/`timeoutMs`/`host` above already cover most of these codes' own keys;
+  // `port` (the declared loopback port) and `method` (an http request's own verb, distinct from
+  // `GateCommandContext`'s `command`/`feature`/`flag`/anything else already in this bag) are the two
+  // new keys these five codes need.
+  port: 4123,
+  method: 'GET',
 } satisfies Record<string, unknown> as never;
 
 /**

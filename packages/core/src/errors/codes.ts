@@ -3370,6 +3370,71 @@ export const ERROR_CODES = {
       'Approve or waive this gate against a surviving record of the declared type, or adjust the ' +
       "gate's own evidence reference, since the cited record was deliberately retired.",
   },
+  // `specs/22` M16 P8 (`13` F-TEST-9: "a literal loopback port verified free before the server
+  // starts -- a held port makes the case `error`, never a comparison against whatever is already
+  // listening"). A declaration-wide precondition failure: every case of the `http` surface reports
+  // this identical error, the same propagation `RUN-127` (a failed `setup`) already gives every case
+  // of a surface whose own precondition never held.
+  'RUN-147': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { port: number; detail: string }) =>
+      `The http surface's declared port ${show(d.port)} could not be bound (${show(d.detail)}); ` +
+      'refusing rather than risk comparing against whatever is already listening there.',
+    remedy:
+      'Free the port (stop whatever process is already listening on it) before running the ' +
+      'observation, or change the declaration\'s own "surfaces.http.port".',
+  },
+  // `specs/22` M16 P8: the server process exited before it ever answered its own declared readiness
+  // probe -- a typed, PROMPT failure, never a hang until the readiness timeout alone expires.
+  'RUN-148': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { command: string; detail: string }) =>
+      `The http surface's server command ${show(d.command)} exited before answering its readiness ` +
+      `probe: ${show(d.detail)}`,
+    remedy:
+      'Fix the server command (or the script it runs) so it stays running and answers its ' +
+      'readiness probe, then re-run the observation.',
+  },
+  // `specs/22` M16 P8: the server process stayed alive but never answered its own declared readiness
+  // probe within its own declared timeout.
+  'RUN-149': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string; timeoutMs: number }) =>
+      `The http surface's server did not answer its readiness probe at ${show(d.path)} within ` +
+      `${show(d.timeoutMs)}ms.`,
+    remedy:
+      'Raise the surface\'s own "readiness.timeoutMs" if the server genuinely needs longer, or fix ' +
+      'the server so it answers sooner, then re-run the observation.',
+  },
+  // `specs/22` M16 P8: one case's own request to the already-ready server could not complete (a
+  // timeout, a response over its own output cap, or the connection failing outright) -- a typed,
+  // distinct case-level failure, never a truncated observation silently passed on as complete (the
+  // identical rule `RUN-118`/`RUN-119` already state for a `process`/`library` case).
+  'RUN-150': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { method: string; path: string; detail: string }) =>
+      `The http request ${show(d.method)} ${show(d.path)} failed: ${show(d.detail)}`,
+    remedy:
+      'Fix the server, or raise the case\'s own "timeoutMs"/"outputCapBytes" if it genuinely needs ' +
+      'longer or more, then re-run the observation.',
+  },
+  // `specs/22` M16 P8 (Q294 Decision 7: "a client that refuses any other host" -- the loopback
+  // client's own, directly-tested enforcement, independent of the declaration schema never being
+  // able to express a non-loopback host in the first place).
+  'RUN-151': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { host: string }) =>
+      `The http client refuses to contact host ${show(d.host)}; only loopback (127.0.0.1, ` +
+      'localhost, ::1) is ever contacted.',
+    remedy:
+      'Fix the caller so it only ever asks this client to contact a loopback host -- this refusal ' +
+      'cannot be configured away.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

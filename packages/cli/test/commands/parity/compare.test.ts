@@ -170,12 +170,15 @@ describe('decideCaseVerdict: match and mismatch on the full normalised content (
   });
 
   it('observationsEqual’s catch-all is unreached by any real SurfaceObservation, proven by defeating the type system', () => {
-    // `SurfaceObservation` has exactly three members (process/file/library); once `a.surface ===
-    // b.surface` holds, one of the three `if` branches always matches, so the function's own final
-    // `return false` is unreachable through the public type. A value that defeats the type system (the
-    // same "escape hatch" pattern `canonical-json.ts` uses for its own catch-all) is the only way to
-    // reach it, which this test does explicitly rather than leaving the line unproven.
-    const typeDefeating = { surface: 'http' } as unknown as SurfaceObservation;
+    // `SurfaceObservation` has exactly four members (process/file/library/http — `specs/22` M16 P8
+    // added the fourth); once `a.surface === b.surface` holds, one of the four `if` branches always
+    // matches, so the function's own final `return false` is unreachable through the public type. A
+    // value that defeats the type system (the same "escape hatch" pattern `canonical-json.ts` uses for
+    // its own catch-all) is the only way to reach it, which this test does explicitly rather than
+    // leaving the line unproven. `'bogus'`, not `'http'`: `http` is now a REAL member this function
+    // has its own real branch for (see the `http` describe block below), so it would no longer defeat
+    // anything.
+    const typeDefeating = { surface: 'bogus' } as unknown as SurfaceObservation;
     expect(observationsEqual(typeDefeating, typeDefeating)).toBe(false);
   });
 
@@ -566,5 +569,145 @@ describe('decideCaseVerdict: the root-path-to-token rewrite runs before any decl
       }),
     );
     expect(outcome).toEqual({ verdict: 'match' });
+  });
+});
+
+function httpObservation(
+  overrides: Partial<{
+    readonly status: number;
+    readonly headers: Readonly<Record<string, string>>;
+    readonly body: string;
+  }> = {},
+): SurfaceObservation {
+  return { surface: 'http', status: 200, headers: {}, body: 'ok', ...overrides };
+}
+
+describe('decideCaseVerdict: the http surface (specs/22 M16 P8)', () => {
+  it('an identical status/headers/body matches', () => {
+    const outcome = decideCaseVerdict(
+      input({
+        surface: 'http',
+        referenceNormalized: httpObservation({ headers: { 'x-flavor': 'vanilla' } }),
+        candidateRawRuns: [httpObservation({ headers: { 'x-flavor': 'vanilla' } })],
+      }),
+    );
+    expect(outcome).toEqual({ verdict: 'match' });
+  });
+
+  it('a differing status mismatches, naming "status"', () => {
+    const outcome = decideCaseVerdict(
+      input({
+        surface: 'http',
+        referenceNormalized: httpObservation({ status: 200 }),
+        candidateRawRuns: [httpObservation({ status: 404 })],
+      }),
+    );
+    expect(outcome).toEqual({
+      verdict: 'mismatch',
+      location: { surface: 'http', httpPart: 'status' },
+    });
+  });
+
+  it('a differing selected header mismatches, naming "headers" -- status and body both equal', () => {
+    const outcome = decideCaseVerdict(
+      input({
+        surface: 'http',
+        referenceNormalized: httpObservation({ headers: { 'x-flavor': 'vanilla' } }),
+        candidateRawRuns: [httpObservation({ headers: { 'x-flavor': 'chocolate' } })],
+      }),
+    );
+    expect(outcome).toEqual({
+      verdict: 'mismatch',
+      location: { surface: 'http', httpPart: 'headers' },
+    });
+  });
+
+  it('a differing body mismatches, naming "body" -- status and headers both equal', () => {
+    const outcome = decideCaseVerdict(
+      input({
+        surface: 'http',
+        referenceNormalized: httpObservation({ body: 'ok' }),
+        candidateRawRuns: [httpObservation({ body: 'not ok' })],
+      }),
+    );
+    expect(outcome).toEqual({
+      verdict: 'mismatch',
+      location: { surface: 'http', httpPart: 'body' },
+    });
+  });
+
+  it('a header present on one side and absent on the other mismatches too -- key presence is part of equality, never conflated with "sent empty"', () => {
+    const outcome = decideCaseVerdict(
+      input({
+        surface: 'http',
+        referenceNormalized: httpObservation({ headers: { 'x-request-id': 'abc' } }),
+        candidateRawRuns: [httpObservation({ headers: {} })],
+      }),
+    );
+    expect(outcome.verdict).toBe('mismatch');
+  });
+
+  it('a normalize rule with no stream/file scope applies to the body, never to a header or the status', () => {
+    const outcome = decideCaseVerdict(
+      input({
+        surface: 'http',
+        rules: [{ rule: 'trim-trailing-whitespace' }],
+        referenceNormalized: httpObservation({ body: 'ok' }),
+        candidateRawRuns: [httpObservation({ body: 'ok   ' })],
+      }),
+    );
+    expect(outcome).toEqual({ verdict: 'match' });
+  });
+
+  it('a stream-scoped replace rule never applies to an http body -- inert, the identical behaviour a file-scoped rule already has on a process case', () => {
+    const outcome = decideCaseVerdict(
+      input({
+        surface: 'http',
+        rules: [{ rule: 'replace', pattern: 'ok', replacement: 'CHANGED', stream: 'stdout' }],
+        referenceNormalized: httpObservation({ body: 'ok' }),
+        candidateRawRuns: [httpObservation({ body: 'ok' })],
+      }),
+    );
+    // Both sides are still literally "ok" (the rule never applied), so this still matches -- proving
+    // inertness, not merely "did not crash".
+    expect(outcome).toEqual({ verdict: 'match' });
+  });
+
+  it('json-canonical normalises the body when both sides are JSON with differently-ordered keys', () => {
+    const outcome = decideCaseVerdict(
+      input({
+        surface: 'http',
+        rules: [{ rule: 'json-canonical' }],
+        referenceNormalized: httpObservation({ body: '{"a":1,"b":2}' }),
+        candidateRawRuns: [httpObservation({ body: '{"b":2,"a":1}' })],
+      }),
+    );
+    expect(outcome).toEqual({ verdict: 'match' });
+  });
+
+  it('an http case’s own stability probe is proven exactly like every other surface’s: a candidate that disagrees across its own runs is unstable, and when it does not, the value its runs share is what is compared', () => {
+    const flaky = decideCaseVerdict(
+      input({
+        surface: 'http',
+        referenceNormalized: httpObservation({ body: 'ok' }),
+        candidateRawRuns: [httpObservation({ body: 'ok' }), httpObservation({ body: 'different' })],
+      }),
+    );
+    expect(flaky).toEqual({ verdict: 'unstable' });
+
+    const stable = decideCaseVerdict(
+      input({
+        surface: 'http',
+        referenceNormalized: httpObservation({ body: 'ok' }),
+        candidateRawRuns: [httpObservation({ body: 'ok' }), httpObservation({ body: 'ok' })],
+      }),
+    );
+    expect(stable).toEqual({ verdict: 'match' });
+  });
+
+  it('observationsEqual’s own http branch is order-insensitive on header keys (sorted-key canonical comparison, not textual string equality)', () => {
+    const a = httpObservation({ headers: { 'x-a': '1', 'x-b': '2' } });
+    const b = httpObservation({ headers: { 'x-b': '2', 'x-a': '1' } });
+    expect(observationsEqual(a, b)).toBe(true);
   });
 });

@@ -119,10 +119,32 @@ export interface RawLibraryObservation {
   readonly result: RawLibraryResult | RawLibraryError;
 }
 
-/** The raw observation of one case, discriminated by surface. `http` is deliberately absent — P8's
- * own, additive surface, out of this piece's scope (its own brief, "Not your job"). */
+/**
+ * An `http` surface's raw observation (`specs/22` M16 P8, `13` F-TEST-9: "`http` observes a
+ * request/response pair"): the response status, the SELECTED response headers only (the case's own
+ * `request.responseHeaders` — `declaration-types.ts`'s own `HttpRequestSpec` doc comment has the full
+ * DECISION on why this is opt-in, never "every header"), and the body — kept both as raw bytes and as
+ * a lossy decode (the identical {@link RawStream} shape `RawProcessObservation`'s own
+ * stdout/stderr already use, and for the identical reason: a caller that wants to refuse a lossy UTF-8
+ * body decode needs the BYTES to decide that correctly).
+ *
+ * `headers` carries only the names the case's own `request.responseHeaders` selected, each already
+ * lower-cased at load (`declaration.ts`'s own `readHttpResponseHeaders`); a selected name the real
+ * response never sent is simply absent as a KEY here, never a present key with an empty or sentinel
+ * value — so "the header was never sent" and "the header was sent as empty text" stay two genuinely
+ * different, comparable facts, the identical reasoning `RawFileEntryContent`'s own `absent` mode
+ * states for a `file` surface's own missing output.
+ */
+export interface RawHttpObservation {
+  readonly surface: 'http';
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: RawStream;
+}
+
+/** The raw observation of one case, discriminated by surface. */
 export type RawSurfaceObservation =
-  RawProcessObservation | RawFileObservation | RawLibraryObservation;
+  RawProcessObservation | RawFileObservation | RawLibraryObservation | RawHttpObservation;
 
 /** One path's state in a tree-cleanliness snapshot (`13` F-TEST-9's unclean-detection bullet):
  * `status` is the raw two-character code `git status --porcelain=v1` printed for it, and `content`

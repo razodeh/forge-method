@@ -51,6 +51,8 @@ import { createHash } from 'node:crypto';
 import type { CanonicalValue } from './canonical-json.ts';
 import { toCanonicalJson } from './canonical-json.ts';
 import type {
+  HttpReadinessProbe,
+  HttpRequestSpec,
   NormalizeRule,
   ParityCase,
   ParityDeclaration,
@@ -91,6 +93,22 @@ function canonicalNormalizeRule(rule: NormalizeRule): CanonicalValue {
   return { rule: rule.rule };
 }
 
+/** `HttpRequestSpec`'s own digestable fields, every one named explicitly (the identical "no cast
+ * through the typed interface" discipline this module's own file header states) — `undefined` when
+ * the case is not an `http` case at all, so a non-`http` case's digest is unaffected by this field's
+ * mere existence on the shared `ParityCase` shape. */
+function canonicalHttpRequest(request: HttpRequestSpec | undefined): CanonicalValue | undefined {
+  if (request === undefined) return undefined;
+  return {
+    method: request.method,
+    path: request.path,
+    headers: request.headers === undefined ? undefined : { ...request.headers },
+    body: request.body,
+    responseHeaders:
+      request.responseHeaders === undefined ? undefined : [...request.responseHeaders],
+  };
+}
+
 function canonicalCase(parityCase: ParityCase): CanonicalValue {
   return {
     args: parityCase.args === undefined ? undefined : [...parityCase.args],
@@ -109,7 +127,17 @@ function canonicalCase(parityCase: ParityCase): CanonicalValue {
     timeoutMs: parityCase.timeoutMs,
     outputCapBytes: parityCase.outputCapBytes,
     expect: parityCase.expect,
+    request: canonicalHttpRequest(parityCase.request),
   };
+}
+
+/** `HttpReadinessProbe`'s own digestable fields — `undefined` on every non-`http` surface, the
+ * identical reason {@link canonicalHttpRequest} gives. */
+function canonicalHttpReadiness(
+  readiness: HttpReadinessProbe | undefined,
+): CanonicalValue | undefined {
+  if (readiness === undefined) return undefined;
+  return { path: readiness.path, timeoutMs: readiness.timeoutMs };
 }
 
 function canonicalSurface(surface: SurfaceDeclaration): CanonicalValue {
@@ -118,6 +146,8 @@ function canonicalSurface(surface: SurfaceDeclaration): CanonicalValue {
     setup: surface.setup === undefined ? undefined : [...surface.setup],
     streams: surface.streams === undefined ? undefined : [...surface.streams],
     network: surface.network,
+    port: surface.port,
+    readiness: canonicalHttpReadiness(surface.readiness),
     stability: { runs: surface.stability.runs },
     cases: surface.cases.map(canonicalCase),
   };

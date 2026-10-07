@@ -1151,10 +1151,22 @@ export const ENGINE_COMMAND_LIMITS: ConfinedLimits = {
  * `[]` on any failure (no real `ps` on this platform, a transient read error) rather than throwing —
  * the caller's own group kill is still real protection even when this extra pass cannot run.
  *
+ * **Exported as of `specs/22` M16 P8**, a narrow, additive exception to "do not change this file's
+ * existing exports casually" (the identical discipline `PLAN-M16.md` P14's own brief asked of
+ * `collection-lock.ts`, and this piece's own brief names this file by name for exactly this
+ * question): the `http` surface's server-lifecycle helper (`packages/cli/src/commands/parity/
+ * http-server.ts`) starts a long-lived child `runConfinedCommand` itself cannot own (that function
+ * AWAITS the child's own exit, which a server never does on its own) and needs the identical,
+ * already-fixed "kill the whole group AND walk real descendants individually" logic this function and
+ * {@link killGroup} already give every other long-running or detaching child this codebase starts —
+ * see that piece's own report for why reusing this exact, already-tested logic (rather than a second,
+ * independently-written copy of the identical reasoning) was the right call. Nothing about this
+ * function's own behaviour changes; only its visibility does.
+ *
  * @see packages/engine/src/dispatch/shell.ts (`listDescendantPids`, the original)
  * @see process/SPEC-QUESTIONS.md Q296
  */
-function listDescendantPids(rootPid: number): readonly number[] {
+export function listDescendantPids(rootPid: number): readonly number[] {
   try {
     const output = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' });
     const childrenByParent = new Map<number, number[]>();
@@ -1192,8 +1204,11 @@ function listDescendantPids(rootPid: number): readonly number[] {
  * group kill alone leaves a descendant that started its own session orphaned and running forever
  * (M16 P10's own real, confirmed repro; ported here verbatim in shape, `SPEC-QUESTIONS.md` Q296
  * Decision 1 and Decision 5). Falls back to the single process where neither mechanism is available
- * (win32, or `pid` is unknown) or found anything to do. */
-function killGroup(subprocess: {
+ * (win32, or `pid` is unknown) or found anything to do.
+ *
+ * **Exported as of `specs/22` M16 P8** — see {@link listDescendantPids}'s own doc comment for the
+ * full reasoning; this function is the other half of the identical reused pair. */
+export function killGroup(subprocess: {
   readonly pid?: number;
   kill: (signal: 'SIGKILL') => boolean;
 }): void {

@@ -23,6 +23,7 @@ import { toCanonicalJson } from './canonical-json.ts';
 import type {
   FileObservation,
   FileObservationContent,
+  HttpObservation,
   LibraryObservation,
   ProcessObservation,
   SurfaceObservation,
@@ -40,12 +41,14 @@ import { decideStability } from './stability.ts';
 
 export type { ObservedRoot } from './normalize.ts';
 
-/** Where a `mismatch` was found: which surface, and, for `process`/`library`, which stream, or, for
- * `file`, which declared output path. Never the text itself (`13` F-TEST-9's information boundary). */
+/** Where a `mismatch` was found: which surface, and, for `process`/`library`, which stream, for
+ * `file`, which declared output path, or, for `http`, which part of the response
+ * (`status`/`headers`/`body`). Never the text itself (`13` F-TEST-9's information boundary). */
 export interface MismatchLocation {
   readonly surface: SurfaceKind;
   readonly stream?: ProcessStream;
   readonly file?: string;
+  readonly httpPart?: 'status' | 'headers' | 'body';
 }
 
 /** One case's comparison outcome — one of the five case-level verdicts `13` F-TEST-9 names, each
@@ -219,6 +222,23 @@ function normalizeObservationOrThrow(
       })),
     };
   }
+  if (observation.surface === 'http') {
+    // Normalisation applies to the response BODY only — the one genuinely text-shaped target an
+    // `http` observation carries, exactly as a `process` stream or a `file`'s text content is (this
+    // module's own report has the full DECISION). `status` is a raw integer with no text to run a
+    // rule against; `headers` are compared as exact strings, never normalised — nothing in `13`
+    // F-TEST-9 names a header as a normalisation target, and the case's own `request.responseHeaders`
+    // is already the deliberate, reviewed control over what a header comparison even sees. An unscoped
+    // rule (no `stream`/`file` named) applies to the body; a `stream`- or `file`-scoped rule is simply
+    // never in scope here, the identical inert behaviour a `file`-scoped rule already has on a
+    // `process` case's own normalisation.
+    return {
+      surface: 'http',
+      status: observation.status,
+      headers: observation.headers,
+      body: normalizeTextOrThrow(observation.body, rules, {}, context, root),
+    };
+  }
   // `library`'s own structured value is deliberately out of scope for the root-path rewrite: `13`
   // F-TEST-9's rewrite is a text operation (a root-path SUBSTRING inside a stream or a file's text),
   // and `LibraryObservation.result.value` is already parsed JSON, not text, with no raw-text field
@@ -251,6 +271,23 @@ function fileObservationsEqual(a: FileObservation, b: FileObservation): boolean 
   return true;
 }
 
+/** Whether two `http` observations' SELECTED headers are equal — key presence included, so a header
+ * the declaration selected but one side never sent differs from the other side sending it (never
+ * conflated with "sent as empty text", the identical reasoning `observe-types.ts`'s own
+ * `RawHttpObservation` doc comment states). Compared via sorted-key canonical JSON, the identical
+ * order-insensitive primitive {@link observationsEqual}'s own `library` branch already uses, rather
+ * than a hand-written key-by-key loop this module would have to keep in sync with it. */
+function httpHeadersEqual(
+  a: Readonly<Record<string, string>>,
+  b: Readonly<Record<string, string>>,
+): boolean {
+  return toCanonicalJson(a) === toCanonicalJson(b);
+}
+
+function httpObservationsEqual(a: HttpObservation, b: HttpObservation): boolean {
+  return a.status === b.status && a.body === b.body && httpHeadersEqual(a.headers, b.headers);
+}
+
 /** A library result as a plain {@link CanonicalValue} tree, for `observationsEqual`'s own
  * canonical-JSON-string comparison (order-insensitive by construction, so this is sound to use as a
  * deep-equality primitive regardless of whether `json-canonical` itself ever ran against it). */
@@ -275,6 +312,7 @@ export function observationsEqual(a: SurfaceObservation, b: SurfaceObservation):
     return a.stdout === b.stdout && a.stderr === b.stderr && exitEqual(a.exit, b.exit);
   }
   if (a.surface === 'file' && b.surface === 'file') return fileObservationsEqual(a, b);
+  if (a.surface === 'http' && b.surface === 'http') return httpObservationsEqual(a, b);
   if (a.surface === 'library' && b.surface === 'library') {
     return (
       toCanonicalJson(libraryResultAsCanonicalValue(a.result)) ===
@@ -306,6 +344,13 @@ function mismatchLocationOf(
         return { surface, file: left.path };
       }
     }
+  }
+  if (candidate.surface === 'http' && reference.surface === 'http') {
+    if (candidate.status !== reference.status) return { surface, httpPart: 'status' };
+    if (!httpHeadersEqual(candidate.headers, reference.headers)) {
+      return { surface, httpPart: 'headers' };
+    }
+    return { surface, httpPart: 'body' }; // the body differs; neither the status nor headers do.
   }
   return { surface };
 }

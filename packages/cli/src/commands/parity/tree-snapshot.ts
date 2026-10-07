@@ -155,6 +155,45 @@ export function snapshotsEqual(a: TreeSnapshot, b: TreeSnapshot): boolean {
   return true;
 }
 
+/** Every path component of a `TreeSnapshot`'s own entries, minus `exclude` — used to decide whether
+ * observing a case left the tree clean, OTHER than at its own declared output paths (`13` F-TEST-9:
+ * "a case that writes outside its declared outputs is unclean" — `observe.ts`'s own DECISION on what
+ * "outside" excludes). Both snapshots are already sorted by path ({@link takeTreeSnapshot}), so
+ * filtering preserves that order and an index-wise comparison stays valid.
+ *
+ * **Shared as of `specs/22` M16 P8.** Originally `observe.ts`'s own private helper; moved here
+ * (rather than exported FROM `observe.ts`) so that module and `observe-http.ts` — the `http`
+ * surface's own dispatch branch, which needs the IDENTICAL "did observing this case leave the tree
+ * clean" decision every other surface's case already gets — can both import it from one place with
+ * no import cycle between the two (`observe.ts` calls INTO `observe-http.ts`'s own dispatch
+ * function, so the reverse edge this helper would otherwise create is avoided entirely by living
+ * here instead, beside {@link snapshotsEqual}, the function it generalises). */
+export function isCleanExcluding(
+  before: TreeSnapshot,
+  after: TreeSnapshot,
+  exclude: ReadonlySet<string>,
+): boolean {
+  if (before.headSha !== after.headSha) return false;
+  const filtered = (snapshot: TreeSnapshot): readonly TreeSnapshotEntry[] =>
+    snapshot.entries.filter((entry) => !exclude.has(entry.path));
+  const b = filtered(before);
+  const a = filtered(after);
+  if (b.length !== a.length) return false;
+  for (let index = 0; index < b.length; index += 1) {
+    const left = b[index];
+    const right = a[index];
+    if (left === undefined || right === undefined) return false;
+    if (
+      left.path !== right.path ||
+      left.status !== right.status ||
+      left.content !== right.content
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** A sha256 over `snapshot`'s canonical form (`canonical-json.ts`'s own `toCanonicalJson`) — what
  * `13` F-TEST-9 calls "the delta digest recorded for the candidate", taken of the snapshot before the
  * FIRST case, never recomputed per case. */

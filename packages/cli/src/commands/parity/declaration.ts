@@ -40,6 +40,8 @@ import * as YAML from 'yaml';
 import { composeArgs } from './compose-args.ts';
 import type {
   DeclaredOutput,
+  HttpReadinessProbe,
+  HttpRequestSpec,
   NormalizeRule,
   OverlayInput,
   ParityCase,
@@ -144,8 +146,18 @@ class Collector {
 
 const REFERENCE_KEYS = ['ref'] as const;
 const REVIEW_KEYS = ['by', 'basis', 'at'] as const;
-const SURFACE_KEYS = ['run', 'setup', 'streams', 'network', 'stability', 'cases'] as const;
+const SURFACE_KEYS = [
+  'run',
+  'setup',
+  'streams',
+  'network',
+  'port',
+  'readiness',
+  'stability',
+  'cases',
+] as const;
 const STABILITY_KEYS = ['runs'] as const;
+const READINESS_KEYS = ['path', 'timeoutMs'] as const;
 const CASE_KEYS = [
   'args',
   'inputs',
@@ -154,9 +166,30 @@ const CASE_KEYS = [
   'timeoutMs',
   'outputCapBytes',
   'expect',
+  'request',
 ] as const;
+const REQUEST_KEYS = ['method', 'path', 'headers', 'body', 'responseHeaders'] as const;
 const INPUT_KEYS = ['from', 'to'] as const;
 const OUTPUT_KEYS = ['path', 'mode'] as const;
+const MIN_PORT = 1;
+const MAX_PORT = 65_535;
+/** An HTTP method token: upper-case letters only (`declaration-types.ts`'s own `HttpRequestSpec` doc
+ * comment states the DECISION to restrict to this conventional form). */
+const HTTP_METHOD_PATTERN = /^[A-Z]+$/;
+/** Whether `value` contains an ASCII control character (0x00-0x1F, 0x7F), CR and LF included —
+ * refused anywhere in an `http` case's own `path`, header name, header value or body, because each
+ * is sent verbatim onto a real request line/header this harness itself writes (request-line/header-
+ * injection defence, not merely a style preference). A plain char-code scan, never a `/[\x00-\x1f]/`
+ * regex literal: ESLint's `no-control-regex` flags a raw control byte written directly into a regex
+ * pattern (`normalize.ts`'s own `applyStripAnsi` doc comment states the identical reason for its own
+ * escape-byte workaround), and a scan needs no regex at all here. */
+function hasControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
 const UNOBSERVABLE_KEYS = ['surface', 'reason', 'owner', 'expiry'] as const;
 const NORMALIZE_RULE_NAMES = [
   'line-endings',
@@ -431,7 +464,243 @@ function readExpect(raw: unknown, out: Collector, at: string): ParityCase['expec
   return undefined;
 }
 
-function readCase(raw: unknown, out: Collector, at: string): ParityCase | undefined {
+/** The first reason `value` is unsafe as an `http` case's own path, header name, header value or body
+ * — a request-line/header-injection defence (`declaration.ts`'s own `hasControlCharacter`), checked
+ * identically everywhere raw text is about to be sent verbatim onto a real HTTP request. */
+function unsafeHttpTextReason(value: string): string | undefined {
+  return hasControlCharacter(value)
+    ? 'contains an ASCII control character (a CR/LF/NUL included), which cannot be sent verbatim onto a request line or header'
+    : undefined;
+}
+
+/** An HTTP header NAME's own full allowed charset (RFC 7230 §3.2.6 `token`/`tchar`): one or more of
+ * the letters, digits, and `!#$%&'*+-.^_`|~`. Unlike a header VALUE, a request `path`, or a case's
+ * `body` — each checked only for an ASCII control character ({@link unsafeHttpTextReason}) — a
+ * header NAME is restricted to this narrower set, because Node's own `http.request` enforces the
+ * IDENTICAL charset internally (`validateHeaderName`) and throws a SYNCHRONOUS, unwrapped `TypeError
+ * [ERR_INVALID_HTTP_TOKEN]` for anything outside it — confirmed by direct experiment (this piece's
+ * own report has the transcript): a name such as `"X-Foo: Bar-Injected"` carries no control character
+ * at all (a colon is not one), so it passed this module's OWN check before this fix, and reached
+ * `http-client.ts`'s `sendHttpRequest` at observe time, where that synchronous throw — never wrapped
+ * as a `ForgeError` — used to crash this surface's entire cases loop instead of failing the one
+ * malformed case. Refusing it here, at load, is what keeps this specific shape from ever reaching the
+ * observer at all; `http-client.ts`'s own `sendHttpRequest` is separately hardened (its own doc
+ * comment) as defence in depth, for whatever this load-time check does not anticipate. */
+const HTTP_HEADER_NAME_TOKEN_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/** The first reason `name` is unsafe as an http header's own NAME — every control-character reason
+ * {@link unsafeHttpTextReason} already checks for a header value/path/body, PLUS the RFC 7230 token
+ * charset a header name alone is held to ({@link HTTP_HEADER_NAME_TOKEN_PATTERN}'s own doc comment).
+ * A colon, space, comma, or any other character outside that set is refused here even though none of
+ * them is an ASCII control character. */
+function unsafeHttpHeaderNameReason(name: string): string | undefined {
+  const controlReason = unsafeHttpTextReason(name);
+  if (controlReason !== undefined) return controlReason;
+  if (!HTTP_HEADER_NAME_TOKEN_PATTERN.test(name)) {
+    return (
+      'is not a valid HTTP header-name token (RFC 7230 §3.2.6): only letters, digits, and ' +
+      '"!#$%&\'*+-.^_`|~" are permitted — it contains a character outside that set (such as a ' +
+      'colon, space, or comma)'
+    );
+  }
+  return undefined;
+}
+
+/** Whether `value` starts with exactly one leading "/" — never zero, and never two or more. A
+ * `request`/readiness `path` beginning "//" (e.g. `"//attacker.example/evil-path"`) is byte-for-byte
+ * INERT here either way (both critics of this piece's own round-2 fix pass proved this directly): it
+ * is a literal request-target string sent verbatim on a request line to a `host`/`port` this harness
+ * itself already fixed, never parsed as a URL (`declaration-types.ts`'s own `HttpRequestSpec` doc
+ * comment, "DECISION — `path`"), so there is no parser anywhere in this pipeline that would ever read
+ * a leading "//" as "switch to this other host" the way a browser's own URL parser would. Refused
+ * anyway, cheaply, because it reads exactly like a protocol-relative URL on review and no legitimate
+ * declaration has a reason to declare one. */
+function hasSingleLeadingSlash(value: string): boolean {
+  return value.startsWith('/') && !value.startsWith('//');
+}
+
+function readHttpReadiness(
+  raw: unknown,
+  out: Collector,
+  at: string,
+): HttpReadinessProbe | undefined {
+  if (!isRecord(raw)) {
+    out.add('invalid-value', at, `must be a mapping, found ${describeValue(raw)}`);
+    return undefined;
+  }
+  out.strictKeys(raw, READINESS_KEYS, at);
+  let ok = true;
+  const probePath = raw['path'];
+  if (!isNonBlankString(probePath) || !hasSingleLeadingSlash(probePath)) {
+    out.add(
+      'invalid-value',
+      `${at}.path`,
+      `must be a non-blank string starting with exactly one "/" (never "//"), found ${describeValue(probePath)}`,
+    );
+    ok = false;
+  } else {
+    const reason = unsafeHttpTextReason(probePath);
+    if (reason !== undefined) {
+      out.add('invalid-value', `${at}.path`, `"${probePath}" is unusable (${reason})`);
+      ok = false;
+    }
+  }
+  const timeoutMs = raw['timeoutMs'];
+  if (typeof timeoutMs !== 'number' || !Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    out.add(
+      'invalid-value',
+      `${at}.timeoutMs`,
+      `must be a positive integer (milliseconds), found ${describeValue(timeoutMs)}`,
+    );
+    ok = false;
+  }
+  if (!ok || !isNonBlankString(probePath) || typeof timeoutMs !== 'number') return undefined;
+  return { path: probePath, timeoutMs };
+}
+
+function readHttpHeaders(
+  raw: unknown,
+  out: Collector,
+  at: string,
+): Readonly<Record<string, string>> | undefined {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) {
+    out.add(
+      'invalid-value',
+      at,
+      `must be a mapping of header name to value, found ${describeValue(raw)}`,
+    );
+    return undefined;
+  }
+  let ok = true;
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (name.trim() === '') {
+      out.add('invalid-value', at, 'has a blank header name, which is refused');
+      ok = false;
+      continue;
+    }
+    const nameReason = unsafeHttpHeaderNameReason(name);
+    if (nameReason !== undefined) {
+      out.add('invalid-value', `${at}["${name}"]`, `the header name is unusable (${nameReason})`);
+      ok = false;
+      continue;
+    }
+    if (!isNonBlankString(value)) {
+      out.add(
+        'invalid-value',
+        `${at}["${name}"]`,
+        `must be a string, found ${describeValue(value)}`,
+      );
+      ok = false;
+      continue;
+    }
+    const valueReason = unsafeHttpTextReason(value);
+    if (valueReason !== undefined) {
+      out.add('invalid-value', `${at}["${name}"]`, `the header value is unusable (${valueReason})`);
+      ok = false;
+      continue;
+    }
+    headers[name] = value;
+  }
+  return ok ? headers : undefined;
+}
+
+function readHttpResponseHeaders(
+  raw: unknown,
+  out: Collector,
+  at: string,
+): readonly string[] | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw) || !raw.every(isNonBlankString)) {
+    out.add('invalid-value', at, 'must be a list of non-blank header names when given');
+    return undefined;
+  }
+  return raw.map((name) => name.toLowerCase());
+}
+
+function readHttpRequest(raw: unknown, out: Collector, at: string): HttpRequestSpec | undefined {
+  if (!isRecord(raw)) {
+    out.add('invalid-value', at, `must be a mapping, found ${describeValue(raw)}`);
+    return undefined;
+  }
+  out.strictKeys(raw, REQUEST_KEYS, at);
+  let ok = true;
+
+  const method = raw['method'];
+  if (!isNonBlankString(method) || !HTTP_METHOD_PATTERN.test(method)) {
+    out.add(
+      'invalid-value',
+      `${at}.method`,
+      `must be an upper-case HTTP method token (e.g. "GET", "POST"), found ${describeValue(method)}`,
+    );
+    ok = false;
+  }
+
+  const requestPath = raw['path'];
+  if (!isNonBlankString(requestPath) || !hasSingleLeadingSlash(requestPath)) {
+    out.add(
+      'invalid-value',
+      `${at}.path`,
+      `must be a non-blank string starting with exactly one "/" (never "//"), found ${describeValue(requestPath)}`,
+    );
+    ok = false;
+  } else {
+    const reason = unsafeHttpTextReason(requestPath);
+    if (reason !== undefined) {
+      out.add('invalid-value', `${at}.path`, `"${requestPath}" is unusable (${reason})`);
+      ok = false;
+    }
+  }
+
+  const headersBefore = out.problems.length;
+  const headers = readHttpHeaders(raw['headers'], out, `${at}.headers`);
+  if (out.problems.length > headersBefore) ok = false;
+
+  const body = raw['body'];
+  if (body !== undefined) {
+    // Unlike `path`/`method`/a header, a body may legitimately be empty or whitespace-only (`body:
+    // ''`, or a literal space): only its TYPE is checked here, never blankness.
+    if (typeof body !== 'string') {
+      out.add(
+        'invalid-value',
+        `${at}.body`,
+        `must be a string when given, found ${describeValue(body)}`,
+      );
+      ok = false;
+    } else {
+      const reason = unsafeHttpTextReason(body);
+      if (reason !== undefined) {
+        out.add('invalid-value', `${at}.body`, `the body is unusable (${reason})`);
+        ok = false;
+      }
+    }
+  }
+
+  const responseHeadersBefore = out.problems.length;
+  const responseHeaders = readHttpResponseHeaders(
+    raw['responseHeaders'],
+    out,
+    `${at}.responseHeaders`,
+  );
+  if (out.problems.length > responseHeadersBefore) ok = false;
+
+  if (!ok || !isNonBlankString(method) || !isNonBlankString(requestPath)) return undefined;
+  return {
+    method,
+    path: requestPath,
+    ...(headers === undefined ? {} : { headers }),
+    ...(typeof body === 'string' ? { body } : {}),
+    ...(responseHeaders === undefined ? {} : { responseHeaders }),
+  };
+}
+
+function readCase(
+  raw: unknown,
+  out: Collector,
+  at: string,
+  kind: SurfaceKind,
+): ParityCase | undefined {
   if (!isRecord(raw)) {
     out.add('invalid-value', at, `must be a mapping, found ${describeValue(raw)}`);
     return undefined;
@@ -442,7 +711,15 @@ function readCase(raw: unknown, out: Collector, at: string): ParityCase | undefi
   const argsRaw = raw['args'];
   let args: readonly string[] | undefined;
   if (argsRaw !== undefined) {
-    if (!Array.isArray(argsRaw) || !argsRaw.every((entry) => typeof entry === 'string')) {
+    if (kind === 'http') {
+      out.add(
+        'invalid-value',
+        `${at}.args`,
+        '"args" composes onto a surface\'s "run" line, which the "http" surface never does per ' +
+          'case (its "run" starts a server once); declare "request" instead',
+      );
+      ok = false;
+    } else if (!Array.isArray(argsRaw) || !argsRaw.every((entry) => typeof entry === 'string')) {
       out.add('invalid-value', `${at}.args`, 'must be a list of strings when given');
       ok = false;
     } else {
@@ -468,7 +745,15 @@ function readCase(raw: unknown, out: Collector, at: string): ParityCase | undefi
   const outputsRaw = raw['outputs'];
   let outputs: readonly DeclaredOutput[] | undefined;
   if (outputsRaw !== undefined) {
-    if (!Array.isArray(outputsRaw)) {
+    if (kind === 'http') {
+      out.add(
+        'invalid-value',
+        `${at}.outputs`,
+        '"outputs" declares a "file" surface\'s own output files; an "http" case\'s observation is ' +
+          'its response, never a declared output file',
+      );
+      ok = false;
+    } else if (!Array.isArray(outputsRaw)) {
       out.add('invalid-value', `${at}.outputs`, 'must be a list when given');
       ok = false;
     } else {
@@ -525,9 +810,42 @@ function readCase(raw: unknown, out: Collector, at: string): ParityCase | undefi
     }
   }
 
-  const expectBefore = out.problems.length;
-  const expect = readExpect(raw['expect'], out, `${at}.expect`);
-  if (out.problems.length > expectBefore) ok = false;
+  let expect: ParityCase['expect'];
+  if (kind === 'http') {
+    if (raw['expect'] !== undefined) {
+      out.add(
+        'invalid-value',
+        `${at}.expect`,
+        '"expect" names an expected process exit code, which an "http" case\'s request/response ' +
+          'pair has none of',
+      );
+      ok = false;
+    }
+  } else {
+    const expectBefore = out.problems.length;
+    expect = readExpect(raw['expect'], out, `${at}.expect`);
+    if (out.problems.length > expectBefore) ok = false;
+  }
+
+  let request: HttpRequestSpec | undefined;
+  const requestRaw = raw['request'];
+  if (kind === 'http') {
+    if (requestRaw === undefined) {
+      out.add('invalid-value', `${at}.request`, 'is required on an "http" case');
+      ok = false;
+    } else {
+      const requestBefore = out.problems.length;
+      request = readHttpRequest(requestRaw, out, `${at}.request`);
+      if (out.problems.length > requestBefore) ok = false;
+    }
+  } else if (requestRaw !== undefined) {
+    out.add(
+      'invalid-value',
+      `${at}.request`,
+      `"request" only applies to the "http" surface, not "${kind}"`,
+    );
+    ok = false;
+  }
 
   if (!ok) return undefined;
   return {
@@ -538,6 +856,7 @@ function readCase(raw: unknown, out: Collector, at: string): ParityCase | undefi
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
     ...(outputCapBytes === undefined ? {} : { outputCapBytes }),
     ...(expect === undefined ? {} : { expect }),
+    ...(request === undefined ? {} : { request }),
   };
 }
 
@@ -650,6 +969,56 @@ function readSurface(
     ok = false;
   }
 
+  const portRaw = raw['port'];
+  let port: number | undefined;
+  if (kind === 'http') {
+    // A literal port, never `0`/ephemeral: Q294 Decision 7 and the plan's own Mandate both say "a
+    // literal loopback port" — the pre-start free check and every case's own request need one fixed
+    // number to agree on in advance, which an OS-chosen ephemeral port cannot give either of them.
+    if (
+      typeof portRaw !== 'number' ||
+      !Number.isInteger(portRaw) ||
+      portRaw < MIN_PORT ||
+      portRaw > MAX_PORT
+    ) {
+      out.add(
+        'invalid-value',
+        `${at}.port`,
+        `must be a literal integer port from ${String(MIN_PORT)} to ${String(MAX_PORT)}, found ${describeValue(portRaw)}`,
+      );
+      ok = false;
+    } else {
+      port = portRaw;
+    }
+  } else if (portRaw !== undefined) {
+    out.add(
+      'invalid-value',
+      `${at}.port`,
+      `"port" only applies to the "http" surface, not "${kind}"`,
+    );
+    ok = false;
+  }
+
+  const readinessRaw = raw['readiness'];
+  let readiness: HttpReadinessProbe | undefined;
+  if (kind === 'http') {
+    if (readinessRaw === undefined) {
+      out.add('invalid-value', `${at}.readiness`, 'is required on the "http" surface');
+      ok = false;
+    } else {
+      const readinessBefore = out.problems.length;
+      readiness = readHttpReadiness(readinessRaw, out, `${at}.readiness`);
+      if (out.problems.length > readinessBefore) ok = false;
+    }
+  } else if (readinessRaw !== undefined) {
+    out.add(
+      'invalid-value',
+      `${at}.readiness`,
+      `"readiness" only applies to the "http" surface, not "${kind}"`,
+    );
+    ok = false;
+  }
+
   const stability = readStability(raw['stability'], out, `${at}.stability`);
 
   const casesRaw = raw['cases'];
@@ -659,7 +1028,7 @@ function readSurface(
     ok = false;
   } else {
     const read = casesRaw.map((entry, index) =>
-      readCase(entry, out, `${at}.cases[${String(index)}]`),
+      readCase(entry, out, `${at}.cases[${String(index)}]`, kind),
     );
     if (allDefined(read)) cases = read;
     else ok = false;
@@ -675,6 +1044,8 @@ function readSurface(
     ...(setup === undefined ? {} : { setup }),
     ...(streams === undefined ? {} : { streams }),
     ...(httpNetwork === undefined ? {} : { network: httpNetwork }),
+    ...(port === undefined ? {} : { port }),
+    ...(readiness === undefined ? {} : { readiness }),
     stability,
     cases,
   };

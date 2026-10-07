@@ -57,6 +57,89 @@ export interface OverlayInput {
   readonly to: string;
 }
 
+/**
+ * The `http` surface's own request/response shape (`specs/22` M16 P8, `13` F-TEST-9's surfaces
+ * bullet: "`http` observes a request/response pair"). One case belongs to exactly one surface
+ * (`ParityCase`'s own doc comment), and this is the `http` case's entire request: method, path,
+ * request headers, a literal body, and which RESPONSE headers to observe.
+ *
+ * **DECISION — why this is a sibling shape on `ParityCase`, not a reuse of `args`.** `args` composes
+ * onto a surface's `run` as single-quoted shell words (`compose-args.ts`); an `http` surface's `run`
+ * starts a SERVER once, and a case never composes anything onto it — see `observe.ts`'s own report
+ * section on why the dispatch itself had to branch. `request` is additive and optional on the one
+ * shared `ParityCase` shape (consistent with how `SurfaceDeclaration` already keeps `network`/
+ * `streams` as kind-specific optional fields on one shared shape, enforced per-kind by
+ * `declaration.ts`'s loader) rather than a wholly separate case type, so every surface's `cases` list
+ * stays the one array type `PLAN-M16.md` P2 established. `declaration.ts`'s loader enforces that an
+ * `http` case carries `request` (and never `args`/`outputs`/`expect`, none of which has a coherent
+ * meaning for a request/response pair) and every other kind never carries `request`.
+ *
+ * **DECISION — `method`.** Required, and validated at load as an upper-case HTTP token
+ * (`declaration.ts`'s own `HTTP_METHOD_PATTERN`): the spec text names no shape beyond "method", and
+ * restricting to the conventional upper-case form (`GET`, `POST`, `DELETE`, ...) is the smallest
+ * reading that avoids a silent `get`/`Get`/`GET` inconsistency a reviewer would not expect to matter.
+ *
+ * **DECISION — `path`.** Required, must start with exactly one `/` (never two or more —
+ * `declaration.ts`'s own `hasSingleLeadingSlash`) and contain no ASCII control character
+ * (`declaration.ts`'s own `unsafeHttpTextReason`): this is a request-target string sent verbatim on
+ * the request line to a server this harness itself started on an explicit `host`/`port` (never parsed
+ * as a URL that could redirect the TCP connection elsewhere — `http-client.ts`'s own doc comment), so
+ * the one real risk it carries is request-line/header injection via an embedded CR/LF, which the
+ * control-character check refuses outright. A leading "//" is refused too, even though it is
+ * byte-for-byte inert for the identical "never parsed as a URL" reason — it reads like a
+ * protocol-relative URL on review, which is confusing enough on its own to refuse outright.
+ *
+ * **DECISION — `headers`/`body`.** Literal values, exactly as a case's `args` are literal words: a
+ * header name/value may not contain a CR, LF or NUL (`declaration.ts`'s own `unsafeHttpTextReason`)
+ * for the identical request-line-injection reason `path` is checked; `body`, if given, is sent
+ * verbatim as the request body with no transformation. A header NAME is held to a narrower charset
+ * still — the RFC 7230 `tchar`/token set, never merely "no control character"
+ * (`declaration.ts`'s own `unsafeHttpHeaderNameReason`) — because Node's own `http.request` enforces
+ * that charset internally and throws a synchronous, unwrapped exception for anything outside it; a
+ * header VALUE has no such narrower restriction here (RFC 7230 §3.2.6's own `field-value` already
+ * permits most of what a control-character check alone would otherwise allow through).
+ *
+ * **DECISION — `responseHeaders`.** An explicit, OPT-IN allowlist of which response header names are
+ * even part of the observation (lower-cased at load, since HTTP header names are case-insensitive) —
+ * the inverse default of `process`'s own `streams` (which defaults to "observe both"). Absent means
+ * NO headers are observed, deliberately: an ordinary HTTP server response carries at least a `Date`
+ * header that changes on every single request, and the stability probe runs each case
+ * `stability.runs` times and requires EVERY run to agree byte-for-byte (`13` F-TEST-9) — defaulting to
+ * "observe every header" would make an ordinary, correctly-behaving server fixture `unstable` on its
+ * very first declaration, for a reason that has nothing to do with the behaviour under test. A
+ * reviewer who wants a header compared says so by name; one who selects a volatile header (`date`,
+ * `set-cookie` with a fresh token, …) gets exactly the instability that selection deserves, which is
+ * the correct, deliberate failure mode, not a trap the harness sets by default.
+ */
+export interface HttpRequestSpec {
+  readonly method: string;
+  readonly path: string;
+  readonly headers?: Readonly<Record<string, string>>;
+  readonly body?: string;
+  readonly responseHeaders?: readonly string[];
+}
+
+/**
+ * The `http` surface's own readiness probe (`specs/22` M16 P8, Q294 Decision 7: "a readiness probe
+ * with a timeout"). `path` is requested by a plain `GET` (the probe is a liveness check, not a case:
+ * it has no method/headers/body of its own to declare — see `http-server.ts`'s own report section for
+ * why `GET` specifically), and the server is considered ready the moment a complete HTTP response, of
+ * ANY status code, is read back within `timeoutMs` of the server process starting.
+ *
+ * **DECISION — why ANY status counts as ready, not only 2xx.** The spec's own text fixes only "a
+ * readiness probe with a timeout", not an expected status; requiring 2xx specifically would refuse a
+ * server whose own health path legitimately answers 404 (no handler yet mounted during a cold start,
+ * for one) or 401 (the convention some frameworks use for "cold but reachable") while still being
+ * genuinely able to answer every declared case. "The TCP/HTTP stack is alive and this process is the
+ * one answering it" — which ANY well-formed HTTP response proves — is the smallest, most honest
+ * reading of "ready" a harness can enforce without also reviewing the project's own health-check
+ * semantics, which this milestone does not ask for.
+ */
+export interface HttpReadinessProbe {
+  readonly path: string;
+  readonly timeoutMs: number;
+}
+
 /** A `file` surface's declared output: `mode: 'bytes'` stores only its sha256, never its content
  * (`13` F-TEST-9); `mode` absent means `'text'`. */
 export interface DeclaredOutput {
@@ -89,6 +172,10 @@ export interface ParityCase {
   readonly timeoutMs?: number;
   readonly outputCapBytes?: number;
   readonly expect?: ExpectedExit;
+  /** The `http` surface's own case shape — required on an `http` case, refused on every other kind
+   * (`declaration.ts`'s loader). See {@link HttpRequestSpec}'s own doc comment for the full DECISION
+   * record on its shape. */
+  readonly request?: HttpRequestSpec;
 }
 
 /**
@@ -106,6 +193,15 @@ export interface SurfaceDeclaration {
   readonly setup?: readonly string[];
   readonly streams?: readonly ProcessStream[];
   readonly network?: 'loopback';
+  /** The `http` surface's own literal loopback port — required on an `http` surface, refused on
+   * every other kind (`declaration.ts`'s loader). A literal port, never `0`/ephemeral or a range
+   * (Q294 Decision 7, the plan's own Mandate: "a literal loopback port"): the harness's own pre-start
+   * free check and every case's request both need one fixed number to agree on, and an ephemeral port
+   * the OS chooses would give the pre-start check nothing to check against in advance. */
+  readonly port?: number;
+  /** The `http` surface's own readiness probe — required on an `http` surface, refused on every
+   * other kind. See {@link HttpReadinessProbe}'s own doc comment for the full DECISION record. */
+  readonly readiness?: HttpReadinessProbe;
   readonly stability: { readonly runs: number };
   readonly cases: readonly ParityCase[];
 }

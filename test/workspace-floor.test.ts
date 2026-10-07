@@ -215,6 +215,12 @@ const IGNORED_PATHS = new Set([
   // process, never imported, never run as a vitest suite, unrecognised by `TEST_FILE`'s naming
   // heuristic" shape `binding-check-child.ts` above already establishes, for the identical reason.
   'packages/cli/test/commands/loop/test/fixtures/hunk-mutation-check-child.ts',
+  // `packages/cli/test/commands/parity/http-fixtures.ts` (`specs/22` M16 P8): shared real-subprocess
+  // HTTP server fixtures (a free-port picker, a parameterised `node:http` server script builder)
+  // imported by this directory's own `http-server.test.ts`/`observe-http.test.ts` -- the identical
+  // "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming heuristic"
+  // shape `fixtures.ts` immediately above already establishes, for the identical reason.
+  'packages/cli/test/commands/parity/http-fixtures.ts',
 ]);
 
 /**

@@ -269,6 +269,9 @@ function toCandidateObservation(raw: RawSurfaceObservation): SurfaceObservation 
   if (raw.surface === 'library') {
     return { surface: 'library', result: toStoredLibraryResult(raw.result) };
   }
+  if (raw.surface === 'http') {
+    return { surface: 'http', status: raw.status, headers: raw.headers, body: raw.body.text };
+  }
   return {
     surface: 'file',
     files: raw.files.map((entry) => ({

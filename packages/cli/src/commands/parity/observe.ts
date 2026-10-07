@@ -41,7 +41,7 @@
  * @see process/SPEC-QUESTIONS.md Q294 Decision 7
  */
 import { createHash } from 'node:crypto';
-import { readFile, realpath } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import { ForgeError, isForgeError, renderValue } from '@forge/core/errors';
@@ -58,6 +58,8 @@ import type {
 } from './declaration-types.ts';
 import { SURFACE_KINDS } from './declaration-types.ts';
 import { parseLibraryProbeOutput } from './library-protocol.ts';
+import { observeHttpSurfaceCases } from './observe-http.ts';
+import { PINNED_ENV } from './pinned-env.ts';
 import type {
   ObservedRoot,
   ParityCaseObservationOutcome,
@@ -69,77 +71,22 @@ import type {
   RawLibraryObservation,
   RawProcessObservation,
   RawStream,
-  TreeSnapshot,
 } from './observe-types.ts';
 import {
   cleanDeclaredOutputs,
   probeSourcePaths,
   readDeclaredOutputContent,
+  readOverlaySourceBytes,
   writeOverlayFile,
   writeProbeOverlay,
 } from './overlay.ts';
 import { lossyUtf8Refusal, secretRefusal } from './refusals.ts';
-import { takeTreeSnapshot } from './tree-snapshot.ts';
+import { isCleanExcluding, takeTreeSnapshot } from './tree-snapshot.ts';
 
-/** `13` F-TEST-9: "Every case runs in a scrubbed environment with `TZ=UTC`, `LC_ALL=C.UTF-8` and
- * `LANG=C.UTF-8`" — injected via `extraEnv`, never read ambiently (`QUALITY-BAR.md` R10). Applied to
- * a surface's own `setup` too (this piece's own DECISION: a build step's behaviour should not vary
- * by host locale either, and nothing in the spec says otherwise). */
-const PINNED_ENV: Readonly<Record<string, string>> = {
-  TZ: 'UTC',
-  LC_ALL: 'C.UTF-8',
-  LANG: 'C.UTF-8',
-};
-
-/**
- * Reads the bytes of an overlay source (a case's own `inputs[].from`, or a `library` surface's
- * probe) from `overlayRoot`'s own `.forge/parity/`. Every failure to read it — missing, a directory,
- * unreadable — is wrapped as the identical `RUN-128`: from the observing case's own point of view,
- * "this byte source could not be read" is one actionable fact regardless of the OS-level reason,
- * and never a raw, unwrapped `fs` exception escaping this piece's own `ForgeError` discipline
- * (`QUALITY-BAR.md` R2).
- */
-async function readOverlaySourceBytes(
-  overlayRoot: string,
-  relativePath: string,
-): Promise<Uint8Array> {
-  try {
-    return await readFile(path.join(overlayRoot, relativePath));
-  } catch (cause) {
-    throw new ForgeError('RUN-128', { path: relativePath }, { cause });
-  }
-}
-
-/** Every path component of a `TreeSnapshot`'s own entries, minus `exclude` — used to decide whether
- * observing a case left the tree clean, OTHER than at its own declared output paths (`13` F-TEST-9:
- * "a case that writes outside its declared outputs is unclean" — this piece's own DECISION on what
- * "outside" excludes, see this module's own report). Both snapshots are already sorted by path
- * (`tree-snapshot.ts`), so filtering preserves that order and an index-wise comparison stays valid. */
-function isCleanExcluding(
-  before: TreeSnapshot,
-  after: TreeSnapshot,
-  exclude: ReadonlySet<string>,
-): boolean {
-  if (before.headSha !== after.headSha) return false;
-  const filtered = (snapshot: TreeSnapshot) =>
-    snapshot.entries.filter((entry) => !exclude.has(entry.path));
-  const b = filtered(before);
-  const a = filtered(after);
-  if (b.length !== a.length) return false;
-  for (let index = 0; index < b.length; index += 1) {
-    const left = b[index];
-    const right = a[index];
-    if (left === undefined || right === undefined) return false;
-    if (
-      left.path !== right.path ||
-      left.status !== right.status ||
-      left.content !== right.content
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
+// `PINNED_ENV` moved to its own module, `pinned-env.ts` (`specs/22` M16 P8): `http-server.ts` needs
+// the IDENTICAL constant and sits on the other side of an `observe.ts` -> `observe-http.ts` ->
+// `http-server.ts` call chain, so re-exporting it from here would create an import cycle back to
+// this module. See that module's own doc comment for the full reasoning.
 
 function decodeLossy(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('utf8');
@@ -422,6 +369,27 @@ async function observeAgainstRoot(
     // unaffected.
     const setupFailure =
       side === 'reference' ? await runSurfaceSetup(surface, root, parentEnv) : undefined;
+
+    // `http` is dispatched to its own branch, not the generic per-case loop below: that loop composes
+    // the CASE's own args onto the surface's `run` and runs ONE confined command invocation PER CASE
+    // (`observeOneCase`), which fits a `process`/`file`/`library` surface's own `run` (a command that
+    // finishes) but not an `http` surface's own `run` (a command that starts a SERVER, which must stay
+    // alive across every one of this surface's cases, never a command run once per case or once and
+    // discarded) -- see this piece's own report, "How `observeAgainstRoot` was restructured", for the
+    // full account of why this is a deliberate top-level branch rather than a forced stretch of the
+    // existing shape. `setupFailure` is honoured identically here: an `http` surface's own `setup` (a
+    // build step, say, before the server itself starts) runs through the IDENTICAL `runSurfaceSetup`
+    // every other surface's reference side already uses, above, before this branch is ever reached.
+    if (surfaceKind === 'http') {
+      const outcomes: readonly ParityCaseObservationOutcome[] =
+        setupFailure !== undefined
+          ? surface.cases.map(() => ({ outcome: 'failed', failure: { error: setupFailure } }))
+          : await observeHttpSurfaceCases(surface, root, overlayRoot, parentEnv);
+      outcomes.forEach((outcome, caseIndex) => {
+        results.push({ surface: surfaceKind, caseIndex, result: outcome });
+      });
+      continue;
+    }
 
     // Sequential, one case at a time: each case's own overlay-write/clean bookkeeping must not
     // overlap a sibling case's (they share the one tree being observed).

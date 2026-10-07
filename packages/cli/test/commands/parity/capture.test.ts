@@ -143,13 +143,13 @@ describe('parseCapture — schema round-trip and name/hash verification (specs/2
     expect(result.problem?.message).toMatch(/cases must be a list/);
   });
 
-  it('rejects an observation naming a surface this capture format carries none for (e.g. "http")', () => {
+  it('rejects an observation naming a surface this capture format carries none for (e.g. "websocket" -- "http" is now a real, carried surface, added by a later piece of this milestone)', () => {
     const invalidShapeBytes = JSON.stringify({
       name: 'x',
       digest: 'd'.repeat(64),
       reference: { ref: 'a'.repeat(40), sha: 'a'.repeat(40) },
       platform: 'linux-x64',
-      cases: [{ surface: 'http', caseIndex: 0, observation: { surface: 'http' } }],
+      cases: [{ surface: 'websocket', caseIndex: 0, observation: { surface: 'websocket' } }],
     });
     const result = parseCapture(invalidShapeBytes, captureFileName(invalidShapeBytes));
     expect(result.capture).toBeUndefined();
@@ -227,7 +227,7 @@ describe('parseCapture — every malformed-observation branch (specs/22 M16 P2)'
   });
 
   it('rejects an observation naming a surface this capture format carries no observation shape for', () => {
-    expectRejected({ surface: 'process', caseIndex: 0, observation: { surface: 'http' } });
+    expectRejected({ surface: 'process', caseIndex: 0, observation: { surface: 'websocket' } });
   });
 
   it('rejects a process observation whose stdout/stderr are present but not strings', () => {

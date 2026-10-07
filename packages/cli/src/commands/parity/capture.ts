@@ -5,9 +5,10 @@
  * identical file."
  *
  * This module owns three things: the typed shape of a normalised observation per surface (`process`,
- * `file`, `library` — `http`'s own shape is P8's, see the note on {@link SurfaceObservation} below),
- * the capture's own canonical bytes and content-addressed file name, and a strict parser that
- * verifies a capture's claimed name against its own bytes on every read.
+ * `file`, `library`, and `http` — the last added by `specs/22` M16 P8, additively, exactly as this
+ * module's own `SurfaceObservation` doc comment always said it would be), the capture's own canonical
+ * bytes and content-addressed file name, and a strict parser that verifies a capture's claimed name
+ * against its own bytes on every read.
  *
  * **`parseCapture` is closed-schema, the identical discipline `declaration.ts`'s own `Collector`
  * gives a declaration** — not merely "read the fields this module expects and ignore the rest".
@@ -87,17 +88,22 @@ export interface LibraryObservation {
 }
 
 /**
- * The normalised observation of one case, discriminated by surface.
- *
- * **`http` is deliberately absent.** `13` F-TEST-9 names a request/response pair as its observation,
- * but its exact shape is explicitly left to P1's text and P3/P8's own build (`PLAN-M16.md`'s "Left to
- * a piece's own BUILD" list); this piece's own brief excludes HTTP outright ("no HTTP (P8)"). Rather
- * than invent a shape that might conflict with what P8 actually needs, this union simply has no
- * `http` member yet — adding one is an additive, non-breaking change to this type when P8 builds it,
- * never a redefinition of the three members already here (`PLAN-M16.md` P2's own Mandate: "P3
- * produces it and P4 compares it, and neither may redefine it" applies symmetrically to a future P8).
+ * An `http` surface's normalised observation (`specs/22` M16 P8, `13` F-TEST-9): the response status,
+ * the selected response headers (by name, already lower-cased at load — `declaration-types.ts`'s own
+ * `HttpRequestSpec` doc comment), and the normalised body text. Additive, following exactly the shape
+ * this module's own file header already promised: "adding one is an additive, non-breaking change to
+ * this type when P8 builds it, never a redefinition of the three members already here."
  */
-export type SurfaceObservation = ProcessObservation | FileObservation | LibraryObservation;
+export interface HttpObservation {
+  readonly surface: 'http';
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;
+}
+
+/** The normalised observation of one case, discriminated by surface. */
+export type SurfaceObservation =
+  ProcessObservation | FileObservation | LibraryObservation | HttpObservation;
 
 /** One case's entry in a capture: which surface and which case (by its zero-based index within that
  * surface's own `cases` list — see `declaration-types.ts`'s own note on case identity) it is for,
@@ -139,6 +145,14 @@ function canonicalObservation(observation: SurfaceObservation): CanonicalValue {
             ? { mode: entry.content.mode, text: entry.content.text }
             : { mode: entry.content.mode, sha256: entry.content.sha256 },
       })),
+    };
+  }
+  if (observation.surface === 'http') {
+    return {
+      surface: observation.surface,
+      status: observation.status,
+      headers: { ...observation.headers },
+      body: observation.body,
     };
   }
   return {
@@ -377,12 +391,31 @@ function parseLibraryObservation(
   throw new CaptureFormatError(`${at}.result.ok must be true or false`);
 }
 
+const HTTP_OBSERVATION_KEYS = ['surface', 'status', 'headers', 'body'] as const;
+
+function parseHttpObservation(raw: Readonly<Record<string, unknown>>, at: string): HttpObservation {
+  expectKnownKeys(raw, HTTP_OBSERVATION_KEYS, at);
+  const status = raw['status'];
+  if (typeof status !== 'number' || !Number.isInteger(status)) {
+    throw new CaptureFormatError(`${at}.status must be an integer`);
+  }
+  const headersRaw = raw['headers'];
+  if (!isPlainObject(headersRaw)) throw new CaptureFormatError(`${at}.headers must be an object`);
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headersRaw)) {
+    headers[name] = expectString(value, `${at}.headers["${name}"]`);
+  }
+  const body = expectString(raw['body'], `${at}.body`);
+  return { surface: 'http', status, headers, body };
+}
+
 function parseObservation(raw: unknown, at: string): SurfaceObservation {
   if (!isPlainObject(raw)) throw new CaptureFormatError(`${at} must be an object`);
   const surface = raw['surface'];
   if (surface === 'process') return parseProcessObservation(raw, at);
   if (surface === 'file') return parseFileObservation(raw, at);
   if (surface === 'library') return parseLibraryObservation(raw, at);
+  if (surface === 'http') return parseHttpObservation(raw, at);
   throw new CaptureFormatError(
     `${at}.surface ("${String(surface)}") is not a surface this capture format carries an observation for`,
   );

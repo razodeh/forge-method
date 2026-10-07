@@ -219,6 +219,64 @@ describe('computeParityDeclarationDigest (specs/22 M16 P2)', () => {
     });
   });
 
+  describe('every http-specific field changes it too (specs/22 M16 P8) (a table over each — the soundness property every other case already has: a declaration change that alters observed behaviour must invalidate an existing capture)', () => {
+    function httpDeclaration(overrides: {
+      readonly port?: number;
+      readonly readiness?: { readonly path: string; readonly timeoutMs: number };
+      readonly request?: {
+        readonly method: string;
+        readonly path: string;
+        readonly headers?: Readonly<Record<string, string>>;
+        readonly body?: string;
+        readonly responseHeaders?: readonly string[];
+      };
+    }): ParityDeclaration {
+      return minimalDeclaration({
+        surfaces: {
+          http: minimalSurface({
+            run: 'node server.js',
+            network: 'loopback',
+            port: overrides.port ?? 4123,
+            readiness: overrides.readiness ?? { path: '/healthz', timeoutMs: 5000 },
+            cases: [
+              minimalCase({
+                request: overrides.request ?? { method: 'GET', path: '/' },
+              }),
+            ],
+          }),
+        },
+      });
+    }
+
+    const base = httpDeclaration({});
+    const baseDigest = digest(base);
+
+    it.each<readonly [string, ParityDeclaration]>([
+      ['surface.port', httpDeclaration({ port: 4124 })],
+      [
+        'surface.readiness.path',
+        httpDeclaration({ readiness: { path: '/other', timeoutMs: 5000 } }),
+      ],
+      [
+        'surface.readiness.timeoutMs',
+        httpDeclaration({ readiness: { path: '/healthz', timeoutMs: 9000 } }),
+      ],
+      ['case.request.method', httpDeclaration({ request: { method: 'POST', path: '/' } })],
+      ['case.request.path', httpDeclaration({ request: { method: 'GET', path: '/other' } })],
+      [
+        'case.request.headers',
+        httpDeclaration({ request: { method: 'GET', path: '/', headers: { 'x-a': '1' } } }),
+      ],
+      ['case.request.body', httpDeclaration({ request: { method: 'POST', path: '/', body: 'x' } })],
+      [
+        'case.request.responseHeaders',
+        httpDeclaration({ request: { method: 'GET', path: '/', responseHeaders: ['x-flavor'] } }),
+      ],
+    ])('%s changes the digest', (_label, changed) => {
+      expect(digest(changed)).not.toBe(baseDigest);
+    });
+  });
+
   describe('overlay and probe bytes (specs/22 M16 P2)', () => {
     it('an overlaid file byte change changes the digest', () => {
       const d = minimalDeclaration();
