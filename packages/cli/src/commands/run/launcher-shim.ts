@@ -94,15 +94,45 @@ export function launcherScript(spec: LauncherSpec, platform: NodeJS.Platform): s
 }
 
 /** `PATH` with `binDir` first, everything else about the parent's `PATH` unchanged, plus the FORGE run
- * marker (`@forge/core/session-marker`, `PLAN-M14.md` P4) when `runId` is given. On Windows the variable
- * is spelled `Path`; the spelling the parent environment already uses is reused, so no second, competing
- * entry is created. The value is an environment variable, never spliced into a shell string, so a directory
- * with spaces or quotes in its name needs no quoting.
+ * marker (`@forge/core/session-marker`, `PLAN-M14.md` P4) when `runId` is given -- and, when it is NOT,
+ * `FORGE_RUN_ID` explicitly STRIPPED from the child env this overlay produces, never merely left out of
+ * this object (round-2 gauntlet fix, M16 P15: two independent critics, two different real repros; see
+ * "Why an explicit strip" below). On Windows the variable is spelled `Path`; the spelling the parent
+ * environment already uses is reused, so no second, competing entry is created. The value is an
+ * environment variable, never spliced into a shell string, so a directory with spaces or quotes in its
+ * name needs no quoting.
  *
  * `runId` is optional, and deliberately not threaded through every caller: `bin.ts`'s own ad-hoc `forge
  * gate check/approve/waive` shim (run directly from a person's own shell, never by the engine) calls this
  * with no run id, so its own commands never carry the marker -- a real human's own shell must never
- * incidentally pick one up (`SPEC-QUESTIONS.md` Q232 decision 9). Only `run.ts`'s own real run passes one. */
+ * incidentally pick one up (`SPEC-QUESTIONS.md` Q232 decision 9). Only `run.ts`'s own real run passes one.
+ *
+ * **Why an explicit strip, not just an omission (the real bug this fixes).** This object is handed to
+ * `execa`'s own `env` option (`runShellCommand`, `@forge/engine/dispatch/shell.ts`), whose default
+ * `extendEnv: true` merges `{...process.env, ...thisObject}` -- so a key this object never mentions AT
+ * ALL falls straight through to whatever `process.env` already has. Before this fix, `runId === undefined`
+ * produced an object with no `FORGE_RUN_ID` key, which is indistinguishable, for that merge, from an
+ * object that never had one to begin with: an already-ambient `FORGE_RUN_ID` in the CALLING shell (left
+ * over from an earlier `forge run` in the same terminal, or inherited from an `agent` step's own spawned
+ * shell, `commandStepEnvironment`) survived into the child regardless. A round-2 critic confirmed this
+ * end-to-end: a genuinely standalone `forge gate check <id>` -- not part of any workflow run at all --
+ * silently wrote a real, MISATTRIBUTED `CheckRun` telemetry event into the real project's own event log,
+ * because `gate-commands.ts`'s `evaluateFresh` runs with `ctx.projectRoot`, the real one (unlike an
+ * in-run gate step's own `ctx.integrationPath` -- `check-command.ts`'s own `RunParityCheckOptions.runId`
+ * doc comment has the full account of both real paths this affects).
+ *
+ * `delete`-ing the key instead of setting it (rather than never adding it) would look identical, for
+ * that same merge, to never having added it at all -- confirmed directly against a real `execa` 9.6.1
+ * subprocess extending a `process.env` that carries an ambient `FORGE_RUN_ID`: deleting the key beforehand
+ * leaks the ambient value through exactly as omitting it does. An explicit `undefined` own property on
+ * THIS object, by contrast, wins the spread (plain JS: a later spread's own key always overwrites an
+ * earlier one, even when its value is `undefined`) and -- also confirmed directly against the same real
+ * subprocess -- is then dropped from the child's actual environment entirely, never coerced to the
+ * literal string `"undefined"`. The cast at this function's own return is to its pre-existing, widely
+ * depended-on return type: every real caller already reads `commandEnv['FORGE_RUN_ID']` as a plain,
+ * possibly-absent string and never relies on the key's own presence, so widening the type instead would
+ * ripple into `GateCommandContext`/`ExecuteStepContext` and every other caller across both packages, far
+ * past this one function's own surface. */
 export function commandEnvFor(
   binDir: string,
   parentEnv: Readonly<Record<string, string | undefined>>,
@@ -121,7 +151,14 @@ export function commandEnvFor(
     existing === undefined || existing === ''
       ? { [key]: platform === 'win32' ? binDir : `${binDir}${delimiter}${DEFAULT_POSIX_PATH}` }
       : { [key]: `${binDir}${delimiter}${existing}` };
-  return runId === undefined ? pathEnv : { ...pathEnv, [FORGE_RUN_ID]: runId };
+  // `FORGE_RUN_ID` is ALWAYS its own explicit key below -- `runId` itself when given, `undefined` (an
+  // own property, not a missing key) when not. See this function's own doc comment above: a plain
+  // omission (or a `delete`) does not actually strip an already-ambient value from the child once
+  // `execa`'s own `extendEnv: true` merges this object over `process.env`; an explicit `undefined` does
+  // (confirmed with a real execa 9.6.1 subprocess, not assumed). The cast is to this function's own
+  // pre-existing return type -- see the doc comment above for why widening it instead would ripple far
+  // past this function's own surface.
+  return { ...pathEnv, [FORGE_RUN_ID]: runId } as Readonly<Record<string, string>>;
 }
 
 const DEFAULT_POSIX_PATH = '/usr/local/bin:/usr/bin:/bin';

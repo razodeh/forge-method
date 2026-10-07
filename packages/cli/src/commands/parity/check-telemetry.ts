@@ -31,6 +31,18 @@
  * function a caller invokes afterwards), so firing telemetry at its own tail is firing it after both
  * are already real, with no second call site to order against.
  *
+ * **Round-2 gauntlet fix addendum.** This piece's own original report claimed a `CheckRun{kind:
+ * 'parity'}` event "can never be emitted from an in-run `G-Parity` gate evaluation." Two independent
+ * critics, via two different real repros, confirmed that claim is false: an in-run evaluation's own
+ * telemetry write genuinely happens (it lands in the integration worktree's own event log, which `forge
+ * report` never reads — disclosed, not fixed, a pre-existing shared-dispatch-architecture gap), and a
+ * SECOND, more severe real path (a standalone, ad hoc `forge gate check <id>` whose gate shells out to
+ * `forge parity check`, with an already-ambient `FORGE_RUN_ID` in the calling shell) could write a real,
+ * misattributed event into the REAL project's own log — closed by a fix to `commandEnvFor`
+ * (`run/launcher-shim.ts`). `check-command.ts`'s own `RunParityCheckOptions.runId` doc comment has the
+ * full account of both paths; this module's own `evidenceId` doc comment below is unaffected (it is
+ * about `--no-record`, a different, still-accurate claim).
+ *
  * @see specs/18 §18.4
  * @see specs/22 M16 P15
  * @see process/SPEC-QUESTIONS.md Q294 Decision 5
@@ -62,8 +74,10 @@ export interface ParityCheckTelemetryInput {
   readonly total: number;
   readonly verdictCounts: ParityVerdictCounts;
   /** `null` for a `--no-record` run — which, per Q294 Decision 5, every in-run (gate) evaluation
-   * genuinely is, since a gate check's own project root can never be named (see this piece's own
-   * report for the real file:line proof). */
+   * genuinely is, since a gate check's own project root cannot be named in a portable, checked-in gate
+   * definition (a different claim from whether this TELEMETRY EVENT itself is ever written for that
+   * path — see this file's own "Round-2 gauntlet fix addendum" above and `check-command.ts`'s own
+   * `RunParityCheckOptions.runId` doc comment: it genuinely is, just to the wrong, harmless place). */
   readonly evidenceId: string | null;
   /** Every declaration this invocation named — never an observation: a declaration's own NAME, not
    * what it observed. */

@@ -621,7 +621,16 @@ describe('runParityCheck: telemetry CheckRun{kind:"parity"} (specs/22 M16 P15)',
     expect(parityRuns[0]).toMatchObject({ total: 0, declarationNames: [] });
   });
 
-  it('a secret-shaped declaration name is redacted at write time (the identical property check-telemetry.ts already proves for the binding payload)', async () => {
+  // Round-2 gauntlet fix (specs/22 M16 P15): this test's own title previously claimed "the identical
+  // property check-telemetry.ts already proves for the binding payload" -- false. Two independent
+  // critics confirmed the ONLY redaction test at this call-site layer was this one, for the NEW parity
+  // emitter's `declarationNames` field; `emitBindingCheckTelemetry`'s own payload had no direct-call
+  // redaction test anywhere in this suite before this fix (grep confirmed: no test file imported it).
+  // Both critics confirmed, via their own direct calls to the real emitter, that redaction mechanically
+  // DOES work correctly for the binding case too (not a live security bug, just a missing proof) -- see
+  // `packages/cli/test/commands/loop/test/check-telemetry.test.ts`'s own new test, added by this fix,
+  // for that proof.
+  it('a secret-shaped declaration name is redacted at write time (the mechanism this parity emitter itself uses; see check-telemetry.test.ts for the equivalent, previously-missing binding-emitter proof)', async () => {
     const dir = await freshProject();
     const secret = `ghp_${'a'.repeat(36)}`;
 

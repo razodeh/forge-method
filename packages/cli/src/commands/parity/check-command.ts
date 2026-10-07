@@ -115,11 +115,46 @@ export interface RunParityCheckOptions {
   readonly vet?: VetCommand;
   /** `specs/22` M16 P15: `process.env[FORGE_RUN_ID]` at the CLI boundary (`bin.ts`'s own dispatcher,
    * the identical `realEnvSnapshot()[FORGE_RUN_ID]` read every other telemetry-gated command already
-   * takes) — `undefined` for a hand run outside any real `forge run`, or for an in-run `G-Parity` gate
-   * evaluation (Q294 Decision 5: a gate check's own project root is the integration worktree, never
-   * the run's own, so this field is moot there even on the rare run where the launcher shim did set
-   * `FORGE_RUN_ID` in the check's own env — see this piece's own report). Telemetry only: never used
-   * to name, gate or select anything about the check itself. */
+   * takes) — `undefined` for a hand run outside any real `forge run` with no ambient marker at all.
+   * Telemetry only: never used to name, gate or select anything about the check itself.
+   *
+   * **Corrected, round-2 gauntlet fix.** This piece's own original report claimed a
+   * `CheckRun{kind:'parity'}` event "can never be emitted from an in-run `G-Parity` gate evaluation."
+   * Two independent critics, via two different real repros, confirmed that claim is false. There are
+   * two real paths that put a non-`undefined` value here, with two different real consequences:
+   *
+   * 1. **A genuine in-run `G-Parity` gate evaluation.** `runGateStep`
+   *    (`@forge/engine/dispatch/steps.ts:1222`) evaluates every gate with `ctx.integrationPath` as the
+   *    check's own `cwd`, never `ctx.projectRoot` (`createGateEvaluator`, `dispatch/facades.ts`) — but
+   *    `ctx.commandEnv` (built by `commandEnvFor`, `run/launcher-shim.ts`) DOES carry the real run's own
+   *    `FORGE_RUN_ID`, exactly as it does for every other shell command that run spawns (`run.ts`'s own
+   *    comment at its `createLauncherShimOrWarn` call: "every shell command this run spawns -- command
+   *    steps, GATE CHECKS, merge checks -- carries the FORGE run marker"). So `runId` here is routinely
+   *    DEFINED for this path on any run whose launcher shim was created successfully — not merely
+   *    possible on some rare run. The write still happens; what makes it harmless is `input.projectRoot`
+   *    for it, which is `ctx.integrationPath`: the resulting event lands in the INTEGRATION WORKTREE's
+   *    own `.forge/state/runs/`, a real file `forge report` never reads (it reads the real project's own
+   *    log), not a prevented write. Fixing this for real means threading real-project-root awareness
+   *    through the shared `runGateStep`/`createGateEvaluator` dispatch code, well past this piece's own
+   *    surface — a disclosed, pre-existing, shared-dispatch-architecture gap, NOT fixed here. The
+   *    identical mechanism likely also affects the pre-existing M15 `emitBindingCheckTelemetry` via
+   *    `G-Verify`'s own real gate wiring — flagged by a critic, not confirmed or chased, left for a
+   *    future piece to investigate.
+   * 2. **A standalone, ad hoc `forge gate check <id>` (or `approve`/`waive`) invocation whose gate
+   *    happens to shell out to `forge parity check`.** `gate-commands.ts`'s `evaluateFresh` runs with
+   *    `ctx.projectRoot` — the REAL project root, unlike path 1 above. Before this fix, if the CALLING
+   *    shell already had an ambient `FORGE_RUN_ID` (left over from an earlier `forge run` in the same
+   *    terminal, or inherited from an `agent` step's own spawned shell), `commandEnvFor` only avoided
+   *    ADDING the marker for this ad hoc path; it never stripped an already-ambient one, and `execa`'s
+   *    own default `extendEnv: true` (`runShellCommand`, `@forge/engine/dispatch/shell.ts`) merges
+   *    `{...process.env, ...env}`, so the ambient value survived into the nested check's own env
+   *    regardless. A critic confirmed end to end, with a real scratch project and a real ambient
+   *    `FORGE_RUN_ID`, that the nested `forge parity check` subprocess then read it as ITS OWN `runId`
+   *    and wrote a real, MISATTRIBUTED `CheckRun{kind:'parity'}` event into the REAL project's own event
+   *    log, under a run that never actually evaluated this check at all. **Closed by this fix**:
+   *    `commandEnvFor` now strips an already-ambient `FORGE_RUN_ID` for real when its own caller passes
+   *    no `runId` — see that function's own doc comment for the mechanism and the real subprocess proof.
+   */
   readonly runId?: string | undefined;
 }
 

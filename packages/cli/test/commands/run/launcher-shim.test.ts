@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -256,6 +257,47 @@ describe('commandEnvFor', () => {
       PATH: '/tmp/x:/usr/bin:/bin',
       FORGE_RUN_ID: 'run-shim-marker',
     });
+  });
+
+  // Round-2 gauntlet fix (specs/22 M16 P15): two independent critics found that the plain-object
+  // assertions above (`toEqual`) cannot catch the real bug, because `toEqual` treats a key that is
+  // absent the same as one present with value `undefined` -- and that is exactly the distinction that
+  // matters once this object reaches a real `execa` subprocess with its own default `extendEnv: true`
+  // (`runShellCommand`, `@forge/engine/dispatch/shell.ts`, the ad hoc `forge gate check` path's real
+  // call shape). These two tests spawn a REAL child process, never a mock, to prove the actual,
+  // merged environment the child sees -- the only way to actually observe the difference.
+  it('strips an already-ambient FORGE_RUN_ID from a real execa subprocess when no runId is given -- closes the ad hoc gate-check misattribution a critic reproduced end to end', async () => {
+    const previous = process.env['FORGE_RUN_ID'];
+    process.env['FORGE_RUN_ID'] = 'ambient-leak-from-the-calling-shell';
+    try {
+      const env = commandEnvFor('/tmp/x', { PATH: '/usr/bin:/bin' }, 'linux');
+      const { stdout } = await execa(
+        process.execPath,
+        ['-e', 'process.stdout.write(process.env.FORGE_RUN_ID ?? "<absent>")'],
+        { env },
+      );
+      expect(stdout).toBe('<absent>');
+    } finally {
+      if (previous === undefined) delete process.env['FORGE_RUN_ID'];
+      else process.env['FORGE_RUN_ID'] = previous;
+    }
+  });
+
+  it('still carries a real, given runId through to a real execa subprocess, overriding any stale ambient value -- the legitimate in-run case is unaffected by the fix above', async () => {
+    const previous = process.env['FORGE_RUN_ID'];
+    process.env['FORGE_RUN_ID'] = 'stale-value-that-must-not-survive';
+    try {
+      const env = commandEnvFor('/tmp/x', { PATH: '/usr/bin:/bin' }, 'linux', 'run-legit-marker');
+      const { stdout } = await execa(
+        process.execPath,
+        ['-e', 'process.stdout.write(process.env.FORGE_RUN_ID ?? "<absent>")'],
+        { env },
+      );
+      expect(stdout).toBe('run-legit-marker');
+    } finally {
+      if (previous === undefined) delete process.env['FORGE_RUN_ID'];
+      else process.env['FORGE_RUN_ID'] = previous;
+    }
   });
 });
 
