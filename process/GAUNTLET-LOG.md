@@ -22016,3 +22016,77 @@ independently added a `surface: 'process'` key to the same object; resolved by k
 own additional keys with `surface` appearing once, re-verified at 528/528 after resolution.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q298`.
+
+## M16 P5 — `ParityEvidence` as a registered artifact type, and the `schemaVersion: 2` migrations
+
+Two gauntlet rounds. Round 1: two independent fresh-context critics. Round 2 was the fix pass,
+verified directly against the pre-fix code rather than by a fresh critic round — the findings were
+concrete, narrow, and well-evidenced, the same judgment already applied to `## M16 P2`/`## M16
+P10`/`## M16 P3`. A further small fix landed afterward, found by the orchestrator's own repo-wide
+sweep rather than either critic round — see **Round 2** below.
+
+**What the piece builds.** Registers `ParityEvidence` (`specs/18` §18.7) as the registry's 27th
+artifact type — the schema/migration counterpart to `M16 P2`'s declaration types and `M16 P4`'s
+verdict/counting algebra, modeled directly on `M15 P2`'s own precedent (`mutation-evidence.ts`/
+`evidence-bundle.ts`). Implements the milestone's first real use of the `Migration`/`applyMigrations`
+mechanism: `MutationEvidence`/`EvidenceBundle` both gain a `schemaVersion: 1→2` migration carrying the
+new `hunkRun` shape alongside the existing `revertedRange`. 3 new source files (`parity-evidence.ts`,
+the two migration files), 10 modified.
+
+**Critic round 1 (two independent critics): one BLOCKING defect, several real gaps.**
+
+*BLOCKING, fixed — `parityEvidenceSchema`'s `superRefine` enforced none of F-TEST-9's own
+verdict-precedence algebra.* Both critics independently constructed schema-valid objects the real
+algebra can never produce: a `match` declaration carrying a `mismatch` case; an overall `invalid`
+record whose sole declaration reads `match`; the exact reverse. Fixed with `PARITY_VERDICT_PRECEDENCE`
+(copied verbatim from `counting.ts`'s own `[...DECLARATION_STOP_PRECEDENCE, ...CASE_VERDICT_PRECEDENCE]`,
+confirmed byte-identical against the real landed source) and a `worstOf` reducer mirroring
+`counting.ts`'s own `worstBy`, checked in both directions at both the declaration and the
+overall-record level.
+
+*Real, fixed.* `exemptCount` had no ceiling at all (`exemptCount: 1_000_000` validated); `13` F-TEST-9
+names exactly four surfaces, so a declaration's `exemptCount` plus its own observed-surface count can
+never exceed four — now enforced. `MutationEvidence`'s `hunkRun.baseSha` and `revertedRange.fromSha`
+could name two different commits on the same record with nothing to stop it; now checked for
+agreement. A doc comment claimed the `revert-hunks` migration-down refusal was "tested end to end
+through the CLI" — a critic traced `migrate-artifacts.ts`'s own `latestSchemaVersionFor` (monotonically
+increasing by construction) and showed a `direction: 'down'` plan can structurally never reach the
+real CLI at all; the comment was corrected and the real, only-reachable path (a hand-built
+`PlannedDocumentMigration` fed directly to `applyArtifactMigrations`) got its own dedicated test
+instead. Both migrations' own data-loss mutation coverage had a gap (a mutated `up()` that silently
+dropped `body`/`type` went undetected); closed with explicit, mutation-proven assertions on both
+fields in both directions.
+
+*Decided, not a defect.* `specs/18` §18.7's own "beyond what schema version 1 records carry" phrasing,
+read directly rather than through either the builder's or a critic's paraphrase: `EvidenceBundle`/
+`MutationEvidence` keep `revertedRange` for `revert-hunks` records and add `hunkRun` alongside it,
+additive rather than replacing — the more specific, more recent, controlling text. The round-2 fix
+closes the one real risk this reading left open (the two fields disagreeing about which commit is the
+base).
+
+**Round 2 (the fix pass, verified directly).** All 6 MUST-FIX and 4 SHOULD-FIX items confirmed landed
+by re-deriving every number rather than trusting the report: read the actual `superRefine` predicates
+against the real, landed `counting.ts` precedence arrays (exact match, confirmed by direct
+comparison); read the real `hunkRun.baseSha`/`revertedRange.fromSha` check; read the new `CFG-019`
+migration test and watched it pass. A further, independent repo-wide sweep (the exact class of miss
+`## M15 P2`'s own two separate critics each caught one more instance of) found six more stale
+registered-type-count comments neither critic nor the builder's own sweep caught — three genuinely
+pre-existing (`spec.ts`, `json-schema/emit.ts`, one of two in `module.yaml`), one a fresh off-by-one
+in the builder's own new comment ("not 25" where the real pre-piece count, confirmed directly against
+`main`, was 26), two more pre-existing in `kb-entry.ts`/`graph/types.ts`/`components-file.ts`. Fixed
+directly in the same piece, since it is the piece that moves the count to 27 and was already touching
+dozens of these for the identical reason — re-verified with a full typecheck/lint/boundaries pass and
+two overlapping scoped test runs (777 tests/20 files; 874 tests/39 files) covering every file either
+the builder or this fix touched, both clean.
+
+**Verification.** 122 tests across the 6 schema/migration files this piece owns (100%/100%/100%/100%
+coverage on 5 of 6; `parity-evidence.ts` 97.87%/100%/100%/97.61%, the one uncovered line an internal
+`worstOf` fallback structurally unreachable through the public schema — the identical shape
+`counting.ts`'s own already-shipped `worstBy` has, disclosed rather than chased). `pnpm typecheck`
+(21/21 packages), `pnpm lint`, `pnpm run boundaries` clean. `pnpm emit-schemas` re-run, 28 files,
+confirmed to reflect the new `exemptCount` ceiling and `hunkRun` shape. Live ceilings re-checked at
+round-2 time: no new error code taken (reuses `RUN-114`; the hunk-level `down` refusal relies on
+`CFG-019`'s already-shipped wrapping, now with its own dedicated test), `PAR` prefix unique in the
+registry.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q299`.

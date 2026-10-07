@@ -28331,3 +28331,39 @@ properly is Decision 1's own provenance-tracking alternative, or a fundamentally
 strategy; both are out of this milestone's scope and are named as follow-up work, not claimed solved.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P4`.
+
+## Q299 — M16 P5: `ParityEvidence` joins the registry — whose wrapping catches a migration's own
+thrown error, and what "beyond" means for a field two schema versions both want to own
+
+**Context.** `PLAN-M16.md` P5's own Mandate: register `ParityEvidence` (`specs/18` §18.7) as the
+registry's 27th artifact type, and give `MutationEvidence`/`EvidenceBundle` their first real
+`schemaVersion: 1→2` migrations. Two gauntlet rounds; the critic-round narrative, the fix detail, and
+the verification numbers are in `GAUNTLET-LOG.md`'s own `## M16 P5` entry and are not repeated here.
+
+**Decision 1 — `@forge/schemas` structurally cannot construct a `ForgeError`, and the already-shipped
+wrapping in `packages/cli/src/commands/upgrade/migrate-artifacts.ts` genuinely catches a migration's
+own thrown error, not only `applyMigrations`'s own control-flow failures.** Confirmed directly, not
+assumed: a dedicated test feeds a hand-built `PlannedDocumentMigration` with `direction: 'down'` and a
+real hunk-level `ArtifactDocument` straight to the real, unmodified `applyArtifactMigrations`,
+asserting the caller sees `CFG-019`, never a bare throw. The reverse question — can the real CLI ever
+reach this path at all — resolved to no: `latestSchemaVersionFor` only ever raises its own target, so
+`planArtifactMigrations` can structurally never produce a `down` plan for any registered type through
+the real `forge upgrade` command, today or previously. The migration's own doc comment, which had
+claimed CLI-reachable coverage, now says this plainly.
+
+**Decision 2 — `specs/18` §18.7's "beyond what schema version 1 records carry" is additive, not a
+replacement: a `revert-hunks` record keeps `revertedRange` (`MutationEvidence`'s own change-level
+credit) and carries `hunkRun` alongside it, not instead of it.** Read directly against the cited text
+rather than through paraphrase: "beyond" names an addition to an existing surface, not a substitution
+for it, and it is the more specific, more recent, controlling sentence for this exact question. The
+one real risk this reading leaves open — the two fields naming different commits on the same record —
+is closed structurally: `hunkRun.baseSha` must agree with `revertedRange.fromSha` wherever both are
+present.
+
+**Decision 3 — a declaration's `exemptCount` is capped at the real number of surfaces `13` F-TEST-9
+defines, not left open-ended.** F-TEST-9 names exactly four surfaces (`process`/`file`/`library`/
+`http`); a declaration's exempt count plus its own observed-surface count can never exceed that
+total, since every surface is either observed or exempt and never a fifth kind. Schema-enforced now,
+not merely assumed true of every real caller.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P5`.
