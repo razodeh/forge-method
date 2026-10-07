@@ -22305,3 +22305,73 @@ genuine stale `index.lock`) and proved cleanup survives both; the real SIGKILL s
 in the identical shared `errors.test.ts` fixture).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q302`.
+
+## M16 P13 — Hunk-level `MutationEvidence`, surfacing, and a project-authored hunk check
+
+Two gauntlet rounds, two independent critics both rounds — the first piece built under the
+one-worktree-per-critic policy adopted after M16 P6's own round found a real mid-mutation collision
+between two critics sharing one worktree.
+
+**What the piece builds.** Makes `M16 P12`'s own real hunk verdicts durable and gate-able: `forge
+test binding --hunks` now writes a `schemaVersion: 2`/`mutationKind: 'revert-hunks'`
+`MutationEvidence` record through the existing append-only writer — the hunk-set shape `M16 P5`
+already designed and gauntleted, populated for real for the first time. Surfaces it (non-JSON output
+lists every non-killed hunk by id/path/verdict; the `--json` envelope's hunk list proven byte-for-byte
+equal to the written record's) and proves, through the real gate evaluator, that a project-authored
+`failOn: 'uncoveredHunks > 0'` check fails on an uncovered hunk, passes on a fully-covered one, and
+still fails when the change-level result itself passes — exactly `Q294` Decision 8's own
+prescription.
+
+**Two real gaps between what `M16 P12` computes per hunk and what `M16 P5`'s schema needs, both
+resolved and reported as DECISIONs.** `HunkMutationEntry` carried no `ranges`/`contentHash` at all —
+closed with a minimal, additive export (the identical narrow-exception pattern `M16 P12` itself used
+against `M16 P11`'s `hunks.ts`). `killedBy`'s real producer is an array (one hunk reversal can kill
+more than one baseline-passing test) while `M16 P5`'s own first-cut schema field was a bare string,
+never yet exercised by any real writer — widened losslessly to a non-empty array, confirmed safe by
+an exhaustive repo-wide blast-radius check by BOTH critics independently (the one other reference, a
+migration test's hand-built YAML fixture, never reaches schema validation at all).
+
+**Critic round 1: one real MAJOR, found by one critic and independently confirmed real by the
+orchestrator; the other critic's own equally thorough pass found zero BLOCKING/MAJOR at all.**
+
+*MAJOR, fixed — a "zero real hunks" state was reachable in ordinary use and completely unguarded.*
+Whenever `--base` resolves further back than the implementation's own last real change (a legitimate
+operation — checking whether a newly-added test binds code that hasn't itself changed since that
+earlier point), `computeHunks` genuinely returns zero hunks while the change-level check still
+reaches `'completed'`. `hunkRunSchema.hunks` had no `.min(1)`, so a full `schemaVersion: 2` record
+with `hunkRun.hunks: []` validated and wrote cleanly — making a project-authored `failOn:
+'uncoveredHunks > 0'` check read `uncoveredHunks: 0` and pass, observably identical to "everything
+genuinely covered." The pre-existing `M16 P5` schema comment asserting "there is no hunk run with
+zero hunks to speak of" turned out to rest on a weak inference from F-TEST-10's own cost formula,
+which is agnostic to N=0, not a real enforced invariant.
+
+*What the OTHER critic independently confirmed, with real adversarial fixtures beyond what either
+brief asked for.* The `killedBy` widening's blast radius (confirmed via a full repo grep and reading
+the one other reference's own migration logic directly, not just running its test). The `FileHunk`
+sentinel's distinguishability from any real `TextHunk` range — tried hard to break with 7-8 real git
+fixtures at the exact degenerate boundary (insertion at file start, into an empty file, deletion of
+the only/first/last line of a file, a trailing-newline-only change, a combined same-run fixture) —
+confirmed structurally impossible for a real hunk to produce `{0,0}` on both sides at once. The
+gate-check proof, independently rebuilt with a genuinely more rigorous fixture (two hunks behind one
+test whose assertion is satisfiable by either branch alone — real redundant coverage, not an absent
+test) and still held.
+
+**Round 2 (the fix pass, verified directly): the zero-hunks gap closed in two layers, not one.** The
+engine now omits `hunkMutation` entirely for this case — the identical treatment an incomplete
+change-level outcome already gets, so the fail-closed stance already built into `evaluateGate`'s own
+handling of a missing field applies automatically, with zero further changes needed in either the
+`--json`-envelope code or the writer. The schema's own `hunkRunSchema.hunks` gained a `.min(1)` as
+defence in depth, and the false-invariant comment was corrected to state the real history rather than
+repeat the claim. Also noted, no code change: the "run twice" append-only scenario through two real
+CLI invocations never actually reaches the real `RUN-114` collision path (refused earlier by the
+pre-existing dirty-tree check) — `RUN-114` itself is real and correctly implemented, provable only at
+the unit level with an injected clock, now documented so this isn't later mis-cited.
+
+**Verification.** 613 tests across the eleven touched/new files. Coverage: `mutation-evidence.ts`
+(schema) 100%/100%/100%/100%; `binding-evidence.ts` 91.3%/83.33%/100%/91.3%; `hunk-mutation.ts`
+94.94%/84.78%/100%/96.47% — all clear the required floors. `pnpm typecheck`, `pnpm run boundaries`,
+`pnpm lint`, `pnpm schema-drift` clean. No new error code — the existing `RUN-114` already covers the
+hunk-level write's own failure mode, confirmed via the mutation table by both critics, not assumed.
+Clean cherry-pick onto `main`, no conflict.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q303`.

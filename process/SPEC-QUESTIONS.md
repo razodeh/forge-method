@@ -28491,3 +28491,45 @@ way: `bin.ts`'s own pre-existing outer shape already collapses the entire envelo
 problem}` for any non-`'completed'` outcome, regardless of this piece's own choice here.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P12`.
+
+## Q303 — M16 P13: hunk-level `MutationEvidence` — a schema field widened before its first real
+writer, and why "zero hunks" must never look like "fully covered"
+
+**Context.** `PLAN-M16.md` P13's own Mandate: give `M16 P12`'s own real hunk verdicts a durable
+record (the shape `M16 P5` already designed) and prove, through the real gate evaluator, that a
+project can gate on them. Two gauntlet rounds; the critic-round narrative, the fix detail, and the
+verification numbers are in `GAUNTLET-LOG.md`'s own `## M16 P13` entry and are not repeated here.
+
+**Decision 1 — `killedBy` is widened from a bare string to a non-empty array, because the field's
+own first cut was written before any real producer existed to disagree with it.** `M16 P5` built
+`hunkEntrySchema.killedBy` as `z.string().min(1).optional()` purely as a reserved placeholder — no
+piece before `M16 P13` ever wrote a `hunkRun` through this schema at all. `M16 P12`'s own real
+`HunkVerdict.killed.killedBy` is a genuine `readonly string[]`, since reversing one hunk can make
+more than one baseline-passing test fail. Widening is a correction to an as-yet-unused sub-field, not
+a break to anything shipped — confirmed, not assumed, by an exhaustive repo-wide grep (both critics,
+independently) finding exactly one other reference, a migration test's hand-built YAML fixture, and
+confirming directly that fixture's own code path never reaches Zod validation at all.
+
+**Decision 2 — a `FileHunk`'s own sentinel ranges (`{old: {0,0}, new: {0,0}}`) are genuinely
+distinguishable from any real `TextHunk`, confirmed by construction, not merely asserted.** A
+`FileHunk` (added/deleted/binary/mode-only/type-changed/submodule) has neither a sub-file range nor a
+reversed hunk body to hash. The sentinel works because a real text hunk representing an actual change
+must have a nonzero count on at least one side — either side alone can be `{0,0}` (a pure insertion
+has old `{0,0}`; a pure deletion has new `{0,0}`), but both sides together being `{0,0}` would mean no
+change at all, which git never emits as a hunk. Both critics independently tried to break this with
+real git fixtures at the exact degenerate boundary and could not.
+
+**Decision 3 — a "zero real hunks" outcome is omitted from both the `--json` envelope and the written
+record entirely, never represented as an empty `revert-hunks` shape.** Settled after round 1 found
+this state reachable in ordinary use (a `--base` resolved further back than the implementation's own
+last real change) and completely unguarded — a `hunkRun.hunks: []` record validated and wrote
+cleanly, making a project-authored `failOn: 'uncoveredHunks > 0'` check pass when nothing had actually
+been verified as covered. Rejected alternatives: writing the empty shape anyway (the bug); a new
+distinguishing field (unnecessary — the change-level outcome's own existing fields already carry the
+real signal for why no hunks were computed); a typed refusal of the whole command (would remove a
+legitimate diagnostic use — checking whether a newly-added test binds code that hasn't changed since
+an earlier point). Omission gets this for free: `evaluateGate`'s own existing fail-closed handling of
+a missing field already does the right thing once the field is genuinely absent, with zero further
+code needed in the envelope or writer layers.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P13`.
