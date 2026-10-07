@@ -200,6 +200,11 @@ const SAMPLE_DETAILS = {
   // with the number of text paths `computeHunks` expected it to describe.
   sectionCount: 3,
   pathCount: 4,
+  // `CFG-514`/`CFG-515`/`RUN-132`..`RUN-138` (`specs/22` M16 P6): `forge parity capture`'s own
+  // refusals -- `file`/`detail`/`surface`/`index`/`path`/`ref`/`runId` above already cover every key
+  // but one; `name` (a parity declaration's own name, distinct from `GateCommandContext`'s `gateId` or
+  // any other identifier already in this bag) is the sole new key these seven codes need.
+  name: 'sample',
 } satisfies Record<string, unknown> as never;
 
 /**

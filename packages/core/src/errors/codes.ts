@@ -3045,6 +3045,149 @@ export const ERROR_CODES = {
       'Remove the named rule from this case’s "normalize" list, or confirm the observation it ' +
       'runs against is valid JSON before comparison.',
   },
+  // `specs/22` M16 P6, `13` F-TEST-9, Q294 Decision 6 (the corrected rule): "checked explicitly against
+  // `refs/heads/<name>`... is a name that names a branch... which the self-agreeing oracle bans as a
+  // reference" -- a branch moves exactly as `HEAD` does, discovered only once a real repository exists
+  // to resolve against (`reference-commit.ts`'s own `resolveReferenceCommit`), one step later than the
+  // pure-text format check `CFG-510` already covers. Grouped with `CFG-510`'s own "this declaration
+  // cannot be trusted as written" bucket (the `invalid` verdict both share, `13` F-TEST-9's Verdicts
+  // section) rather than a `RUN-` code, even though it needs a live git call to find: `capture-command.ts`'s
+  // own `captureOneDeclaration` is this code's one throw site.
+  'CFG-514': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; ref: string }) =>
+      `Parity declaration ${show(d.file)}'s reference.ref (${show(d.ref)}) names a branch, which ` +
+      'moves like HEAD and cannot be a stable reference (specs/13 F-TEST-9).',
+    remedy:
+      'Point reference.ref at a full commit sha or a tag name instead of a branch, then re-run the ' +
+      'capture.',
+  },
+  // `specs/22` M16 P6, `13` F-TEST-9: "a declaration that has reached its `expires` date" (or an
+  // `unobservable` entry's own expiry) -- the declaration-level `expired` verdict, decided against an
+  // injected `Clock` (`QUALITY-BAR.md` R10), never a bare `Date.now()`. `detail` is a pre-rendered,
+  // complete sentence (the identical "detail is already a complete message" shape `CFG-504`/`CFG-505`
+  // give an already-reviewed violation), since the two triggers (the declaration's own `expires`, or
+  // one `unobservable` entry's `expiry`) read naturally as two different sentences, not one template.
+  'CFG-515': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; detail: string }) =>
+      `Parity declaration ${show(d.file)} has expired: ${show(d.detail)}.`,
+    remedy:
+      'Update the declaration\'s "review" block with a new by/basis/at and a later "expires" (or ' +
+      '"unobservable" entry "expiry") date, then re-run the capture.',
+  },
+  // `specs/22` M16 P6, `13` F-TEST-9: `forge parity capture --name <name>` where `<name>` matches no
+  // real declaration under `.forge/parity/` -- "it refuses a `--name` that matches no declaration and
+  // names those that exist" (Q294 Amendment A8). The identical "a given identifier names nothing real"
+  // shape `RUN-082`/`RUN-092` already give a bad `--stage`/a story that cannot be implemented, reused
+  // here for the identical reason (a usage mistake, not a runtime failure).
+  'RUN-132': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { name: string; detail: string }) =>
+      `No parity declaration named ${show(d.name)} exists under ".forge/parity/" (${show(d.detail)}).`,
+    remedy:
+      'Choose one of the existing declaration names (or omit --name to capture every declaration), ' +
+      'or author a new ".forge/parity/<name>.parity.yaml" declaration.',
+  },
+  // `specs/22` M16 P6, `13` F-TEST-9, Q294 Decision 6 (the corrected rule): "a bare name that names no
+  // branch is resolved only as a tag, so one with no matching tag reads `missing`, never `invalid`" --
+  // the declaration-level `missing` verdict's own trigger for a well-formed `reference.ref` (a full sha
+  // or an accepted tag name, `CFG-510`'s own load-time check already passed) that resolves to no real
+  // commit in this repository (`reference-commit.ts`'s own `resolveReferenceCommit`, `'not-found'`).
+  // Grouped as `RUN-`, unlike its `CFG-514` sibling above, because the one real distinction between the
+  // two codes IS the verdict word each reports (`invalid` vs `missing`), and `missing` is a fact only a
+  // live repository can establish, never a property of the declaration's own text alone.
+  'RUN-133': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; ref: string }) =>
+      `Parity declaration ${show(d.file)}'s reference.ref (${show(d.ref)}) is well-formed but does ` +
+      'not resolve to a real commit in this repository.',
+    remedy:
+      'Fix reference.ref to name a commit sha or tag that actually exists, or create the missing ' +
+      'tag, then re-run the capture.',
+  },
+  // `specs/22` M16 P6, `13` F-TEST-9: "a reference that disagrees with itself is not an oracle" -- at
+  // capture every one of a case's `stability.runs` runs against the reference must be equal after
+  // normalisation, or the case is `unstable` and capture refuses and writes nothing.
+  'RUN-134': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { file: string; surface: string; index: number }) =>
+      `Parity declaration ${show(d.file)}'s ${show(d.surface)} surface case ${show(d.index)} ` +
+      'disagreed with itself across its stability runs against the reference; it cannot be captured ' +
+      'as an oracle.',
+    remedy:
+      'Fix the reference-side nondeterminism (a timestamp, an unseeded random value, an unordered ' +
+      'listing) this case\'s command depends on, or raise "stability.runs", then re-run the capture.',
+  },
+  // `specs/22` M16 P6, `13` F-TEST-9: "a capture that would differ from an existing one with the same
+  // key is refused, never replacing it and never sitting beside it" -- covers both a genuinely
+  // differing re-capture under one key and two-or-more EXISTING captures already mutually `ambiguous`
+  // under that key (`selection.ts`'s own `selectCapture`): both share the identical remedy (a human must
+  // resolve the existing capture file(s) in a reviewed commit before this command can write a new one),
+  // so both share this one code rather than a second, narrowly-distinguished sibling.
+  'RUN-135': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { file: string; path: string }) =>
+      `Parity declaration ${show(d.file)}'s freshly observed capture conflicts with ${show(d.path)} ` +
+      'under the identical selection key; captures are never overwritten or multiplied.',
+    remedy:
+      'Remove the stale capture file in a reviewed commit, or change the declaration so it selects ' +
+      'a different capture key, then re-run the capture.',
+  },
+  // `specs/22` M16 P6, `13` F-TEST-9, Q294 Amendment A8: "it refuses whenever `FORGE_RUN_ID` is
+  // present, whichever run it names; the refusal is an honest-session signal and not a security
+  // boundary" -- the identical shape `KB-017` already gives `forge adr accept/reject/supersede`'s own
+  // refusal under the same marker, in this command's own `RUN-` domain rather than `KB-017`'s.
+  'RUN-136': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { runId: string }) =>
+      '"forge parity capture" cannot run from inside a FORGE-spawned session or command (the ' +
+      `FORGE_RUN_ID marker is set to ${show(d.runId)}): capturing a parity reference is a person's ` +
+      "own act, never a run's.",
+    remedy:
+      'Run "forge parity capture" from a person at their own terminal, outside any run -- never from ' +
+      'inside an agent session or a run-spawned command.',
+  },
+  // `specs/22` M16 P6, `13` F-TEST-9: "a reference that did not do what was expected is not an oracle
+  // either" -- a case whose reference run exits with a code other than its declared `expect` (default
+  // 0), or whose entire observation is empty unless it declares `expect: empty`. One code for both
+  // (sharing `CFG-504`/`CFG-505`'s own "a pre-rendered detail is already a complete sentence" shape):
+  // each is "the reference, observed, is not usable as this case's own oracle", not two different KINDS
+  // of problem a caller would act on differently.
+  'RUN-137': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { file: string; surface: string; index: number; detail: string }) =>
+      `Parity declaration ${show(d.file)}'s ${show(d.surface)} surface case ${show(d.index)}'s ` +
+      `reference run did not behave as declared: ${show(d.detail)}.`,
+    remedy:
+      'Fix the case\'s own declared "expect" (its exit code, or "empty" when no output is expected), ' +
+      'or fix the reference command so it behaves as declared, then re-run the capture.',
+  },
+  // `specs/22` M16 P6, `13` F-TEST-9: a `file` surface's declared output that is simply absent from the
+  // reference's own observation (`observe-types.ts`'s own `RawFileEntryContent` "absent" DECISION note)
+  // -- a real, comparable fact `capture.ts`'s own committed `FileObservationContent` (`text`/`bytes`
+  // only) has no way to represent, so a capture cannot honestly store it. Disclosed, not fixed, in this
+  // piece's own report: the gap is between two already-landed M16 pieces (P2's `capture.ts`, P3's
+  // `observe-types.ts`), not invented here.
+  'RUN-138': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { file: string; surface: string; index: number; path: string }) =>
+      `Parity declaration ${show(d.file)}'s ${show(d.surface)} surface case ${show(d.index)}'s ` +
+      `declared output ${show(d.path)} does not exist in the reference's own observation; a parity ` +
+      'capture has no way to record an absent file distinctly from an empty one.',
+    remedy:
+      `Fix the reference-side command so it always writes the declared output, or remove that ` +
+      'declared output from the case, then re-run the capture.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

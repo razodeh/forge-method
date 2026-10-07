@@ -199,6 +199,7 @@ import {
   type ModuleCommandContext,
 } from './commands/module.ts';
 import { overlayAdd, type OverlayCommandContext } from './commands/overlay.ts';
+import { runParityCapture, type ParityCaptureMarker } from './commands/parity/capture-command.ts';
 import {
   presetApply,
   presetEject,
@@ -1239,6 +1240,52 @@ async function runGateSubcommand(
   const report = await gateWaive(ctx, gateId, { reason, owner, expiresAt });
   console.log(json ? JSON.stringify({ v: 1, report }) : formatGateReport(report));
   return report.passed ? EXIT_CODES.success : EXIT_CODES.gateFailed;
+}
+
+/** `forge parity <sub>` (`PLAN-M16.md` P6, `13` F-TEST-9, Q294 Amendment A8). `capture` is the one
+ * real sub-verb today; `check` is a separately-gauntleted future piece's own addition to this same
+ * dispatcher. `runParityCapture` itself returns plain data (no `v`): this dispatcher adds the
+ * envelope's `v: 1` on `--json`, the identical "the command returns data; the dispatcher adds the
+ * envelope" split `runGateSubcommand`'s own `check`/`approve`/`waive` branches already use above.
+ *
+ * The FORGE session marker is read here, once, via `gateCommandMarker`'s own existing
+ * `realEnvSnapshot()`-based extraction (`QUALITY-BAR.md` R10's one ambient environment read), reused
+ * rather than re-implemented: `forge parity capture` refuses under ANY marker at all — an agent id,
+ * or a bare run/step only — exactly as `forge adr accept/reject/supersede`'s own `KB-017` refusal
+ * does (`adr.ts`'s own `refuseUnderMarker` doc comment: "presence alone is the whole test"), since a
+ * capture has no "the run this command targets" of its own to compare a marker's `runId` against. */
+async function runParityCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  if (sub !== 'capture') {
+    console.error('forge: "parity" needs a real subcommand (capture).');
+    return EXIT_CODES.usage;
+  }
+  const { values, positionals } = parseCommandFlags(rest, { '--name': true });
+  assertNoArgs(positionals);
+  const marker: ParityCaptureMarker | undefined = gateCommandMarker(realEnvSnapshot());
+  const name = values.get('--name');
+  const result = await runParityCapture({
+    projectRoot,
+    parentEnv: realEnvSnapshot(),
+    ...(name === undefined ? {} : { name }),
+    ...(marker === undefined ? {} : { marker }),
+  });
+  if (json) {
+    console.log(JSON.stringify({ v: 1, ...result }));
+  } else {
+    const detail =
+      result.captures.map((entry) => `${entry.name} -> ${entry.file}`).join(', ') ||
+      'nothing to capture';
+    console.log(
+      `forge parity capture: captured ${String(result.captured)}, unchanged ${String(result.unchanged)} (${detail}).`,
+    );
+  }
+  return EXIT_CODES.success;
 }
 
 const MERGE_FLAGS = {
@@ -5197,6 +5244,10 @@ async function main(): Promise<number> {
   if (command === 'gate') {
     const [gateSub, ...gateRest] = afterCommand;
     return runGateCommand(paths, projectRoot, gateSub, gateRest, flags.json);
+  }
+  if (command === 'parity') {
+    const [paritySub, ...parityRest] = afterCommand;
+    return runParityCommand(paths, projectRoot, paritySub, parityRest, flags.json);
   }
   if (command === 'merge') {
     return runMergeCommand(paths, projectRoot, afterCommand, flags.json);
