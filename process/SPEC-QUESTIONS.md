@@ -28450,3 +28450,44 @@ succeeded. Closed by threading the accumulated progress onto the error's own det
 stands, its own observability now matches it.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P6`.
+
+## Q302 — M16 P12: the per-hunk mutation engine — reusing a byte-exact encoding rather than
+re-deriving it, and keeping one lane open across N+3 runs rather than N+1 lanes
+
+**Context.** `PLAN-M16.md` P12's own Mandate: given a story and a real `--base`/`--hunks` request
+(`M16 P11`'s own resolved revision), mutate one hunk at a time inside the lane worktree the
+change-level check already uses, N+3 real test-command runs total, never N+1 separate lane
+worktrees. Two gauntlet rounds; the critic-round narrative, the fix detail, and the verification
+numbers are in `GAUNTLET-LOG.md`'s own `## M16 P12` entry and are not repeated here.
+
+**Decision 1 — the one, narrowly-scoped exception to "do not edit a landed piece's own file": `M16
+P11`'s `hunks.ts` gained an additive, opt-in `includePatches`/`TextHunk.patch` export rather than
+having this piece re-derive a hunk's own patch bytes independently.** The alternative (reimplementing
+the `-U0`-diff-to-patch-bytes logic a second time, in this piece's own new file) would have
+duplicated exactly the byte-exact CRLF/non-ASCII/no-trailing-newline round-trip logic `M16 P11` spent
+two full gauntlet rounds getting right — a second, independent implementation is a second place for
+the identical class of bug to recur, not a safer boundary. The addition is zero-cost to every
+existing caller (the bytes were already computed internally and discarded; `includePatches` defaults
+to `false`, and all of `M16 P11`'s own pre-existing tests pass unmodified) and was verified, not just
+trusted, by two independent critics each constructing the hardest real round-trip fixture through the
+actual new consumer and confirming it is genuinely sensitive to getting the encoding right.
+
+**Decision 2 — `binding.ts`'s `runBindingCheck` is refactored into two reusable pieces
+(`createBindingLane`/`runChangeLevelCheck`), not duplicated, so one lane worktree serves the
+change-level check and every hunk mutant instead of a fresh one per hunk.** The Mandate's own cost
+framing ("N + 3 runs") only makes sense under one shared lane; N+1 separate lane worktrees would be a
+materially more expensive, unstated design. `runBindingCheck`'s own existing public behaviour had to
+stay provably unchanged for every caller that never sets `--hunks` — proven, not asserted: a
+unit-level golden comparison against identical input, a real two-copy CLI diff of the full `--json`
+envelope, and the complete pre-existing M15 regression suite (46 tests) re-run unmodified.
+
+**Decision 3 — `hunkMutation` is omitted entirely from the `--json` envelope when the change-level
+check does not reach `'completed'`, rather than reporting every hunk `skipped`.** Settled, after
+round 1 found the builder's own first-stated reason was wrong (it is not that the lane's own shas are
+unavailable — they are resolved before the baseline run even executes): the real reason is that no
+mutation strategy (`granularity`) was ever chosen or run, so reporting one, even as all-`skipped`,
+would misleadingly imply a decision was made when none was. Confirmed observably low-stakes either
+way: `bin.ts`'s own pre-existing outer shape already collapses the entire envelope to `{v, ok,
+problem}` for any non-`'completed'` outcome, regardless of this piece's own choice here.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P12`.

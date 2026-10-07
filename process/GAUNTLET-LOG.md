@@ -22243,3 +22243,65 @@ independently added a new key to the same object at the same point; resolved by 
 own keys, re-verified at 550/550 after resolution.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q301`.
+
+## M16 P12 — The per-hunk mutation engine: `forge test binding --hunks`
+
+Two gauntlet rounds, two independent critics both rounds, zero BLOCKING or real MAJOR code defects
+across either round.
+
+**What the piece builds.** The engine `--hunks` has been resolving flags for since `M16 P11`: given a
+story, runs M15's existing three-run change-level check (baseline/revert/restore) unchanged, then,
+inside the SAME lane worktree, one mutant run per hunk — apply that hunk's own reversal, run the
+story's tests, classify `killed`/`uncovered`/`invalid`/`timeout`/`skipped` (`13` F-TEST-10's own
+File-load-failure credit rule: a lone hunk's own load failure is `invalid`, never `killed`; a
+file/change-collapsed mutant's is). Report-only — hunk verdicts never affect the exit code. Above
+`--max-hunks` (default 25, reused as the further file→change degrade bound too, since the cost
+driver — one extra test-command run — is identical at both steps) degrades hunk → file → change,
+relabeling the already-run change-level mutant rather than sampling.
+
+**Two real architectural gaps, both resolved well — confirmed by two independent critics via real
+adversarial repros, not just read.** P11's `hunks.ts` exposed no raw patch bytes to apply a specific
+hunk's reversal — closed with a minimal, additive, opt-in `includePatches`/`TextHunk.patch` export,
+reusing the byte-exact `latin1` encoding P11 spent two gauntlet rounds getting right rather than
+re-deriving it; both critics independently built the hardest round-trip fixture (CRLF + multi-byte
+UTF-8 + no trailing newline, all at once) through the real, end-to-end consumer and proved it
+genuinely mutation-sensitive by flipping the encoding to `utf8` and confirming every hunk silently
+misclassifies as `invalid` — confirmed absent in the real shipped code. `runBindingCheck` created and
+tore down its own lane entirely inside one call, with no way to keep it open for N more mutants —
+closed by extracting `createBindingLane`/`runChangeLevelCheck` out of it (`runBindingCheck`'s own
+public behaviour proven unchanged via both a unit-level golden comparison and a real two-copy CLI
+diff, plus the full pre-existing M15 regression suite, 46 tests, unaffected); both critics
+independently proved the lane-reset-between-mutants claim via direct filesystem inspection of every
+real reset call's own on-disk bytes, one with a fixture specifically engineered (a line-count-
+changing hunk ordered before the others) so an incomplete or late reset would be mechanically
+unmissable.
+
+**Critic round 1: the one real finding was a cross-piece error-code collision, not a defect in this
+piece's own logic.** This piece's own `RUN-132` claim, made before `M16 P6` landed concurrently and
+claimed that exact range for something unrelated, was flagged proactively by both critics while it
+was still only a risk (main was still pre-`P6` at the time). It became a real collision the moment
+`P6` actually landed. Also found, independently by both critics: a Prettier violation (one line
+exceeding the length limit); a test title that overstated what it proved ("before any git work at
+all," when `--base`'s own real git resolution genuinely runs first — the refusal itself was always
+correct, only the title was wrong); a doc comment's stated reason for omitting `hunkMutation` on an
+incomplete change-level outcome was factually wrong (claimed the shas were unavailable; they are
+resolved before the baseline run even executes) though its conclusion was still right for a
+different, stronger reason (no mutation strategy was ever chosen or run, so reporting one would
+mislead) — one critic additionally found the practical margin is wider than either framing suggests,
+since `bin.ts`'s own pre-existing outer shape already collapses the whole envelope to `{v, ok,
+problem}` for any incomplete outcome regardless of this piece's own choice.
+
+**Round 2 (the fix pass, verified directly): all four fixed, renumbered to `RUN-139`.** Live ceiling
+re-checked by the builder twice and by the orchestrator once more immediately before commit — `main`
+was at `RUN-138` (`M16 P6`'s own range) in every check, confirming `RUN-139` genuinely free.
+
+**Verification.** 1142 tests across the new/touched test files. Coverage (`hunk-mutation.ts`)
+96.34%/84.09%/100%/94.79% (lines/branches/functions/statements). `pnpm typecheck`, `pnpm run
+boundaries`, `pnpm lint` clean. Each critic independently constructed a real, non-mocked git failure
+mid-mutant by a DIFFERENT mechanism (one corrupting a lane's own gitdir file, the other planting a
+genuine stale `index.lock`) and proved cleanup survives both; the real SIGKILL suite (the M15
+`binding-sigkill.test.ts` pattern) re-run clean multiple times by each. Clean cherry-pick onto `main`
+— no conflict this round (unlike `M16 P6`'s own cherry-pick immediately before it, which did conflict
+in the identical shared `errors.test.ts` fixture).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q302`.
