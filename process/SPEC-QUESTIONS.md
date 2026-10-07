@@ -28242,3 +28242,92 @@ independent proof that its own copy is really fixed, without reopening a file ou
 own Surface.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P3`.
+
+## Q298 — M16 P4: normalise, compare, and the stability probe — six rounds, because "can this
+pipeline ever make two different things look the same" kept having another real answer
+
+**Context.** `PLAN-M16.md` P4's own Mandate: apply a declaration's own normalise rules, decide
+equality on the full result, run the stability probe, own the verdict/counting algebra. Six gauntlet
+rounds — the critic-round narrative, every repro, and the verification numbers are in
+`GAUNTLET-LOG.md`'s own `## M16 P4` entry and are not repeated here. This entry is the decisions:
+what was chosen, over what alternative, and why — including the one decision to stop fixing and
+disclose instead.
+
+**Decision 1 — a conservative, structural restriction on which rules may share a scope, not a
+cleverer detector, is the right shape of fix for "two individually-safe rules compound to erase
+everything."** The fully general fix is provenance tracking: know, at every point in the pipeline,
+which output text traces back to untouched original input versus a rule's own synthesised
+replacement, so a compounding erasure can be detected directly rather than inferred. That is a
+materially larger design than this piece's own brief asks for, and this milestone's own build
+discipline does not have room for it. The alternative this piece chose instead — classify each rule
+as "structural" (freely combinable) or "content-discarding" (at most one per scope) — is provably
+weaker than full provenance tracking (it is a sufficient, not a necessary, condition for safety, so
+it over-restricts some safe combinations) but has a property provenance tracking's own complexity
+would cost: it is simple enough to state, implement, and verify completely, which is why rounds 4
+through 6 were able to repeatedly widen or generalise it rather than replace it each time a gap was
+found. The alternative considered and rejected each time a new gap appeared — a sharper, more
+targeted detector for the *specific* mechanism just found — was rejected for the same reason twice
+over: round 2's own witness-check technique, extended naively to the whole pipeline, was proven
+*not* to generalise (a real, non-empty replacement's length can re-inflate text in a way that changes
+a later rule's own match, so "replace with empty is a safe lower bound" holds for one rule and not
+for a chain) — one clever, mechanism-specific fix already failed to generalise once; building another
+was judged more likely to repeat that failure than to close the problem.
+
+**Decision 2 — the restriction's own membership grew twice (3 members, to covering repetition of
+all 7, to 5 members in the content-discarding set specifically), each time by widening the existing
+mechanism rather than adding a new one.** Round 3 identified `replace`/`sort-lines`/
+`trim-trailing-whitespace` as "content-discarding" by a specific property: each can make a *later*
+rule's own effective target depend on input content in a way that compounds. Round 5 found this
+same restriction needed a second, independent dimension — not just *which kinds* may share a scope,
+but whether *one kind, repeated,* can defeat itself (`strip-ansi` applied twice is not idempotent) —
+closed by generalising to all seven rule kinds rather than special-casing `strip-ansi`, specifically
+because narrow, single-instance fixes had already been shown (rounds 1 through 4) to leave the next
+instance of the same general shape uncaught. Round 6 found the *original* three-member classification
+itself incomplete: `json-canonical` and `ignore-json-pointers` both re-sort JSON keys as part of their
+own implementation, which is the identical "makes a later rule's target content-independent" property
+`sort-lines` has, just expressed through key name instead of line content — neither rule discards
+content itself, which is why the original classification called them safe, but discarding was never
+the relevant property; making a *later* rule's target deterministic regardless of real content is.
+Widened to five members rather than inventing a third, cross-cutting classification scheme, for the
+identical reason round 5 did not special-case `strip-ansi`: the pattern across this piece's own
+history is that a narrower fix leaves the next instance of the same shape uncaught, and widening an
+already-proven mechanism carries far less of that risk than inventing a new one.
+
+**Decision 3 — two real over-restrictions (`sort-lines`+`trim-trailing-whitespace`; after Decision 2,
+also `json-canonical`+`ignore-json-pointers`) are accepted, not special-cased.** Both pairs were
+confirmed, by direct construction, to be actually harmless — the first by a rigorous proof (bounded
+per-line whitespace removal composed with a pure line permutation can never discard non-whitespace
+content or merge/lose a line); the second by the same reasoning Decision 2 itself rests on
+(`ignore-json-pointers` targets a named JSON path, never a text position, so re-ordering keys before
+or after it changes nothing about which logical field it removes). Both are refused anyway, because
+a hand-written exception for a specific pair is itself new, untested surface — exactly the shape of
+thing this piece's own history (rounds 3 through 6) shows is easy to get subtly wrong — traded against
+a small, real cost: an author who legitimately wants both members of either pair must split the case
+in two, or drop one. Given the demonstrated pattern, the restriction's own simplicity is worth more
+than the marginal flexibility either exception would buy back.
+
+**Decision 4 — the always-on root-path-token rewrite's own interaction with a length-anchored
+`replace` rule is disclosed, not fixed, and is named more severe than this piece's other two
+disclosed gaps rather than given the same, lighter treatment.** `specs/13` F-TEST-9 requires the
+rewrite unconditionally, before any declared rule; this piece's own round-3-and-later restriction
+only ever inspects the declaration's own `normalize` array, which the rewrite is not a member of —
+there is nothing for `CFG-512`/`CFG-513` to count it against, and no way to make it a member without
+changing what it is (an always-on step, not an optional, declared one). Three fixes were considered
+and rejected: reordering the rewrite relative to declared rules does not help (hand-traced: the
+combined effect reaches the identical collapsed text regardless of order, since "strip N characters
+then normalise the root" and "normalise the root then strip N characters" differ only in which text
+gets cut, not in how much); a length-preserving token defeats the rewrite's own purpose (two
+different-length real paths would then produce two different-length tokens, reintroducing exactly the
+difference the rewrite exists to erase); and a heuristic detector for "a dangerous, length-anchored
+`replace` pattern" was rejected for the same reason Decision 1 rejected one — this piece has already
+shown, twice, that a clever pattern-shape detector is the kind of fix that itself turns out to have a
+gap, and this specific detection problem (is a regex "anchored to a fixed-width suffix" in a way that
+makes it sensitive to upstream length shifts) is at least as open-ended as the ReDoS-shape detection
+problem `replace-lint.ts` already discloses as incomplete. Unlike that gap and `M16 P2`'s Windows
+disclosure, this one needs no adversarial declaration shape at all — ordinary, differently-named
+checkout paths plus an ordinary trailing-content-trimming rule are sufficient — which is why it is
+named at a higher severity than the other two rather than given uniform treatment. Closing it
+properly is Decision 1's own provenance-tracking alternative, or a fundamentally different root-token
+strategy; both are out of this milestone's scope and are named as follow-up work, not claimed solved.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P4`.

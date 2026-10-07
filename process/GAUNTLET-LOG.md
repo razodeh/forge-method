@@ -21888,3 +21888,131 @@ regardless of the assertion's own outcome, so a future flake is a red test, neve
 re-verified clean in one further clean-worktree pass afterward.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q297`.
+
+## M16 P4 — Normalise, compare, and the stability probe
+
+Six gauntlet rounds — more than any other M16 piece. Not a dispute: every round found a real,
+reproduced, converging way to make the oracle report two genuinely different observations as the
+same, and every fix closed exactly what was found. The pattern across rounds 3 through 6 — a
+confident, specific fix for one mechanism, followed by a fresh critic finding the next one — is
+itself the piece's own most important finding, and is recorded honestly below rather than smoothed
+into a tidier-looking history.
+
+**What the piece builds.** Applies a declaration's own normalise rules to a surface observation, in
+the declaration's own order; decides equality on the full normalised content; runs the stability
+probe shared between capture-time (the reference) and check-time (the candidate); owns the verdict
+precedence and counting algebra (`specs/13` F-TEST-9's nine verdicts, total order, the
+`no-declarations`/`nothing-printable` refusals). Consumes `M16 P2`'s declaration types and `M16 P3`'s
+raw observations; produces nothing P6/P7 don't ask for. 5 source files.
+
+**Round 1 (two independent critics): one BLOCKING defect.** A `replace` rule whose match spans an
+entire non-empty stream, with a non-empty replacement, defeated the erase-everything guard outright
+— the guard only checked whether the *result* was empty, never whether the match alone, regardless
+of its replacement, would have consumed everything. A critic built the real collision: two
+completely different inputs, one rule, one identical output. Fixed: an independent witness check —
+replace with an empty string first, see if *that* alone empties the input, regardless of what the
+real (non-empty) replacement produces.
+
+**Round 2 (the fix pass, verified directly): four more.** `countParityResults`'s `no-declarations`
+case returned a contentless `{ok:false}` where `specs/13` and `PLAN-M16.md` P7's own Mandate both
+require a real, counted, printable result (`failing:1, passing:0, verdict:'invalid'`) — fixed with
+its own variant of the success shape. `isPathologicalReplacePattern`'s own recursion stack-overflowed
+on a sufficiently deep pattern instead of refusing cleanly — fixed with a depth cap. A `library`
+observation holding a value `toCanonicalJson` can't represent (`NaN`) crashed `decideCaseVerdict`
+with a bare `TypeError`, not one of the nine verdicts — fixed by catching it alongside the existing
+`ForgeError` handling. `RUN-130` had no test asserting its own code or message, only the verdict
+discriminant — a critic mutated the message text entirely and every test still passed; fixed with a
+real assertion.
+
+**Round 3 (a targeted re-attack, specifically because round 1's fix was proven incomplete): a SECOND
+BLOCKING defect, in a different shape entirely.** Chaining two *different* rules — two `replace`s, or
+`sort-lines` then one `replace` — bypassed round 1's single-rule fix completely, because neither rule
+*alone* looked dangerous: each left exactly one byte of real input surviving, the explicitly-accepted
+boundary case. Chained, zero bytes of real information survived. Confirmed through the real
+`decideCaseVerdict`, not just the primitive: a reference and a candidate with genuinely different
+diagnostic text both read `match`. The critic also proved the obvious generalisation of round 1's own
+fix technique — zero every `replace`'s own replacement across the whole pipeline, check if the result
+vanishes — does not work: a real, non-empty replacement's own length can re-inflate text in a way
+that changes what a *later* rule matches, so "replace with empty is a safe lower bound" is true for
+one isolated rule and false once a second rule's own match depends on the first's output. Fixed with
+a conservative, structural decision rather than a cleverer detector: rules split into "structural"
+(freely combinable) and "content-discarding" (`replace`, `sort-lines`, `trim-trailing-whitespace` at
+the time); a declaration is refused (`CFG-512`) if more than one content-discarding rule would apply
+to the same effective scope.
+
+**Round 4 (two independent critics, re-attacking specifically because of round 3's own history):
+the restriction's own counting/scope logic confirmed sound by both, after genuinely serious effort —
+but both independently found a THIRD BLOCKING defect, in a rule the classification had called
+unconditionally safe.** `strip-ansi` *alone*, zero chaining, erased real content: its CSI grammar's
+final-byte class matched the entire Latin alphabet, so `\x1b[A` and `\x1b[Z` — and an arbitrarily long
+run of parameter digits before either — both stripped to the identical result, discarding a real,
+distinguishing byte. Neither the generic erase-everything guard (the result was non-empty) nor
+`CFG-512` (built for 2+ *co-scoped* rules; this needed only one) caught it. Fixed by narrowing the
+final-byte class to the realistic, commonly-emitted set (SGR colour, erase, cursor codes) —
+explicitly disclosed as narrowing, not eliminating, the theoretical risk. One critic also found a
+real over-restriction (`sort-lines` + `trim-trailing-whitespace`, rigorously proven harmless) —
+decided, deliberately, not to special-case it: a hand-written carve-out is itself new surface to get
+wrong, and the cost (splitting into two cases) is small.
+
+**Round 5 (one more critic, specifically re-attacking the just-narrowed grammar): a FOURTH BLOCKING
+defect — `strip-ansi` applied *twice* to the same scope is not idempotent.** A dangling, never-
+completed `ESC[<params>` prefix — one that failed to close because another escape sequence
+interrupted it — can become newly adjacent to literal text once the first pass deletes whatever sat
+between them; the second pass then consumes a real leading character the first pass's own output
+never exposed. Confirmed to predate round 4 entirely (reproduces against the old, unbounded grammar
+too) and to affect no other rule (the other three "structural" rules are each idempotent by
+construction, confirmed directly). Fixed by generalising, not patching the one instance: no rule
+*kind*, of any of the seven, may be applied more than once to one effective scope (`CFG-513`),
+layered independently alongside `CFG-512` rather than replacing it.
+
+**Round 6 (two independent critics, with an explicit "new categories only" mandate): four more
+findings, three fixed, one disclosed.** `json-canonical` and `ignore-json-pointers` both end by
+re-sorting JSON keys — the identical "makes a later rule's target content-independent" property that
+made `sort-lines` dangerous when paired with `replace`, just by key name instead of line content.
+Confirmed live: a `json-canonical` rule plus one ordinary `replace` anchored at the alphabetically
+last field made two objects differing only in that field's *value* collapse identically. Neither
+`CFG-512` nor `CFG-513` caught it, since neither rule was in the restricted set. Fixed by widening
+`CONTENT_DISCARDING_RULES` from three members to five — the same, already-twice-proven machinery,
+reused rather than re-invented. Separately: `ignore-json-pointers`'s own `pointers` list silently
+mistargeted removal whenever it named two or more array-index entries into the *same* array in
+ascending order — the natural way to write one — because each sequential removal shifts every later
+index down by one. Found independently by both round-6 critics. Fixed by resolving same-parent
+array-index removals in a safe order regardless of how the declaration author wrote them, using a
+total, order-independent algorithm chosen specifically after a naive sort-based alternative was
+proven intransitive on a split-group counter-example. Separately: `applyNormalizeRulesToText`'s own
+switch had no compiler-enforced exhaustiveness — confirmed directly, adding an untested eighth rule
+kind compiled clean under `tsc`, with only a separately-run, suppressible lint rule standing guard —
+fixed with a `never`-typed `default` arm.
+
+**Disclosed, not fixed, and named more severe than this piece's two other disclosed gaps (the ReDoS
+shapes `replace-lint.ts`'s own lint cannot catch; `M16 P2`'s POSIX-only `composeArgs`): the always-on
+root-path-token rewrite can mask a real pass/fail regression when combined with an ordinary,
+otherwise-legal, length-anchored `replace` rule.** `rewriteRootPaths` substitutes each side's real
+root path — almost never the same length as the other, in genuine use — for one fixed-length token,
+before any declared rule runs. A single `replace` rule anchored to the end of the string (stripping a
+trailing fixed-width id, an entirely ordinary reason to write one) then cuts at a different offset
+into the real content on each side, purely because the substitution upstream shifted the two texts by
+two different amounts. Confirmed live, end to end: a reference root of `/r` and a candidate root of
+`/candidateroot`, with genuinely different raw stdout (one records a real pass, the other a real
+fail), both normalise to the identical text. This needs no adversarial declaration shape at all —
+differently-named checkout paths and an ordinary trailing-content-trimming rule are enough. Reordering
+the rewrite relative to declared rules does not help (traced by hand: the combined effect lands on
+the identical collapsed text either order). Closing it properly needs full provenance tracking
+through the whole pipeline, or a fundamentally different root-token strategy immune to interacting
+with every length-sensitive rule — both a materially larger undertaking than this milestone's own
+scope, and explicitly named as such rather than attempted as a sixth-round patch with its own,
+not-yet-found gap.
+
+**Verification.** 974 tests (5 files), mutation-verified for every fix across all six rounds — each
+defect reproduced live against the pre-fix code first (not merely asserted), confirmed red for the
+stated reason, confirmed green after, restored and `cmp`-verified where a file was directly mutated.
+Coverage 97.2%/92.62%/100%/100% (statements/branches/functions/lines), zero uncovered lines. `pnpm
+typecheck`, `pnpm run boundaries`, `pnpm lint` clean. Independently re-verified in a clean worktree
+built from the committed, cherry-picked `HEAD` (`07042ec`): install, typecheck, lint, schema-drift,
+and the scoped suite (769 tests) all clean; `-t "M16"` selects 1100 of 15,402 with nothing outside
+this piece's own scope affected. One real merge conflict at cherry-pick time, in
+`packages/core/test/errors.test.ts`'s shared `SAMPLE_DETAILS` fixture — both `M16 P3` and this piece
+independently added a `surface: 'process'` key to the same object; resolved by keeping both pieces'
+own additional keys with `surface` appearing once, re-verified at 528/528 after resolution.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q298`.
