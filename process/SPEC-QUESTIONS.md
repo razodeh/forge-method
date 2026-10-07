@@ -28367,3 +28367,42 @@ total, since every surface is either observed or exempt and never a fifth kind. 
 not merely assumed true of every real caller.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P5`.
+
+## Q300 — M16 P11: the hunk parser — no ordinal in a hunk id, and two real ways a quoted path or a
+diff driver turned a defensive throw into a reachable crash
+
+**Context.** `PLAN-M16.md` P11's own Mandate: split a two-commit diff into pinned, per-hunk ranges
+with stable, distinct ids and a reversibility signal, and thread `--base`/`--hunks` through
+`forge test binding`. Two gauntlet rounds; the critic-round narrative, the fix detail, and the
+verification numbers are in `GAUNTLET-LOG.md`'s own `## M16 P11` entry and are not repeated here.
+
+**Decision 1 — a hunk's own id has no "ordinal" component, and none is required.** The piece's own
+brief named "derive the id from the ordinal alone" as one illustrative mutation that should break
+distinctness; the builder's own design (content+path+range) has no ordinal at all, since two real
+hunks can never share an identical range within one file, and disclosed this as an apparent tension
+with the brief. Read directly against `specs/13` lines 559-562 rather than trusting either the
+brief's own wording or the builder's own uncertainty: the format is explicitly left to this piece
+under exactly two real requirements — stability across two parses, and distinctness for two
+textually-identical hunks in one file. No "ordinal" requirement exists in the actual spec text; the
+brief's wording was only ever one possible mutation, not a specification of the id's formula. The
+builder's design satisfies both real requirements and is correct as built.
+
+**Decision 2 — the tab/quote-path crash is BLOCKING, not MINOR, once a second, filename-independent
+trigger is in hand.** The conformance critic's own first framing ("falsifies the 12-structurally-
+unreachable count for one throw") undersold what the adversarial critic's own second mechanism — an
+ordinary, documented git feature (a `.gitattributes` external diff driver), needing no adversarial
+filename at all — made clear: this is a real, user-reachable crash via two independent, realistic
+paths, hitting a bare `throw new Error` with no `code`/`severity`/`remedy`, a direct `QUALITY-BAR.md`
+R2 violation rather than a hand-fabricated edge case. Escalated accordingly before the round-2 fix
+list was sent, and fixed at the root for both mechanisms at once (`--no-ext-diff` plus positional
+path correlation instead of parsing the quotable `+++` line) rather than patched one mechanism at a
+time.
+
+**Decision 3 — a symlink retarget (same type, different target) is correctly left as an ordinary
+`TextHunk`, not reclassified alongside the submodule fix.** Confirmed directly: reversing the
+resulting hunk restores a genuine symlink to its original target byte-for-byte. Unlike a gitlink,
+whose two diff lines encode a *reference* to another commit entirely (content a text diff cannot
+meaningfully represent), a symlink's content IS its target string — the generic text machinery is
+already the correct mechanism, not a coincidental pass.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P11`.

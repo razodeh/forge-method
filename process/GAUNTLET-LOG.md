@@ -22090,3 +22090,79 @@ round-2 time: no new error code taken (reuses `RUN-114`; the hunk-level `down` r
 registry.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q299`.
+
+## M16 P11 — The hunk parser, hunk ids, and `--base`
+
+Two gauntlet rounds. Round 1: two independent fresh-context critics. Round 2 was the fix pass,
+verified directly against the pre-fix code rather than by a fresh critic round — the findings were
+concrete, narrow, and well-evidenced, the same judgment already applied to `## M16 P2`/`## M16
+P10`/`## M16 P3`/`## M16 P5`.
+
+**What the piece builds.** The per-hunk mutation surface's own input: `computeHunks` splits a real,
+two-commit `git diff` into pinned, per-hunk `TextHunk` ranges (byte-exact CRLF/non-ASCII/no-trailing-
+newline round trips via `latin1` decoding, avoiding both `execa`'s default `stripFinalNewline` and
+UTF-8 replacement-character corruption) or whole-file `FileHunk`s (added/deleted/binary/mode-only/
+type-changed/submodule), each with a stable, distinct id (content+path+range — no "ordinal" component,
+since the spec's own text, `specs/13` lines 559-562, leaves the id format open under exactly two real
+requirements, stability and distinctness, confirmed by direct reading rather than trusting either the
+builder's own disclosed uncertainty or the piece brief's own illustrative mutation-evidence wording)
+and a reversibility signal (`git apply -R --check --unidiff-zero`). Threads `--base`/`--hunks` through
+`forge test binding`, replacing the hard-coded `HEAD~1` with an explicit, resolvable revision —
+confirmed byte-identical to the no-`--base` default when resolved to the same range, via a real
+two-copy CLI run and a real `Buffer.compare`, not by reading the one test the builder wrote.
+
+**Critic round 1 (two independent critics): two real defects, one of them found by two different
+mechanisms.**
+
+*MAJOR, fixed — a submodule (gitlink, mode `160000`) pointer bump was misclassified as an ordinary
+`TextHunk` with a false `reversible: true`.* `git diff --raw` reports a gitlink bump as plain `M` with
+differing blob ids; `--numstat` reports it as ordinary, non-binary text — the gitlink mode is the only
+real signal that distinguishes it from a text file. Both critics independently performed the real
+reversal end to end: `git apply -R --unidiff-zero` exits 0 ("successful") while `git ls-files -s`
+shows the identical gitlink sha before and after — a confirmed, silent no-op. Named more than a
+labelling nit: if `M16 P12`'s own mutation consumer ever trusts this `reversible: true` for a pinned
+dependency bump, it will believe the bump was reverted when nothing happened, a false `uncovered`
+verdict for exactly the class of change binding exists to protect.
+
+*BLOCKING, fixed, found by two independent mechanisms.* A path containing a tab or double-quote
+character crashed `computeHunks` entirely with a bare, non-`ForgeError` `Error` — git C-quotes such a
+path in every human-readable diff line (`+++`, `diff --git`) unconditionally, which
+`core.quotePath=false` does not suppress (that setting only affects bytes ≥0x80), and the module's own
+`path`-from-text parsing could not match the quoted form. The conformance critic found this with a
+real tab-named and quote-named file. The adversarial critic independently found a SECOND, more
+realistic trigger reaching the identical class of crash: an ordinary, documented git feature — a
+`.gitattributes` external diff driver — can replace the whole `-U0` rendering with arbitrary text,
+needing no adversarial filename at all, just an ordinary project configuration. Escalated by the
+orchestrator from the conformance critic's own original MINOR framing ("falsifies the 12-unreachable
+count") to BLOCKING once the second, broader, filename-independent trigger and the exact root cause
+were in hand — a real, user-reachable crash via two independent paths is a direct `QUALITY-BAR.md` R2
+violation, not a hand-fabricated edge case.
+
+**Round 2 (the fix pass, verified directly): both real mechanisms closed at the root.** `--no-ext-diff`
+added to the `-U0` invocation neutralises the external-driver trigger outright. `parseTextSection` no
+longer parses a path out of the quotable `+++ b/<path>` line at all — `computeHunks` instead zips each
+diff section against the already-resolved, structurally unquoted `--raw -z` path list positionally,
+confirmed sound (not assumed) with a real multi-file fixture mixing tab/quote/plain paths: both
+listings share one sorted tree order for the identical base/head inputs, independent of pathspec
+argument order. The zip is guarded by a new typed refusal (`RUN-131`) rather than assumed to always
+hold, since it is an invariant across two separate git invocations, not something checkable at every
+call site. The submodule gitlink is now its own `FileHunkReason` member, checked before the mode-only/
+binary checks, routed by the raw diff's own mode fields (previously read but discarded, per the file's
+own prior comment). A test literally named "MUTATION EVIDENCE 1" did not itself exercise the mutation
+it claimed to (a differently-named test did, the real protection was never missing, only mislabelled)
+— renamed onto the real test. A symlink *retarget* (same type, different target) was confirmed to fall
+into the ordinary `TextHunk` path rather than `FileHunk`, and confirmed harmless (byte-exact restore on
+reversal) — decided and documented as correct as-is, since git's own content model for a symlink IS
+the target string, unlike a gitlink's commit reference.
+
+**Verification.** 30 tests (`hunks.test.ts` + `bin-binding-hunks.test.ts`), mutation-verified including
+a case beyond what either critic required: scrambling the positional zip (identical section/path
+counts, so `RUN-131`'s own length check alone cannot catch it) is caught only by a dedicated
+cross-attribution test built with three distinctly-shaped paths. Coverage 91.47%/84.72%/100%/90.83%
+(statements/branches/functions/lines), clearing the `packages/cli` 85/80 floor. `pnpm typecheck`,
+`pnpm run boundaries`, `pnpm lint` clean; the wider collateral sweep (`errors.test.ts`,
+`spec-cli-examples.test.ts`'s own naming-rule check, `workspace-floor.test.ts`, `binding.test.ts`/
+`bin-binding.test.ts`) 1125 tests, all clean, independently re-run by the orchestrator against the
+cherry-picked commit rather than trusted from the report alone.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q300`.
