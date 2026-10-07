@@ -3284,6 +3284,92 @@ export const ERROR_CODES = {
       'Check that every declared surface lists at least one case, then re-run the check; if this ' +
       'persists, report it as a defect in the counting algebra itself.',
   },
+  // `specs/22` M16 P14, `18` §18.7 (Retention), `process/SPEC-QUESTIONS.md` Q294 Decision 9: "`n` is an
+  // integer of at least 1 (0, a negative number and a non-integer are refused)". Originally taken as
+  // `RUN-140` (the live ceiling the day this piece's own worktree was cut); renumbered to `RUN-143`
+  // once `M16 P7` landed `RUN-140`-`RUN-142` concurrently for a wholly different command -- the SAME
+  // class of ceiling race `RUN-139`'s own comment already records once this milestone, now a second
+  // time between these two specific pieces (`M16 P7` cut its own worktree before `M16 P12` landed;
+  // this piece cut its own before `M16 P7` landed). Distinct from `RUN-139` (`--max-hunks`, a count of
+  // hunks) and `RUN-117` (a count of milliseconds): a third flag, a third unit, the identical
+  // "each flag's own message names its own unit" discipline `RUN-139`'s own comment already states for
+  // why IT does not reuse `RUN-117`.
+  'RUN-143': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { flag: string; value: string }) =>
+      `${show(d.flag)}'s value (${show(d.value)}) is not a positive integer count of records to keep.`,
+    remedy:
+      'Pass a positive whole number of records to keep per (type, subject) (for example, --keep 5), ' +
+      'or omit the flag to use the built-in default of 5.',
+  },
+  // `specs/22` M16 P14, `18` §18.7: "`--apply` refuses whenever the FORGE session marker `FORGE_RUN_ID`
+  // is present, whichever run it names... because a prune is a human act, as `forge parity capture` is:
+  // a run must not be able to discard the evidence about its own work." The identical shape `RUN-136`
+  // already gives `forge parity capture`'s own refusal under the same marker, reused here in this
+  // command's own code rather than literally reusing `RUN-136`'s (its message names "forge parity
+  // capture" by name, which would read wrong for this command, `QUALITY-BAR.md` R2's "states what it
+  // found" applying to the command name too). Renumbered from `RUN-141` for the identical reason as
+  // `RUN-143` above.
+  'RUN-144': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { runId: string }) =>
+      '"forge evidence prune --apply" cannot run from inside a FORGE-spawned session or command (the ' +
+      `FORGE_RUN_ID marker is set to ${show(d.runId)}): a run must not be able to discard the evidence ` +
+      'about its own work. A dry run (no --apply) is not refused this way.',
+    remedy:
+      'Run "forge evidence prune --apply" from a person at their own terminal, outside any run -- ' +
+      'never from inside an agent session or a run-spawned command.',
+  },
+  // `specs/22` M16 P14, `18` §18.7: "A prune that cannot enumerate every store that can hold an
+  // evidence id, because one is unreadable or does not parse, refuses and removes nothing: a reference
+  // it could not see is one it could break." Covers a `MutationEvidence`/`EvidenceBundle`/
+  // `ParityEvidence`-typed document that fails its own registered schema (so its own id/subject, or an
+  // `EvidenceBundle`'s own reference lists, cannot be trusted) -- a document that is not one of these
+  // three types at all, or fails to parse as an artifact document in the first place, is skipped
+  // instead (`countIdsFromFiles`'s own identical "not an artifact document, or too broken to even know
+  // its claimed type" stance, `@forge/core/ids/scan.ts`): this code fires only once a file has
+  // unambiguously claimed to BE one of the three managed types and then failed to validate as one. An
+  // unreadable/malformed `.forge/checks/*.gate.yaml` surfaces as the existing `GATE-506` instead (this
+  // command's own gate-citation scan reuses `loadGateRegistry` unchanged, per this piece's own Surface
+  // note not to alter that function's existing behaviour) -- a second, narrower code for the identical
+  // "a gate document is broken" fact would only disagree with the one `loadGateRegistry`'s own other
+  // two real callers (`gate list`/`check`/`approve`/`waive`) already give a project for the same file.
+  // Renumbered from `RUN-142` for the identical reason as `RUN-143` above.
+  'RUN-145': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string; detail: string }) =>
+      `${show(d.path)} is a store "forge evidence prune" must read before it can safely decide ` +
+      `anything, and it ${show(d.detail)}; refusing rather than risk breaking a reference it could not see.`,
+    remedy:
+      'Fix or remove the broken file (or restore it from version control) so it reads back as a ' +
+      'valid document, then re-run "forge evidence prune".',
+  },
+  // `specs/22` M16 P14, `18` §18.7/§18.8: "a reference to a pruned id resolves to a distinct 'pruned'
+  // answer naming the tombstone, never to 'dangling'." Distinct from `RUN-112` (`'missing'`/
+  // `'superseded'`, `specs/22` M15 P8): `RUN-112`'s own `reason` union is a property every one of ITS
+  // real callers' SAMPLE_DETAILS already covers, and widening it to a third member is a change to
+  // `@forge/engine/gates/approve.ts`, a file this piece's own Surface line does not name (and the
+  // common head's own rule is to report, not silently widen, when a boundary does not fit) -- this
+  // command's own `gate-commands.ts` addition (`resolveGateEvidence`'s caller, both the `approve` and
+  // `waive` code paths) checks for a tombstoned id BEFORE calling the existing, unmodified
+  // `refuseOnUnresolvedEvidence`, and throws this new code directly for that one specific case instead,
+  // leaving `RUN-112` itself, and its own two real reasons, exactly as they were. Originally taken as
+  // `RUN-143`; renumbered here to `RUN-146` for the identical reason the current `RUN-143`'s own
+  // comment above states (the collision with `M16 P7`'s own, already-landed `RUN-140`-`RUN-142`).
+  'RUN-146': {
+    severity: 'error',
+    exitCode: EXIT_CODES.prerequisiteMissing,
+    message: (d: { gateId: string; ref: string; id: string; path: string }) =>
+      `gate ${show(d.gateId)}'s own evidence ${show(d.ref)} names ${show(d.id)}, which "forge ` +
+      `evidence prune" has pruned (tombstone: ${show(d.path)}) -- not missing, and not evidence of ` +
+      'current work.',
+    remedy:
+      'Approve or waive this gate against a surviving record of the declared type, or adjust the ' +
+      "gate's own evidence reference, since the cited record was deliberately retired.",
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

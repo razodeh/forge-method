@@ -199,6 +199,7 @@ import {
   type ModuleCommandContext,
 } from './commands/module.ts';
 import { overlayAdd, type OverlayCommandContext } from './commands/overlay.ts';
+import { parseKeep, runEvidencePrune } from './commands/evidence/prune-command.ts';
 import { runParityCapture, type ParityCaptureMarker } from './commands/parity/capture-command.ts';
 import { parityCheckExitCode, runParityCheck } from './commands/parity/check-command.ts';
 import {
@@ -1335,6 +1336,55 @@ async function runParityCommand(
       'nothing to capture';
     console.log(
       `forge parity capture: captured ${String(result.captured)}, unchanged ${String(result.unchanged)} (${detail}).`,
+    );
+  }
+  return EXIT_CODES.success;
+}
+
+const EVIDENCE_PRUNE_FLAGS = { '--apply': false, '--keep': true } as const;
+
+/** `forge evidence <sub>` (`process/plans/PLAN-M16.md` P14, `18` §18.7, `03` §3.2.5). `prune` is the
+ * one real sub-verb. The identical "the command returns data; the dispatcher adds the `--json`
+ * envelope" split `runParityCommand` just above already uses for its own sibling M16 command.
+ *
+ * The FORGE session marker is read here, once (`QUALITY-BAR.md` R10's one ambient environment read),
+ * via the identical `gateCommandMarker(realEnvSnapshot())` `forge parity capture` already reuses for
+ * its own identical refusal shape — `runEvidencePrune` itself decides whether the marker's mere
+ * PRESENCE refuses this particular call (only ever for `--apply`; a dry run is always allowed, `18`
+ * §18.7). */
+async function runEvidenceCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  sub: string | undefined,
+  rest: readonly string[],
+  json: boolean,
+): Promise<number> {
+  if (sub !== 'prune') {
+    console.error('forge: "evidence" needs a real subcommand (prune).');
+    return EXIT_CODES.usage;
+  }
+  const { values, flags, positionals } = parseCommandFlags(rest, EVIDENCE_PRUNE_FLAGS);
+  assertNoArgs(positionals);
+  const keep = parseKeep(values.get('--keep'));
+  const apply = flags.has('--apply');
+  const marker = gateCommandMarker(realEnvSnapshot());
+  const result = await runEvidencePrune({
+    paths: new ProjectPaths(projectRoot),
+    clock: SYSTEM_CLOCK,
+    keep,
+    apply,
+    marker,
+  });
+  if (json) {
+    console.log(JSON.stringify({ v: 1, ...result }));
+  } else {
+    const verb = apply ? 'removed' : 'would remove';
+    console.log(
+      `forge evidence prune: kept ${String(result.kept.length)}, ${verb} ${String(result.removed.length)}` +
+        (result.pending.length > 0
+          ? `, ${String(result.pending.length)} pending (still referenced)`
+          : '') +
+        '.',
     );
   }
   return EXIT_CODES.success;
@@ -5457,6 +5507,10 @@ async function main(): Promise<number> {
   if (command === 'parity') {
     const [paritySub, ...parityRest] = afterCommand;
     return runParityCommand(paths, projectRoot, paritySub, parityRest, flags.json);
+  }
+  if (command === 'evidence') {
+    const [evidenceSub, ...evidenceRest] = afterCommand;
+    return runEvidenceCommand(paths, projectRoot, evidenceSub, evidenceRest, flags.json);
   }
   if (command === 'merge') {
     return runMergeCommand(paths, projectRoot, afterCommand, flags.json);

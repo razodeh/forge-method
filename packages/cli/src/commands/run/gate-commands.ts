@@ -55,6 +55,7 @@ import { appendEvent, readEvents } from '@forge/telemetry/events';
 
 import { sanitizeForTerminal } from '../../generated-header.ts';
 import { CONFIG_REL_PATH, readConfig } from '../config.ts';
+import { hasTombstone, tombstoneRelPath } from '../evidence/tombstone.ts';
 import { loadGateRegistry } from './gates.ts';
 
 /** `18` §18.7's own registered `GateReport` row: `idPrefix`/`idWidth` for numbering
@@ -786,6 +787,48 @@ function isResolvableEvidenceType(type: string): boolean {
  * commit at `HEAD` (`listCommittedPaths` above)" -- this command has no lane-worktree concept of its own
  * to distinguish a scratch copy committed only to a never-merged lane branch from one that has actually
  * landed; see `listCommittedPaths`'s own doc comment. Full disclosure record: `SPEC-QUESTIONS.md` Q287. */
+/**
+ * Refuses `RUN-146` when the FIRST unresolved reference in `resolvedEvidence` (`10` §10.3's own
+ * declaration-order rule, `refuseOnUnresolvedEvidence`'s own identical "name one real reason"
+ * convention) names a specific id (`Type(id)`, never a `Type(*)` wildcard — see `types.ts`'s own
+ * `GateEvidenceCitation` doc comment in `@forge/cli/commands/evidence`) that `forge evidence prune`
+ * has already pruned.
+ *
+ * `process/SPEC-QUESTIONS.md` Q294 Decision 9 / `18` §18.7: "a reference to a pruned id resolves to a
+ * distinct 'pruned' answer naming the tombstone, never to 'dangling'." Checked BEFORE
+ * `refuseOnUnresolvedEvidence` at both of this file's own two call sites (`gateApprove`/`gateWaive`),
+ * so a pruned id never even reaches that function's own generic `'missing'` reason (`RUN-112`) — this
+ * command's own Surface line permits changing "the evidence-resolution refusal path" in THIS file;
+ * `@forge/engine/gates/approve.ts`'s own `ResolvedEvidenceRef.problem` union (`'missing'`/
+ * `'superseded'`) is a different file, outside that Surface line, and is left exactly as it is (see
+ * `RUN-146`'s own comment in `@forge/core/errors/codes.ts` for the full reasoning).
+ *
+ * A record still on disk (the "tombstone exists, record also still exists — the record wins" pending-
+ * removal state `18` §18.7 describes) never reaches this function with `problem: 'missing'` at all:
+ * `resolveGateEvidence` below already finds that record by its own ordinary directory scan, so
+ * `resolvedEvidence` carries no problem for it in the first place. This function therefore only ever
+ * has to ask "does a tombstone exist" — by the time it is called, "the record itself is absent" is
+ * already an established fact.
+ */
+async function refuseOnPrunedEvidence(
+  ctx: GateCommandContext,
+  gateId: string,
+  resolvedEvidence: readonly ResolvedEvidenceRef[],
+): Promise<void> {
+  const firstProblem = resolvedEvidence.find((entry) => entry.problem !== undefined);
+  if (firstProblem?.problem !== 'missing') return;
+  const { id } = parseEvidenceRef(firstProblem.ref);
+  if (id === '*') return;
+  const reportsRoot = await resolveReportsRoot(ctx);
+  if (!(await hasTombstone(ctx.paths, reportsRoot, id))) return;
+  throw new ForgeError('RUN-146', {
+    gateId,
+    ref: firstProblem.ref,
+    id,
+    path: tombstoneRelPath(reportsRoot, id),
+  });
+}
+
 async function resolveGateEvidence(
   ctx: GateCommandContext,
   definition: GateDefinition,
@@ -890,6 +933,7 @@ export async function gateApprove(
   // `SPEC-QUESTIONS.md` Q287). `approveGate` decides it again below for a caller that bypasses this
   // (the same "computed once, enforced twice" shape `refusal`/`producedEvidenceFor` already are).
   const resolvedEvidence = await resolveGateEvidence(ctx, definition);
+  await refuseOnPrunedEvidence(ctx, gateId, resolvedEvidence);
   refuseOnUnresolvedEvidence(gateId, resolvedEvidence);
   // Sampled AFTER the checks ran (they have no time limit): a waiver that lapsed while they ran has lapsed.
   const nowIso = clock.now();
@@ -1044,6 +1088,7 @@ export async function gateWaive(
   // not be waivable into passing either. `gateWaive` never calls `approveGate` (see the comment
   // above), so this is likewise the ONLY place `RUN-112` is enforced for waiving.
   const resolvedEvidence = await resolveGateEvidence(ctx, definition);
+  await refuseOnPrunedEvidence(ctx, gateId, resolvedEvidence);
   refuseOnUnresolvedEvidence(gateId, resolvedEvidence);
   const waiver: Waiver = input;
   // A waiver excuses failing checks. On a gate that passes there is nothing to excuse, and recording one anyway
