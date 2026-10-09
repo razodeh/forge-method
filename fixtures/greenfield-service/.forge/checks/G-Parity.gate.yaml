@@ -1,0 +1,18 @@
+# forge:generated v=0.0.0 hash=09654d9e6353cc123a294693cd98ec05ba6b41bda61f43b5b5e1505e7c65f338 — edits will be overwritten; use overrides/
+id: G-Parity
+name: Parity gate
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: behavior:parity
+      run: 'forge parity check --json --no-record --trusted refs/heads/main'
+      parser: forge-json
+      failOn: 'failing > 0'
+  advisory: []
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: ParityEvidence

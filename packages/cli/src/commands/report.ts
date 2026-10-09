@@ -40,13 +40,28 @@
  * shape is outside this piece's Surface to extend), not a silent inaccuracy -- a future piece widening
  * `CheckRun{kind:'binding'}`'s own payload to also carry stale-exemption ids would close this exactly.
  *
- * **Metric 3 (gate failures before first pass, per gate/check) is scoped per `(runId, gateId)` pair,
- * not project-wide-ever-per-gate-id.** The same gate id is legitimately re-evaluated fresh in every new
- * real run (`G-Verify` once per story's own verify phase, say) -- collapsing every run's own attempts
- * into one global "time to first-ever pass" per gate id would conflate genuinely different real
- * attempts into one number. `GateRejected` (not `GateEvaluated.passed === false`) is the actual
- * "failure" signal counted: `GateEvaluated` only ever fires from the engine's own automatic gate step
- * (`dispatch/steps.ts`'s `runGateStep`), but a human's own `forge gate reject` (`gate-commands.ts`'s
+ * **Metric 3 (gate failures before first pass, per gate/check) is scoped per `(runId, gateId, stepId)`
+ * triple, not project-wide-ever-per-gate-id -- and, as of `specs/22` M16 P9, not per bare `(runId,
+ * gateId)` either.** The same gate id is legitimately re-evaluated fresh in every new real run
+ * (`G-Verify` once per story's own verify phase, say) -- collapsing every run's own attempts into one
+ * global "time to first-ever pass" per gate id would conflate genuinely different real attempts into
+ * one number. M16 P9 (`G-Parity`) introduced a SECOND way the identical conflation can happen, this
+ * time WITHIN one run: it is the first gate id ever referenced by TWO different steps of one workflow
+ * (`preflight-parity`, `verify-parity`, `refactor.workflow.yaml`/`migrate.workflow.yaml`). Grouping only
+ * by `(runId, gateId)` let `preflight-parity`'s own clean `GateApproved` -- structurally always first
+ * in `seq`, since the run could not have reached `verify-parity` at all otherwise -- satisfy this
+ * metric's "reached first pass" check for the WHOLE group before `verify-parity`'s own later, genuinely
+ * independent `GateRejected` in the same run was ever examined: a real `verify-parity` rejection was
+ * silently reported as a clean pass. `stepId` -- a real, top-level field on every real
+ * `GateRejected`/`GateApproved`/`GateWaived` event (`dispatch/steps.ts`'s `runGateStep`, which always
+ * stamps `stepId: node.id`) -- is therefore now part of the grouping key: two steps of one run
+ * referencing the same gate id are two separate real attempts, exactly as two separate runs
+ * referencing the same gate id already were. (A human's own `forge gate approve`/`reject`/`waive`,
+ * `gate-commands.ts`'s `emitGateEvent`, stamps no top-level `stepId` at all -- every such event for a
+ * given `(runId, gateId)` still groups together as one triple, unchanged from before M16 P9, since they
+ * all share the same absent `stepId`.) `GateRejected` (not `GateEvaluated.passed === false`) is the
+ * actual "failure" signal counted: `GateEvaluated` only ever fires from the engine's own automatic gate
+ * step (`dispatch/steps.ts`'s `runGateStep`), but a human's own `forge gate reject` (`gate-commands.ts`'s
  * `gateReject`) emits a real `GateRejected` with no accompanying `GateEvaluated` at all -- counting only
  * `GateEvaluated.passed === false` would silently miss every human-driven rejection. `GateApproved` and
  * `GateWaived` both count as reaching "first pass": a waiver is a real, deliberate way a gate becomes
@@ -189,8 +204,11 @@ export interface CriticLoopMetric {
 }
 
 export interface GateMetric {
-  /** Distinct `(runId, gateId)` pairs with at least one real `GateRejected`/`GateApproved`/
-   * `GateWaived` event. */
+  /** Distinct `(runId, gateId, stepId)` triples with at least one real
+   * `GateRejected`/`GateApproved`/`GateWaived` event -- still called a "pair" below (and in these
+   * field names, kept as-is rather than renamed) for continuity with this metric's pre-M16-P9 shape,
+   * which had only two components; see this module's own top doc comment, Metric 3, for why `stepId`
+   * joined `(runId, gateId)` as a third, required component of what counts as one real attempt. */
   readonly pairsEvaluated: number;
   /** Of those, how many reached `GateApproved`/`GateWaived` with zero `GateRejected` beforehand. */
   readonly pairsWithCleanFirstPass: number;
@@ -686,8 +704,22 @@ function buildGateMetric(events: readonly ForgeEvent[]): GateMetric {
     // character, so a `\0`-joined key's own safety would rest on an invariant this codebase does not
     // actually enforce. A JSON-encoded array has no such assumption -- a literal NUL byte inside either
     // half renders as `\u0000` in the encoded string, never as a real separator, so two different real
-    // `(runId, gateId)` pairs can never collide into the same key regardless of their own content.
-    const key = JSON.stringify([event.runId, gateId]);
+    // `(runId, gateId, stepId)` triples can never collide into the same key regardless of their own
+    // content.
+    //
+    // `stepId` joined the key at M16 P9 (this module's own top doc comment, Metric 3): `G-Parity` is
+    // the first gate id ever referenced by TWO different steps of one workflow (`preflight-parity`,
+    // `verify-parity`), and grouping only by `(runId, gateId)` let the FIRST step's own clean pass
+    // (structurally always earliest in `seq`) hide a genuinely independent, later rejection from a
+    // SECOND step in that same run -- this metric would report a clean pass for a run whose
+    // `verify-parity` step had actually failed. A real `GateRejected`/`GateApproved`/`GateWaived`
+    // always carries a top-level `stepId` (`node.id`, `dispatch/steps.ts`'s `runGateStep`); a human's
+    // own `forge gate approve`/`reject`/`waive` (`gate-commands.ts`'s `emitGateEvent`) stamps no
+    // top-level `stepId` at all, so `JSON.stringify` encodes that genuinely-absent case as a literal
+    // `null` in the key (never `undefined`, which it would silently drop from the array) -- every such
+    // event for a given `(runId, gateId)` still groups together as one triple, unchanged from before
+    // this fix, since they all share that same absent `stepId`.
+    const key = JSON.stringify([event.runId, gateId, event.stepId]);
     const group = byPair.get(key);
     if (group === undefined) byPair.set(key, [event]);
     else group.push(event);

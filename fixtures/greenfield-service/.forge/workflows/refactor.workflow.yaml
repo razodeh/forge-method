@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=c6e2ade002f3ee081ff1d796dab6c60b1ba4edccb004ed0f936b274ebde16ff7 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=5032bce2418f4e81e5d051c6e2d19ab8cf3888bb7fc10ef0e39791061729dd58 — edits will be overwritten; use overrides/
 id: refactor
 name: Refactor
 version: 1.0.0
@@ -9,10 +9,18 @@ inputs:
     type: string
     required: true
 steps:
+  # (Post-v1.0, specs/22 M16, 10 §10.3 rule 8.) A fail-fast preflight: a project with no parity
+  # declaration that compares at least one non-exempt surface is refused here, before any agent step
+  # runs, rather than burning a session on a refactor the oracle can never evaluate.
+  - id: preflight-parity
+    kind: gate
+    gate: G-Parity
+
   - id: state-invariants
     kind: agent
     agent: architect
     brief: briefs/state-refactor-invariants.md
+    dependsOn: [preflight-parity]
     outputs: [{ type: HandoffRecord, subtype: refactor-invariants }]
 
   - id: refactor-code
@@ -29,7 +37,19 @@ steps:
     kind: command
     run: 'forge test run --json'
     dependsOn: [refactor-code]
+    # `forge test run` (no `--rule`) owns `test-results.json` and, whenever a layer was configured and the
+    # run's own collection was clean, `flaky.json` (`packages/cli/src/commands/loop/test/{run,flaky}.ts`,
+    # `PLAN-M14.md` P2). Both are tracked reports its lane writes, not project code.
+    produces: ['docs/forge/reports/test-results.json', 'docs/forge/reports/flaky.json']
+
+  # (Post-v1.0, specs/22 M16.) The same gate id as preflight-parity, referenced a second time: it
+  # re-evaluates the candidate the refactor actually produced, after the lane landed, against the
+  # identical trust anchor (10 §10.3 rule 8, 13 F-TEST-9).
+  - id: verify-parity
+    kind: gate
+    gate: G-Parity
+    dependsOn: [verify-invariants]
 
   - id: commit
     kind: checkpoint
-    dependsOn: [verify-invariants]
+    dependsOn: [verify-parity]

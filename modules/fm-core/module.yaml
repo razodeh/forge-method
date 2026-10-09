@@ -197,7 +197,8 @@ provides:
     ]
 
   # `@forge/templates`'s own real `GATE_INDEX` -- all 10 ids `10` §10.3's own gate catalogue names
-  # ("all gates" per this module's own `19` §19.1 shipped-modules row).
+  # ("all gates" per this module's own `19` §19.1 shipped-modules row), plus (post-v1.0, specs/22 M16)
+  # the workflow-scoped eleventh, `G-Parity` (`10` §10.3 rule 8).
   gates:
     [
       G-Problem,
@@ -210,6 +211,7 @@ provides:
       G-Integration,
       G-Deliver,
       G-Operate,
+      G-Parity,
     ]
 
   # `@forge/templates`'s own real `FRAMEWORK_INDEX`, minus exactly one id: `analytical-pipeline-design`

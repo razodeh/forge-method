@@ -1,0 +1,17 @@
+id: G-Parity
+name: Parity gate
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: behavior:parity
+      run: 'forge parity check --json --no-record --trusted refs/heads/main'
+      parser: forge-json
+      failOn: 'failing > 0'
+  advisory: []
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1
+evidence:
+  - artifact: ParityEvidence

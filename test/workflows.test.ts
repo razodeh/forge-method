@@ -359,7 +359,7 @@ onComplete:
     ]);
   });
 
-  it("every workflow references a gate id from 10 §10.3's own ten-row catalogue where it names one at all", () => {
+  it("every workflow references a gate id from 10 §10.3's own ten lifecycle gates, plus the workflow-scoped G-Parity (10 §10.3 rule 8), where it names one at all", () => {
     const knownGates = new Set([
       'G-Problem',
       'G-Product',
@@ -371,6 +371,7 @@ onComplete:
       'G-Integration',
       'G-Deliver',
       'G-Operate',
+      'G-Parity',
     ]);
     for (const id of Object.keys(WORKFLOW_INDEX) as WorkflowId[]) {
       const parsed = parseWorkflow(readWorkflowSource(id));

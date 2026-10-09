@@ -348,6 +348,55 @@ describe('runUpgrade', () => {
       );
     });
 
+    describe('(specs/22 M16 P9)', () => {
+      // A project initialised before M16 has no `G-Parity.gate.yaml` at all (`missingFiles`) and an
+      // older `refactor.workflow.yaml` body with no `preflight-parity`/`verify-parity` steps
+      // (`staleFiles`) -- both real regenerable-content categories `content.ts` already drives
+      // (`GATE_INDEX`/`WORKFLOW_INDEX`), so a real upgrade installs both with no new wiring of its
+      // own.
+      it('a pre-M16 project (no G-Parity.gate.yaml, an older refactor.workflow.yaml body) installs G-Parity and the edited refactor workflow on a real upgrade', async () => {
+        const project = await createTestProject();
+        const gateRelPath = '.forge/checks/G-Parity.gate.yaml';
+        const refactorRelPath = '.forge/workflows/refactor.workflow.yaml';
+        await rm(path.join(project.dir, gateRelPath));
+        const olderBody =
+          'id: refactor\nname: Refactor\nversion: 1.0.0\ndescription: d\nlevels: [L0]\n' +
+          'steps:\n  - id: refactor-code\n    kind: agent\n    agent: backend\n' +
+          '# an older shipped body, pre-M16 P9\n';
+        const refactorVersion = readPackageVersion('@forge/agents');
+        await writeFile(
+          path.join(project.dir, refactorRelPath),
+          withGeneratedHeader(olderBody, refactorRelPath, refactorVersion, sha256(olderBody)),
+          'utf8',
+        );
+
+        const dryRun = await runUpgrade(
+          project.paths,
+          project.dir,
+          { dryRun: true },
+          baseDeps(project),
+        );
+        expect(dryRun.missingFiles).toContain(gateRelPath);
+        expect(dryRun.staleFiles).toContain(refactorRelPath);
+        expect(dryRun.regenerated).toBe(true);
+
+        const report = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+        expect(report.dryRun).toBe(false);
+        const gateFile = report.regeneratedFiles?.find((file) => file.path === gateRelPath);
+        const workflowFile = report.regeneratedFiles?.find((file) => file.path === refactorRelPath);
+        expect(gateFile?.conflict).toBeUndefined();
+        expect(workflowFile?.conflict).toBeUndefined();
+
+        const installedGate = await readFile(path.join(project.dir, gateRelPath), 'utf8');
+        expect(installedGate).toContain('id: G-Parity');
+        expect(installedGate).toContain('behavior:parity');
+        const installedWorkflow = await readFile(path.join(project.dir, refactorRelPath), 'utf8');
+        expect(installedWorkflow).toContain('preflight-parity');
+        expect(installedWorkflow).toContain('verify-parity');
+        expect(installedWorkflow).not.toContain('an older shipped body');
+      });
+    });
+
     it('a real run regenerates the stale file silently, and a second dry run reports none', async () => {
       const project = await createTestProject();
       await writeStaleWorkflow(project);

@@ -33,7 +33,9 @@ const templatesPackageRoot = path.join(repoRoot, 'packages', 'templates');
 interface RawGateFile {
   readonly id: string;
   readonly name: string;
-  readonly phase: string;
+  // Absent for the workflow-scoped `G-Parity` (`10` §10.3 rule 8: "`phase` is optional in a gate
+  // document") -- every one of the ten lifecycle gates still carries one.
+  readonly phase?: string;
   readonly autonomyOverride: string | null;
   readonly checks: {
     readonly deterministic: readonly {
@@ -55,7 +57,9 @@ interface RawGateFile {
     readonly quorum: number;
   };
   readonly evidence: readonly { readonly artifact: string }[];
-  readonly onReject: { readonly action: string; readonly target: string };
+  // Absent for `G-Parity`, which names no lifecycle phase to replan to; onReject is otherwise
+  // decorative (nothing reads it, `document.ts`'s own `validateEvidenceAndReject`).
+  readonly onReject?: { readonly action: string; readonly target: string };
 }
 
 function readGateFile(id: GateId): RawGateFile {
@@ -82,7 +86,7 @@ describe('the 10 built-in gates (10 §10.3) all parse and are structurally well-
     },
   );
 
-  it("GATE_INDEX names exactly the 10 ids 10 §10.3's own catalogue table lists, no more and no fewer", () => {
+  it("GATE_INDEX names exactly the ten lifecycle gates 10 §10.3's own catalogue table lists plus the workflow-scoped G-Parity (10 §10.3 rule 8), no more and no fewer", () => {
     expect(ALL_GATE_IDS.sort()).toEqual(
       [
         'G-Problem',
@@ -95,6 +99,7 @@ describe('the 10 built-in gates (10 §10.3) all parse and are structurally well-
         'G-Integration',
         'G-Deliver',
         'G-Operate',
+        'G-Parity',
       ].sort(),
     );
   });
@@ -188,6 +193,8 @@ const PASSING_OUTPUT = JSON.stringify({
   coverage: 100,
   // `G-Verify.gate.yaml`'s own `test:binding` check (`specs/22` M15 P5): `failOn: 'incomplete > 0'`.
   incomplete: 0,
+  // `G-Parity.gate.yaml`'s own `behavior:parity` check (`specs/22` M16 P9): `failOn: 'failing > 0'`.
+  failing: 0,
 });
 /** The same fields, every one at a value that trips its `failOn`. */
 const FAILING_OUTPUT = JSON.stringify({
@@ -201,6 +208,7 @@ const FAILING_OUTPUT = JSON.stringify({
   regressions: 1,
   coverage: 0,
   incomplete: 1,
+  failing: 1,
 });
 
 describe('every gate round-trips through the real evaluateGate (M5 P14)', () => {

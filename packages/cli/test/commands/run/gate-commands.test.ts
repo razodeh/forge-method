@@ -285,9 +285,58 @@ describe('gateList', () => {
     const gates = await gateList(ctx(project));
     expect(gates.map((gate) => gate.id)).toEqual([FIXTURE_GATE_ID]);
   });
+
+  describe('(specs/22 M16 P9)', () => {
+    // `10` §10.3 rule 8: a workflow-scoped gate file has no lifecycle `phase` at all -- the real,
+    // shipped `G-Parity.gate.yaml` is the one real gate file in this whole project that omits it,
+    // so this is the real asset, not a hand-rolled stand-in.
+    it('lists the real, shipped, phase-less G-Parity alongside an ordinary phased gate, with no crash', async () => {
+      const project = await createTestProject();
+      await writeFile(
+        path.join(project.dir, CHECKS_ROOT, 'G-Parity.gate.yaml'),
+        await readFile(
+          path.join(
+            path.dirname(path.dirname(path.dirname(path.dirname(import.meta.dirname)))),
+            'templates/templates/checks/G-Parity.gate.yaml',
+          ),
+          'utf8',
+        ),
+      );
+      const gates = await gateList(ctx(project));
+      expect(gates.map((gate) => gate.id).sort()).toEqual([FIXTURE_GATE_ID, 'G-Parity'].sort());
+      const parity = gates.find((gate) => gate.id === 'G-Parity');
+      expect(parity?.checks.deterministic.map((check) => check.id)).toEqual(['behavior:parity']);
+    });
+  });
 });
 
 describe('gateCheck', () => {
+  describe('(specs/22 M16 P9)', () => {
+    // `10` §10.3 rule 8: "`forge gate check`... resolve[s] it by id like any other." It is never
+    // reached by a phase transition (nothing in this codebase enumerates gates by phase at all --
+    // `document.ts`'s own parser does not even keep the `phase:` key on the parsed
+    // `GateDefinition`), but a human naming it directly still resolves and evaluates it, never
+    // "gate not found" -- what the shell actually does with `behavior:parity`'s own `run:` string
+    // (no real `forge`/git/declaration wired into this minimal fixture) is this test's own
+    // non-concern; a dedicated real-git-repository proof lives in `parity-gate.test.ts`.
+    it('resolves and evaluates the real, shipped, phase-less G-Parity by id -- never "gate not found"', async () => {
+      const project = await createTestProject();
+      await writeFile(
+        path.join(project.dir, CHECKS_ROOT, 'G-Parity.gate.yaml'),
+        await readFile(
+          path.join(
+            path.dirname(path.dirname(path.dirname(path.dirname(import.meta.dirname)))),
+            'templates/templates/checks/G-Parity.gate.yaml',
+          ),
+          'utf8',
+        ),
+      );
+      const report = await gateCheck(ctx(project), 'G-Parity');
+      expect(report.gateId).toBe('G-Parity');
+      expect(report.checks.map((check) => check.checkId)).toEqual(['behavior:parity']);
+    });
+  });
+
   it('evaluates a real gate with a real, passing shell check, emitting no event', async () => {
     const project = await createTestProject();
     await writeFile(

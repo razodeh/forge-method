@@ -8,10 +8,18 @@ inputs:
     type: string
     required: true
 steps:
+  # (Post-v1.0, specs/22 M16, 10 §10.3 rule 8.) A fail-fast preflight: a project with no parity
+  # declaration that compares at least one non-exempt surface is refused here, before any agent step
+  # runs, rather than burning a session on a refactor the oracle can never evaluate.
+  - id: preflight-parity
+    kind: gate
+    gate: G-Parity
+
   - id: state-invariants
     kind: agent
     agent: architect
     brief: briefs/state-refactor-invariants.md
+    dependsOn: [preflight-parity]
     outputs: [{ type: HandoffRecord, subtype: refactor-invariants }]
 
   - id: refactor-code
@@ -33,6 +41,14 @@ steps:
     # `PLAN-M14.md` P2). Both are tracked reports its lane writes, not project code.
     produces: ['docs/forge/reports/test-results.json', 'docs/forge/reports/flaky.json']
 
+  # (Post-v1.0, specs/22 M16.) The same gate id as preflight-parity, referenced a second time: it
+  # re-evaluates the candidate the refactor actually produced, after the lane landed, against the
+  # identical trust anchor (10 §10.3 rule 8, 13 F-TEST-9).
+  - id: verify-parity
+    kind: gate
+    gate: G-Parity
+    dependsOn: [verify-invariants]
+
   - id: commit
     kind: checkpoint
-    dependsOn: [verify-invariants]
+    dependsOn: [verify-parity]

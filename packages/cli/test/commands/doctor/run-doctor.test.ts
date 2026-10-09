@@ -4,7 +4,7 @@
  *
  * @see specs/03 §3.7
  */
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -30,6 +30,44 @@ describe('runDoctor', () => {
     expect(report.ok).toBe(true);
     expect(report.checks.length).toBeGreaterThan(5);
     expect(report.checks.map((c) => c.id)).toContain('node-version');
+  });
+
+  describe('(specs/22 M16 P9)', () => {
+    // `10` §10.3 rule 8: "no path that enumerates every gate evaluates it." NOT the same claim as
+    // "nothing under `packages/cli/src/commands/doctor/` touches `.forge/checks/` at all" -- that
+    // broader claim is false: `run-doctor.ts` itself defines `CHECKS_ROOT = '.forge/checks'` and
+    // passes it to `workflowValidateAll` (`../workflow.ts`), which reads that directory to confirm a
+    // `kind: gate` step's referenced gate id actually exists (a referential check, over gate ids
+    // only). The real, narrower claim this test needs -- confirmed by a project-wide grep with zero
+    // hits for `evaluateGate`/`gateCheck`/`gateApprove`/`loadGateRegistry`/`@forge/engine/gates`
+    // anywhere under that same directory -- is that nothing in `doctor` ENUMERATES every gate and
+    // EVALUATES it (runs any gate's own deterministic checks). So `runDoctor`'s own report is
+    // identical whether or not the real, shipped, phase-less `G-Parity.gate.yaml` is present on disk
+    // — this is a real run against it present, not an assumption that absence proves tolerance.
+    it('is unaffected by the real, shipped, phase-less G-Parity gate file being present on disk', async () => {
+      const project = await createTestProject();
+      await mkdir(path.join(project.dir, '.forge/checks'), { recursive: true });
+      await writeFile(
+        path.join(project.dir, '.forge/checks/G-Parity.gate.yaml'),
+        await readFile(
+          path.join(
+            path.dirname(path.dirname(path.dirname(path.dirname(import.meta.dirname)))),
+            'templates/templates/checks/G-Parity.gate.yaml',
+          ),
+          'utf8',
+        ),
+      );
+      const report = await runDoctor({
+        paths: project.paths,
+        projectRoot: project.dir,
+        config: project.config,
+        env: {},
+        processVersion: process.version,
+      });
+      expect(report.v).toBe(1);
+      expect(report.ok).toBe(true);
+      expect(report.checks.map((c) => c.id)).not.toContain('G-Parity');
+    });
   });
 
   it('reports ok:false when a real hard check genuinely fails', async () => {

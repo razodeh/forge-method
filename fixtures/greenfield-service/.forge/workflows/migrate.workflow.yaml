@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=1c74f348f082bb85b7e139da02536e4357f106778695b1b0927b7655b295b239 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=e0f366940db3e66ad4270d49821aa64c2ae696258d2449f343562f0c6eee807f — edits will be overwritten; use overrides/
 id: migrate
 name: Migrate
 version: 1.0.0
@@ -63,3 +63,11 @@ steps:
     # run's own collection was clean, `flaky.json` (`packages/cli/src/commands/loop/test/{run,flaky}.ts`,
     # `PLAN-M14.md` P2). Both are tracked reports its lane writes, not project code.
     produces: ['docs/forge/reports/test-results.json', 'docs/forge/reports/flaky.json']
+
+  # (Post-v1.0, specs/22 M16, 10 §10.3 rule 8.) Structurally wired, like every other step here; reachable
+  # end to end only once `forge migrate run` itself is wired (`migrate-data`'s own disclosed, pre-existing
+  # limit -- not this gate step's own).
+  - id: verify-parity
+    kind: gate
+    gate: G-Parity
+    dependsOn: [verify-migration]

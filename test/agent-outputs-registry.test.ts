@@ -578,7 +578,9 @@ describe('a gate lists as evidence what the steps before it produce (P18, E3)', 
   const runs = gateRuns();
 
   it('enumerates the gate steps for real', () => {
-    expect(runs.length).toBe(15);
+    // M16 P9 adds three: refactor's preflight-parity and verify-parity (both naming G-Parity, so two
+    // runs of the same workflow/gate pair) and migrate's verify-parity (one more), 15 -> 18.
+    expect(runs.length).toBe(18);
   });
 
   it('G-Problem lists no artifact that a step after the gate writes: its evidence is the discover steps output', () => {
@@ -625,6 +627,13 @@ describe('a gate lists as evidence what the steps before it produce (P18, E3)', 
     'fm-mobile/store-release.workflow.yaml:G-Verify': ['GateReport'],
     'fm-service/contract-test-cycle.workflow.yaml:G-Verify': ['GateReport'],
     'harden:G-Stable': ['RCA'],
+    // M16 P9: `G-Parity` lists `ParityEvidence` as evidence, but its own check runs `forge parity
+    // check --no-record` -- in a run or by hand, the identical fixed string -- so no step ever
+    // produces one (Decision 11, Decision 5). Two gate-step instances of refactor:G-Parity
+    // (preflight-parity, verify-parity) collapse to the one dict key here; `runs.length` above still
+    // counts both.
+    'refactor:G-Parity': ['ParityEvidence'],
+    'migrate:G-Parity': ['ParityEvidence'],
   };
 
   it('every gate lists as evidence only artifacts a step upstream of it declares, except the pinned known drift', () => {

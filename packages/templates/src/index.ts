@@ -224,8 +224,12 @@ export const FRAMEWORK_INDEX: Readonly<Record<FrameworkId, string>> = {
   'cost-model': 'templates/frameworks/cost-model.framework.yaml',
 };
 
-/** `10` §10.3's own ten-row gate catalogue, transcribed independently for the identical "this package
- * has no `@forge/engine` edge" reason `WorkflowId`/`WORKFLOW_INDEX` above already document. */
+/** `10` §10.3's own ten-row lifecycle gate catalogue, transcribed independently for the identical "this
+ * package has no `@forge/engine` edge" reason `WorkflowId`/`WORKFLOW_INDEX` above already document, plus
+ * (post-v1.0, `specs/22` M16) the one workflow-scoped eleventh, `G-Parity` (`10` §10.3 rule 8): a gate
+ * file with no lifecycle `phase`, reached only from a `kind: gate` workflow step, never from a phase
+ * transition. It is a real `GateId`/`GATE_INDEX` member with a real `.gate.yaml` file — unlike `G-Adopt`
+ * (`17` §17.2), which is evaluated in-process with no gate file at all and is not a member of this type. */
 export type GateId =
   | 'G-Problem'
   | 'G-Product'
@@ -236,7 +240,8 @@ export type GateId =
   | 'G-Stable'
   | 'G-Integration'
   | 'G-Deliver'
-  | 'G-Operate';
+  | 'G-Operate'
+  | 'G-Parity';
 
 /** Resolves a gate id to its `.gate.yaml` file, as a path relative to this package's own root — the
  * identical "caller resolves against wherever `@forge/templates` is actually installed" contract
@@ -252,6 +257,7 @@ export const GATE_INDEX: Readonly<Record<GateId, string>> = {
   'G-Integration': 'templates/checks/G-Integration.gate.yaml',
   'G-Deliver': 'templates/checks/G-Deliver.gate.yaml',
   'G-Operate': 'templates/checks/G-Operate.gate.yaml',
+  'G-Parity': 'templates/checks/G-Parity.gate.yaml',
 };
 
 export const TEMPLATE_INDEX: Readonly<Record<TemplateArtifactTypeId, string>> = {
