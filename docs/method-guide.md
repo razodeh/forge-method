@@ -193,6 +193,95 @@ incomplete about what the one before it couldn't guarantee:
   this actually help" against a real number instead of memory — the scorecard doesn't judge whether
   a number is good; that's deliberately left to whoever reads it.
 
+## Parity: checking a refactor against a reference
+
+Binding tells you a test genuinely exercises the code it claims to. It has nothing to say about
+whether a `refactor` changed what that code actually _does_ — answering that needs something binding
+alone can't supply: a reference to compare against. A **parity oracle** is a second, different kind
+of evidence FORGE checks a story against, not a replacement for the binding chain above: a reviewed
+declaration plus an immutable capture of a reference's own observed behaviour, compared against a
+candidate with `forge parity capture`/`forge parity check`. A `refactor` always has a reference (the
+code before the change); greenfield work does not, and keeps relying on binding alone.
+
+A green `forge parity check` means exactly one thing: the **declared** surfaces matched a reviewed
+reference on the **declared** cases, after the **declared** normalisation — never that "behaviour is
+preserved" in any broader sense. Everything a declaration doesn't name is simply unobserved, and the
+evidence says so plainly rather than implying a wider guarantee.
+
+- **Authoring a declaration.** `.forge/parity/<name>.parity.yaml` names the reference
+  (`reference.ref` — a full commit sha or a tag, resolved once; never a branch name or `HEAD`, since
+  either can move out from under the comparison) and the surfaces to compare (`process`, `file`,
+  `library`, `http`), each with one or more `cases`. It counts as reviewed only with a `review`
+  block — `by`, `basis` (what the review actually rested on; a real project's own basis names the
+  commits or diff a human actually read, not a one-line gesture at having looked) and `at` — plus an
+  `expires` date a person has to renew by hand: either missing, or a lapsed `expires`, fails the
+  check outright. `unobservable` lets a human excuse exactly one named surface, with its own reason,
+  owner and expiry — it is an **owned exemption**: a person asserting "I cannot observe this," never
+  the tool deciding so on its own, and it excuses one surface, never a whole declaration (a
+  declaration whose every surface is excused compares nothing and is itself invalid). Normalisation
+  rules (`strip-ansi`, `line-endings`, `sort-lines`, `replace`, and the rest) exist so a capture can
+  tolerate noise that genuinely isn't a behaviour difference — a timestamp, a host path — but they
+  are not risk-free: a rule written too broadly can hide real content, not just noise it was meant
+  to tidy away. A normalisation rule is something a reviewer has to read and judge, the same as the
+  surfaces and cases themselves, never a safe default to wave through.
+- **The vet's closed lists.** A surface's `run`, and a declaration's `setup` (used only when
+  capturing the reference), are vetted exactly as a stored test command is: one plain invocation,
+  `network: none` with no relaxation a declaration can grant, and a closed set of refusals — a
+  network program or URL (`curl`, `wget`, `ssh`), a package manager's install verb, a program that
+  runs another program for you (`env`, `xargs`, `npx`, …), one that mutates files or the environment
+  (`rm`, `mv`, `chmod`, …), a git subcommand that isn't read-only, and a path naming a secret file
+  or `.forge/state`. That refuses a bare `cargo build` or `pip install` outright; a reviewed
+  **wrapper script** — a checked-in shell script the vet itself can't see past — is the way around
+  that, never a relaxation of the vet itself. That distinction matters more than the mechanics:
+  these lists are a filter on what the **declaration** may literally say, never a sandbox on what a
+  named script then actually _does_ once it runs — a program the lists don't recognise is
+  unrecognised, not thereby safe, and review of the declaration, not the vet, is what has to cover
+  that.
+- **Capture, then check.** `forge parity capture [--name <name>]` is the one human act that writes
+  the oracle: it observes the declared reference, at its declared ref, in a scratch worktree, and
+  writes a content-addressed capture under `.forge/parity/captures/`. No workflow runs it, and it
+  refuses outright under any FORGE session marker at all, so a refactor can never mint its own
+  oracle. `forge parity check [--name <name>] [--trusted <ref>] [--story <id>] [--no-record]` then
+  observes the candidate _in place_ and compares it against the capture a matching declaration
+  selects, writing one `ParityEvidence` record per invocation unless given `--no-record`.
+- **Why `refactor` is strict now.** M16 gives `refactor` a fail-fast `preflight-parity` step before
+  any agent session even starts, and a second, `verify-parity`, once the refactor lands: a project
+  with no parity declaration that compares at least one real, non-exempt surface cannot pass
+  `refactor` at all. That is a deliberate behaviour change, not an incidental detail — before M16 a
+  `refactor` workflow was no stricter than any other; a `refactor` with nothing declared to compare
+  now refuses before spending a session's budget, rather than completing having checked nothing.
+- **The trust anchor, and its real boundary.** `forge parity check --trusted <ref>` compares
+  everything under `.forge/parity/` against the tree at `<ref>` by reading git objects directly —
+  never `git status` or `git diff`, both of which an agent with a shell can blind. `G-Parity`'s own
+  check always passes `--trusted refs/heads/main`, so inside a run the anchor is trunk. This is the
+  real boundary: **a rewritten oracle is detected, not prevented, and a reviewed change has to reach
+  trunk before a `forge refactor` run can rely on it.** That trunk is itself a hardcoded literal —
+  FORGE's engine always treats `main` as trunk, never a value read from project configuration — so a
+  project whose own default branch is genuinely named anything else cannot pass a real `refactor`'s
+  `G-Parity` gate at all, for a reason that has nothing to do with parity itself, until either its
+  branch is renamed to match or FORGE itself grows configuration for this. The declaration is not
+  unwritable by an agent: `.forge/**` sits in the engine's never-writable floor, but that floor is
+  enforced only after the fact, when the adapter reports changed files — a session that commits its
+  own work bypasses it entirely. So the anchor, not the floor, is what actually protects the oracle,
+  and it protects it by failing the run that sees the rewrite, never by stopping the rewrite from
+  happening or landing.
+- **Per-hunk results: what they do and don't tell you.**
+  `forge test binding --story <id> --hunks --base <ref> [--max-hunks <n>]` is the finer-grained
+  sibling of the ordinary behavioural binding described above: instead of reverting a story's whole
+  implementation change at once, it reverts one _hunk_ of text change at a time and asks whether a
+  baseline-passing test now fails. It is opt-in, bounded (N hunks cost N+3 test runs) and strictly
+  report-only — a hunk's own verdict never changes the command's exit code. A project that wants to
+  gate on it writes its own check over the `--json` envelope's `uncoveredHunks` field, and takes on
+  three real costs by doing so: a comment-only or purely cosmetic hunk still reads `uncovered`,
+  there is no hunk exemption, and attribution is bounded by the story's own declared tests — a hunk
+  covered only by a different story's test still reads `uncovered`. None of that makes hunk coverage
+  unreliable; it means an `uncovered` hunk is a prompt to go look, never, on its own, proof that a
+  test is missing.
+
+See [`getting-started.md`'s walkthrough](getting-started.md) for a real, run-for-real example of all
+of the above on a tiny, shipped fixture — a declaration, a capture, a passing and a refused check,
+and the hunk and prune commands.
+
 ## Where the method stops and customization begins
 
 FORGE draws a hard line: **the user owns flavour, FORGE owns rigour.** Flavour is who the agents

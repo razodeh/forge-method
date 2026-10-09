@@ -296,14 +296,14 @@ git add -A && git commit -m "scaffold: init, story, DoD profile, test runner con
 
 Now write the implementation and a test that _looks_ like it covers it but doesn't call it at all:
 
-```js
+```
 // src/add.js
 export function add(a, b) {
   return a + b;
 }
 ```
 
-```js
+```
 // src/add.test.js
 import { describe, it, expect } from 'vitest';
 
@@ -345,7 +345,7 @@ and stage the evidence file together, then amend them both into the SAME commit 
 `src/` — never a separate commit on top of it — so that commit stays immediately `HEAD~1` away from
 the next check:
 
-```js
+```
 // src/add.test.js
 import { describe, it, expect } from 'vitest';
 import { add } from './add.js';
@@ -428,6 +428,314 @@ directly — a durable, committed file, not an event log entry — so it has no 
 real, disclosed scope boundary of `forge report`, not a bug in this guide's own steps: see
 `docs/method-guide.md`'s own Measurement section, and `SPEC-QUESTIONS.md` Q291 for the full
 reasoning.
+
+## 9. Check a refactor against a reference
+
+Everything above is checked by running a story's own tests, with or without a revert — there's no
+reference to compare against. A `refactor` is different: the code _before_ the change always exists,
+so this guide's own CLI now ships a **parity oracle** that checks a refactor's candidate against a
+reviewed, immutable capture of that reference's own observed behaviour, and `refactor` now refuses
+to run at all without one. This section runs the real `forge parity capture`/`check`,
+`forge test binding --hunks` and `forge evidence prune` commands against `fixtures/parity-refactor/`
+— the small, deliberately trivial fixture this repository's own test suite already uses for exactly
+this — not a live `forge refactor` run: that needs a real agent session and real spend, which this
+guide doesn't do (see [`docs/method-guide.md`](method-guide.md) for the concepts this section only
+runs).
+
+This needs its own project, kept apart from the one sections 2–8 built (it needs an unrelated
+`sum.mjs`, and mixing it into `STORY-001`'s own history would only confuse both) — initialize one
+exactly as section 2 did, in a new directory:
+
+```bash
+FORGE_REPO="$(pwd)"
+mkdir /tmp/forge-parity-demo && cd /tmp/forge-parity-demo
+forge init --name "Parity Demo" --level L0 --yes
+git add -A && git commit -q -m "scaffold: forge init"
+```
+
+`$FORGE_REPO` is this checkout's own root — every `fixtures/parity-refactor/` path below is relative
+to it, not to the new project directory you just `cd`'d into.
+
+Copy in the fixture's reference implementation and commit it on its own; this commit is what the
+declaration below names as the reviewed reference:
+
+```bash
+cp "$FORGE_REPO/fixtures/parity-refactor/reference/sum.mjs" ./sum.mjs
+git add -A && git commit -q -m "reference implementation of sum.mjs"
+REF_SHA=$(git rev-parse HEAD)
+```
+
+`fixtures/parity-refactor/reference/sum.mjs`'s own content, read directly rather than retyped:
+
+```
+// The reference implementation `specs/22` M16's own exit test (`03` §3.5, `13` F-TEST-9) compares a
+// refactor against: sums its two command-line arguments and prints the result. Deliberately simple
+// and deterministic (no clock, no randomness, no filesystem) so a byte-for-byte parity comparison is
+// the whole point, not an accident of the fixture.
+const [a, b] = process.argv.slice(2).map(Number);
+process.stdout.write(String(a + b));
+```
+
+The fixture's own declaration names this exact commit as its reference, as a template with a
+placeholder where the real commit sha goes, since the declaration can't name a commit that didn't
+exist until the step above:
+
+```
+name: behavior
+reference:
+  ref: __REFERENCE_SHA__
+review:
+  by: fixture-author
+  basis: read reference/sum.mjs by hand; it is three lines
+  at: 2026-01-01
+expires: 2999-01-01
+surfaces:
+  process:
+    run: "node sum.mjs"
+    stability:
+      runs: 2
+    cases:
+      - args: ["2", "3"]
+      - args: ["10", "-4"]
+```
+
+A real declaration's own `review.basis` would name something substantive — the actual diff a human
+read, not a one-line gesture; this fixture's own basis is deliberately trivial, because the fixture
+itself is six lines — four of comment, two of code, shown above. (Its path, `reference/sum.mjs`, is
+also this fixture's own location inside this repository, not `./sum.mjs` where it actually sits once
+copied into the project you just created — `basis` is free text the tooling never parses, so that
+mismatch is cosmetic, not a sign you missed a step.) Fill in the one real commit sha the same way
+this repository's own tests do, substituting it for the placeholder, and commit the result:
+
+```bash
+mkdir -p .forge/parity
+sed "s/__REFERENCE_SHA__/$REF_SHA/" "$FORGE_REPO/fixtures/parity-refactor/declaration/behavior.parity.yaml" > .forge/parity/behavior.parity.yaml
+git add -A && git commit -q -m "declare parity for sum.mjs"
+```
+
+Now capture the reference's own observed behaviour — the one human act that actually writes the
+oracle:
+
+```bash
+forge parity capture
+```
+
+```
+forge parity capture: captured 1, unchanged 0 (behavior -> d1c9ffbd3f94a72eecc7826c5a22c6d381175f3d6fa8e8ebb140bf6348e9e36a.json).
+```
+
+(the capture's own file name — the sha256 of its own canonical bytes — is as specific to this run as
+the commit sha above; yours will legitimately differ.) Commit it: a capture is an oracle a later
+`refactor` has to trust, and trusting an uncommitted file is not trusting anything.
+
+```bash
+git add -A && git commit -q -m "capture reference behaviour"
+```
+
+Now try a behaviour-preserving refactor: the implementation changes, the observable output does not.
+
+```bash
+cp "$FORGE_REPO/fixtures/parity-refactor/preserving/sum.mjs" ./sum.mjs
+forge parity check --trusted refs/heads/main --no-record
+```
+
+```
+forge parity check: 2 passing, 0 failing (behavior: match).
+```
+
+Exit code 0. `--trusted refs/heads/main --no-record` isn't an arbitrary choice of flags here — it is
+the same trust anchor and recording behaviour that `G-Parity`'s own check runs inside a real
+`refactor`, just without that check's own `--json` (shown further below instead, once this
+walkthrough needs a machine-readable field rather than a human-readable line): the trust anchor is
+always trunk, and a gate check never records evidence of its own, because it runs inside the
+integration worktree, where a file the check wrote would leave that worktree dirty for the next run.
+
+Now try a behaviour-changing refactor: a deliberate off-by-one
+(`function sum(x, y) { return x + y + 1; }`).
+
+```bash
+cp "$FORGE_REPO/fixtures/parity-refactor/changing/sum.mjs" ./sum.mjs
+forge parity check --trusted refs/heads/main --no-record --json
+```
+
+```
+{"v":1,"ok":true,"verdict":"mismatch","failing":2,"passing":0,"evidenceId":null,"declarations":[{"name":"behavior","verdict":"mismatch","reason":"surface \"process\" case 0 differs on its \"stdout\" stream","passing":0,"failing":2}]}
+```
+
+Exit code 1. Read `reason` closely: it says _where_ the two disagree — the surface (`"process"`),
+the case (`0`, the first of the two declared) and the stream (`"stdout"`) — and nothing else. It
+never says the reference printed `5` and the candidate printed `6`; F-TEST-9 is explicit that an
+envelope never carries the differing text itself, only where the difference is, so a
+`ParityEvidence` record can be shared and reviewed without leaking whatever the comparison actually
+found.
+
+Put the preserving refactor back — it's the one actually going into this project's history — and
+check it again without `--no-record` this time, the way a human checking by hand (rather than a
+gate, mid-run) normally would:
+
+```bash
+cp "$FORGE_REPO/fixtures/parity-refactor/preserving/sum.mjs" ./sum.mjs
+forge parity check --trusted refs/heads/main --json
+```
+
+```
+{"v":1,"ok":true,"verdict":"match","failing":0,"passing":2,"evidenceId":"PAR-001","declarations":[{"name":"behavior","verdict":"match","passing":2,"failing":0}]}
+```
+
+`evidenceId` names a real, just-written `ParityEvidence` record. Look at it — the shas and digests
+_inside_ the record are your own and will differ; the record's own id really is `PAR-001` here too
+(always, for the first record in a fresh project), and the shape around it won't differ either:
+
+```bash
+cat docs/forge/reports/parity/PAR-001-behavior.md
+```
+
+```
+---
+id: PAR-001
+type: ParityEvidence
+schemaVersion: 1
+title: forge parity check -- project
+status: recorded
+created: 2026-10-09
+updated: 2026-10-09
+revision: 1
+author: engine
+changelog: []
+trusted: db9414d8d0515d5fc75ab7a8e8f4dc580de0520d
+headSha: db9414d8d0515d5fc75ab7a8e8f4dc580de0520d
+dirty: true
+deltaDigest: 381e765f28a4fe317c20d06ca1556d5f47d004936714381ae62159888e15598d
+toolVersions:
+  node: v22.14.0
+verdict: match
+declarations:
+  - name: behavior
+    digest: e56543d4c13540078da406bf8051760834cceb0765c7f76e6976b0e4d09a4ac4
+    reference:
+      ref: d5b92b81372331b02a229bf7e296b9a645355adc
+      sha: d5b92b81372331b02a229bf7e296b9a645355adc
+    platform: darwin-arm64
+    captureDigest: d1c9ffbd3f94a72eecc7826c5a22c6d381175f3d6fa8e8ebb140bf6348e9e36a
+    verdict: match
+    cases:
+      - surface: process
+        caseIndex: 0
+        verdict: match
+        contentHash: 642ed483706c549e49d466ce64f6b6238a54cb2ee1b9c0ae4731665a18b929ab
+      - surface: process
+        caseIndex: 1
+        verdict: match
+        contentHash: d2de089df2234317cbe04a0355dee26281ea74a8db689775719e0cff71eadf6c
+    exemptCount: 0
+---
+
+<No further content: every real finding lives in the front matter above, not the body.>
+```
+
+Every hash in that file is a hash _of_ content — never the content itself, proof rather than just a
+claim of F-TEST-9's "never the observed content" rule. Commit it:
+
+```bash
+git add -A && git commit -q -m "record a parity check (PAR-001)"
+```
+
+`forge parity check` tells you a refactor's observable output didn't move. It says nothing about
+whether your own tests would have caught it if it had — that's `forge test binding`'s job (section 8
+above), and this CLI's own hunk mode is a finer-grained form of exactly that: reverting one hunk of
+a change at a time, rather than the whole thing at once. It needs a story and a real test, so add
+both — a story whose `files_expected` splits `sum.mjs` from its own test, and a test that actually
+calls the refactored code through its command-line contract, the only one `sum.mjs` has:
+
+```bash
+cat > package.json <<'EOF'
+{
+  "name": "parity-demo",
+  "private": true,
+  "type": "module"
+}
+EOF
+forge spec new Story "Refactor sum.mjs"
+```
+
+```
+forge spec new Story: wrote docs/forge/specs/stories/STORY-001-refactor-sum-mjs.md.
+```
+
+Fill in the same placeholder fields section 8 did (`owner_role: backend`, `dod_profile: default`),
+with `files_expected: [sum.mjs, sum.test.mjs]` this time:
+
+```
+// sum.test.mjs
+import { execFileSync } from 'node:child_process';
+import { describe, expect, it } from 'vitest';
+
+describe('sum.mjs', () => {
+  it('sums its two command-line arguments', () => {
+    const output = execFileSync('node', ['sum.mjs', '2', '3'], { encoding: 'utf8' });
+    expect(output).toBe('5');
+  });
+});
+```
+
+Point `execution.testCommands.unit` at a real vitest 4 — this project can reuse the one
+`pnpm install` already put in this repository's own `node_modules`, so there's nothing new to
+install this time:
+
+```bash
+forge config set execution.testCommands.unit "$FORGE_REPO/node_modules/.bin/vitest run --root ."
+echo 'node_modules/' >> .gitignore
+git add -A && git commit -q -m "add a story and a real test for sum.mjs"
+```
+
+Now hunk-mutate the refactor itself, against the commit that introduced the reference
+implementation:
+
+```bash
+forge test binding --story STORY-001 --hunks --base "$REF_SHA"
+```
+
+```
+forge test binding --story STORY-001: bound=0 nonBinding=1 restoreVerified=true evidence=MUT-001.
+non-binding: sum.mjs sums its two command-line arguments
+hunk uncovered: baa2bdc602d66102d957428fc5325071928d713eff01ccc870f00ed2a340f52d sum.mjs
+```
+
+(unlike the commit shas above, this hunk id is the same for every reader: it is derived purely from
+the diff's own content and position, never from a commit sha or a timestamp.)
+
+Exit code 1 — and worth sitting with, because this is not a weak test. It really does exec `sum.mjs`
+and check its real output; it's the identical check `forge parity check` already made above. That's
+exactly why reverting the refactor doesn't fail it: `preserving/sum.mjs` is called that because, for
+every input, it returns what `reference/sum.mjs` already returned — so a test of nothing but the
+observable output can never tell the two apart, by the fixture's own construction. The one hunk (the
+diff has no unchanged line to split it on, so the whole file is one hunk here) reads `uncovered` for
+the identical reason the change-level check reads `nonBinding=1`. This is the real, concrete
+difference between the two oracles this milestone ships: parity rewards exactly this refactor,
+because nothing observable moved; binding has nothing to say about it either way, because nothing in
+this test distinguishes "the new code ran" from "the old code would have produced the same thing." A
+refactor that broke something internal — not just its final printed digit — is what a hunk-level
+check is for; this fixture's own refactor, by design, isn't that.
+
+Commit the evidence this just wrote, then look at retention:
+
+```bash
+git add -A && git commit -q -m "record MUT-001 (hunk-mode binding check)"
+forge evidence prune
+```
+
+```
+forge evidence prune: kept 2, would remove 0.
+```
+
+A dry run by default: the one `MutationEvidence` record (`MUT-001`) and the one `ParityEvidence`
+record (`PAR-001`) committed above are both still under the default `--keep 5`, so nothing is
+removed. `--apply` is what would actually prune, and it refuses outright inside a real FORGE run,
+for the identical reason `forge parity capture` does above.
+
+This whole section ran against a small, deliberately trivial fixture — six lines of reference code
+and two tiny variants of it — never a real production refactor. A real one is `specs/22` M16 P17's
+own job, authorized separately, if and when the project's owner actually spends real money on one.
 
 ## Where to go next
 

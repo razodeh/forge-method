@@ -110,9 +110,13 @@ For the normative specification the codebase is built against, start with
 FORGE is pre-release but functional: everything shown above — init, spec authoring, dry-run
 planning, and, dropping `--dry-run`, real agent runs — already works end-to-end against the real
 CLI, including the evidence discipline that checks a test genuinely binds to real behavior before a
-story counts as done (`forge test binding`, `forge report`). What's not true yet: it hasn't been
-published to npm, and cross-platform CI (Linux/macOS/Windows) is still being hardened. See
-[`CONTRIBUTING.md`](CONTRIBUTING.md) for the detailed, warts-and-all build history.
+story counts as done (`forge test binding`, `forge report`). A `refactor` is now held to a second,
+different kind of evidence too: a reviewed reference oracle
+(`forge parity capture`/`forge parity check`) wired into `refactor`'s own gates and enforced
+strictly — a project with no declaration comparing at least one real surface cannot pass a refactor
+at all. What's not true yet: it hasn't been published to npm, and cross-platform CI
+(Linux/macOS/Windows) is still being hardened. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
+detailed, warts-and-all build history.
 
 ## Contributing
 
