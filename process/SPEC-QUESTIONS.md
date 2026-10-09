@@ -28662,3 +28662,38 @@ only diverge in behavior once something downstream chooses to extend rather than
 this function's own caller makes, not this function.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P15`.
+
+## Q308 — M16 P9: `G-Parity` — a metric keyed by `(run, gate)` alone assumed one evaluation per gate
+per run, an assumption this piece was the first to break
+
+**Context.** `PLAN-M16.md` P9's own Mandate: wire a real, workflow-scoped gate onto `behavior:parity`
+and reference it from two steps of `refactor` for the first time anywhere in this codebase. The
+critic-round narrative, the fix detail, and the verification numbers are in `GAUNTLET-LOG.md`'s own
+`## M16 P9` entry and are not repeated here.
+
+**Decision — `forge report`'s own `buildGateMetric` needed `stepId` added to its grouping key,
+because its own existing `(runId, gateId)` key encoded an assumption — "one gate, evaluated at most
+once per run" — that was true of every gate this codebase had ever shipped until this piece, and
+silently stopped being true the moment one piece referenced one gate id from two steps of one
+workflow.** The metric's own existing doc comment already states the right PRINCIPLE for the sibling
+case it was built for (two separate RUNS of the same gate id are "genuinely different real attempts"
+and must not be collapsed) — the bug was that the principle's own scope was narrower than its own
+stated reasoning actually requires: two STEPS of one run referencing the same gate id are equally
+"genuinely different real attempts," for the identical reason, and the pre-existing key did not cover
+it. The fix widens the key along the one axis (`stepId`) `GateRejected`/`GateApproved` already
+carried, unused, confirmed to leave the metric's own other real caller (a human-driven `forge gate
+approve`/`reject`/`waive`, whose events carry no top-level `stepId` at all) byte-for-byte unaffected —
+`JSON.stringify` of an array serialises a missing/`undefined` element identically every time, so that
+caller's own events still group exactly as they did before this piece existed.
+
+**The general shape worth naming for a future piece**: a metric or cache keyed by what currently
+happens to be a unique identifier is making an implicit claim about what ELSE currently happens to be
+true (here: "a gate id is only ever evaluated once per run") — and that claim can be broken by a
+LATER piece that has every reason to believe it is only changing gate/workflow configuration, not
+touching `report.ts` at all. This is not a reason to over-key every metric defensively against every
+hypothetical; it is a reason this specific class of break (an existing identifier's own uniqueness
+assumption, broken by new configuration rather than new code) is worth a critic's own real-run
+attention specifically whenever a piece creates a genuinely new SHAPE of reference — "the same X
+referenced twice" — that nothing in the codebase has done before.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P9`.

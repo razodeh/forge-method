@@ -22697,3 +22697,98 @@ concurrent CPU contention from `M16 P9`'s own concurrently-running builder) clea
 isolated re-run (1585/1585). Clean cherry-pick onto `main`, both commits.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q307`.
+
+## M16 P9 — `G-Parity`, `behavior:parity`, and the three workflows — real runs settled two open
+questions, and the SAME real design decision broke already-shipped code in a way neither the plan
+nor either critic's own first pass anticipated
+
+The most integrative piece this milestone: it ties `M16 P2` through `P8`'s own real parity machinery
+into the actual gate/workflow dispatch system. Its own central discipline, per `Q294` Decision 11, was
+proving three specific claims by REAL RUNS rather than reading-and-reasoning, and the build genuinely
+did: real `runWorkflow` calls, real git repositories, a real launcher shim spawning a real nested
+`forge parity check` subprocess.
+
+**Build.** `G-Parity.gate.yaml` (new, phase-less — the spec's own markdown gate catalogue table
+deliberately does NOT widen, confirmed directly against `specs/10-workflow-engine-and-lifecycle.md:282`;
+only the code-level `GateId`/`GATE_INDEX` does, now an eleventh member). `refactor.workflow.yaml` gains
+`preflight-parity` (first step) and `verify-parity` (between `verify-invariants` and `commit`) —
+referencing the IDENTICAL gate id from two different steps of one workflow, the first time this
+codebase has ever done that. `migrate.workflow.yaml` gains `verify-parity` after `verify-migration`.
+`adopt` stays untouched. All three of Decision 11's own required real-run proofs were built and run
+for real, including a genuinely adversarial variant of Required (3): a session committing directly
+inside its own lane worktree (bypassing the declarative write-claim path entirely — the same
+already-disclosed Decision 2 gap, deliberately exploited rather than invented). The build also caught
+a real imprecision in the orchestrator's own brief (the "ten-row table widens to eleven" framing — the
+builder followed the real, normative spec text instead, correctly) and found two real bugs in its own
+test infrastructure (a `HandoffRecord` id failing its own, non-default `idWidth: 4` schema regex; two
+real TypeScript errors on literal `ExpressionContext` objects).
+
+**Round 1 (two critics, each in a dedicated worktree, the builder's own uncommitted files copied in):
+zero defects in the actual gate/workflow wiring itself — both critics' real adversarial runs held up
+everywhere they tried to break Required (1)/(2)/(3), including scenarios the builder's own 10 tests
+never covered (a real agent-step failure instead of a preflight refusal; a third, layered run;
+ordinary unrelated concurrent activity landing on the same integration branch between a corruption
+and its detection). But both critics independently found the SAME test-authoring gap, and critic 2
+additionally found a real, HIGH-severity defect in ALREADY-SHIPPED, unmodified code.**
+
+Both critics, independently: the test named "...excuses its only surface as unobservable (nothing left
+to compare)" doesn't actually exercise the `nothing-compared` SEMANTIC verdict (`Q294` Decision 4) its
+own name claims — its declaration has an `unobservable` entry naming a surface with NO corresponding
+`surfaces:` block at all, which `declaration.ts`'s own structural validation refuses ONE STEP EARLIER,
+for an unrelated reason, before the real engine-level check is ever reached. The outer
+`preflight-parity: 'failed'` assertion happens to pass either way, so this was never caught as red.
+Both critics independently built the genuinely correct fixture shape (fully declared, then excused)
+and confirmed the real mechanism IS correct; both also independently built the third scenario (one
+real surface, one properly excused) proving `preflight-parity` correctly distinguishes "truly nothing
+to compare" from "something real plus some exemptions."
+
+**Critic 2's own, additional finding (HIGH): `forge report`'s `buildGateMetric` (`M15 P12`-era,
+untouched by this piece) groups `GateRejected`/`GateApproved`/`GateWaived` events by `(runId, gateId)`
+alone — no `stepId`.** This piece is the first thing in this codebase to ever put one gate id behind
+two steps of one workflow. The metric's own inner loop sorts by `seq` and breaks on the FIRST
+`GateApproved`/`GateWaived` it finds; `preflight-parity`'s own clean pass is STRUCTURALLY always first
+(the run could not have reached `verify-parity` otherwise), so `verify-parity`'s own later, real
+rejection in the identical group is never examined. Proven by critic 2 with a real end-to-end run (a
+real "changing" refactor whose `verify-parity` genuinely fails) and a real call to `buildReport()`:
+`pairsWithCleanFirstPass: 1, totalRejectionsBeforeFirstPass: 0` for a run that actually failed —
+independently re-confirmed by the orchestrator via direct reading of `report.ts:421-467` before
+accepting, and confirmed that both `GateRejected` and `GateApproved` already carry a real, unused,
+top-level `stepId` field (`steps.ts:1249,1263`) that the fix simply needed to start using. This
+directly contradicts the Mandate `M15 P12` itself states for this exact metric ("did this help?
+against a real captured number") for precisely the scenario this piece's own design creates — a real,
+previously-undisclosed cross-piece consequence, not a defect in gate approval/rejection itself.
+
+**Round 2 (one focused fix pass, verified directly — no third critic round).** `buildGateMetric`'s own
+grouping key widened to `(runId, gateId, stepId)` — independently confirmed by the orchestrator, via a
+direct Node experiment, that this is SAFE for the pre-existing human-driven `forge gate approve/
+reject/waive` path too: those events carry no top-level `stepId` at all, and `JSON.stringify` of an
+array with an `undefined` element always serialises that position to the identical `null`, so every
+such event for a given `(runId, gateId)` still groups together exactly as it did before — zero
+behaviour change for the path this metric already correctly served. A real regression test reproduces
+critic 2's own exact scenario and numbers; reverting only the grouping-key line was independently
+confirmed, by the orchestrator, to reproduce the bug's own exact wrong values before restoring the
+fix. Also fixed in the same pass: the `nothing-compared` test (the genuinely correct fixture shape,
+plus the third mixed-surfaces scenario); two real gate-evidence-approval tests neither critic required
+but both independently built and judged worth having (missing evidence refuses `RUN-112`; a prior,
+real `ParityEvidence` record resolves and succeeds); and a cosmetic doc-comment inaccuracy in
+`run-doctor.test.ts` (a "zero hits" grep claim that, re-run for real, wasn't zero — the DEEPER,
+substantive claim the test actually needs was still true, only the comment's own stated evidence for
+it was wrong).
+
+**Disclosed, not fixed**: critic 2's own third finding — the Required (1) real-run proof's "two
+sequential runs" technique doesn't generalize to a SECOND run re-attempting an already-integrated,
+later step (a pre-existing, unrelated `RUN-083`/output-contract interaction in `runWorkflow` itself,
+nothing specific to `G-Parity`; `forge resume`, not a fresh `runWorkflow` call, is almost certainly
+the real intended recovery path there, out of scope for this piece).
+
+**Verification, independently re-run by the orchestrator at every stage.** The core gate YAML/workflow
+diffs read directly and confirmed correct before any critic was dispatched; the three Decision-11
+real-run proofs independently re-run (10/10 pass) before critics saw the piece; the `stepId`-safety
+claim for the no-stepId path independently re-confirmed via a direct Node experiment; the fix pass's
+own full scoped suite re-run (61/61), plus 11 further root-enumerating/surface-named files (1161/1161);
+`pnpm typecheck`/`lint`/`boundaries` clean. Cherry-pick onto `main` required a real, automatic 3-way
+merge on `report.ts` (this piece's own fix pass and `M16 P15`'s own build both independently touched
+that file, from different stale bases) — confirmed correct by direct inspection: both pieces' own
+functions present exactly once, no duplication.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q308`.
