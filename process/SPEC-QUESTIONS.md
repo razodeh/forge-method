@@ -28697,3 +28697,23 @@ attention specifically whenever a piece creates a genuinely new SHAPE of referen
 referenced twice" — that nothing in the codebase has done before.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P9`.
+
+## Q309 — M16 P16: docs — a documentation piece's own gauntlet can still surface a real product
+defect, not only a prose defect
+
+**Context.** `PLAN-M16.md` P16's own Mandate: documentation only, verified entirely by literal
+re-execution rather than an automated test. The critic-round narrative, the fix detail, and the
+verification numbers are in `GAUNTLET-LOG.md`'s own `## M16 P16` entry and are not repeated here.
+
+**Decision — a docs-only piece's critic round is not a weaker review than a code piece's; the SAME
+"construct an adversarial real scenario, not just repeat the author's own steps" discipline applies,
+and it found a real product gap here exactly as it has for code throughout this milestone.**
+`G-Parity`'s own check is pinned to `--trusted refs/heads/main`, and the engine's own `TRUNK` constant
+is a hardcoded literal — a fact about the PRODUCT, not about this piece's own prose, that a critic
+only found by deliberately varying something the walkthrough's own author had no reason to vary (the
+reader's own git default branch name). This is recorded as its own decision, distinct from the
+piece's many smaller prose-precision fixes, because the FIX for it is a disclosure, not a correction:
+the limitation is real and stays real; the documentation's own job is to say so plainly rather than
+let a reader discover it by surprise, exactly as a disclosed, not fixed, item for a code piece would.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P16`.

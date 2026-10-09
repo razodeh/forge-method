@@ -22792,3 +22792,76 @@ that file, from different stale bases) — confirmed correct by direct inspectio
 functions present exactly once, no duplication.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q308`.
+
+## M16 P16 — Docs: authoring a declaration, a real walkthrough, and the status line — zero
+reproduction failures across five independent fresh-clone runs, but the one real finding was a
+product limitation, not a prose nit
+
+The final piece of M16's own build: documentation only, no code, no automated test. Its own stated
+gauntlet mechanism, per the plan itself, is literal re-execution — a critic re-runs the walkthrough in
+a fresh clone and treats anything that doesn't reproduce as a real finding, full severity.
+
+**Build.** `docs/method-guide.md` gains one new conceptual section on the parity oracle (what a green
+`forge parity check` means and does not mean; authoring a declaration; the vet's closed lists and the
+wrapper-script workaround; why `refactor` is now strict; the trust anchor's real boundary; the three
+real costs of gating on `uncoveredHunks`). `docs/getting-started.md` gains a run-it-yourself
+walkthrough on the already-shipped `fixtures/parity-refactor/` fixture (built by `M16 P7`): capture,
+a preserving variant passing, a changing variant refused by name not content, a real recorded
+`ParityEvidence` shown in full, then the hunk and prune commands. `README.md`'s status line updated.
+The builder ran the full walkthrough three times, in genuinely fresh `mktemp -d` directories each
+time, before considering any of it finished — the exact discipline `M15 P13`'s own precedent exists to
+enforce — and found and plainly documented a real, slightly surprising result rather than engineering
+around it: the hunk-mode check reads `uncovered` on the behaviour-*preserving* refactor too, for a
+structural reason (a test of only observable output can never distinguish the two), not a weak test.
+
+**Round 1 (two critics, independently): the walkthrough itself survived everything thrown at it.**
+Both critics ran the ENTIRE new walkthrough clean, start to finish, multiple times, in fresh clones —
+and both went further than simply repeating the builder's own steps, each building a DIFFERENT
+deliberately adversarial git-history variant (one restructuring commits and injecting unrelated ones
+throughout, with `--base` resolving ten commits back instead of two; the other committing the BROKEN
+variant to history first, then the fix, as a separate follow-up commit). Every "legitimately not
+variable" claim (the evidence record ids, the hunk id itself) reproduced byte-for-byte across all five
+runs combined, under both restructured histories — a materially stronger result than the walkthrough's
+own Mandate asked for.
+
+**But one critic's own adversarial exploration (beyond repeating the builder's own steps) found a
+real, previously undisclosed limitation in the PRODUCT itself, confirmed directly by the
+orchestrator**: `G-Parity`'s own check always runs `--trusted refs/heads/main`, and
+`packages/cli/src/commands/run/context.ts:84`'s own `TRUNK` is a hardcoded literal, `'main'` — never
+read from project configuration. A critic proved this is reachable, not theoretical, by simulating a
+reader whose `git init` defaults to `master` (via a per-shell `GIT_CONFIG_*` override, never touching
+global/system config) and reproducing a real refusal: `"refs/heads/main" does not name an existing
+ref`. A project whose own trunk isn't literally `main` cannot pass a real `refactor`'s `G-Parity` gate
+at all, for a reason that has nothing to do with parity itself — and nothing in the docs disclosed
+this before this piece's own gauntlet found it. Both critics also independently converged on: a claim
+that a shown command was "the literal command" `G-Parity` runs, when the real gate always adds
+`--json` which the walkthrough's own human-readable form omitted; and a real, pre-existing,
+out-of-Surface defect (`specs/03`'s own CLI table still says all four M16 commands are "not wired
+yet," false as of this commit, and — independently confirmed by both critics reading the real decision
+text — NOT actually covered by the citation the original builder's report gave for it). One critic
+independently found, and the other's own close sentence-by-sentence read did not catch: the fixture's
+own `basis` text claims "three lines" when the real file is six, a miscount the builder's own new
+prose then independently repeated twice, checkable against a code block the same section shows two
+paragraphs earlier.
+
+**Round 2 (one focused fix pass, verified directly).** All of the above fixed: the trust-anchor
+disclosure added; the "literal command" claim corrected to name the real difference explicitly rather
+than overclaim; both line-count miscounts corrected; the one unqualified "behaviour" phrase in an
+otherwise scrupulously-qualified section tightened. The fix-pass builder also found, independently,
+that `prettier --write` would have corrupted the walkthrough's own real, byte-exact captured JSON and
+YAML output (reformatting single-line JSON into multi-line, rewriting YAML quote style) — and
+correctly refused to "fix" the resulting lint failure that way, leaving it disclosed instead of papering
+over it with a worse defect. **The orchestrator resolved this properly before landing**: the real
+cause, once fully traced, was two independent, both-safe fixes — stripping the language tag from every
+fenced block holding real verbatim command output (so prettier's embedded-language formatter leaves
+the content alone entirely, a zero-content-change markdown-syntax choice) and applying the repo's own
+`proseWrap: always` paragraph rewrap (confirmed, line by line, to move words across line breaks only,
+never change a single word) — with the untagged blocks' own real content independently re-verified
+byte-exact afterward. `pnpm lint` is clean on the landed commit.
+
+**Verification.** Five independent fresh-clone walkthrough runs total (two builder, two critics, one
+further by the fix-pass builder) with zero reproduction failures on the final content;
+`test/spec-cli-examples.test.ts` (499/499) and `test/output-contract-known-gaps.test.ts` (15/15) green
+throughout; `pnpm lint` clean on the final, landed diff. Clean cherry-pick onto `main`.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q309`.
