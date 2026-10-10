@@ -22949,27 +22949,37 @@ mention in a file and pass if ANY ONE is fully specified, after finding real fil
 times (as an input, in the output shape, again in acceptance criteria) with only one of them meant to
 be authoritative.
 
-**Disclosed, not fixed here (future piece).** A round-2 critic found a fourth live instance of the
-identical bug class: `Risk` and `OpenQuestion` collection entries (`riskSchema`/`openQuestionSchema`
-via `collection-file.ts`, validated through the identical path as `Assumption`) are undocumented in
-every brief that produces them — `frame-problem.md`, `threat-model.md`, `review-stage-plan.md`,
-`stage-retro.md` for `Risk` (none state `id`, most leave `likelihood`/`impact`/`mitigation`/`owner`
-bare); `frame-problem.md`, `write-test-plan.md`, `write-prd.md`, `security-hardening-pass.md`,
-`performance-hardening-pass.md`, `write-ux-spec.md` for `OpenQuestion` (none state `id`/`question`).
-`write-ux-spec.md` is the sharpest: it already correctly distinguishes a `HandoffRecord`'s own
-plain-string `open_questions` from the KB's structured `OpenQuestion` by NAME — the exact confusion
-RUN-083 was about — but still never states the KB entry's own shape. Named here, prominently, with
-file:line citations in this piece's own review transcripts, specifically so this does not join
-`write-test-plan.md`/`decompose-stages.md` on the list of gaps found once and then forgotten for two
-milestones.
+**Also fixed, on the owner's explicit instruction to close the full bug class rather than defer it
+again.** A round-2 critic found a fourth live instance of the identical bug class: `Risk` and
+`OpenQuestion` collection entries (`riskSchema`/`openQuestionSchema` via `collection-file.ts`,
+validated through the identical path as `Assumption`) were undocumented in every brief that produces
+them — `frame-problem.md`, `threat-model.md`, `review-stage-plan.md`, `stage-retro.md` for `Risk`
+(none stated `id`, most left `likelihood`/`impact`/`mitigation`/`owner` bare); `frame-problem.md`,
+`write-test-plan.md`, `write-prd.md`, `security-hardening-pass.md`, `performance-hardening-pass.md`,
+`write-ux-spec.md` for `OpenQuestion` (none stated `id`/`question`). `write-ux-spec.md` was the
+sharpest: it already correctly distinguishes a `HandoffRecord`'s own plain-string `open_questions`
+from the KB's structured `OpenQuestion` by NAME — the exact confusion RUN-083 was about — but still
+never stated the KB entry's own shape. First logged here as a deliberately-deferred follow-up, same
+as `write-test-plan.md`/`decompose-stages.md` were by M14 P9-3; the owner explicitly asked ("fold it
+in now") not to repeat that pattern a third time, so it is fixed in this same piece instead — five
+more brief files (`threat-model.md`, `stage-retro.md`, `security-hardening-pass.md`,
+`performance-hardening-pass.md`, `write-ux-spec.md`; the other four were already being touched for
+the `Assumption` gap above), under the identical tests-first, mutation-evidence discipline, including
+one genuine repeat of the earlier `confidence: low`-as-one-backtick-span mistake (this time
+`status: open`), caught by the new tests failing on every one of the 6 `OpenQuestion` briefs at once
+and fixed the same way. The shared windowing helper (`entryMentionWindows`/`someWindowStatesShape`)
+was extracted from the `Assumption`-only version once used a third time, rather than copied again.
 
-**Verification.** `node scripts/run-tests.mjs run test/templates.test.ts`: 135/135 (119 in
-`test/templates.test.ts`, 16 in the adapter-generic glob match). `pnpm lint` and `pnpm typecheck`
-clean. Mutation evidence per file: each of the 13 briefs' own hunk reverted individually, confirmed the
-exactly-expected test(s) go red and nothing else, restored, confirmed green again — repeated twice
-(once after the first fix pass, again after the `status`-enum/confidence-consistency follow-up).
+**Verification.** `node scripts/run-tests.mjs run test/templates.test.ts`: 145/145 (129 in
+`test/templates.test.ts`, 16 in the adapter-generic glob match) — 18 brief files touched in total.
+`pnpm lint` and `pnpm typecheck` clean, including a fresh-worktree re-check (`pnpm install
+--frozen-lockfile --prefer-offline`, zero network, then the same three commands) against the first
+fix's own two commits before the second fix landed. Mutation evidence per file, both fixes: each
+brief's own hunk reverted individually, confirmed the exactly-expected test(s) go red and nothing
+else, restored, confirmed green again.
 
-**Spend this entry.** $0.97 (one Opus call, the failed `state-refactor-invariants` step). The
+**Spend this entry.** $0.97 (one Opus call, the failed `state-refactor-invariants` step) — no further
+real spend; everything after that was free (prose edits, tests, lint, typecheck, worktree review). The
 Mandate's own four checks have not yet been attempted for real — continued in a later entry once the
 live run resumes against the fixed briefs.
 
