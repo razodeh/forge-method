@@ -22984,3 +22984,98 @@ Mandate's own four checks have not yet been attempted for real — continued in 
 live run resumes against the fixed briefs.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q310`.
+
+## M16 P17 (live run, attempt 2) — real spend was silently recorded as zero on every failed session
+until this run's own `error_max_turns` forced the question, and the Mandate's own first bullet landed
+
+**A real defect, found directly by the live run itself (not by a critic reviewing something else).**
+Attempt 2's `refactor-code` step hit `error_max_turns` after 198s of real, substantial agent work —
+and `UsageRecorded` reported `inputTokens:0, outputTokens:0, cacheReadTokens:0, costUsd:0`,
+indistinguishable from a session that spent nothing. Traced to `packages/adapter-claude-code/src/cli/
+parse-event.ts`'s `mapResultError` (mirrored in `sdk/map-message.ts`): for any non-success `result`
+subtype, the code only ever read `code`/`message`/`errors`, never `usage`/`total_cost_usd` — even
+though the real, currently-installed SDK (`@anthropic-ai/claude-agent-sdk@0.3.266`, confirmed directly
+against its own shipped `sdk.d.ts`) declares both as REQUIRED fields on `SDKResultError`, identical to
+`SDKResultSuccess`. The codebase's own prior doc comment claiming `SDKResultError` was limited to
+`subtype`/`is_error`/`errors` was itself stale against a since-updated SDK — this exact branch's own
+comment said as much: "never observed live (both real captures succeeded)." This run was the first
+real occurrence in this codebase's history.
+
+**Fix, under the full gauntlet.** Extended `AdapterEvent`'s `'error'` variant (`packages/adapter-kit/
+src/types/events.ts`, mirrored in its Zod schema and in `specs/07-platform-adapters.md` §7.2/§7.3) with
+4 new OPTIONAL fields, the same shape as the existing `'usage'` variant. Both transports now share an
+extracted `extractUsageFields` helper; `session-result.ts`'s `accumulateSessionResult` captures the new
+fields from an `'error'` event exactly as it already did for a `'usage'` event. Two independent critics
+reviewed the diff in separate worktrees: one found it clean on every angle probed (multi-leg handling,
+retry-classification isolation, success-path preservation, field-symmetry reasoning, each independently
+re-derived from the real source, not just asserted); the other found a real, concrete second instance
+of the SAME bug the fix was built to close — `mapResult`'s sibling `api_error` branch (a mid-turn API
+error reported as `subtype: 'success'` with `is_error: true`, genuinely `SDKResultSuccess`-shaped,
+which requires `usage`/`total_cost_usd` exactly as much as a clean success does) was never updated,
+confirmed via the same direct `.d.ts` read and proven untested (the existing fixture carried no usage
+fields and the existing assertion expected none). Fixed the same way, in both transports, with new
+tests; the spec's own normative text, which shared the identical blind spot, updated to name both
+paths. Mutation evidence: each of the 5 source files' hunks (and the two added-later `api_error` hunks)
+reverted individually, confirmed the exactly-expected tests fail (or, for the pure-type `events.ts`
+change, confirmed `pnpm typecheck` catches it, since vitest alone does not check types), restored,
+confirmed green. `node scripts/run-tests.mjs run packages/adapter-kit/test packages/adapter-claude-code/
+test packages/engine/test`: 3280 tests, 4 failed on the first run — all four in `stacked-lanes.test.ts`,
+unrelated to any file this fix touches, under genuine heavy concurrent load (two critic worktrees each
+running real installs/tests, plus a live run attempt, plus this run itself); re-ran that file alone,
+38/38 clean, the same established contention-flake pattern this milestone has hit repeatedly elsewhere.
+`pnpm lint`/`pnpm typecheck` clean.
+
+**Two more real, disclosed-not-fixed findings from the same critic round, scoped out as pre-existing
+and symmetric rather than introduced by this diff:** `cacheReadTokens` is plumbed through
+`extractUsageFields`/`session-result.ts` but dead-ends there — `SessionUsage`
+(`packages/adapter-kit/src/types/session.ts:56-61`) has no field for it at all, so it never reaches the
+real ledger regardless of this fix (true before and after; `engine/src/dispatch/steps.ts` and two other
+call sites hardcode `cacheReadTokens: 0` independently of any adapter event). Separately,
+`context-expansion.ts`'s own `summedUsage` (multi-leg `FORGE_REQUEST_CONTEXT` sessions) previously lost
+a failing final leg's real spend from its aggregate sum entirely, for the identical root-cause reason —
+this fix repairs that too, as a side effect, though it was not itself the bug being chased.
+
+**Separately, after this fix landed: the Mandate's own first bullet — a real, behaviour-preserving
+`forge refactor` reaching `commit` — succeeded for real, on attempt 9 of the live run.** The seven
+attempts between the RUN-083 fix (Q310) and this one, in order, each surfaced its own real, distinct
+blocker, every one fixed before moving on rather than worked around silently: (1) a stale integration
+branch, diverged from `main` by this orchestrator's own direct commits, resolved by deleting it so the
+next run created it fresh; (2) `forge test run`'s ecosystem detection requiring a `package.json` that
+this deliberately-minimal demo project (by its own architect-derived invariant) never had — resolved by
+adding a trivial one, a pragmatic project-level choice, not a product change, since the detection
+module's own design philosophy ("never guess, only unambiguous markers") is deliberate, not an
+oversight; (3) the real architect agent correctly refusing to fabricate invariants for a goal whose own
+premise ("extract four loops") no longer held, because an earlier attempt's own work had already been
+merged forward manually — resolved by re-phrasing the run's `goal` input to ask for verification
+instead, matching the agent's own proposed resolution; (4) `forge test run`'s "js" ecosystem support
+understanding only Vitest's `--reporter=json` output, not Node's built-in test runner's TAP output
+(`calc.test.mjs`'s own choice) — the owner chose, when asked, to switch the demo's test runner to
+Vitest rather than extend `forge test run` itself, a deliberately smaller, project-scoped fix over a
+shared-infrastructure feature addition; (5) stale, retained lane-worktree directories (`execution.
+retainLaneWorktrees: on-failure`, working as designed across many failed debugging attempts) polluting
+Vitest's own file discovery — resolved by removing them. None of these blockers were the refactor's own
+correctness; the real backend agent's actual code (a null-prototype dispatch table, defending the exact
+prototype-pollution hazard the architect's own handoff named, correct empty-array/NaN/-0 edge-case
+handling throughout) was independently judged correct by direct reading at multiple points along the
+way, before any of these blockers were even found.
+
+**Real spend, this entry.** State-invariants $1.04924125, refactor-code $0.39288730000000005 (the
+successful, final attempt) — **$1.44212855** for the Mandate's first bullet. Every real `UsageRecorded`
+cost across all six real run ids this piece produced, read directly from each run's own
+`events.ndjson` rather than reconstructed from memory: $0.9699222500000002 (Q310's own RUN-083
+discovery), $1.0982574999999999 + $0 (the second attempt's architect session, then a backend session
+that hit `error_max_turns` and is the live instance of the very bug this entry fixes — its real cost
+was never captured, the $0 is the bug's own output, not a true free run; treated conservatively as $0
+in this sum, a small, known under-count this entry is obligated to flag rather than estimate past),
+$1.14081925 + $0.3766544 (third attempt, both agent steps succeeded, failed later at the ecosystem-
+detection gate), $0.46244725 (fourth attempt, architect correctly refused via `FORGE_ASK` rather than
+fabricate invariants against an already-satisfied goal), $1.3335675 + $0.5163988000000002 (fifth
+attempt, both agent steps succeeded, failed later at the Vitest/TAP gate), $1.04924125 + $0.3928873
+(sixth, successful attempt). **Cumulative real spend across the whole of M16 P17 so far: $7.3401955,
+known to be a slight under-count by exactly one session's own true cost.**
+
+**Still open.** The Mandate's remaining three checks (a deliberately behaviour-changing refactor
+refused at `verify-parity`; `forge test binding --hunks` on a real completed story; a real `forge
+evidence prune --apply`) continue in a later entry.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q311`.

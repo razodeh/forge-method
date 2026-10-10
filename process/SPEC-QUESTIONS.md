@@ -28753,3 +28753,37 @@ freshly-found gap of a kind already known to rot when deferred, closing it costs
 the risk of a third occurrence.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P17 (live run, attempt 1)`.
+
+## Q311 — M16 P17 (attempt 2): a type whose own doc comment says "confirmed against the real SDK" is a
+claim about the SDK version at the time it was written, not a standing fact
+
+**Context.** Continuing Q310. The critic-round narrative, the fix detail, the real spend reconstructed
+directly from six runs' own `events.ndjson` files, and the Mandate's own first bullet landing for real
+are all in `GAUNTLET-LOG.md`'s own `## M16 P17 (live run, attempt 2)` entry and are not repeated here.
+
+**Decision — `mapResultError`'s own doc comment stated a real, once-true fact ("`SDKResultError` has
+only `subtype`/`is_error`/`errors`") that had since gone stale against a dependency bump, and nothing
+in this codebase's own process re-verifies a "confirmed against the real SDK" claim when the SDK
+itself updates.** `package.json` pins `@anthropic-ai/claude-agent-sdk` to an exact version
+(`0.3.266`); nothing about bumping that version re-triggers the kind of direct `.d.ts` read that
+originally grounded this comment. The comment was true when written and false by the time a real
+`error_max_turns` result finally exercised the path it described — not because anyone was careless,
+but because "confirmed against the real SDK" has an implicit "as of" that this codebase has no
+mechanism to track or re-check. The fix itself is Q310's own continuation; the decision worth naming
+here is narrower and sharper: a round-2 critic, reviewing THIS fix, found a second, sibling code path
+(`api_error`, the `is_error:true`-with-`subtype:'success'` shape) with the IDENTICAL defect, missed by
+the first pass specifically because the fix was scoped to "the `error_*` subtypes" rather than to "every
+code path this adapter builds from a raw SDK message that might carry real usage" — the narrower frame
+was accurate for what Q310's own live run had actually observed, but not for the real shape of the
+bug class it belonged to.
+
+**The general shape worth naming for a future piece: when a fix is motivated by one concrete, observed
+symptom, the DIAGNOSIS should be stated at the level of the actual mechanism (here: "any adapter-
+constructed event built from a message that might carry `usage`/`total_cost_usd` must check for them"),
+not at the level of the specific case that happened to surface it (here: "the `error_*` subtypes") —
+the narrower framing is what let a real sibling instance survive the first pass's own tests, caught
+only because a second critic rebuilt the mechanism-level question independently rather than checking
+the first pass's own stated scope.** This is the same shape Q278/this piece's own earlier entry named
+for brief-authored schema gaps, now observed again one layer down, in adapter code instead of prose.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P17 (live run, attempt 2)`.
