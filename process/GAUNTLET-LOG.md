@@ -23079,3 +23079,69 @@ refused at `verify-parity`; `forge test binding --hunks` on a real completed sto
 evidence prune --apply`) continue in a later entry.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q311`.
+
+## M16 P17 (live run, attempt 3) — the Mandate's remaining three checks, all real, closing the piece
+
+**Second bullet: a deliberately behaviour-changing refactor refused at `verify-parity`.** Free, no
+agent dispatch needed — the real, already-landed refactor's own `avg` reducer hand-edited to divide by
+`nums.length + 1` instead of `nums.length` (a real, deliberate behaviour change), checked two ways
+against the real, unmodified `G-Parity` gate definition `verify-parity` itself references: (1) `forge
+parity check --trusted refs/heads/main` directly — real exit 1, `"6 passing, 2 failing (calc:
+mismatch)"`, correctly isolating exactly the two declared `avg` cases while the six `sum`/`max`/`min`
+cases still pass; (2) `forge gate check G-Parity` — real exit 3, `passed=false`, a named per-case
+reason ("surface \"process\" case 6 differs on its \"stdout\" stream"), and a real, written
+`GateReport` file. Reverted afterward; `main` stays on the real, correct refactor.
+
+**Third bullet: `forge test binding --hunks` on a real completed story.** Retroactively authored
+`STORY-001` for the already-landed, already-verified refactor (`files_expected: [calc.mjs,
+calc.test.mjs]`, two ACs), renamed `calc.test.mjs`'s own 8 real test titles to carry their AC id
+(`extractAcId`'s own "appears anywhere in the name" contract; no behaviour change, test titles only),
+and ran `forge test binding --story STORY-001 --hunks --base 94793ca` (the true pre-refactor commit)
+for real. Two real, informative results, both correctly explainable, neither a defect:
+
+- **Whole-implementation-revert binding: all 8 tests classified `nonBinding`.** Correct and expected,
+  not a setup mistake: `BindingCheckCompleted`'s own contract is "a test not in `failedUnderMutation`
+  kept passing with the implementation reverted to `--base`" — and a *behaviour-preserving refactor's*
+  own defining property is that every real test passes identically against the old and the new
+  implementation. "AC-test binding" in this command's sense names something a feature or bug story's
+  own tests should show and a pure refactor's tests structurally cannot — `refactor.workflow.yaml`
+  itself never calls `test binding` for exactly this reason, using the parity differential instead.
+  Worth naming for a future piece: the command's own output gives no hint that `nonBinding` is
+  *expected* for a refactor story specifically, which could read as a false failure signal to a human
+  who has not independently worked out this reasoning.
+- **Per-hunk mutation: 2 real hunks, one `killed` by all 8 tests, one genuinely `uncovered` — and the
+  `uncovered` one is real, explainable, and not a coverage gap.** The real written evidence
+  (`docs/forge/reports/mutation/STORY-001-*.md`, `id: MUT-001`) gives exact ranges: hunk 1
+  (`old:{start:6,length:0}` → `new:{start:7,length:6}`, a pure insertion) is the new `reducers` table
+  itself, killed by every test — breaking any reducer breaks something basic, as expected. Hunk 2
+  (`old:{start:8,length:28}` → `new:{start:14,length:2}`) is just the two dispatch lines (`if
+  (Object.hasOwn(reducers, op))` / `result = reducers[op](nums)`) replacing the entire 28-line old
+  if/else-if chain. Reverting hunk 2 ALONE (`revert-hunks` mutation, keeping hunk 1's new table intact)
+  does not produce an observable behaviour change at all: the reverted 28-line chain is a complete,
+  self-contained, correct implementation on its own, so the file runs the OLD dispatch logic exactly
+  as before — the new, still-present `reducers` table simply sits unused. No test can distinguish this
+  from the un-reverted file because there is nothing to distinguish; the mutation is observationally
+  silent by construction, not because any test fails to exercise the real code path. A genuinely
+  interesting, real property of hunk-granularity mutation testing against a refactor whose own hunks
+  are not behaviourally independent of each other — not a defect in the tool, the story, or the tests.
+
+**Fourth bullet: a real `forge evidence prune --apply`.** A free dry run first (`--keep` default:
+"kept 3, would remove 0" — too little real evidence yet to prune); `--keep 1` dry run: "kept 2, would
+remove 1" (two real `ParityEvidence` records for the same "calc" surface, `PAR-001` the original
+capture and `PAR-002` from the behaviour-break check above); then the real `--apply`: "kept 2, removed
+1". Verified at the file level, not just trusted the summary line: `PAR-001-calc.md` really deleted
+(`git status`: `D`), a real tombstone written to `docs/forge/reports/pruned/PAR-001.json` — id, type,
+subject, a real `recordSha256` of the pruned content, and a real timestamp. `PAR-002-calc.md` untouched.
+
+**The Mandate (`PLAN-M16.md:1168-1185`) is now fully, honestly satisfied: all four required real checks
+ran, for real, against a real project, with every real defect found along the way fixed under the full
+gauntlet rather than routed around.** Total real spend across this whole piece, all three attempt
+entries combined (reconstructed directly from every run's own `events.ndjson`, not estimated):
+**$7.3401955** (Q311's own figure; nothing in this entry's own checks spent real money — the parity/
+gate checks ran the already-landed code directly, and `test binding`/`evidence prune` are both
+command-kind, agent-free operations). Two real product defects found and fixed under the gauntlet
+(RUN-083, Q310; the cost-zeroing defect, Q311); five real operational blockers resolved along the way;
+one real, substantive, non-defect finding about `test binding`'s own relationship to refactor stories,
+named above for a future piece to consider documenting.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q312`.

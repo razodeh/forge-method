@@ -28787,3 +28787,43 @@ the first pass's own stated scope.** This is the same shape Q278/this piece's ow
 for brief-authored schema gaps, now observed again one layer down, in adapter code instead of prose.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P17 (live run, attempt 2)`.
+
+## Q312 — M16 P17 (attempt 3, Mandate complete): "AC-test binding" and "behaviour preservation" are
+different, sometimes-incompatible properties, and a refactor story structurally has only the second
+
+**Context.** Continuing Q310/Q311. The real commands, the real output, and the real evidence files are
+in `GAUNTLET-LOG.md`'s own `## M16 P17 (live run, attempt 3)` entry and are not repeated here. This
+entry closes the Mandate: all four of `PLAN-M16.md:1168-1185`'s required real checks ran for real.
+
+**Decision — `forge test binding`'s own "non-binding" verdict means "this test does not prove the
+story changed anything observable," which is the CORRECT, expected verdict for every test of a
+behaviour-preserving refactor, not a sign of a weak test suite.** `BindingCheckCompleted`'s own
+contract reverts the implementation to the story's own `--base` and checks which tests fail — a
+feature or bug story's tests SHOULD fail against the pre-story code, proving they depend on the new
+behaviour. A refactor story's own Mandate is the opposite: no test may be ALLOWED to fail against the
+reverted code, because no observable behaviour may differ. Run the same command against a real,
+correctly-done refactor and every one of its tests is `nonBinding` by construction — the command is
+measuring a real, meaningful property, just not one a pure refactor story can ever satisfy
+differently. `refactor.workflow.yaml` already reflects this (it calls the parity differential, never
+`test binding`); this entry is the first time a real run exercised `test binding` against a real
+refactor story directly and confirmed the "always nonBinding" prediction empirically rather than by
+reading the schema.
+
+**A second, narrower decision from the same run: hunk-granularity mutation testing can report a real,
+correctly-covered code path as `uncovered` when a diff's own hunks are not behaviourally independent.**
+`revert-hunks` mutation reverts ONE hunk while leaving every other hunk at its new content. When an
+earlier hunk in the same diff adds a complete, self-contained replacement for what a later hunk
+removes (here: a new dispatch table coexisting, unused, alongside the OLD, still-functionally-complete
+if/else-if chain a later hunk's own revert restores), reverting the later hunk alone produces a file
+that is still fully correct — the revert has no observable effect, so no test can register it as a
+mutation at all. `uncovered` here does not mean "no test exercises this code" (CHAR-UNKNOWN and all
+four basic-operation tests clearly exercise the real dispatch path) — it means "this specific hunk, in
+isolation, cannot be observationally distinguished from its own revert," a property of how the diff
+happens to be split into hunks, not of test coverage. Worth naming for a future piece: neither finding
+is wrong, but neither is self-explanatory from the command's own output alone — a human reading
+`nonBinding: [...8 tests...]` or `verdict: uncovered` for a real, well-tested refactor has no signal
+distinguishing "this is structurally expected for a refactor/this specific hunk split" from "the tests
+are actually weak," and would need exactly the reasoning this entry just did, each time, to tell them
+apart.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P17 (live run, attempt 3)`.
