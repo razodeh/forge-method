@@ -26,6 +26,18 @@ const WORKED_EXAMPLES: readonly AdapterEvent[] = [
   { type: 'usage', inputTokens: 10, outputTokens: 5 },
   { type: 'usage', inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, costUsd: 0.01 },
   { type: 'error', code: 'ADP-001', message: 'boom', retryable: false },
+  // M16 P17: an error-terminated session can still carry real usage/cost (specs/07 §7.3's own Claude
+  // Code note — `SDKResultError` carries `usage`/`total_cost_usd` exactly like `SDKResultSuccess`).
+  {
+    type: 'error',
+    code: 'error_max_turns',
+    message: 'Reached maximum number of turns (20)',
+    retryable: false,
+    inputTokens: 40,
+    outputTokens: 9874,
+    cacheReadTokens: 0,
+    costUsd: 0.3766544,
+  },
   { type: 'session.ended', reason: 'complete' },
 ];
 

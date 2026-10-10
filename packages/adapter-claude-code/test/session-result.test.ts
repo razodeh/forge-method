@@ -154,6 +154,43 @@ describe('accumulateSessionResult', () => {
     expect(typed.finalText).toBe('still counted');
   });
 
+  it("an error event carrying real usage/cost (M16 P17's own real live run: a session that fails after real spend, e.g. error_max_turns) populates result.usage instead of leaving it at the zeroed default", async () => {
+    const cwd = await plainCwd();
+    const input: AdapterEvent[] = [
+      {
+        type: 'error',
+        code: 'error_max_turns',
+        message: 'Reached maximum number of turns (20)',
+        retryable: false,
+        inputTokens: 40,
+        outputTokens: 9874,
+        costUsd: 0.3766544,
+      },
+    ];
+    const { result } = await drain(
+      accumulateSessionResult(eventsOf(input), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    const typed = result as SessionResult;
+    expect(typed.ok).toBe(false);
+    expect(typed.usage.inputTokens).toBe(40);
+    expect(typed.usage.outputTokens).toBe(9874);
+    expect(typed.usage.costUsd).toBe(0.3766544);
+  });
+
+  it('an error event with no usage fields at all (a crash/startup error) leaves result.usage at its zeroed default, exactly as before this fix', async () => {
+    const cwd = await plainCwd();
+    const input: AdapterEvent[] = [
+      { type: 'error', code: 'boom', message: 'it broke', retryable: false },
+    ];
+    const { result } = await drain(
+      accumulateSessionResult(eventsOf(input), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    const typed = result as SessionResult;
+    expect(typed.usage.inputTokens).toBe(0);
+    expect(typed.usage.outputTokens).toBe(0);
+    expect('costUsd' in typed.usage).toBe(false);
+  });
+
   it('ok stays true and error is omitted entirely when no error event ever arrives', async () => {
     const cwd = await plainCwd();
     const { result } = await drain(

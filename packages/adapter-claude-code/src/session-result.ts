@@ -97,6 +97,13 @@ export async function* accumulateSessionResult(
       case 'error':
         ok = false;
         error = { code: event.code, message: event.message };
+        // M16 P17's own real live run: a session that fails after real spend (hitting --max-turns, a
+        // budget cap, or any other terminal condition) still carries real usage on this same event
+        // (`07` §7.3's own Claude Code note) -- captured the same way the `'usage'` case above does,
+        // not left at this function's own zeroed/undefined defaults.
+        if (event.inputTokens !== undefined) inputTokens = event.inputTokens;
+        if (event.outputTokens !== undefined) outputTokens = event.outputTokens;
+        if (event.costUsd !== undefined) costUsd = event.costUsd;
         break;
       // A fresh critic round found the original draft never inspected `session.ended.reason` at
       // all -- an aborted (or transport-internal-error) session that never happened to also emit an

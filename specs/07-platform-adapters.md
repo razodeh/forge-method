@@ -103,7 +103,13 @@ export type AdapterEvent =
   | { type: 'control'; token: ForgeControlToken; payload: unknown }   // parsed FORGE_* tokens
   | { type: 'retry'; attempt: number; maxRetries: number; reason: string; delayMs: number }
   | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; costUsd?: number }
-  | { type: 'error'; code: string; message: string; retryable: boolean }
+  // `inputTokens`/`outputTokens`/`cacheReadTokens`/`costUsd` are OPTIONAL here, not a second copy of
+  // `'usage'`'s own required fields: a session that ends in error still consumed real tokens and real
+  // money up to the point of failure, and the adapter SHOULD report them on this same event when the
+  // underlying platform makes them available, rather than only on a clean success (M16 P17's own real
+  // live run found every FORGE run silently recorded $0 for a step that failed after real spend,
+  // because no adapter ever looked for them here).
+  | { type: 'error'; code: string; message: string; retryable: boolean; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; costUsd?: number }
   | { type: 'session.ended'; reason: 'complete' | 'aborted' | 'error' | 'limit'; };
 
 export interface SessionResult {
@@ -179,6 +185,15 @@ users' environments differ (subscription auth vs API key, corporate proxies, Bed
 **Normative implementation notes:**
 
 - Treat cost figures as **client-side estimates**; the ledger labels them as such.
+- The real SDK's own `SDKResultError` (every `error_*` result subtype) carries `usage`/`total_cost_usd`
+  exactly like `SDKResultSuccess` does, not only `code`/`message`-shaped fields — map them onto the
+  `'error'` `AdapterEvent`'s own optional usage fields above whenever present, on both transports. The
+  SAME applies to the OTHER real `'error'`-producing shape, a mid-turn API error reported as
+  `subtype: 'success'` with `is_error: true`: that shape is `SDKResultSuccess` itself, which requires
+  `usage`/`total_cost_usd` just as much as a clean success does — a critic round reviewing the first
+  fix found this sibling path still zeroed (M16 P17). A session that fails after real spend (hitting
+  `--max-turns`, a budget cap, a mid-turn API error, or any other terminal condition) must not be
+  indistinguishable from one that spent nothing at all.
 - Use `--bare` for all FORGE-driven steps by default (`platform.claudeCode.bare: true`) so runs are
   reproducible across machines and unaffected by a user's personal hooks/CLAUDE.md. Provide
   `bare: false` for users who *want* their project's own config to apply, and warn that runs become

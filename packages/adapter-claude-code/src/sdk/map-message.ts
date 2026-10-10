@@ -107,11 +107,16 @@ function mapApiRetry(message: SDKMessage & { readonly type: 'system' }): Adapter
   };
 }
 
-/** Field names confirmed against the real, published SDK's own `SDKResultSuccess` type declaration
- * (`total_cost_usd`, `usage.input_tokens`/`.output_tokens`/`.cache_read_input_tokens`) -- the identical
- * fields the CLI transport's own live captures confirmed for the same underlying `result` message. */
-function mapResultSuccess(message: unknown): AdapterEvent | undefined {
-  if (!isRecord(message)) return undefined;
+/** `usage.input_tokens`/`.output_tokens`/`.cache_read_input_tokens` plus top-level `total_cost_usd` --
+ * the same four optional fields on both the `'usage'` and `'error'` `AdapterEvent` variants, read the
+ * same way regardless of which `result` subtype carries them (mirrors `../cli/parse-event.ts`'s own
+ * `extractUsageFields`). Returns `undefined` when `usage` itself is missing or malformed, rather than
+ * `{}`: a `Record<string, never>`-shaped empty return collides with an object-literal spread that also
+ * sets a sibling literal key (`{ type: 'usage', ...fields }`), confirmed directly -- `tsc` rejected it
+ * (`type: never` inferred from the index signature). */
+function extractUsageFields(
+  message: Record<string, unknown>,
+): Omit<Extract<AdapterEvent, { type: 'usage' }>, 'type'> | undefined {
   const usage = message['usage'];
   if (!isRecord(usage)) return undefined;
   const inputTokens = numberOf(usage['input_tokens']);
@@ -120,7 +125,6 @@ function mapResultSuccess(message: unknown): AdapterEvent | undefined {
   const cacheReadTokens = numberOf(usage['cache_read_input_tokens']);
   const costUsd = numberOf(message['total_cost_usd']);
   return {
-    type: 'usage',
     inputTokens,
     outputTokens,
     ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
@@ -128,17 +132,36 @@ function mapResultSuccess(message: unknown): AdapterEvent | undefined {
   };
 }
 
+/** Field names confirmed against the real, published SDK's own `SDKResultSuccess` type declaration
+ * (`total_cost_usd`, `usage.input_tokens`/`.output_tokens`/`.cache_read_input_tokens`) -- the identical
+ * fields the CLI transport's own live captures confirmed for the same underlying `result` message. */
+function mapResultSuccess(message: unknown): AdapterEvent | undefined {
+  if (!isRecord(message)) return undefined;
+  const fields = extractUsageFields(message);
+  if (fields === undefined) return undefined;
+  return { type: 'usage', ...fields };
+}
+
 /** Field names confirmed against the real, published SDK's own `SDKResultError` type declaration
- * (`subtype`, `is_error`, `errors: string[]`). `retryable` is `false` for every one of the SDK's own
- * four named error subtypes -- each names a terminal condition for *this* session, not a transient one
- * `AdapterEvent{type:'retry'}` already covers separately. */
+ * (`subtype`, `is_error`, `errors: string[]`, PLUS `usage`/`total_cost_usd` -- M16 P17's own real live
+ * run found the latter two genuinely present on a real `error_max_turns` result and confirmed directly
+ * against the installed SDK's own `.d.ts`: an earlier doc comment here claiming this shape was limited
+ * to `subtype`/`is_error`/`errors` was itself stale against a since-updated SDK). `retryable` is
+ * `false` for every one of the SDK's own four named error subtypes -- each names a terminal condition
+ * for *this* session, not a transient one `AdapterEvent{type:'retry'}` already covers separately. */
 function mapResultError(message: unknown): AdapterEvent | undefined {
   if (!isRecord(message)) return undefined;
   const subtype = textOf(message['subtype']);
   if (subtype === undefined) return undefined;
   const errors = message['errors'];
   const firstError = isArray(errors) ? textOf(errors[0]) : undefined;
-  return { type: 'error', code: subtype, message: firstError ?? subtype, retryable: false };
+  return {
+    type: 'error',
+    code: subtype,
+    message: firstError ?? subtype,
+    retryable: false,
+    ...extractUsageFields(message),
+  };
 }
 
 /**
@@ -154,6 +177,10 @@ function mapResultError(message: unknown): AdapterEvent | undefined {
  * `SDKResultError`-shaped; `subtype === 'success'` with `is_error: true` is this second, real case,
  * read from `result` instead of `errors`. `'api_error'` is this piece's own label for it (not a value
  * literally present in the SDK's own subtype enum, since none exists for this specific case).
+ * M16 P17's own real live run (via a round-2 critic, reviewing the `extractUsageFields` fix above):
+ * this shape is genuinely `SDKResultSuccess`-shaped, which requires `usage`/`total_cost_usd` exactly
+ * like a clean success does -- a mid-turn API error after real spend must report it the same way
+ * `mapResultError` now does, not fall back to the pre-fix zeroed default via a second, missed path.
  */
 function mapResult(message: unknown): AdapterEvent | undefined {
   if (!isRecord(message)) return undefined;
@@ -165,6 +192,7 @@ function mapResult(message: unknown): AdapterEvent | undefined {
       code: 'api_error',
       message: resultText ?? 'API error',
       retryable: false,
+      ...extractUsageFields(message),
     };
   }
   return mapResultSuccess(message);

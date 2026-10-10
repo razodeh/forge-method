@@ -109,6 +109,12 @@ const errorSchema = z
     code: z.string().min(1),
     message: z.string(),
     retryable: z.boolean(),
+    // Same fields, same constraints as `usageSchema` above — a session that ends in error can still
+    // carry real usage/cost (`07` §7.3's own Claude Code note).
+    inputTokens: z.number().int().nonnegative().optional(),
+    outputTokens: z.number().int().nonnegative().optional(),
+    cacheReadTokens: z.number().int().nonnegative().optional(),
+    costUsd: z.number().nonnegative().finite().optional(),
   })
   .strict();
 

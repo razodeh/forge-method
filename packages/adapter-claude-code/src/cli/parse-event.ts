@@ -134,13 +134,15 @@ function mapUserToolResult(message: Record<string, unknown>): AdapterEvent | und
   return { type: 'tool.result', id, ok: isError !== true, summary };
 }
 
-/** `result` (`subtype: 'success'`) -> `usage`. Confirmed live: `total_cost_usd`, `usage.input_tokens`/
- * `.output_tokens`/`.cache_read_input_tokens` all present exactly as `07` §7.3's own mapping table
- * names them ("result message `total_cost_usd`, per-model breakdown, token counts"). Per-model
- * (`modelUsage`) breakdown is real but has no field of its own in `AdapterEvent`'s closed `usage`
- * variant -- carried nowhere by this function; a future piece needing it reads `session.started`'s own
- * `meta`-adjacent init data or a richer event this milestone's scope does not add. */
-function mapResultSuccess(message: Record<string, unknown>): AdapterEvent | undefined {
+/** `usage.input_tokens`/`.output_tokens`/`.cache_read_input_tokens` plus top-level `total_cost_usd` --
+ * the same four optional fields on both the `'usage'` and `'error'` `AdapterEvent` variants, read the
+ * same way regardless of which `result` subtype carries them. Returns `undefined` when `usage` itself
+ * is missing or malformed, rather than `{}`: a `Record<string, never>`-shaped empty return collides
+ * with an object-literal spread that also sets a sibling literal key (`{ type: 'usage', ...fields }`),
+ * confirmed directly -- `tsc` rejected it (`type: never` inferred from the index signature). */
+function extractUsageFields(
+  message: Record<string, unknown>,
+): Omit<Extract<AdapterEvent, { type: 'usage' }>, 'type'> | undefined {
   const usage = message['usage'];
   if (!isRecord(usage)) return undefined;
   const inputTokens = numberOf(usage['input_tokens']);
@@ -149,7 +151,6 @@ function mapResultSuccess(message: Record<string, unknown>): AdapterEvent | unde
   const cacheReadTokens = numberOf(usage['cache_read_input_tokens']);
   const costUsd = numberOf(message['total_cost_usd']);
   return {
-    type: 'usage',
     inputTokens,
     outputTokens,
     ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
@@ -157,10 +158,26 @@ function mapResultSuccess(message: Record<string, unknown>): AdapterEvent | unde
   };
 }
 
+/** `result` (`subtype: 'success'`) -> `usage`. Confirmed live: `total_cost_usd`, `usage.input_tokens`/
+ * `.output_tokens`/`.cache_read_input_tokens` all present exactly as `07` §7.3's own mapping table
+ * names them ("result message `total_cost_usd`, per-model breakdown, token counts"). Per-model
+ * (`modelUsage`) breakdown is real but has no field of its own in `AdapterEvent`'s closed `usage`
+ * variant -- carried nowhere by this function; a future piece needing it reads `session.started`'s own
+ * `meta`-adjacent init data or a richer event this milestone's scope does not add. */
+function mapResultSuccess(message: Record<string, unknown>): AdapterEvent | undefined {
+  const fields = extractUsageFields(message);
+  if (fields === undefined) return undefined;
+  return { type: 'usage', ...fields };
+}
+
 /** `result` (any `error_*` subtype) -> `error`. Field names confirmed against the real, published
- * SDK's own `SDKResultError` type (`subtype`, `is_error`, `errors: string[]`) -- never observed live
- * (both real captures succeeded). `retryable` is `false` for every one of the SDK's own four named
- * error subtypes (`error_during_execution`, `error_max_turns`, `error_max_budget_usd`,
+ * SDK's own `SDKResultError` type (`subtype`, `is_error`, `errors: string[]`, PLUS `usage`/
+ * `total_cost_usd` -- M16 P17's own real live run found the latter two genuinely present on a real
+ * `error_max_turns` result and confirmed directly against the installed SDK's own `.d.ts`: an earlier
+ * doc comment here claiming this shape was limited to `subtype`/`is_error`/`errors` was itself stale
+ * against a since-updated SDK, not a reflection of this piece's own original verification having been
+ * wrong from the start). `retryable` is `false` for every one of the SDK's own four named error
+ * subtypes (`error_during_execution`, `error_max_turns`, `error_max_budget_usd`,
  * `error_max_structured_output_retries`): each names a terminal condition for *this* session, not a
  * transient one `AdapterEvent{type:'retry'}` already covers separately. */
 function mapResultError(message: Record<string, unknown>): AdapterEvent | undefined {
@@ -168,7 +185,13 @@ function mapResultError(message: Record<string, unknown>): AdapterEvent | undefi
   if (subtype === undefined) return undefined;
   const errors = message['errors'];
   const firstError = Array.isArray(errors) ? textOf(errors[0]) : undefined;
-  return { type: 'error', code: subtype, message: firstError ?? subtype, retryable: false };
+  return {
+    type: 'error',
+    code: subtype,
+    message: firstError ?? subtype,
+    retryable: false,
+    ...extractUsageFields(message),
+  };
 }
 
 /**
@@ -186,6 +209,10 @@ function mapResultError(message: Record<string, unknown>): AdapterEvent | undefi
  * `SDKResultError`-shaped; `subtype === 'success'` with `is_error: true` is this second, real case,
  * read from `result` instead of `errors`. `'api_error'` is this piece's own label for it (not a value
  * literally present in the SDK's own subtype enum, since none exists for this specific case).
+ * M16 P17's own real live run (via a round-2 critic, reviewing the `extractUsageFields` fix below):
+ * this shape is genuinely `SDKResultSuccess`-shaped, which requires `usage`/`total_cost_usd` exactly
+ * like a clean success does -- a mid-turn API error after real spend must report it the same way
+ * `mapResultError` now does, not fall back to the pre-fix zeroed default via a second, missed path.
  */
 function mapResult(message: Record<string, unknown>): AdapterEvent | undefined {
   if (message['subtype'] !== 'success') return mapResultError(message);
@@ -196,6 +223,7 @@ function mapResult(message: Record<string, unknown>): AdapterEvent | undefined {
       code: 'api_error',
       message: resultText ?? 'API error',
       retryable: false,
+      ...extractUsageFields(message),
     };
   }
   return mapResultSuccess(message);

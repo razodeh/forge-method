@@ -87,7 +87,7 @@ describe('mapSdkMessage', () => {
     ]);
   });
 
-  it('result error (real field names confirmed against the real SDK SDKResultError type) -> [error], retryable:false', () => {
+  it('result error with no usage field at all (a crash/startup error) -> [error], retryable:false, no usage fields', () => {
     const message = {
       type: 'result',
       subtype: 'error_max_turns',
@@ -100,6 +100,29 @@ describe('mapSdkMessage', () => {
         code: 'error_max_turns',
         message: 'exceeded the maximum number of turns',
         retryable: false,
+      },
+    ]);
+  });
+
+  it("result error WITH usage/cost present (M16 P17's own real live run: the real SDKResultError carries usage/total_cost_usd exactly like SDKResultSuccess) -> [error], retryable:false, PLUS the real usage fields", () => {
+    const message = {
+      type: 'result',
+      subtype: 'error_max_turns',
+      is_error: true,
+      errors: ['exceeded the maximum number of turns'],
+      total_cost_usd: 0.3766544,
+      usage: { input_tokens: 40, output_tokens: 9874, cache_read_input_tokens: 0 },
+    } as unknown as SDKMessage;
+    expect(mapSdkMessage(message)).toEqual([
+      {
+        type: 'error',
+        code: 'error_max_turns',
+        message: 'exceeded the maximum number of turns',
+        retryable: false,
+        inputTokens: 40,
+        outputTokens: 9874,
+        cacheReadTokens: 0,
+        costUsd: 0.3766544,
       },
     ]);
   });
@@ -121,6 +144,29 @@ describe('mapSdkMessage', () => {
         code: 'api_error',
         message: 'the API returned a 529 overloaded error mid-turn',
         retryable: false,
+      },
+    ]);
+  });
+
+  it('result success with is_error:true AND usage/cost present (M16 P17, round 2: SDKResultSuccess requires usage/total_cost_usd exactly like a clean success does) -> [error], retryable:false, PLUS the real usage fields', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: 'the API returned a 529 overloaded error mid-turn',
+      total_cost_usd: 0.3766544,
+      usage: { input_tokens: 40, output_tokens: 9874, cache_read_input_tokens: 0 },
+    } as unknown as SDKMessage;
+    expect(mapSdkMessage(message)).toEqual([
+      {
+        type: 'error',
+        code: 'api_error',
+        message: 'the API returned a 529 overloaded error mid-turn',
+        retryable: false,
+        inputTokens: 40,
+        outputTokens: 9874,
+        cacheReadTokens: 0,
+        costUsd: 0.3766544,
       },
     ]);
   });

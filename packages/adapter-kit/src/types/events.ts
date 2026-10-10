@@ -74,5 +74,15 @@ export type AdapterEvent =
       readonly code: string;
       readonly message: string;
       readonly retryable: boolean;
+      // Optional, not a second copy of `'usage'`'s own required fields: a session that ends in error
+      // still consumed real tokens and real money up to the point of failure (`07` §7.3's own Claude
+      // Code note — the real SDK's `SDKResultError` carries `usage`/`total_cost_usd` exactly like
+      // `SDKResultSuccess` does), and an adapter SHOULD report them here when the platform makes them
+      // available, rather than defaulting a real spend to indistinguishable-from-zero (M16 P17's own
+      // real live run).
+      readonly inputTokens?: number | undefined;
+      readonly outputTokens?: number | undefined;
+      readonly cacheReadTokens?: number | undefined;
+      readonly costUsd?: number | undefined;
     }
   | { readonly type: 'session.ended'; readonly reason: 'complete' | 'aborted' | 'error' | 'limit' };
