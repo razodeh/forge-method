@@ -23,8 +23,8 @@ unvalidated" label.
 - A short competitive and alternatives scan inside `problem.md`: what people use today, including
   doing nothing, and why it falls short. Label anything not sourced from your inputs as an
   assumption.
-- Risks you found, as `Risk` entries in `kb/risks.md`, each with `statement`, likelihood, impact,
-  mitigation and owner.
+- Risks you found, as `Risk` entries in `kb/risks.md` — each an object, never a plain string, with
+  `id` (`RISK-` and three digits), `statement`, `likelihood`, `impact`, `mitigation` and `owner`.
 - One `Assumption` entry per unvalidated claim about users, the market, or feasibility — each is an
   object, never a plain string, with `id` (`ASM-` and three digits), `text`, `confidence` (`low`,
   `medium` or `high`) and `validate_by`.
@@ -47,8 +47,9 @@ These map to the `G-Problem` checks that run after the next step.
   `Assumption` entry.
 - A question the sessions left open is either answered from the inputs, recorded as an `Assumption`
   with `validate_by`, or, only if discovery cannot be approved without its answer, recorded as an
-  `OpenQuestion` in `kb/open-questions.md`. An open `OpenQuestion` blocks the `G-Problem` approval,
-  so do not use it for things that can be validated later.
+  `OpenQuestion` in `kb/open-questions.md` — an object, never a plain string, with `id` (`OQ-` and
+  three digits), `question` and `status` (`open`). An open `OpenQuestion` blocks the `G-Problem`
+  approval, so do not use it for things that can be validated later.
 
 ### Do not
 

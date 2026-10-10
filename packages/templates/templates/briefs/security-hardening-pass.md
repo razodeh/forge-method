@@ -29,8 +29,9 @@ code against it rather than against a generic list. Cover, where they apply to t
 For each threat class say what you checked and how. A class with no finding needs one line in your
 final summary saying what was examined, so absence of a defect is distinguishable from absence of a
 review. A class you could not examine (no access to run or read what is needed) is recorded as an
-`OpenQuestion` with status `open` naming what is missing, so the stage cannot pass on an unexamined
-threat; raise it with `FORGE_ASK:` if you cannot write that register.
+`OpenQuestion` — an object, never a plain string, with `id` (`OQ-` and three digits), `question` and
+`status` (`open`) — naming what is missing, so the stage cannot pass on an unexamined threat; raise
+it with `FORGE_ASK:` if you cannot write that register.
 
 ### Produce
 

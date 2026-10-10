@@ -36,7 +36,9 @@ Frame, Diverge, Converge, Decisions, Non-decisions, Actions and KB write-back.
 - Decisions and actions each have an owner role and a concrete change: a workflow tweak, a standards
   update, an overlay change, a new check, a story to add. An observation with no owner is not an
   action; either assign it or list it under non-decisions with the reason.
-- Record the risks you saw that were never owned, as proposed `Risk` entries.
+- Record the risks you saw that were never owned, as proposed `Risk` entries — each an object, never
+  a plain string, with `id` (`RISK-` and three digits), `statement`, `likelihood`, `impact`,
+  `mitigation` and `owner`.
 - KB write-back lists what should change in `engineering/ways-of-working.md` and any other KB page,
   and states these as proposals where you do not own the page.
 

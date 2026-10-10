@@ -29,8 +29,9 @@ prove it.
 - The authentication and authorization approach was chosen with the stack. Review it here and record
   its threats. Write an `ADR` (category `security`) only for a decision that is still open, such as
   the authorization model or secrets handling, and only when a real alternative exists.
-- A `Risk` entry (in `kb/risks.md`, with an owner) for every residual risk that is not reduced to
-  low.
+- A `Risk` entry (in `kb/risks.md`) for every residual risk that is not reduced to low — an object,
+  never a plain string, with `id` (`RISK-` and three digits), `statement`, `likelihood`, `impact`,
+  `mitigation` and `owner`.
 
 ### Depth
 

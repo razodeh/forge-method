@@ -31,8 +31,9 @@ states must not pass through you unnoticed.
 
 ### What to produce
 
-- A `Risk` entry (in `kb/risks.md`) for each sequencing, capacity or dependency risk you found, with
-  likelihood, impact, mitigation and owner.
+- A `Risk` entry (in `kb/risks.md`) for each sequencing, capacity or dependency risk you found — an
+  object, never a plain string, with `id` (`RISK-` and three digits), `statement`, `likelihood`,
+  `impact`, `mitigation` and `owner`.
 - One `HandoffRecord` entry in the handoff register `docs/forge/reports/handoffs.md` (subtype
   `stage-plan-review`, `from: em`, `to: pm`, `step: review-stages → plan-stage`) that records the
   verdict. There is no `subtype` key, so the first string in `delivered` is

@@ -69,7 +69,8 @@ command that runs it. Then:
 - Every stage NFR with a numeric target has a test or monitor that can fail at that number.
 - Nothing in the plan requires an environment the scaffold and pipeline do not provide. Raise any
   gap with the platform role; if it must stop stories from becoming ready, record it as an
-  `OpenQuestion`, knowing that any open one blocks readiness for every story until resolved.
+  `OpenQuestion` — an object, never a plain string, with `id` (`OQ-` and three digits), `question`
+  and `status` (`open`) — knowing that any open one blocks readiness for every story until resolved.
 
 ### Do not
 

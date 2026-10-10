@@ -39,7 +39,9 @@ In the handoff record, `delivered` lists the spec path, `constraints_for_receive
 decisions that bind the architecture (real-time updates, offline use, session handling), which the
 architecture step reads, and `open_questions` lists what you could not decide. The handoff's
 `open_questions` list does not block a gate; an `OpenQuestion` entry in the KB does, so create one
-only for a question the product cannot be approved without.
+only for a question the product cannot be approved without. That KB entry is an object, never a
+plain string, with `id` (`OQ-` and three digits), `question` and `status` (`open`) — a different
+shape from the handoff's own plain-string `open_questions` list above, despite the shared name.
 
 ### Acceptance criteria
 

@@ -303,6 +303,42 @@ describe.each(ARTIFACT_TYPES.map((type) => [type.id, type] as const))(
  * validator, the same consequence, just without a plain-string sibling field on the same record to
  * make the trap obvious by contrast.
  */
+/**
+ * One brief typically mentions a collection-entry type more than once (as an input, in the output
+ * shape, again in acceptance criteria) and not every mention repeats the full shape — a later
+ * cross-reference reasonably just says "with `validate_by`", trusting the reader already has the
+ * shape from wherever it was first stated. So this collects every backtick-quoted mention of
+ * `typeName`'s own trailing window (to the next blank line, heading or new bullet) rather than
+ * assuming the first or last one is the authoritative one; the tests below ask only that AT LEAST
+ * ONE window carries the full shape.
+ */
+function entryMentionWindows(content: string, typeName: string): string[] {
+  const windows: string[] = [];
+  const mentionPattern = new RegExp('`' + typeName + 's?`', 'gi');
+  for (const match of content.matchAll(mentionPattern)) {
+    const rest = content.slice(match.index);
+    const end = rest.search(/\n\n|\n#|\n- /);
+    windows.push(end === -1 ? rest : rest.slice(0, end));
+  }
+  return windows;
+}
+
+/**
+ * True if at least one window states the object shape: the word "object" plus every one of `fields`
+ * as its OWN backtick-quoted span (`` `id` ``, not bare `id`) — the backtick anchor matters: an
+ * unrelated backtick span elsewhere in the same paragraph that merely CONTAINS one of these words
+ * (for example `` `risk: <text> | <owner role>` `` naming a DIFFERENT field's own shape) would
+ * otherwise read as a false pass; demonstrated empirically against `change-impact-analysis.md`'s own
+ * real text during review.
+ */
+function someWindowStatesShape(windows: string[], fields: string[]): boolean {
+  return windows.some(
+    (guidance) =>
+      /\bobject\b/i.test(guidance) &&
+      fields.every((field) => new RegExp('`' + field + '`').test(guidance)),
+  );
+}
+
 describe('briefs producing an assumptionSchema-shaped entry state its real object shape (RUN-083, Q278)', () => {
   const BRIEFS_WITH_ASSUMPTIONS = [
     'adoption-gap-analysis.md',
@@ -321,32 +357,6 @@ describe('briefs producing an assumptionSchema-shaped entry state its real objec
     'write-prd.md',
   ] as const;
 
-  /**
-   * One brief typically mentions `` `Assumption` ``/`` `assumptions` `` more than once (as an input,
-   * in the output shape, again in acceptance criteria) and not every mention repeats the full shape
-   * — a later cross-reference reasonably just says "with `validate_by`", trusting the reader already
-   * has the shape from wherever it was first stated. So this collects every backtick-quoted mention's
-   * own trailing window (to the next blank line, heading or new bullet) rather than assuming the
-   * first or last one is the authoritative one, and the test below asks only that AT LEAST ONE window
-   * carries the full shape.
-   *
-   * The field-name checks below additionally require each name to appear as its own backtick-quoted
-   * span (`` `id` ``, not `id` bare) — without that, an unrelated backtick span elsewhere in the same
-   * paragraph that merely CONTAINS one of these words (for example `` `risk: <text> | <owner role>` ``
-   * naming a DIFFERENT field's own shape) reads as a false pass; demonstrated empirically against
-   * `change-impact-analysis.md`'s own real text during review.
-   */
-  function assumptionsWindows(content: string): string[] {
-    const windows: string[] = [];
-    const mentionPattern = /`[Aa]ssumptions?`/g;
-    for (const match of content.matchAll(mentionPattern)) {
-      const rest = content.slice(match.index);
-      const end = rest.search(/\n\n|\n#|\n- /);
-      windows.push(end === -1 ? rest : rest.slice(0, end));
-    }
-    return windows;
-  }
-
   it.each(BRIEFS_WITH_ASSUMPTIONS)(
     '%s says each assumptions entry is an object with id, text, confidence and validate_by',
     (fileName) => {
@@ -354,18 +364,89 @@ describe('briefs producing an assumptionSchema-shaped entry state its real objec
         path.join(templatesPackageRoot, 'templates', 'briefs', fileName),
         'utf8',
       );
-      const windows = assumptionsWindows(raw);
+      const windows = entryMentionWindows(raw, 'assumption');
       expect(
         windows.length,
         'no backtick-quoted `Assumption`/`assumptions` mention found',
       ).toBeGreaterThan(0);
-      const fullySpecified = windows.some(
-        (guidance) =>
-          /\bobject\b/i.test(guidance) &&
-          ['id', 'text', 'confidence', 'validate_by'].every((field) =>
-            new RegExp('`' + field + '`').test(guidance),
-          ),
+      const fullySpecified = someWindowStatesShape(windows, [
+        'id',
+        'text',
+        'confidence',
+        'validate_by',
+      ]);
+      expect(
+        fullySpecified,
+        `no mention fully specifies the object shape; windows were:\n${windows.join('\n---\n')}`,
+      ).toBe(true);
+    },
+  );
+});
+
+/**
+ * The identical gap, found by a round-2 critic reviewing the fix above: `riskSchema` and
+ * `openQuestionSchema` (`packages/schemas/src/artifacts/{risk,open-question}.ts`) are strict objects
+ * reused as `collection: true` entries in `kb/risks.md`/`kb/open-questions.md`
+ * (`collection-file.ts`), validated through the identical path as `Assumption`
+ * (`packages/engine/src/dispatch/outputs.ts`), and no brief producing either one documented the
+ * shape. `write-ux-spec.md` is the sharpest case: it already correctly distinguishes a
+ * `HandoffRecord`'s own plain-string `open_questions` from the KB's structured `OpenQuestion` by
+ * NAME — the exact confusion `RUN-083` was about — but, before this fix, never stated the KB entry's
+ * own shape either.
+ */
+describe('briefs producing a Risk entry state its real object shape', () => {
+  const BRIEFS_WITH_RISK = [
+    'frame-problem.md',
+    'threat-model.md',
+    'review-stage-plan.md',
+    'stage-retro.md',
+  ] as const;
+
+  it.each(BRIEFS_WITH_RISK)(
+    '%s says each Risk entry is an object with id, statement, likelihood, impact, mitigation and owner',
+    (fileName) => {
+      const raw = readFileSync(
+        path.join(templatesPackageRoot, 'templates', 'briefs', fileName),
+        'utf8',
       );
+      const windows = entryMentionWindows(raw, 'risk');
+      expect(windows.length, 'no backtick-quoted `Risk`/`Risks` mention found').toBeGreaterThan(0);
+      const fullySpecified = someWindowStatesShape(windows, [
+        'id',
+        'statement',
+        'likelihood',
+        'impact',
+        'mitigation',
+        'owner',
+      ]);
+      expect(
+        fullySpecified,
+        `no mention fully specifies the object shape; windows were:\n${windows.join('\n---\n')}`,
+      ).toBe(true);
+    },
+  );
+});
+
+describe('briefs producing an OpenQuestion entry state its real object shape', () => {
+  const BRIEFS_WITH_OPEN_QUESTION = [
+    'frame-problem.md',
+    'write-test-plan.md',
+    'write-prd.md',
+    'security-hardening-pass.md',
+    'performance-hardening-pass.md',
+    'write-ux-spec.md',
+  ] as const;
+
+  it.each(BRIEFS_WITH_OPEN_QUESTION)(
+    '%s says each OpenQuestion entry is an object with id, question and status',
+    (fileName) => {
+      const raw = readFileSync(
+        path.join(templatesPackageRoot, 'templates', 'briefs', fileName),
+        'utf8',
+      );
+      const windows = entryMentionWindows(raw, 'openquestion');
+      expect(windows.length, 'no backtick-quoted `OpenQuestion` mention found').toBeGreaterThan(0);
+      const fullySpecified = someWindowStatesShape(windows, ['id', 'question', 'status']);
       expect(
         fullySpecified,
         `no mention fully specifies the object shape; windows were:\n${windows.join('\n---\n')}`,
