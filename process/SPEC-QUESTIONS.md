@@ -28717,3 +28717,35 @@ the limitation is real and stays real; the documentation's own job is to say so 
 let a reader discover it by surprise, exactly as a disclosed, not fixed, item for a code piece would.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P16`.
+
+## Q310 — M16 P17 (attempt 1): a brief that never states an object-vs-string asymmetry is a defect
+that WILL recur, not a one-off — it already had, once, two milestones earlier
+
+**Context.** `PLAN-M16.md:1168-1185`'s live-run Mandate, started on the owner's real-time
+authorization. The critic-round narrative, the fix detail, and the verification numbers are in
+`GAUNTLET-LOG.md`'s own `## M16 P17 (live run, attempt 1)` entry and are not repeated here.
+
+**Decision — when a defect is diagnosed as "a brief gap, not a schema or engine defect" and fixed
+only in a throwaway copy, the fix is not done; recording it as a deferred "future piece" without a
+tracked owner is operationally identical to not having found it at all.** M14 P9-3 (`Q278`) diagnosed
+this exact class correctly, named the two shipped templates that still needed it, and the fix never
+happened — not because it was hard (it is a one-sentence, mechanical addition, proven by how fast this
+piece applied it to thirteen files once motivated), but because nothing forced it to compete for
+attention against numbered, Mandate-tracked work. This piece's own real live run re-discovered the
+identical class, for real money, on the very first real agent step of the milestone's own proof-of-
+the-whole-method piece. The fix this time addresses every instance four independent critics could
+find across two full review rounds (`assumptionSchema` reused for `HandoffRecord.assumptions` AND for
+bare `Assumption` collection entries; `rcaSchema`'s own `timeline`/`hypotheses`) — and explicitly names
+a FOURTH instance (`Risk`/`OpenQuestion` collection entries) that is deliberately NOT fixed in this
+piece, specifically so it does not quietly repeat Q278's own fate a third time.
+
+**The general shape worth naming for a future piece (again; stated so it is harder to lose a third
+time): an undocumented object-shape field is not a static property of the brief that names it — it is
+a property of the SCHEMA, and any other brief reusing that schema inherits the identical risk whether
+or not that brief has ever been exercised live.** A grep for every brief referencing a `collection:
+true` artifact type or an object-array `HandoffRecord` field, cross-checked against whether its own
+prose states "object" plus every required field name, would find the remaining `Risk`/`OpenQuestion`
+gap mechanically — this needs a scheduled piece with that as its own Mandate, not another critic
+stumbling on it as a side effect of reviewing something else a third time.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P17 (live run, attempt 1)`.

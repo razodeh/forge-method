@@ -22865,3 +22865,112 @@ further by the fix-pass builder) with zero reproduction failures on the final co
 throughout; `pnpm lint` clean on the final, landed diff. Clean cherry-pick onto `main`.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q309`.
+
+## M16 P17 (live run, attempt 1) — a real agent, on the first real step it ever ran this milestone,
+reproduced a known defect class that two earlier milestones had each caught once and left unfixed
+
+**Mandate.** `PLAN-M16.md:1168-1185`: prove the milestone against a real agent and a real model —
+a behaviour-preserving `forge refactor` reaching `commit`; a deliberately behaviour-changing one
+refused at `verify-parity`; `forge test binding --hunks` on a real completed story; a real `forge
+evidence prune --apply`. Started only on the owner's explicit, real-time authorization, per the
+Mandate's own requirement. This entry covers attempt 1 only — a real defect found and fixed under the
+gauntlet before any of the Mandate's four checks could be attempted for real; the Mandate itself is
+still open.
+
+**Setup (free).** A throwaway project outside the repository, `forge init --level L0`, a 4-operation,
+31-line `calc.mjs` (`sum`/`max`/`min`/`avg`, each a hand-written `for` loop) with a real test suite, a
+real 8-case parity declaration and capture, sanity-checked clean against the unchanged reference, then
+a free `--dry-run` of `forge refactor calc.mjs --goal "..."` (extract the four loops into a dispatch
+table of reducers, no behaviour change) — compiled 6 steps.
+
+**Attempt 1a (real, failed before any spend).** The real, non-dry-run invocation refused outright:
+"The working tree has 320 uncommitted change(s)... FORGE never discards uncommitted work." The
+project's own `forge init` scaffold (agents, briefs, checks, templates, workflows, `FORGE.md`, `docs/`)
+had never been committed — an orchestrator setup gap, not a product defect. Fixed by committing the
+scaffold; re-ran.
+
+**Attempt 1b (real, failed at `refactor:state-invariants`, $0.9699222500000002 spent — Opus,
+20,881 output tokens, ~4m24s).** The `architect` agent's own analysis was excellent — it correctly
+derived every real invariant of `calc.mjs` (down to a prototype-pollution hazard the goal's own
+dispatch-table shape introduces, NaN/`-0` edge cases, fold-order sensitivity) and scoped the change
+correctly. The run still failed `RUN-083`: the produced `HandoffRecord`'s `assumptions` array held
+plain strings; `assumptionSchema` (`packages/schemas/src/artifacts/assumption.ts:24-32`, `.strict()`)
+requires each entry to be an object (`id`, `text`, `confidence`, `validate_by`).
+
+**Root cause.** `handoff-record.ts`'s `assumptions` field is the ONLY one of its five array fields
+typed as objects — `delivered`/`open_questions`/`constraints_for_receiver`/`acceptance_for_receiver`
+are all plain `z.array(z.string())`. `state-refactor-invariants.md` (the brief driving this step) said
+only "`open_questions` and `assumptions`: anything about intent you could not establish" — no shape
+hint at all, so a capable agent reasonably pattern-matched `assumptions` to its four plain-string
+siblings. **This exact failure already happened once, live, two milestones ago**, for a different
+step (`write-test-plan`, M14 P9-3, `SPEC-QUESTIONS.md` Q278): same root cause, same error code,
+diagnosed correctly as "a genuine brief gap, not a schema or engine defect," fixed only in a throwaway
+checkpoint project's own copy, and explicitly logged as still needing "the real fix" in the shipped
+`write-test-plan.md` and `decompose-stages.md` — "as a future piece." That future piece never came,
+for two milestones, until this live run paid real money to rediscover it.
+
+**Fix, under the full gauntlet — not repeating that mistake a second time.** Tests first: extended
+`test/templates.test.ts` (root-level, the one place allowed to depend on both `@forge/schemas` and
+`@forge/templates`, per its own existing doc comment) with three new `describe` blocks, confirmed red
+against the real pre-fix text of every file below before any fix landed. Two rounds of two independent
+critics each (four critics total, each its own worktree, builder's uncommitted files copied in) kept
+finding further real, live instances of the identical class — this piece treats that as the Mandate's
+own point, not scope creep, given the two-milestone history of exactly this kind of gap being found
+once and silently left for later. Fixed, across 13 brief files:
+
+- `state-refactor-invariants.md` — the real failure.
+- `decompose-stages.md`, `write-test-plan.md` — the two M14 P9-3 named and never fixed.
+- `verify-nfrs.md`, `propose-level.md` — same `HandoffRecord.assumptions` gap, newly found.
+- `capture-constraints.md`, `review-stage-plan.md` — produce a `HandoffRecord` but never mention
+  `assumptions` at all (lower risk — nothing prompts a guess — but the schema's `.strict()` still
+  requires the key); each now just says to leave it empty.
+- `frame-problem.md`, `seed-glossary.md`, `define-success-metrics.md`, `write-prd.md` — the identical
+  schema (`assumptionSchema`), reused for bare `Assumption` collection entries in `kb/assumptions.md`
+  (`collection-file.ts`'s `assumptionsFileSchema`) rather than a `HandoffRecord` field — same validator,
+  same consequence, just without a plain-string sibling field on the same record to make the trap
+  obvious by contrast.
+- `rca.md`, `run-rca-framework.md` — a completely different schema (`rcaSchema`), found by a round-1
+  critic: `timeline` (`z.array(z.record(z.string(), z.string()))`, an open label-to-string map with no
+  fixed key list, per `specs/13-frameworks-testing-and-debugging.md:671`'s worked example) and
+  `hypotheses` (`{claim, refuted_by, status}`) were bare words with little or no shape guidance. A
+  round-2 critic then found the fix's own first pass still left `status`'s real enum
+  (`confirmed`/`refuted`) unstated — sharper than it sounds, because both briefs' own Method section
+  describes the same outcome informally as a hypothesis that "survives" or "dies," priming exactly the
+  wrong vocabulary for the strict field a few lines later. Fixed in the same pass.
+
+Also tightened, mid-review: a round-1 critic demonstrated empirically that the test's original
+field-name check (`\bid\b` etc.) false-passed 3 of its 5 per-file assertions on `change-impact-
+analysis.md` — not because that file's real text names them, but because unrelated nearby prose
+(`` `risk: <text> | <owner role>` ``, naming a DIFFERENT field's shape) happened to contain the bare
+words. Fixed by requiring each field name as its own standalone backtick span; re-verified by replaying
+the exact repro independently (all 5 checks correctly fail on the mutated text now, not 2 of 5). The
+"first mention" window heuristic was also widened to check EVERY backtick-quoted `` `Assumption`` ``
+mention in a file and pass if ANY ONE is fully specified, after finding real files mention it multiple
+times (as an input, in the output shape, again in acceptance criteria) with only one of them meant to
+be authoritative.
+
+**Disclosed, not fixed here (future piece).** A round-2 critic found a fourth live instance of the
+identical bug class: `Risk` and `OpenQuestion` collection entries (`riskSchema`/`openQuestionSchema`
+via `collection-file.ts`, validated through the identical path as `Assumption`) are undocumented in
+every brief that produces them — `frame-problem.md`, `threat-model.md`, `review-stage-plan.md`,
+`stage-retro.md` for `Risk` (none state `id`, most leave `likelihood`/`impact`/`mitigation`/`owner`
+bare); `frame-problem.md`, `write-test-plan.md`, `write-prd.md`, `security-hardening-pass.md`,
+`performance-hardening-pass.md`, `write-ux-spec.md` for `OpenQuestion` (none state `id`/`question`).
+`write-ux-spec.md` is the sharpest: it already correctly distinguishes a `HandoffRecord`'s own
+plain-string `open_questions` from the KB's structured `OpenQuestion` by NAME — the exact confusion
+RUN-083 was about — but still never states the KB entry's own shape. Named here, prominently, with
+file:line citations in this piece's own review transcripts, specifically so this does not join
+`write-test-plan.md`/`decompose-stages.md` on the list of gaps found once and then forgotten for two
+milestones.
+
+**Verification.** `node scripts/run-tests.mjs run test/templates.test.ts`: 135/135 (119 in
+`test/templates.test.ts`, 16 in the adapter-generic glob match). `pnpm lint` and `pnpm typecheck`
+clean. Mutation evidence per file: each of the 13 briefs' own hunk reverted individually, confirmed the
+exactly-expected test(s) go red and nothing else, restored, confirmed green again — repeated twice
+(once after the first fix pass, again after the `status`-enum/confidence-consistency follow-up).
+
+**Spend this entry.** $0.97 (one Opus call, the failed `state-refactor-invariants` step). The
+Mandate's own four checks have not yet been attempted for real — continued in a later entry once the
+live run resumes against the fixed briefs.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q310`.
