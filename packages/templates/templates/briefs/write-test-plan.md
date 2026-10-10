@@ -22,7 +22,10 @@ follows and the stage-plan review, and the test author will implement from it.
   `delivered` is `subtype: test-plan`, and the second names the plan. In the record,
   `constraints_for_receiver` lists environment and data requirements, and `acceptance_for_receiver`
   lists the checks the test author must meet, including the non-AC tests below as required
-  additional tests.
+  additional tests. Record any unresolved question in `open_questions` (a plain array of strings)
+  and any assumption you made in `assumptions` — NOT plain strings: each entry is an object with
+  `id` (`ASM-` and three digits), `text`, `confidence` (`low`, `medium` or `high`) and
+  `validate_by`. Leave `assumptions` empty if you have none to record.
 - If the project has no test strategy yet, create the strategy document (`engineering/testing.md`, a
   KB entry): the pyramid shape and a budget for each layer, and which command runs each layer. Use
   the commands the scaffold provides (`test:unit`, `test:integration`, `test:contract`, `test:e2e`,

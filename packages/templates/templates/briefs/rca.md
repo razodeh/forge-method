@@ -45,11 +45,15 @@ Follow the RCA loop in order and do not skip a phase.
 ### Produce
 
 An `RCA` record: defect id, severity, symptom, reproduction (the command, or the new reproduction
-test's own path if you added one), timeline, hypotheses with `refuted_by` and status, root cause,
-causal chain, blast radius, prevention actions, and time to diagnose. The schema requires `defect`
-to name a `Defect`; if none exists for this failure, record one first with `status: open` and every
-required field: observed, expected, first seen, frequency, environment, severity, affected stories
-and evidence. State the recommended route in `fix` without applying it:
+test's own path if you added one), `timeline` (an array of small objects, never plain strings — each
+maps one or more free-form labels to a string value, for example `{first_seen: '2026-03-09'}` and
+`{detected_by: 'e2e AC-014-1'}` as two separate entries), `hypotheses` (an array of objects, never
+plain strings — each with `claim`, `refuted_by` and `status`, which is exactly `confirmed` or
+`refuted` — not "survived"/"died", which is how step 5 above describes the same outcome informally),
+root cause, causal chain, blast radius, prevention actions, and time to diagnose. The schema
+requires `defect` to name a `Defect`; if none exists for this failure, record one first with
+`status: open` and every required field: observed, expected, first seen, frequency, environment,
+severity, affected stories and evidence. State the recommended route in `fix` without applying it:
 
 - implementation at fault: what to change and where, for the implementer;
 - test at fault: the specific assertion and the criterion it contradicts, to be raised with

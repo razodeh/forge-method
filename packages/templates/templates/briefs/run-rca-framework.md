@@ -52,7 +52,11 @@ one seems obvious.
 ### Produce
 
 An `RCA` record carrying the defect id, severity, symptom, reproduction (the command or test path),
-timeline, every hypothesis with `refuted_by` and status, root cause, causal chain, prevention, blast
+`timeline` (an array of small objects, never plain strings — each maps one or more free-form labels
+to a string value, for example `{first_seen: '2026-03-09'}` and `{detected_by: 'e2e AC-014-1'}` as
+two separate entries), every hypothesis as an object, never a plain string, with `claim`,
+`refuted_by` and `status` (exactly `confirmed` or `refuted` — not "survived"/"died", which is how
+step 5 above describes the same outcome informally), root cause, causal chain, prevention, blast
 radius, KB writes and time to diagnose. Because the fix is applied after you, state in `fix` the
 intended change and its location, marked as prescribed and not yet applied.
 

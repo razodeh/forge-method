@@ -52,8 +52,10 @@ One `HandoffRecord` entry (subtype `level-proposal`) with `from: analyst`, `to: 
 `delivered` is `subtype: level-proposal`, which is how the output check and a reader recognise the
 record (`step` names the next node and does not carry the subtype). The second string is the
 proposed level and the one-paragraph reasoning, followed by one string per signal in the form
-`signal: value (source)`. Every unknown signal goes in `open_questions`, and every signal you
-inferred rather than read goes in `assumptions` with its confidence and how to validate it.
+`signal: value (source)`. Every unknown signal goes in `open_questions` (a plain array of strings),
+and every signal you inferred rather than read goes in `assumptions` as an object (NOT a plain
+string) with `id` (`ASM-` and three digits), `text`, `confidence` (`low`, `medium` or `high`) and
+`validate_by`. Leave `assumptions` empty if every signal was read rather than inferred.
 
 ### Acceptance criteria
 

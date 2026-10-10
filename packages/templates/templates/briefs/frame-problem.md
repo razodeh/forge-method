@@ -25,8 +25,9 @@ unvalidated" label.
   assumption.
 - Risks you found, as `Risk` entries in `kb/risks.md`, each with `statement`, likelihood, impact,
   mitigation and owner.
-- One `Assumption` entry per unvalidated claim about users, the market, or feasibility, each with
-  `confidence` and `validate_by`.
+- One `Assumption` entry per unvalidated claim about users, the market, or feasibility — each is an
+  object, never a plain string, with `id` (`ASM-` and three digits), `text`, `confidence` (`low`,
+  `medium` or `high`) and `validate_by`.
 
 ### Acceptance criteria
 

@@ -51,9 +51,10 @@ it.
 - Every NFR has a numeric target and a verification method, so a check for numeric NFR targets
   passes at the product gate.
 - Every metric traces to a problem or user need in `problem.md` or `users.md`, cited by entry id.
-- A number you chose yourself, rather than read from the inputs, is recorded as an `Assumption` (low
-  confidence, with `validate_by`). The metric or NFR statement says "proposed target", and an NFR
-  built on it stays at `status: draft`.
+- A number you chose yourself, rather than read from the inputs, is recorded as an `Assumption` — an
+  object, never a plain string, with `id` (`ASM-` and three digits), `text`, `confidence` (always
+  `low`) and `validate_by`. The metric or NFR statement says "proposed target", and an NFR built on
+  it stays at `status: draft`.
 - If no reasonable basis for a number exists, raise the question with the human instead of guessing.
 
 ### Do not

@@ -28,6 +28,11 @@ in its fields:
   be. Prefer the existing suite. Where behaviour is critical, name a differential check that runs
   the old and new code on the same inputs.
 - `open_questions` and `assumptions`: anything about intent you could not establish.
+  `open_questions` is a plain array of strings. `assumptions` is NOT: each entry is an object with
+  `id` (`ASM-` and three digits), `text`, `confidence` (`low`, `medium` or `high`) and
+  `validate_by`. This is the only field in the handoff shaped as an object — every other field here,
+  including `open_questions`, is a plain array of strings. Leave `assumptions` empty if you have
+  none to record.
 
 ### Acceptance
 

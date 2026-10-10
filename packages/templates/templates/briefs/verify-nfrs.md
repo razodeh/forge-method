@@ -39,6 +39,9 @@ step, and the output check reads the subtype from the `delivered` line). Use the
   written.
 - `acceptance_for_receiver`: the exact commands that reproduce each measurement.
 - `constraints_for_receiver` and `assumptions`: measurement conditions others must keep or check.
+  `constraints_for_receiver` is a plain array of strings. `assumptions` is NOT: each entry is an
+  object with `id` (`ASM-` and three digits), `text`, `confidence` (`low`, `medium` or `high`) and
+  `validate_by`. Leave `assumptions` empty if you have none to record.
 
 ### Acceptance
 

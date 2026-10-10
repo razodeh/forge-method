@@ -39,7 +39,8 @@ states must not pass through you unnoticed.
   `subtype: stage-plan-review`, the second is `verdict: pass` or `verdict: changes-required`,
   followed by one line per check with its result and evidence. Each required change goes in
   `constraints_for_receiver`, ordered by severity, and unresolved questions go in `open_questions`.
-  Add your own entry and leave every other entry in the register as it is.
+  Leave `assumptions` empty; this review has none of its own to record. Add your own entry and leave
+  every other entry in the register as it is.
 - Your closing message repeats the verdict and the required changes. Nothing after this step reads
   the verdict automatically, so on `changes-required` say so plainly and ask the human to send the
   plan back to `decompose-stages` before stage planning starts.

@@ -281,6 +281,144 @@ describe.each(ARTIFACT_TYPES.map((type) => [type.id, type] as const))(
  * @see specs/08 §8.6
  * @see PLAN-M14.md P11
  */
+/**
+ * A brief that asks an agent to fill an `assumptionSchema`-shaped field — `HandoffRecord.assumptions`
+ * or the `Assumption` collection entries in `kb/assumptions.md` (`collection-file.ts`'s
+ * `assumptionsFileSchema`, the identical schema reused) — must tell it the real shape: a strict
+ * object (`id`, `text`, `confidence`, `validate_by`), never a plain string. On `HandoffRecord` this is
+ * a real asymmetry trap: every sibling field (`delivered`, `open_questions`,
+ * `constraints_for_receiver`, `acceptance_for_receiver`) is a plain array of strings, so a capable
+ * agent will reasonably pattern-match `assumptions` to them and fail real output validation
+ * (`RUN-083`).
+ *
+ * This already happened once, live, for `write-test-plan` (M14 P9-3, `GAUNTLET-LOG.md:19114`,
+ * `SPEC-QUESTIONS.md` Q278) and was fixed only in a throwaway checkpoint copy, never in the shipped
+ * template; `decompose-stages.md` was named there as sharing the identical gap, also never fixed
+ * (`GAUNTLET-LOG.md:19124`). M16 P17's own real live run hit it again for a third brief
+ * (`state-refactor-invariants.md`). The fix for that found four more HandoffRecord-producing briefs
+ * with the same gap (`verify-nfrs.md`, `propose-level.md`, plus `capture-constraints.md` and
+ * `review-stage-plan.md`, which never mention `assumptions` at all) and, once in independent review,
+ * four briefs producing bare `Assumption` collection entries with the identical gap
+ * (`frame-problem.md`, `seed-glossary.md`, `define-success-metrics.md`, `write-prd.md`) — the same
+ * validator, the same consequence, just without a plain-string sibling field on the same record to
+ * make the trap obvious by contrast.
+ */
+describe('briefs producing an assumptionSchema-shaped entry state its real object shape (RUN-083, Q278)', () => {
+  const BRIEFS_WITH_ASSUMPTIONS = [
+    'adoption-gap-analysis.md',
+    'change-impact-analysis.md',
+    'instrument-observability.md',
+    'propose-change.md',
+    'plan-story.md',
+    'state-refactor-invariants.md',
+    'decompose-stages.md',
+    'write-test-plan.md',
+    'verify-nfrs.md',
+    'propose-level.md',
+    'frame-problem.md',
+    'seed-glossary.md',
+    'define-success-metrics.md',
+    'write-prd.md',
+  ] as const;
+
+  /**
+   * One brief typically mentions `` `Assumption` ``/`` `assumptions` `` more than once (as an input,
+   * in the output shape, again in acceptance criteria) and not every mention repeats the full shape
+   * — a later cross-reference reasonably just says "with `validate_by`", trusting the reader already
+   * has the shape from wherever it was first stated. So this collects every backtick-quoted mention's
+   * own trailing window (to the next blank line, heading or new bullet) rather than assuming the
+   * first or last one is the authoritative one, and the test below asks only that AT LEAST ONE window
+   * carries the full shape.
+   *
+   * The field-name checks below additionally require each name to appear as its own backtick-quoted
+   * span (`` `id` ``, not `id` bare) — without that, an unrelated backtick span elsewhere in the same
+   * paragraph that merely CONTAINS one of these words (for example `` `risk: <text> | <owner role>` ``
+   * naming a DIFFERENT field's own shape) reads as a false pass; demonstrated empirically against
+   * `change-impact-analysis.md`'s own real text during review.
+   */
+  function assumptionsWindows(content: string): string[] {
+    const windows: string[] = [];
+    const mentionPattern = /`[Aa]ssumptions?`/g;
+    for (const match of content.matchAll(mentionPattern)) {
+      const rest = content.slice(match.index);
+      const end = rest.search(/\n\n|\n#|\n- /);
+      windows.push(end === -1 ? rest : rest.slice(0, end));
+    }
+    return windows;
+  }
+
+  it.each(BRIEFS_WITH_ASSUMPTIONS)(
+    '%s says each assumptions entry is an object with id, text, confidence and validate_by',
+    (fileName) => {
+      const raw = readFileSync(
+        path.join(templatesPackageRoot, 'templates', 'briefs', fileName),
+        'utf8',
+      );
+      const windows = assumptionsWindows(raw);
+      expect(
+        windows.length,
+        'no backtick-quoted `Assumption`/`assumptions` mention found',
+      ).toBeGreaterThan(0);
+      const fullySpecified = windows.some(
+        (guidance) =>
+          /\bobject\b/i.test(guidance) &&
+          ['id', 'text', 'confidence', 'validate_by'].every((field) =>
+            new RegExp('`' + field + '`').test(guidance),
+          ),
+      );
+      expect(
+        fullySpecified,
+        `no mention fully specifies the object shape; windows were:\n${windows.join('\n---\n')}`,
+      ).toBe(true);
+    },
+  );
+});
+
+/**
+ * Two briefs produce a `HandoffRecord` but never ask the agent to populate `assumptions` at all
+ * (lower risk than the gap above — nothing prompts a bare-string guess — but the schema's `.strict()`
+ * still requires the key, so each was given a one-line "leave it empty" note for completeness,
+ * found during review of the fix above).
+ */
+describe('briefs that never populate assumptions at least say to leave it empty', () => {
+  it.each(['capture-constraints.md', 'review-stage-plan.md'] as const)('%s', (fileName) => {
+    const raw = readFileSync(
+      path.join(templatesPackageRoot, 'templates', 'briefs', fileName),
+      'utf8',
+    );
+    const idx = raw.search(/`assumptions`/);
+    expect(idx, 'no backtick-quoted `assumptions` mention found').toBeGreaterThan(-1);
+    expect(raw.slice(idx, idx + 80)).toMatch(/\bempty\b/i);
+  });
+});
+
+/**
+ * `rcaSchema` (`packages/schemas/src/artifacts/rca.ts`) has the identical undocumented-object-shape
+ * trap in two of its own fields, found during review of the fix above: `hypotheses` is
+ * `z.array(hypothesisSchema)` (`{claim, refuted_by, status}`, strict), and `timeline` is
+ * `z.array(z.record(z.string(), z.string()))` — an array of small free-form label-to-string maps
+ * (`specs/13-frameworks-testing-and-debugging.md:671`'s own worked example:
+ * `[{first_seen: '2026-03-09'}, {detected_by: 'e2e AC-014-1'}]`), with no fixed key list at all. Both
+ * producing briefs named `timeline` and `hypotheses` as bare words with little or no shape guidance.
+ * `status` is doubly dangerous: both briefs' own Method section describes the FALSIFY step as a
+ * hypothesis that "survives" or "dies", informal vocabulary an agent could plausibly carry straight
+ * into the `status` field itself, which the strict `z.enum(['confirmed', 'refuted'])` would reject.
+ */
+describe('briefs producing an RCA state timeline and hypotheses as objects, not strings', () => {
+  it.each(['rca.md', 'run-rca-framework.md'] as const)('%s', (fileName) => {
+    const raw = readFileSync(
+      path.join(templatesPackageRoot, 'templates', 'briefs', fileName),
+      'utf8',
+    );
+    expect(raw, 'does not say a timeline entry is an object').toMatch(/timeline[^.]*\bobjects?\b/i);
+    expect(raw, "does not name a hypothesis's `claim` field").toMatch(/`claim`/);
+    expect(raw, "does not name a hypothesis's `refuted_by` field").toMatch(/`refuted_by`/);
+    expect(raw, "does not name a hypothesis's `status` field").toMatch(/`status`/);
+    expect(raw, 'does not state the real `status` enum value "confirmed"').toMatch(/`confirmed`/);
+    expect(raw, 'does not state the real `status` enum value "refuted"').toMatch(/`refuted`/);
+  });
+});
+
 describe('the six KB-located templates carry `sources: []` and validate as scaffolds (PLAN-M14.md P11)', () => {
   const KB_LOCATED_TYPES = [
     'ADR',

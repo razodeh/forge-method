@@ -45,11 +45,14 @@ that every capability has an acceptance summary, every NFR is numeric, and no op
   well".
 - Every NFR target parses as a number. Where the inputs give no figure, propose one with a stated
   reason, keep the NFR at `status: draft`, say "proposed" in its `statement`, and record an
-  `Assumption` with `validate_by`. If no reasonable basis exists at all, ask the human instead.
+  `Assumption` — an object, never a plain string, with `id` (`ASM-` and three digits), `text`,
+  `confidence` (`low`, `medium` or `high`) and `validate_by`. If no reasonable basis exists at all,
+  ask the human instead.
 - Capabilities that the Vision lists as non-goals appear only as `wont`, if at all.
 - An `OpenQuestion` entry is created only for a question that must be answered before product
   approval, because any `OpenQuestion` left open blocks the product gate and, later, every story's
-  readiness. Resolve it or turn it into an `Assumption` with `validate_by` before you finish.
+  readiness. Resolve it or turn it into an `Assumption` (the same object shape: `id`, `text`,
+  `confidence`, `validate_by`) before you finish.
 - Every success metric in the Vision is moved by at least one capability, and not every capability
   is `must`: priorities are differentiated, with the reason for each `must`.
 - The NFRs cover the security, privacy, availability, cost and performance categories, or state for

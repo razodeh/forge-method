@@ -39,7 +39,10 @@ design.
   in `delivered` is `subtype: constraints-captured`, which is how the output check and a reader
   recognise the record. It is followed by one string per file written, in the form
   `path: N constraints, M unknown`. Every answer that was "unknown" also goes in `open_questions`,
-  one per question.
+  one per question. Leave `assumptions` empty unless you inferred something rather than asking; if
+  you did, each entry is an object, never a plain string, with `id` (`ASM-` and three digits),
+  `text`, `confidence` (`low`, `medium` or `high` — a different, three-value scale from the
+  constraint `confidence` above, which never uses `medium`) and `validate_by`.
 
 ### Acceptance criteria
 

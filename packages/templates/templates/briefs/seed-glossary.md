@@ -18,8 +18,8 @@ record every meaning you had to infer as an assumption.
   item is `kind: human` with a `ref` naming the elicitation answer or constraint file the terms came
   from.
 - One `Assumption` entry (in `kb/assumptions.md`) for each definition that you inferred instead of
-  reading. Each carries `text`, `confidence` (low, medium or high) and `validate_by`, stating who or
-  what can confirm the meaning.
+  reading. Each is an object, never a plain string, with `id` (`ASM-` and three digits), `text`,
+  `confidence` (low, medium or high) and `validate_by`, stating who or what can confirm the meaning.
 
 ### How to choose terms
 
