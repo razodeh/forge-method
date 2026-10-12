@@ -28827,3 +28827,190 @@ are actually weak," and would need exactly the reasoning this entry just did, ea
 apart.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M16 P17 (live run, attempt 3)`.
+
+## Q313 — M17 P1: Spec first — the M16 exit-tests correction confirmed real, and the DECISIONs this piece made writing `forge migrate run`'s contract into `03`
+
+**Context.** `PLAN-M17.md` P1's own Mandate: amend `specs/22` M17 into two phases, write the
+`forge-test-report` v1 contract, re-state `13` F-TEST-1/6/7/9 and add F-TEST-11, structured
+`testCommands`/coverage `source`/`vcs.trunk`/the worktree move in `18`, the `G-TestAdopt` gate in
+`10`, `06` §6.4/§6.5/§6.8, `07` §7.2/§7.3, and `03`'s new CLI rows. The full per-section report (what
+was already correct vs. flatly wrong, the exact old sentence replaced each time) is in this piece's
+own builder report, not repeated here; this entry records the one factual correction the plan opens
+with, confirmed independently rather than copied, and the DECISIONs the `03` `forge migrate run`
+row needed.
+
+**Decision 1 — the M16 exit-tests correction is real, confirmed independently, not merely restated
+from the plan.** `PLAN-M17.md`'s own opening paragraph asserts that `pnpm test` was never run against
+M16 and has been failing. Confirmed directly, not trusted: (a) `vitest.config.ts`'s `coverage.exclude`
+list names seven thin `scripts/*.mjs` wrappers with a documented reason each, and does **not** name
+`packages/cli/src/bin.ts` — `bin.ts` is therefore subject to the same `thresholds.lines: 85` per-file
+floor as every other file `coverage.include` reaches; (b) `bin.ts` is dispatched to almost exclusively
+through real subprocess tests (`packages/cli/test/bin.test.ts` and siblings spawn the real CLI), which
+is exactly the shape v8 coverage cannot instrument, confirmed by `vitest.config.ts`'s own doc comments
+on the neighbouring `scripts/*.mjs` exclusions describing the identical limitation for spawned
+children; (c) a real `pnpm test` run in this piece's own worktree (clean checkout of `071c5d5`, no
+code changes of this piece's own) is red: 17 of 16,004 tests failed (`bin.test.ts`'s own
+`ENOTEMPTY`-on-cleanup races under real subprocess E2E tests, two real `60s`/`30s` timeouts in
+`confined-command.test.ts`/`fetch-npm.test.ts`/`run-upgrade.test.ts`, and one
+`gate-fail-closed.test.ts` flake asserting `G-Parity` never refuses), confirming `pnpm test` is
+genuinely not green in this environment, independent of whatever the coverage-ratchet step would
+separately report (the run's own vitest step already failed, so the coverage-ratchet script never
+got a chance to run in this particular invocation — reported here as a boundary of what this
+confirmation shows, not papered over). This is M17 P2's own piece, not this one's, to fix; P1's job
+was confirming the claim is real before writing it into `specs/22` as fact, which this does.
+
+**Decision 2 — `forge migrate run --phase <expand|migrate|contract>`, matching the THREE-value
+`phase` enum `model-data.md`'s own `migrations.yaml` schema already defines, not the two-value
+expand/contract split the brief's own strawman shape suggested.** `packages/templates/templates/
+briefs/model-data.md` ("Declarations the gate reads") is unambiguous: a `migrations.yaml` entry's
+`phase` is `expand`, `migrate` or `contract` — three values, where `migrate` is itself a distinct
+entry kind (the backfill/data-population work, `expands`-linked to an `expand` entry). `03`'s new row
+uses this same three-value enum as the authoritative, already-specified schema, rather than inventing
+a narrower two-value `--phase <expand|contract>` split that would have no referent in the one file
+that already defines the phase vocabulary.
+
+**A real, pre-existing inconsistency this decision surfaces, disclosed rather than silently resolved
+(per this piece's own brief), and WIDER than a one-word fix — confirmed by grep at 8 occurrences, not
+1.** The ALREADY-SHIPPED `migrate.workflow.yaml`'s one command step calls
+`forge migrate run --phase expand --json` for what the plan's own `migration-expand.md` brief calls
+"the migration script or backfill routine that the data migration step ... runs" — i.e. the step the
+*workflow's own id* calls `migrate-data`, and which `model-data.md`'s own phase vocabulary would
+classify as a `migrate`-phase entry, not an `expand`-phase one. Under this row's own contract (exact
+`--phase` match against `migrations.yaml`'s `phase` field), the shipped invocation
+`--phase expand` would select only `expand`-phase entries and miss the `migrate`-phase backfill entry
+the brief says it runs. The identical `--phase expand` framing for this same backfill step is baked
+into FOUR files, not one: `packages/templates/templates/workflows/migrate.workflow.yaml:43` (the
+command string itself), `packages/templates/templates/briefs/plan-migration.md:41` (telling the
+planning agent which arguments the expand step builds for), `packages/templates/templates/briefs/
+migration-expand.md:28` (telling the expand-phase agent this backfill step runs under its own phase)
+and `packages/templates/templates/briefs/migration-contract.md:9-10` (telling the contract-phase agent
+the step it reads output from is the `--phase expand` one) — each one, independently, tells an agent
+the backfill step IS expand-phase, not just the one command line. The identical four-file pattern is
+then mirrored byte-for-byte in the committed `fixtures/greenfield-service/.forge/{workflows,briefs}/`
+tree (`migrate.workflow.yaml:44`, `plan-migration.md:42`, `migration-expand.md:29`,
+`migration-contract.md:10`), which is a fixture checked into this repo, not project-generated output —
+8 occurrences total. This predates M17 (the whole `migrate` workflow is M13/M14-era and has never
+been run for real, since `forge migrate run` was never wired until this milestone); it is not this
+spec-only piece's to fix (`packages/templates/**` and `fixtures/**` are outside P1's Surface, and
+none of the 8 are `specs/*.md`). Recommended, for whichever piece wires P18: change all 8 occurrences'
+`--phase expand` framing to `--phase migrate` for this one backfill step (template-only and
+fixture-only, no spec change needed) rather than widen this row's own semantics to blur `expand` and
+`migrate` together, which would reopen the exact three-way distinction `model-data.md` already draws
+deliberately. P18's own builder should re-grep rather than trust this count, in case either tree
+changes before P18 lands.
+
+**Decision 3 — the `--json` envelope `{v:1, phase, applied, failed, errors, problems?}` follows the
+established `errors`/`problems` convention `forge test run`'s own `TestRunResult` already uses
+(`packages/cli/src/commands/loop/test/run.ts`), not a bespoke shape.** `failed`/`errors` being always
+both present, with `problems` naming why a run could not fully complete and forcing the relevant count
+to at least 1 when non-empty (never a `0` reading as a clean pass), is this codebase's own existing
+answer to "what does a command-kind step's JSON envelope look like," reused rather than reinvented.
+
+**Decision 4 — the normalisation wall-clock budget's default is 5000 ms, applying to the WHOLE
+ordered rule sequence for one case, not only to `replace`'s own match.** `13` F-TEST-9 already bounded
+`replace` alone with an unspecified "time limit"; `PLAN-M17.md` P14's own Mandate asks for a stated
+wall-clock budget. 5000 ms is this piece's own DECISION (no existing default in the codebase names a
+comparable per-case bound at this layer): generous enough for any legitimate observation at the scale
+F-TEST-9's own surfaces produce (a process's stdout/stderr, a declared output file), short enough that
+a catastrophic pattern or a pathological input cannot meaningfully stall a `forge parity check`
+invocation. P14's own builder may revise the number; the requirement that it be stated, bound the
+whole case rather than one rule, and produce the already-typed `error` verdict is what P1 is
+confident of, not the specific millisecond figure.
+
+**Decision 5 — `G-TestAdopt`'s `checkId` is `test-adoption:approved`, following the existing
+`behavior:parity`/`spec:validate`-style `<domain>:<check>` naming convention `10`'s own gate catalogue
+already uses**, rather than inventing a different naming shape.
+
+**Disclosed, not a DECISION — the self-reverting-tamper isolation and the root-token/`replace`
+interaction each name TWO (or three) acceptable mechanisms rather than picking one**, per this piece's
+own brief: P14's builder has real latitude on which of "absent" vs. "read-only" closes the tamper gap,
+and on which of a length-preserving token, a rule-ordering/composition change, or provenance tracking
+closes the masking gap. `13` F-TEST-9 states the requirement and both honest-boundary consequences of
+each choice; it does not pick for P14.
+
+**Round 2 (two independent critics, each in its own worktree, plus the orchestrator's own
+verification) — one BLOCKING finding fixed, several confirmed citation/claim slips corrected.**
+
+**Decision 6 — `G-TestAdopt`'s write/approve ordering was genuinely circular as first written, fixed
+by splitting PROPOSE from PROMOTE.** Both critics independently read the three places this piece's own
+text said the same thing (`03`'s `forge test adopt` row, `13` F-TEST-11, `10`'s `G-TestAdopt` check
+definition) and found they could not all be true together: `--write` was specified to apply a proposal
+to the live `.forge/config.yaml` entry only after `G-TestAdopt` passed, while the gate's own check read
+that SAME live entry to decide whether to pass — the write needs the gate to have passed; the gate
+needs the write to have already happened. Unbuildable as written. Fixed by introducing a third state
+between "investigated" and "live": `forge test adopt` (no `--write`) now writes a STAGED proposal
+record, `.forge/test-adopt/<layer>.proposal.yaml` (one per layer, committed), carrying the proposed
+`execution.testCommands.<layer>` entry, which detection/translator path produced it, and the
+translator-proof's full result. `G-TestAdopt`'s check now reads THIS staged record, never the live
+entry, which is what makes it evaluable before any write happens. `--write` becomes the separate
+PROMOTION act — it copies an approved staged record into the live config, and is a typed refusal, not
+a silent no-op, when run before `G-TestAdopt` has actually been approved for that record. Precedent
+search (asked for explicitly): no existing FORGE artifact is already shaped "proposed, pending a
+gate's approval, not yet live" — the registry's own typed, evidence-resolved artifacts (`18` §18.7)
+are all records of something that already happened (a mutation run, a parity check, a gate
+evaluation), never something still awaiting a verdict, so none of them fit as-is. The precedent used
+instead is `.forge/parity/`'s own shape (`13` F-TEST-9's declarations and captures): a committed file
+living under `.forge/<domain>/`, outside the artifact registry (`18` §18.2 lists the path as
+committed, on-disk content; `18` §18.7's own registry table has no entry for either), that a gate's
+deterministic check reads directly off disk rather than through
+evidence resolution. `.forge/test-adopt/<layer>.proposal.yaml` follows that same shape — committed (so
+a human reviews it in the same diff they approve), non-registry, directly read by the one check that
+needs it — rather than inventing a new one. Updated consistently in `03` (the `forge test adopt` row),
+`13` F-TEST-11 (a new "staged proposal" paragraph, and the reworded Detection/agent-proposed-config
+sentences), `10` (the `G-TestAdopt` check definition), and `18` §18.2 (one new line in the on-disk
+layout, mirroring `parity/`'s own line) — plus every pinned-sentence test the reworded text touched.
+
+**Citation slips, confirmed and fixed (both critics independently found overlapping instances of the
+same F-TEST-9/F-TEST-5/F-TEST-1/F-TEST-10 mix-up).** "Behavioural binding" is F-TEST-5 throughout this
+file, never F-TEST-9 (which is parity oracles — differential/trust-anchor comparison, no mention of
+binding, `forge-test-report`, or `detectEcosystem`); "explicit-config-wins" is F-TEST-1 (matching
+`18`'s own existing citation for the identical rule), not F-TEST-9. Fixed: `13`:173 ("F-TEST-9's
+binding" → "F-TEST-5's binding," in F-TEST-7 point 5); `13`'s F-TEST-11 Detection paragraph
+("F-TEST-9's own explicit-config-wins rule" → "F-TEST-1's own..."); `09`'s new `forge-test-report`
+paragraph ("F-TEST-1 point 4, F-TEST-6, F-TEST-7 and F-TEST-9 each state theirs" → "...and F-TEST-10
+each state theirs" — F-TEST-10 is the one that actually states a stated/typed degradation for a
+missing signal, the `--max-hunks` granularity degrade and the `kind: 'assertion'` conservative default
+the very next sentence already attributes to it; F-TEST-5 has no comparable stated-degradation
+language, so it was not the fix here despite being the other candidate both critics flagged). A full
+re-grep of every `F-TEST-9` this piece's own diff introduced, across every touched file, confirmed no
+further instance — including one this round's own Decision 6 text introduced and then had to correct
+twice: a first draft attributed `.forge/parity/`'s "non-registry" characterisation to F-TEST-9 itself;
+a second draft moved it to `18` §18.7 instead, but §18.7 is only the registry's own table, which
+simply has no entry for a parity declaration or capture — it makes no affirmative "outside the
+registry" statement for anyone to cite. The accurate pointer is `18` §18.2 (which lists the path as
+committed, on-disk content) plus the plain observation that §18.7's table omits it; reworded to cite
+both correctly, orchestrator-verified against both sections' real text before landing.
+
+**Smaller fixes.** `13` F-TEST-11 point 2 (count reconciliation) read `fail`, `crash` and `timeout` as
+three coordinate `status` values; `09` §9.5's own schema makes `crash`/`timeout` values of `kind`, only
+meaningful when `status: 'fail'` — reworded so a non-zero exit implies a `status: 'fail'` test of any
+`kind`, never a literal `status: 'crash'`. `03`'s `forge migrate run --json` envelope illustration had
+a malformed `"phase"` key with no value (`{"v":1,"phase","applied":...}`); fixed to `"phase":"<the
+--phase value>"`. `13` F-TEST-1 point 4 ended in two sentences saying the same thing ("...never an
+ad-hoc invocation a gate composes for itself." immediately followed by the pre-existing "Gates invoke
+these, never ad-hoc invocations."); trimmed the second, redundant one. `test/output-contract-known-
+gaps.test.ts` item 10 measured `Date.now() - start` around nothing but comments, so it passed
+unconditionally regardless of whether a real wall-clock budget exists — reduced to a static-only check
+(absence of any budget-enforcing construct, plus an exact match on `applyReplace`'s own current,
+budget-free body and both of its real call sites) with its title and inline claims corrected to say so
+explicitly, rather than built out into a genuine live repro: a real catastrophic-backtracking call is
+unbounded by construction, so pinning it live risks hanging this suite itself, not only the command
+under test, and that hard-guard machinery (a worker thread with `terminate()`, or a child process run
+under a real `timeout`) is more than this one disclosed gap currently earns — deferred to whichever
+M17 piece actually builds the F-TEST-9 wall-clock budget, which can then prove its own bound under its
+own hard guard. Q313's own Decision 2 disclosure of the `--phase expand`/`migrate` mismatch undercounted
+its scope ("a one-word fix, template-only"): confirmed by grep at 8 occurrences, not 1 — the identical
+framing is baked into `plan-migration.md`, `migration-expand.md` and `migration-contract.md` (each
+telling an agent the backfill step IS expand-phase, not just the one workflow command string) and
+mirrored byte-for-byte in the committed `fixtures/greenfield-service/.forge/{workflows,briefs}/` tree;
+Decision 2's own paragraph above now states the real count so P18's builder does not under-fix it.
+
+**Advisory finding, left as-is (this piece's own call).** `10`'s `G-TestAdopt` paragraph never
+restates the `approval.roles: [human]` constraint `13` F-TEST-11 already states normatively — but
+`10`'s own prose for its only sibling workflow-scoped gate, `G-Parity`, does not restate it either (it
+relies on the generic gate-file schema's own `approval` block, shown once, F-TEST-11's `roles` already
+being a real constraint there). Restating it for `G-TestAdopt` alone would be inconsistent with how
+`10` documents its one existing precedent, so left unstated, matching `G-Parity`.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P1` (orchestrator writes the log entry at commit time,
+after this piece's own report and the critics').

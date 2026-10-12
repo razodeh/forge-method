@@ -23145,3 +23145,69 @@ one real, substantive, non-defect finding about `test binding`'s own relationshi
 named above for a future piece to consider documenting.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q312`.
+
+## M17 P1 — Spec first: the runner-agnostic test-support redesign, `forge migrate run`'s CLI
+contract, and the M16 exit-tests correction confirmed real
+
+**Rounds: 2. Outcome: DONE.** Spec-only (zero `packages/` touched, confirmed every round):
+`specs/{03,06,07,09,10,13,18,22}.md`, `process/SPEC-QUESTIONS.md` (`## Q313`,
+`test/spec-cli-examples.test.ts`, `test/output-contract-known-gaps.test.ts`.
+
+### Round 1 — 2 independent critics, each in its own separate worktree: 1 BLOCKING, 2 independently
+converged MAJOR, 3 lower
+
+What the critics caught that I missed, writing my own brief: **a real circular dependency in the
+`G-TestAdopt` gate I designed myself.** Three places the brief had the builder write (`03`'s
+`forge test adopt` row, `13` F-TEST-11, `10`'s `G-TestAdopt` check) together said `--write` applies a
+proposal to the live `.forge/config.yaml` entry only *after* the gate approves it — while the gate's
+own deterministic check read that *same live entry* to decide whether to pass. The write needed the
+gate; the gate needed the write. Unbuildable as specified, and not disclosed anywhere as an
+intentional deferral — it only became visible once written out in full normative detail, which is
+exactly why two critics exist. I decided the resolution myself rather than leaving it to the builder:
+split PROPOSE from PROMOTE, with a staged record the gate's check reads instead of the live entry.
+
+**Both critics, independently, in separate worktrees, caught overlapping instances of the same
+citation slip**: three new cross-references attributed content to F-TEST-9 (parity oracles —
+differential/trust-anchor comparison, no mention of binding or `forge-test-report`) that actually
+lives in F-TEST-5 (behavioural binding), F-TEST-1 (`detectEcosystem`'s explicit-config-wins rule), or
+F-TEST-10 (stated-degradation language) — a real, consequential defect in a spec pack whose whole
+value is machine-traceable cross-references, caught by neither critic's own fixture testing (pinned
+sentences assert prose verbatim, never whether the cross-reference itself is correct).
+
+One critic also found `test/output-contract-known-gaps.test.ts` item 10 measuring `Date.now() - start`
+around nothing but comments — passing unconditionally regardless of whether a real wall-clock budget
+exists, directly contradicting both its own title and the describe block's own header rule ("reads the
+REAL... source, or runs it, never a description of it"). The other found a `status`/`kind` conflation
+in the translator proof's count-reconciliation rule (treating `crash`/`timeout` as coordinate `status`
+values when they're `kind` sub-values of `fail`), a malformed JSON illustration, and that Q313's own
+disclosed `--phase expand` inconsistency undersold its real scope (1 occurrence claimed, 8 confirmed
+by grep across three agent briefs plus fixture mirrors).
+
+### Round 2 — fix pass (same builder, resumed with the consolidated list), verified by an independent
+fork plus one direct orchestrator fix
+
+All 8 findings fixed. The `G-TestAdopt` fix: `forge test adopt` without `--write` now writes a STAGED
+proposal (`.forge/test-adopt/<layer>.proposal.yaml`, mirroring `.forge/parity/`'s own committed,
+non-registry on-disk precedent — searched first for an existing "proposed, pending approval" artifact
+shape, found none, used this one instead); the gate's check reads that staged file, never the live
+entry; `--write`/promotion is a typed refusal, not a silent no-op, before the gate has actually
+approved that record. The builder's own re-grep for every `F-TEST-9` occurrence it introduced caught
+a 4th self-introduced instance in its own new Decision-6 text before I ever saw it.
+
+The independent verification fork confirmed all 8 fixes landed correctly, with one new, small
+discrepancy in the Decision-6 text itself: it cited `18` §18.7 as the source of `.forge/parity/`'s
+"non-registry" characterisation. Direct read of `18` §18.7 (the registry's own table, lines 352-547)
+showed it makes no such affirmative statement — it simply has no entry for a parity declaration or
+capture. Fixed directly (not sent back for a third agent round, given the size and mechanical nature
+of the fix): the accurate pointer is `18` §18.2 (which lists the path as committed, on-disk content)
+plus the plain observation that §18.7's table omits it — applied to both `13`:719 and the
+`SPEC-QUESTIONS.md` Q313 text, re-verified green (577/577) after the edit.
+
+Final state: 577 tests across the two pin files (550 + 27), repo-wide `-t "M17"` 71 passed,
+`pnpm typecheck`/`pnpm run boundaries`/`pnpm lint` all clean. `pnpm test`'s full coverage leg remains
+red for the pre-existing, already-disclosed `bin.ts` reason M17 P2 owns — confirmed not this piece's
+own regression (zero `packages/` touched). Mutation evidence: 3 original pins (round 1) plus a fresh
+spot-check on the `vcs.trunk` default (round-1 verification fork) and a direct re-run after the
+round-2 citation fix (round 2), all red-for-the-right-reason and `cmp`-restored byte-identical.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q313`.
