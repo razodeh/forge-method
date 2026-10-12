@@ -75,9 +75,19 @@ interface StepNode {
 Each non-inline step runs in a **lane**:
 
 ```
-.forge/state/worktrees/<laneId>/          git worktree
+$XDG_CACHE_HOME/forge/<project-hash>/worktrees/<laneId>/     git worktree (18 §18.3's platform fallbacks apply)
 branch:  forge/<runId>/<stepId-slug>      branched from the integration branch
 ```
+
+**Worktree location (post-v1.0, `specs/22` M17).** Before M17, a lane's worktree lived inside the
+project tree, at `.forge/state/worktrees/<laneId>/`, which required the `.gitignore` rule below to
+keep it from self-referencing, and let any runner that globs the whole project tree discover a lane's
+own in-progress copy of the project's test files. M17 moves it out of the project tree entirely, to a
+per-project directory under the user's cache directory (`18` §18.3 names the exact path and its
+platform equivalents), keyed by a stable hash of the project so resume can find the same directory
+again. `forge doctor` reports any worktree it still finds under the old, in-tree location — left by a
+pre-M17 run, or by a project upgraded mid-run — and offers to remove it; a project is not blocked from
+running while one exists, since the engine itself never creates a lane there again.
 
 Lane lifecycle:
 
@@ -126,7 +136,10 @@ Lane lifecycle:
   `swarm-review` step whose sole predecessor's lane would fast-forward into its own runs its perspective
   sessions in that predecessor lane's worktree; otherwise (several predecessors, or none) it reads the project
   checkout, as before.
-- `.gitignore` MUST exclude `.forge/state/`. Worktrees live there, so they never self-reference.
+- `.gitignore` MUST exclude `.forge/state/`. Before M17 this is also what kept a lane's own worktree
+  from self-referencing; post-M17 (above) a worktree lives outside the project tree entirely, so no
+  `.gitignore` entry is needed for that reason any more, though `.forge/state/` is still excluded for
+  everything else it holds.
 - Non-git projects: FORGE requires git. `init` offers to `git init`. If refused, parallelism is
   disabled and lanes degrade to sequential in-place execution with a loud warning.
 
@@ -134,6 +147,23 @@ Lane lifecycle:
 
 Serial, one merge at a time, on the integration branch (`forge/integration/<stage>` by default,
 configurable to merge directly to a trunk).
+
+**Landing a finished run on trunk (post-v1.0, `specs/22` M17).** Before M17, a completed run's own
+integration branch was left exactly where the run's last merge put it: no command and no doc said
+how, or whether, it ever reaches `vcs.trunk` (`18` §18.3), and a person who committed it there by
+hand then blocked the next run (its lanes branch from the integration-branch tip, which a manual
+trunk commit never updates). Two paths now land a run, and a project picks one by its own
+`execution.integrationBranch` configuration: (1) a project that configures its integration branch to
+BE the trunk itself (the "configurable to merge directly to a trunk" form above) needs nothing
+further — each lane merge already lands on trunk as the run proceeds, which is also why F-TEST-9's
+trust anchor names this as a project that "gets no protection" from a rewritten oracle (`13` F-TEST-9,
+the anchor's boundary); (2) a project whose integration branch is the default, separate
+`forge/integration/<stage>` branch lands a finished run with an explicit command (P9 names and builds
+it) that fast-forwards or merges the run's own integration-branch tip onto `vcs.trunk`, refusing when
+trunk has diverged from the integration branch's own base since the run started — the refusal names
+the remedy (P9's own exact wording) rather than leaving the project blocked with no path forward: at
+minimum, which ref to rebase the integration branch onto and which command re-attempts the land once
+it is current.
 
 Per candidate:
 
@@ -256,6 +286,16 @@ Failure classification (implemented in `@forge/engine/failures.ts`):
 third time identically; it must be escalated (stronger model, decomposed into smaller steps, or
 handed to a human). Repetition without variation is a known agent failure mode and FORGE detects it
 by hashing normalised error output.
+
+**This table describes a policy, not merely a config shape (post-v1.0, `specs/22` M17).** A
+retryable failure is not retried because this table names a class `retryOn` lists; it is retried
+because `driveToCompletion`'s own failure handling actually consults the step's declared
+`RetryPolicy`, decides whether and when to retry, and computes the real backoff — the identical
+decision-and-backoff logic the Never-retry rule above already depends on — before any retry attempt
+is scheduled, recreating the lane and re-executing from the step's own idempotency key, and emitting
+a `retry` event (`07` §7.2's `AdapterEvent{type:'retry'}` is the adapter-level signal; the engine's own
+retry decision is a separate, run-level event). A decision and a backoff computed but never acted on
+is not compliant with this section, whatever the table above says a class's "default handling" is.
 
 ## 6.9 Budgets
 

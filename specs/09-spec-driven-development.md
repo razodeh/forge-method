@@ -211,8 +211,32 @@ Acceptance criteria are written in a **structured Given/When/Then** with an expl
    - Java: `@Tag("forge-ac:AC-014-2")`
    - Go: test name prefix `TestAC_014_2_…`
    - Generic fallback: the ID appears in the test name and is regex-extracted from the report.
-3. Emit results into a normalised report (`docs/forge/reports/test-results.json`) mapping
-   `AC id → pass/fail/skipped/missing`.
+3. Emit results into **`forge-test-report` v1**, FORGE's own canonical, versioned JSON test-result
+   shape, which FORGE normalises every other format into before any command reads a result, and
+   which it maps back to `docs/forge/reports/test-results.json`'s `AC id → pass/fail/skipped/missing`,
+   exactly as before.
+
+**The canonical test report (post-v1.0, `specs/22` M17).** `forge-test-report` v1 is one JSON object:
+
+```json
+{"forgeTestReport": 1, "tests": [{"name": "string (required)", "file": "string, relative path (optional)", "status": "pass | fail | skip (required)", "kind": "assertion | load | timeout | crash (optional)", "durationMs": "number (optional)", "acId": "string (optional)"}]}
+```
+
+Only `name` and `status` are required on each entry; every other field is optional, and a consumer
+that needs a field the project's own test command did not supply degrades to a stated, typed outcome
+rather than guessing (`13` F-TEST-1 point 4, F-TEST-6, F-TEST-7 and F-TEST-10 each state theirs).
+`status: 'skip'` names a test the runner itself skipped — not run, and not failed. `kind` applies
+only when `status` is `'fail'` and is omitted for a pass or a skip; `assertion` is the default reading
+when the source format carries no finer failure signal than pass/fail (TAP, for one), which is the
+conservative choice `13` F-TEST-10's own hunk-mutation credit logic reads from here rather than
+guessing itself. `acId`, when present, is an already-extracted AC id from a `forge-json`-emitting
+translator that knows its own project's naming convention better than a generic regex would; when
+absent, the `extractAcId` regex-over-`name` convention point 2 above describes still applies,
+unchanged — this field is additive, never a replacement for it. This is what every OTHER format a
+project's test command can produce — JUnit XML, TAP, a runner's own native JSON, or a hand- or
+agent-written translator's output (`13` F-TEST-11, `18` §18.3) — is converted INTO before any FORGE
+command reads it: `forge-test-report` is the one shape the rest of this spec pack, and the rest of the
+codebase, actually reasons about.
 
 This mapping is what makes "done" mean something. A story cannot reach `verified` while any of its
 ACs is `missing` or `failing`.

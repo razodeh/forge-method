@@ -287,7 +287,28 @@ onReject:
    argument, trunk, and `--no-record` writes no `ParityEvidence`, because a gate check runs in the
    integration worktree and a file it writes there leaves the worktree dirty, so that the next run
    refuses to start (`VCS-INTEGRATION-DIRTY`). Run by hand, `forge gate check G-Parity` runs the same
-   command, so it compares with trunk too.
+   command, so it compares with trunk too. **`G-TestAdopt`** (post-v1.0, `specs/22` M17, `13`
+   F-TEST-11) is the second workflow-scoped gate to have a file, scheduled by the `adopt-tests`
+   workflow's own `kind: gate` step (P7 builds the workflow; this gate's own file). Its one
+   deterministic check, `checkId: test-adoption:approved`, reads `.forge/test-adopt/<layer>.proposal.yaml`
+   (`13` F-TEST-11's staged proposal record, never the live `.forge/config.yaml`
+   `execution.testCommands` entry: the live entry does not exist yet when this check first needs to
+   pass, and this check existing to gate the live entry's own creation is exactly why it cannot be the
+   thing that reads it) for the layer under review. It passes when that staged record exists, was
+   produced by `forge test adopt` (human-invoked directly, or via the `adopt-tests` agent workflow),
+   and carries a RECORDED translator-proof result (`13` F-TEST-11) that (a) passed and (b) is no older
+   than the translator's own current content hash and the detected runner's own current version — a
+   proof taken against an earlier translator or an earlier runner version is stale and does not
+   satisfy the check, which fails or is simply never reached otherwise. `--write` (the promotion that
+   copies the staged record into the live config, `13` F-TEST-11) runs only after this check has
+   passed AND the approval itself has happened (rule 6's own `forge gate approve`), never on the
+   check's pass alone: approving the gate is what certifies the staged record for promotion, and a
+   `--write` attempted before that approval is a typed refusal, not a silent no-op. This check is
+   **conditional, not universal**: a layer
+   whose `testCommands` entry is the legacy bare-string form (`18` §18.3) never needs this gate at
+   all, because nothing about it was ever proposed by `forge test adopt` — a workflow that wires
+   `adopt-tests` only ever schedules this gate's `kind: gate` step for a layer the structured form
+   governs.
 
 **Check contract (normative; what a deterministic check must do to pass).** A check passes only if it shows
 success; anything the evaluator cannot read as success is a failure with a stated `reason`, and a failing check

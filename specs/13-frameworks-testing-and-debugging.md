@@ -36,7 +36,9 @@ inverts within weeks because agents write whatever is easiest to make pass.
 3. **No test may depend on another test's side effects or on execution order.** Enforced by running
    the suite in randomised order in CI (`--shuffle` / `-p no:randomly` inverted / `-shuffle on`).
 4. **Every layer has a single command** recorded in the KB: `test:unit`, `test:integration`,
-   `test:contract`, `test:e2e`, `test:nfr`. Gates invoke these, never ad-hoc invocations.
+   `test:contract`, `test:e2e`, `test:nfr` — the layer's own `execution.testCommands` entry (`18`
+   §18.3's legacy bare string or post-v1.0 `specs/22` M17's structured form, converted into `09`
+   §9.5's `forge-test-report` either way), never an ad-hoc invocation a gate composes for itself.
 5. The pyramid targets are *budgets, not floors*: exceeding the E2E share triggers a warning at
    `G-Verify` because it signals unit-level gaps being papered over.
 
@@ -131,7 +133,11 @@ Flaky tests destroy autonomous loops — an agent cannot distinguish a flake fro
 either ignores real failures or thrashes on noise. The framework mandates:
 
 - Every test failure is retried **once, in isolation**, purely to classify it: consistent failure =
-  real; passes on retry = flake candidate.
+  real; passes on retry = flake candidate. "In isolation" means the layer's own `filter` capability
+  (`18` §18.3's structured `execution.testCommands`, post-v1.0 `specs/22` M17): a layer declared only
+  as a legacy bare string, or declared structured with no `filter` template, cannot run one test in
+  isolation at all, and the retry is skipped — the failure is recorded `unclassified`, never silently
+  read as "not flaky" and never silently read as a confirmed regression either.
 - Flake candidates are recorded in `docs/forge/reports/flaky.json` with a rolling failure rate.
 - Above the configured rate (default 2% over 20 runs) a test is **quarantined**: excluded from the
   gate, and a `STORY` is auto-created to fix it with a deadline. Quarantine is visible in every gate
@@ -145,15 +151,27 @@ either ignores real failures or thrashes on noise. The framework mandates:
 The specific design requirements that let agents own testing:
 
 1. **One command per layer**, exit code meaningful, no interactive prompts, no TTY requirement.
-2. **Machine-readable output**: JUnit XML or the framework's JSON reporter, written to a known path.
-   FORGE normalises it into `docs/forge/reports/test-results.json` mapping AC id → outcome.
+2. **Machine-readable output, converted into one canonical shape (post-v1.0, `specs/22` M17).** A
+   layer's output is JUnit XML, TAP, a runner's own native JSON, or (`18` §18.3's structured
+   `execution.testCommands`) an agent- or hand-written translator's output — written to a known path
+   (stdout, or a FORGE-allocated `{output}` file FORGE itself deletes before every run, so a stale
+   report is never read). Whichever it is, FORGE converts it into **`forge-test-report` v1** (`09`
+   §9.5), the one shape every later consumer of a test result — this section's own flake control, a
+   binding check, hunk mutation, AC-coverage — actually reads; nothing downstream reasons about a
+   runner-native format directly, and a project using only the legacy bare-string `testCommands` form
+   keeps today's exact Vitest/pytest behaviour, converted the same way. FORGE normalises the result
+   into `docs/forge/reports/test-results.json` mapping AC id → outcome, unchanged.
 3. **Failure output must be diagnosable from text alone**: assertion diffs, not screenshots; stack
    traces with source; the failing input printed for property-based tests (seed included so it
    reproduces).
 4. **Deterministic**: seeded randomness, injected clock, no reliance on wall time, timezone pinned in
    the test env, network denied by default in unit tests.
 5. **Selectable**: run by file, by name pattern, and by AC id, so an agent can iterate on one failure
-   without a 10-minute cycle.
+   without a 10-minute cycle. A structured layer's own `scope`/`filter` templates (`18` §18.3) are how
+   a project opts into file- and name-scoped runs; a layer with neither runs its whole suite every
+   time, which the consumers that would otherwise scope to one file (F-TEST-6 above, F-TEST-5's
+   binding, F-TEST-10's hunk mutation) each handle as their own stated, bounded, typed degradation,
+   never an unbounded fallback.
 6. **Fast feedback tier**: a `test:affected` command using the build system's dependency graph, so
    the inner loop stays under ~60 s.
 
@@ -295,12 +313,15 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   in that run and in every later one until the anchor and the tree agree again. It does not prevent
   the rewrite or its landing: a lane is integrated onto the integration branch between ticks whatever
   a gate says, so the gate that sees a rewrite sees it after it has landed there; an agent with a
-  shell can move a ref; code a case runs can change a file and restore it between the two comparisons,
-  which neither sees (the harness uses only the bytes it loaded, so such a change alters nothing the
-  harness itself writes into a tree or compares, but a case's own command can read the file while it
-  is changed, and code a case runs can do anything the user can in any case); and a
-  project that configures its integration branch to be the trunk itself gets no protection, because
-  lanes then land on the anchor.
+  shell can move a ref; and a project that configures its integration branch to be the trunk itself
+  gets no protection, because lanes then land on the anchor. A candidate case's own command cannot
+  write or restore anything under `.forge/parity/` while it runs (above, a read-only isolation
+  mechanism still permitting a read), which closes the one self-reverting-tamper gap this boundary
+  used to carry for the candidate side; it can still change
+  and restore any OTHER file in the tree between the two comparisons, which neither comparison sees
+  (the harness uses only the bytes it loaded, so such a change alters nothing the harness itself
+  writes into a tree or compares, but the case's own command can read that other file while it is
+  changed, and can do anything else the user can outside `.forge/parity/`).
   It cannot tell a person's deliberate change from an agent's: a reviewed change to `.forge/parity/`
   is trusted once it is on the anchor, and until then reads `oracle-changed`. The gates a run
   evaluates are read from the main project when the run starts, so a lane's edit of a gate or check
@@ -319,13 +340,28 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   `expect: empty`.
 - **Normalisation** is declarative and bounded: no code from a declaration runs. Before any declared
   rule runs, the harness rewrites each observed tree's root path, both as given and as its real path, to
-  a fixed token, so where a tree happens to live is not a behaviour difference. The rules are
+  a fixed token, so where a tree happens to live is not a behaviour difference. **This root-path
+  rewrite must not be combinable with a declared `replace` rule in a way that can mask a real
+  regression** (post-v1.0, `specs/22` M17): a root-path token substitution that does not preserve
+  length parity between the reference and the candidate shifts a later, length-anchored `replace`
+  rule's own cut point by a different offset on each side, which can turn a genuine PASS-vs-FAIL
+  difference into byte-identical normalised text on both sides, silently erasing it. The exact
+  mechanism that closes this — a length-preserving token, a change to the order or composition of the
+  root rewrite against a `replace` rule, or provenance tracking through the later rule so a cut point
+  is reported in pre-rewrite coordinates — is this milestone's own BUILD decision, not fixed here: any
+  of the three satisfies the requirement, and the build is proven against a real repro of the masking
+  behaviour (and a new adversarial round beyond it), not merely asserted safe. The rules are
   `strip-ansi`, `line-endings`, `trim-trailing-whitespace`, `sort-lines`, `json-canonical` (parse, sort
   keys, re-serialise; a non-JSON observation is an error, not a pass), `ignore-json-pointers` and
   `replace` (a regular-expression source with a literal replacement, scoped to a stream or an output
   file, linted at load for catastrophic-backtracking shapes — conservative, not a proof of linear time —
-  and run under a time limit, exceeding which makes the case `error`). The rules run in the order a
-  declaration lists them: `line-endings` rewrites CRLF and a lone CR as LF; `strip-ansi` removes CSI
+  and run, together with every other rule a declaration lists for one case, under a single stated
+  wall-clock budget (post-v1.0, `specs/22` M17; default 5000 ms, bounding the whole ordered
+  application for that case, not merely one `replace` rule's own match), exceeding which makes the
+  case `error`, a typed refusal, never a hang — the lint at load is advisory defence in depth against
+  a known catastrophic shape, never a substitute for this runtime bound, which also catches a
+  pathological shape the lint's own heuristic misses or a merely large observation). The rules run in the
+  order a declaration lists them: `line-endings` rewrites CRLF and a lone CR as LF; `strip-ansi` removes CSI
   escape sequences (`ESC [`, parameter and intermediate bytes, then a final byte);
   `trim-trailing-whitespace` removes the spaces and tabs at the end of each line; `sort-lines`
   orders lines by UTF-16 code unit; and `replace` replaces every match. A rule that would erase a
@@ -402,7 +438,17 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
 - **Where each side is observed.** The reference in a scratch worktree at the declared ref, placed
   under the `.forge/state/` of the tree a capture runs in (gitignored, `18` §18.2) and always removed;
   the candidate in place, with its head sha, a dirty flag and a digest of its working-tree delta
-  recorded. The scratch tree holds the ref's tracked files and nothing installed or built. Because it
+  recorded. **Observing the candidate isolates `.forge/parity/` from the candidate's own case
+  commands** (post-v1.0, `specs/22` M17): the directory is either absent from the tree the case's own
+  `run` sees, or mounted read-only for it, closing the self-reverting-tamper gap the honest boundary
+  below used to disclose rather than close — a case that reads a capture's own stored observation
+  while it runs, edits it, and restores it before the trust anchor's second comparison, which the
+  anchor cannot see either way (its two comparisons bracket the run, never watch it continuously).
+  Which of the two mechanisms is used is this milestone's own BUILD decision; either makes a case's own
+  `run` unable to write or restore anything under `.forge/parity/` for the duration of its run (a
+  read-only mechanism still permits a read, which the honest boundary below states), which the
+  anchor's own boundary sentence below is corrected to state. The scratch tree holds the
+  ref's tracked files and nothing installed or built. Because it
   sits beneath the same project directory as the candidate, a runtime that finds dependencies by
   walking up the directory tree (Node's `node_modules`) reaches the same installed copy from both
   sides, so a change of installed dependency is not seen; for any other runtime, and for anything that
@@ -526,10 +572,13 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   on the **declared cases** after the **declared normalisation** — never that behaviour is preserved.
   Everything undeclared is unobserved, and the evidence says so. Over-normalising can hide a real
   difference, which is why the rules sit in a digest-bound, human-reviewed declaration and none may
-  erase everything. The candidate is observed in place, so the code under test can read
-  `.forge/parity/`, a capture's stored observation included: a change that reads its own expected
-  output is a code change this check cannot tell from a faithful one, and review is what catches it.
-  Vetting judges a command's text against the engine's closed lists and, for a glob or a symlink,
+  erase everything. The candidate is observed in place, and its own case command can no longer write
+  or restore anything under `.forge/parity/` (above): where the chosen isolation mechanism makes the
+  directory absent from the tree the command sees, it cannot read it either; where the mechanism is
+  read-only instead, the command can still read it, including a capture's stored observation, and a
+  change that reads its own expected output is a code change this check cannot tell from a faithful
+  one — review is what catches that, exactly as it always has. Vetting judges a command's text
+  against the engine's closed lists and, for a glob or a symlink,
   the project's tree as it is when the declaration loads. That judgement covers neither the
   reference's scratch tree, which a ref fills, nor what the program the command names does when it
   runs, nor a program that is on none of the lists, so a `run` or `setup` that names a script does
@@ -594,6 +643,91 @@ test that passed at baseline now fails. It is opt-in, bounded, and report-only.
   hunk), which is why the mode is opt-in and bounded.
 
 ---
+
+### F-TEST-11 · Test adoption and the translator proof (post-v1.0, `specs/22` M17)
+
+A project's test configuration (`18` §18.3's `execution.testCommands.<layer>`) is EITHER the legacy
+bare-string form — unchanged meaning, Vitest JSON or pytest JUnit XML by `detectEcosystem`, F-TEST-1
+point 4 — OR the structured form F-TEST-7 point 2 names. Nothing silently mixes the two for one layer.
+
+**Detection.** `forge test adopt` inspects the project for a known runner, across languages and in a
+monorepo (one proposal per package or layer): `package.json`'s own `scripts` and `devDependencies`;
+`pyproject.toml`, `setup.cfg` or `tox.ini`; `go.mod`; `Cargo.toml`; `pom.xml` or `build.gradle`;
+`*.csproj`; `Gemfile`; `composer.json`; `Makefile`; and the project's own known CI configuration paths.
+When it recognises a runner with confidence, it proposes a structured entry preferring that runner's
+richest machine-readable output (a built-in `format`, F-TEST-7 point 2) — written to the STAGED
+proposal record below, never straight to the live config; `--write` is the later, separate promotion
+act, below. Detection only ever proposes: F-TEST-1's own explicit-config-wins rule (Decision 4 of
+`process/plans/PLAN-M17.md`) holds here too.
+
+**The agent, when detection cannot settle it.** An unfamiliar framework, an in-house runner with its
+own output shape, a polyglot repository detection reads only partly, or a project with no test setup
+at all — anything detection does not confidently recognise — is handed to an AI-driven workflow
+instead of guessing: **`adopt-tests`** (P7 builds it). The workflow investigates how the project's
+tests actually run (its manifests, CI configuration, Makefiles, scripts, docs, and, for an in-house
+runner, the runner's own source), runs them — including with a deliberately failing probe test added,
+so it has seen what failure looks like, not only success — and produces either a mapping to a
+built-in format or a **translator**: a script, committed to the project, that prints `09` §9.5's
+`forge-test-report` on stdout from the runner's real raw output. A project with no test setup at all
+gets a *proposal* for a conventional runner for its stack, as a reviewable change, never a silently
+added dependency. `forge test adopt --agent` requests this path directly.
+
+**The translator proof.** This is the one path by which ANY format that is not one of F-TEST-7 point
+2's built-ins — whether an agent wrote it or a person did — is ever trusted by a gate, run against a
+real execution of the project's tests (P6 builds the harness):
+
+1. **Schema validity** — the translator's stdout parses as `09` §9.5's `forge-test-report` v1 shape.
+2. **Count reconciliation** — the reported outcomes agree with the runner's own exit code (non-zero
+   implies at least one test with `09` §9.5's `status: 'fail'`, whatever its `kind` — `assertion`,
+   `load`, `timeout` or `crash`, all of which are `fail`, never a coordinate `status` value of their
+   own; zero implies none) and, where the runner printed one, its own summary line's totals.
+3. **An injected-failure probe** — a deliberately failing test, written in the runner's own idiom and
+   supplied by whoever proposed the configuration, is added in a scratch lane; the translator must
+   report exactly that test as `fail`, by its exact name (and file, where the format claims file
+   attribution); the probe is then removed.
+4. **Determinism** — two runs of the identical translator over the identical raw output yield the
+   identical canonical report, ignoring `durationMs`.
+5. **The zero-tests guard still holds.**
+
+A failing proof is a typed refusal naming the check that failed, never a partial or a best-effort
+pass. A passing proof's result is itself evidence: pinned to the translator's own content hash and
+the detected runner's version, it is re-run by `forge doctor` whenever either changes, so a translator
+or a runner upgrade does not silently keep trusting a proof taken against an older pair.
+
+**The staged proposal, and why writing and approving cannot be the same act.** Applying a proposal to
+the live config and approving `G-TestAdopt` cannot be ordered as "write, then the gate checks what was
+written": the gate's own deterministic check has to find something to evaluate before a human approves
+it, and nothing may reach the live `execution.testCommands.<layer>` entry before that approval — each
+side needs the other to have gone first. What breaks the cycle is a THIRD state between "investigated"
+and "live": every `forge test adopt` investigation — a confident detection, an `--agent` run, or a
+human-authored translator or runner choice — writes or overwrites one STAGED proposal record per
+layer, `.forge/test-adopt/<layer>.proposal.yaml`, committed to the project (never `.forge/config.yaml`
+itself). It carries the layer; the exact proposed `execution.testCommands.<layer>` entry in `18`
+§18.3's structured shape; which path produced it (built-in detection, `--agent`, or a human-authored
+translator/runner choice); and, where a translator proof ran, its full result — each of the proof's
+five checks' own outcome, the overall verdict, the translator's own content hash, the detected
+runner's version, and a timestamp. `G-TestAdopt`'s one deterministic check (`10` defines it) reads
+THIS record for the layer under review, never the live config entry, which is what makes the check
+evaluable before any write has happened. `--write` is therefore a PROMOTION, not the proposal step:
+run against a layer whose current staged record has not been approved at `G-TestAdopt`, it is a typed
+refusal naming the gate, never a silent no-op and never a fallback that writes the live entry anyway;
+run after approval, it copies the staged record's exact `testCommands` entry into the live
+`execution.testCommands.<layer>` and nothing else. (DECISION, `SPEC-QUESTIONS.md` Q313: no existing
+FORGE artifact already shaped "proposed, pending a gate's approval, not yet live" — the registry's
+typed, evidence-resolved artifacts, `18` §18.7, are all records of something that already happened, not
+something awaiting a verdict. The precedent used instead is `.forge/parity/`'s own shape (`13`
+F-TEST-9's declarations and captures, which `18` §18.2 lists as committed, on-disk content with no
+entry in `18` §18.7's own registry table): a committed, non-registry file under `.forge/<domain>/`
+that a gate's deterministic check reads directly off disk.)
+
+An agent-proposed configuration — a translator, a runner choice proposed for a project with no test
+setup, or anything else `adopt-tests` produces — reaches its staged proposal record the identical way a
+confident detection's does, and is copied into `.forge/config.yaml` ONLY after it passes the translator
+proof AND a human approves it at the **`G-TestAdopt`** gate (`10` defines its one check, which reads
+that same staged record); a human-authored translator or a human-chosen runner for a no-tests project
+passes through the identical proof, record and gate, since F-TEST-9's own "a reference recorded from
+the code under test agrees with itself" danger applies equally to a translator nobody but its own
+author reviewed.
 
 ## 13.2 The autonomous debugging framework (`forge debug`)
 

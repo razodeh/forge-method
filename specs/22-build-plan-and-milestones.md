@@ -527,7 +527,7 @@ fail the gate.
 
 ---
 
-## M17 — Falsification: prove it somewhere FORGE did not build
+## M17 — Harden, then falsify: prove it somewhere FORGE did not build
 
 Post-v1.0, after M15 (which emits the metrics) and preferably after M16. Every belief about FORGE's
 value is currently self-reported by the system that built itself — a closed loop, and the single
@@ -536,18 +536,98 @@ measurement, no baseline, and no stated claim that could come back negative. Thi
 make one claim falsifiable and then genuinely test it, accepting a negative result as the real
 outcome rather than a setback to be re-run until favourable.
 
-**Build:** a pre-registered hypothesis with a success criterion and a measurement window, committed
-*before* the trial; one real external project — not this repository, not a throwaway — run through
-FORGE with M15's metrics collected against a recorded baseline; the longitudinal check that tests the
-Knowledge Body's central claim directly (are week-1 decisions still read and respected in week-12
-work, measured by KB-reads-before-decision and by contradiction rate, not by assertion); a published
-result in the `GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` tradition **whether or not it favours FORGE**; and
-whatever adoption-cost reduction the trial proves necessary, which is expected to be substantial.
+**Two phases, in a fixed order, with a hard precondition between them.** On 2026-10-11 the owner
+added a precondition: every disclosed defect is fixed before the trial starts, regardless of whether
+the trial project would ever actually hit it. This is also what the trial's own measurement integrity
+requires, independent of the owner's instruction: the whole point of Phase B is a trial of a FORGE
+that does not change during the measurement window, so **hardening cannot happen concurrently with,
+or after, the trial starts** — a FORGE that changes mid-trial confounds the very before/after
+comparison the milestone exists to make.
 
-**Do not build:** a second trial to replace a disappointing first one; any metric chosen after seeing
-the data; marketing claims not carried by the published result.
+- **Phase A — hardening.** Closes the milestone's own defect register (`process/plans/PLAN-M17.md`'s
+  table): runner-agnostic test support as a contract rather than a fixed list of known runners (a
+  canonical test-result shape every format is converted into, deterministic detection for recognised
+  runners, and an AI-driven adoption path — investigate, run, study the real output, map or write a
+  translator — for anything FORGE does not recognise, never trusted on an agent's word but proven by a
+  deterministic translator proof first, and never applied to a gate without a human approval), real
+  retries, trunk as configuration, worktrees outside the project tree, honest adapter event/usage
+  accounting, and every other item the table names. Phase A ends with a real, owner-authorized live
+  run and a git tag, **`m17-hardened`**: no Phase B work starts before that tag exists, and Phase B
+  measures that exact tag and nothing newer — a defect the trial later finds is recorded and fixed
+  only after the measurement window closes.
+- **Phase B — the trial.** `specs/22`'s original M17 as M15 and M16 left it, outlined below and
+  finalized once Phase A's tag exists: a pre-registered hypothesis, one real external project, M15's
+  metrics against a recorded baseline, a published result whether or not it favours FORGE.
 
-**Exit tests**
+**The correction about M16.** This milestone's own exit tests (below) are not the first to list
+`pnpm test` — M16's exit tests already did, and that was never honoured. M16 was verified piece by
+piece with the scoped test runner (`node scripts/run-tests.mjs run`) alone, without `--coverage`, and
+`pnpm test` — coverage, the coverage ratchet and the boundary lint together — was never once run
+against the whole repository before M16's own log entry declared the milestone complete. It has been
+failing the entire time: `packages/cli/src/bin.ts` reports 0% line coverage against the 85% per-file
+floor `vitest.config.ts` sets (`bin.ts` runs only as a spawned subprocess in every CLI test, and v8
+coverage cannot see into a spawned child process), and every recent CI run on this repository is red
+for exactly that reason. M16 is therefore **not complete by its own stated exit criteria.** `specs/22`
+M17 P2 fixes this first; from P2 on, every M17 piece's own verification runs `pnpm test`, not only the
+scoped runner (Decision 8 of `PLAN-M17.md` adds that CI itself moves to a `next` branch for the
+duration, since the repository is public and a push to `main` triggers a release).
+
+**Build (Phase A — hardening).** The canonical `forge-test-report` v1 contract (`09` §9.5, `18`
+§18.3, `13` F-TEST-1/6/7/9/10/11) with built-in parsers and project-authored translators; deterministic
+runner detection plus the `adopt-tests` agent workflow and its translator proof for anything FORGE
+cannot recognise; the `G-TestAdopt` human-approval gate (`10`) an agent-produced configuration must
+pass before any gate trusts it; `pnpm test` made green and CI driven from a `next` branch (P2); real
+retries, realistic agent-step turn limits, and a fresh run after partial integration that does not
+collide with its predecessor (P10); trunk as configuration and an explicit, documented way to land a
+finished run on it (P9); lane and integration worktrees moved outside the project tree, under the
+user's cache directory (P8); the adapter reporting several events per raw result message, real
+`structured_output`, and honest cache-token accounting (P11, `07` §7.2/§7.3); engine messages and
+telemetry that reach the right place, and CLI clarity fixes (P12, P13); parity oracle hardening — the
+root-token/`replace` interaction, self-reverting-tamper isolation, capture/check symmetry and a bounded
+normalisation budget (P14, `13` F-TEST-9); in-lane commits honouring the write claim (P15); Windows
+support for parity, binding and test adoption (P16); `forge adopt` and `forge spec re-derive` wired end
+to end (P17); `forge migrate run` built, and `migrate`'s own parity gate made reachable (P18); the
+pin-test gaps this milestone's own P1 leaves open (P19); docs for all of the above (P20); and a real,
+owner-authorized live run exercising every path above across fresh fixture projects, then the
+`m17-hardened` tag (P21).
+
+**Do not build (Phase A):** a second hardening pass once the tag exists; fixing a defect the trial
+later finds before the trial's own measurement window closes (Decision 10 of `PLAN-M17.md`);
+concealment work of any kind — hiding the trial app from screen sharing, recording or proctoring —
+which is Phase B's own non-goal (Decision 11), named here so Phase A builds nothing that pretends
+otherwise.
+
+**Phase A exit tests**
+```
+pnpm test                                        # coverage, ratchet, boundaries — must be green
+node scripts/run-tests.mjs run -t "M17"
+pnpm typecheck && pnpm lint && pnpm emit-schemas && pnpm schema-drift
+forge test adopt --json                          # each recognised-runner fixture: proposes the expected config
+forge test run --json                            # node --test, custom-runner and no-config fixtures: real outcomes
+forge test binding --story <id> --json           # same, under a non-Vitest runner
+forge refactor <target> --goal <text>            # master-trunk fixture: reaches commit, lands on trunk
+CI on `next`: every leg green (Linux, macOS, Windows)
+```
+
+Every M17 test's `describe` name carries `(specs/22 M17 P<n>)`, which is what `-t "M17"` selects on,
+exactly as the M16 convention above works: that filter exits 0 when it selects nothing, so a green
+`-t "M17"` run is not by itself evidence that anything ran, and the exit gate also requires that every
+piece that adds tests has at least one test carrying its own marker.
+
+**Build (Phase B — the trial; outlined only, finalized once the `m17-hardened` tag exists):** a
+pre-registered hypothesis with a success criterion and a measurement window, committed *before* the
+trial; one real external project — not this repository, not a throwaway — run through FORGE with
+M15's metrics collected against a recorded baseline; the longitudinal check that tests the Knowledge
+Body's central claim directly (are week-1 decisions still read and respected in week-12 work, measured
+by KB-reads-before-decision and by contradiction rate, not by assertion); a published result in the
+`GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md` tradition **whether or not it favours FORGE**; and whatever
+adoption-cost reduction the trial proves necessary, which is expected to be substantial.
+
+**Do not build (Phase B):** a second trial to replace a disappointing first one; any metric chosen
+after seeing the data; marketing claims not carried by the published result; concealment work of any
+kind — hiding the trial app from screen sharing, recording or proctoring (Decision 11).
+
+**Exit tests (Phase B)**
 ```
 forge report --json --since <trial start>   # against the external project, compared to the committed baseline
 ```

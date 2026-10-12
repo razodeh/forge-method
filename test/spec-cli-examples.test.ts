@@ -1336,10 +1336,13 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it("M16 specs/13 F-TEST-9: the comparison does not prevent the rewrite or its landing — lanes integrate between ticks whatever a gate says, an agent with a shell can move a ref, code a case runs can change a file and restore it between the two comparisons, which neither sees (the harness uses only the bytes it loaded, so such a change alters nothing the harness itself writes into a tree or compares, but a case's own command can read the file while it is changed, and code a case runs can do anything the user can in any case), and an integration branch that is the trunk itself gets no protection", () => {
+  it('M16 specs/13 F-TEST-9: the comparison does not prevent the rewrite or its landing — lanes integrate between ticks whatever a gate says, an agent with a shell can move a ref, and an integration branch that is the trunk itself gets no protection (reworded M17 P1: the self-reverting-tamper clause moved to its own, now-closed sentence)', () => {
     const section = parity();
     expectPinned(section, [
-      "It does not prevent the rewrite or its landing: a lane is integrated onto the integration branch between ticks whatever a gate says, so the gate that sees a rewrite sees it after it has landed there; an agent with a shell can move a ref; code a case runs can change a file and restore it between the two comparisons, which neither sees (the harness uses only the bytes it loaded, so such a change alters nothing the harness itself writes into a tree or compares, but a case's own command can read the file while it is changed, and code a case runs can do anything the user can in any case); and a project that configures its integration branch to be the trunk itself gets no protection, because lanes then land on the anchor.",
+      'It does not prevent the rewrite or its landing: a lane is integrated onto the integration branch between ticks whatever a gate says, so the gate that sees a rewrite sees it after it has landed there; an agent with a shell can move a ref; and a project that configures its integration branch to be the trunk itself gets no protection, because lanes then land on the anchor.',
+    ]);
+    expectAbsent(section, [
+      "code a case runs can change a file and restore it between the two comparisons, which neither sees (the harness uses only the bytes it loaded, so such a change alters nothing the harness itself writes into a tree or compares, but a case's own command can read the file while it is changed, and code a case runs can do anything the user can in any case); and a",
     ]);
   });
 
@@ -1414,10 +1417,10 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it('M16 specs/13 F-TEST-9: the rule list is closed, and `replace` runs under a time limit whose breach makes the case `error`', () => {
+  it('M16 specs/13 F-TEST-9: the rule list is closed, and `replace` runs under a wall-clock budget whose breach makes the case `error` (reworded M17 P1: the budget now bounds the whole case, not only `replace`)', () => {
     const section = parity();
     expectPinned(section, [
-      'The rules are `strip-ansi`, `line-endings`, `trim-trailing-whitespace`, `sort-lines`, `json-canonical` (parse, sort keys, re-serialise; a non-JSON observation is an error, not a pass), `ignore-json-pointers` and `replace` (a regular-expression source with a literal replacement, scoped to a stream or an output file, linted at load for catastrophic-backtracking shapes — conservative, not a proof of linear time — and run under a time limit, exceeding which makes the case `error`).',
+      "The rules are `strip-ansi`, `line-endings`, `trim-trailing-whitespace`, `sort-lines`, `json-canonical` (parse, sort keys, re-serialise; a non-JSON observation is an error, not a pass), `ignore-json-pointers` and `replace` (a regular-expression source with a literal replacement, scoped to a stream or an output file, linted at load for catastrophic-backtracking shapes — conservative, not a proof of linear time — and run, together with every other rule a declaration lists for one case, under a single stated wall-clock budget (post-v1.0, `specs/22` M17; default 5000 ms, bounding the whole ordered application for that case, not merely one `replace` rule's own match), exceeding which makes the case `error`, a typed refusal, never a hang — the lint at load is advisory defence in depth against a known catastrophic shape, never a substitute for this runtime bound, which also catches a pathological shape the lint's own heuristic misses or a merely large observation).",
     ]);
   });
 
@@ -2028,10 +2031,10 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it("M16 specs/13 F-TEST-9: the candidate is observed in place, so the code under test can read `.forge/parity/`, a capture's stored observation included, and a change that reads its own expected output is a code change this check cannot tell from a faithful one, which review is what catches", () => {
+  it("M16 specs/13 F-TEST-9: the candidate's own case command can no longer write or restore anything under `.forge/parity/`; a read-only mechanism still permits the review-caught read-cheat (reworded M17 P1: closes the self-reverting-tamper gap)", () => {
     const section = parity();
     expectPinned(section, [
-      "The candidate is observed in place, so the code under test can read `.forge/parity/`, a capture's stored observation included: a change that reads its own expected output is a code change this check cannot tell from a faithful one, and review is what catches it.",
+      "The candidate is observed in place, and its own case command can no longer write or restore anything under `.forge/parity/` (above): where the chosen isolation mechanism makes the directory absent from the tree the command sees, it cannot read it either; where the mechanism is read-only instead, the command can still read it, including a capture's stored observation, and a change that reads its own expected output is a code change this check cannot tell from a faithful one — review is what catches that, exactly as it always has.",
     ]);
   });
 
@@ -2405,7 +2408,7 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
       'That omission predates M16; the row now lists them.',
     ]);
     expectLines(section, [
-      '| `forge test <sub>` | `plan`, `generate`, `run`, `report`, `flaky`, `coverage`, `binding`, `exempt` |',
+      '| `forge test <sub>` | `plan`, `generate`, `run`, `report`, `flaky`, `coverage`, `binding`, `exempt`, `adopt` (post-v1.0, `specs/22` M17) |',
     ]);
   });
 
@@ -4773,12 +4776,13 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it("M16 F-TEST-9 block [5] (r3g items 1/2): The anchor's boundary.", () => {
+  it("M16 F-TEST-9 block [5] (r3g items 1/2): The anchor's boundary. (reworded M17 P1: the self-reverting-tamper clause is replaced by the candidate-side isolation sentence)", () => {
     const section = parity();
     expectBlock(section, [
       "**The anchor's boundary.**",
       'The comparison makes a rewritten oracle fail the evaluation that sees it, in that run and in every later one until the anchor and the tree agree again.',
-      "It does not prevent the rewrite or its landing: a lane is integrated onto the integration branch between ticks whatever a gate says, so the gate that sees a rewrite sees it after it has landed there; an agent with a shell can move a ref; code a case runs can change a file and restore it between the two comparisons, which neither sees (the harness uses only the bytes it loaded, so such a change alters nothing the harness itself writes into a tree or compares, but a case's own command can read the file while it is changed, and code a case runs can do anything the user can in any case); and a project that configures its integration branch to be the trunk itself gets no protection, because lanes then land on the anchor.",
+      'It does not prevent the rewrite or its landing: a lane is integrated onto the integration branch between ticks whatever a gate says, so the gate that sees a rewrite sees it after it has landed there; an agent with a shell can move a ref; and a project that configures its integration branch to be the trunk itself gets no protection, because lanes then land on the anchor.',
+      "A candidate case's own command cannot write or restore anything under `.forge/parity/` while it runs (above, a read-only isolation mechanism still permitting a read), which closes the one self-reverting-tamper gap this boundary used to carry for the candidate side; it can still change and restore any OTHER file in the tree between the two comparisons, which neither comparison sees (the harness uses only the bytes it loaded, so such a change alters nothing the harness itself writes into a tree or compares, but the case's own command can read that other file while it is changed, and can do anything else the user can outside `.forge/parity/`).",
       "It cannot tell a person's deliberate change from an agent's: a reviewed change to `.forge/parity/` is trusted once it is on the anchor, and until then reads `oracle-changed`.",
       "The gates a run evaluates are read from the main project when the run starts, so a lane's edit of a gate or check file does not change that run.",
       'By hand, `forge gate check G-Parity` runs the same command, so it compares with trunk too.',
@@ -4804,13 +4808,16 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it('M16 F-TEST-9 block [8] (r3g items 1/2): Normalisation', () => {
+  it('M16 F-TEST-9 block [8] (r3g items 1/2): Normalisation (reworded M17 P1: the root-token/replace requirement and the wall-clock budget are inserted)', () => {
     const section = parity();
     expectBlock(section, [
       '**Normalisation**',
       'is declarative and bounded: no code from a declaration runs.',
       "Before any declared rule runs, the harness rewrites each observed tree's root path, both as given and as its real path, to a fixed token, so where a tree happens to live is not a behaviour difference.",
-      'The rules are `strip-ansi`, `line-endings`, `trim-trailing-whitespace`, `sort-lines`, `json-canonical` (parse, sort keys, re-serialise; a non-JSON observation is an error, not a pass), `ignore-json-pointers` and `replace` (a regular-expression source with a literal replacement, scoped to a stream or an output file, linted at load for catastrophic-backtracking shapes — conservative, not a proof of linear time — and run under a time limit, exceeding which makes the case `error`).',
+      '**This root-path rewrite must not be combinable with a declared `replace` rule in a way that can mask a real regression**',
+      "(post-v1.0, `specs/22` M17): a root-path token substitution that does not preserve length parity between the reference and the candidate shifts a later, length-anchored `replace` rule's own cut point by a different offset on each side, which can turn a genuine PASS-vs-FAIL difference into byte-identical normalised text on both sides, silently erasing it.",
+      "The exact mechanism that closes this — a length-preserving token, a change to the order or composition of the root rewrite against a `replace` rule, or provenance tracking through the later rule so a cut point is reported in pre-rewrite coordinates — is this milestone's own BUILD decision, not fixed here: any of the three satisfies the requirement, and the build is proven against a real repro of the masking behaviour (and a new adversarial round beyond it), not merely asserted safe.",
+      "The rules are `strip-ansi`, `line-endings`, `trim-trailing-whitespace`, `sort-lines`, `json-canonical` (parse, sort keys, re-serialise; a non-JSON observation is an error, not a pass), `ignore-json-pointers` and `replace` (a regular-expression source with a literal replacement, scoped to a stream or an output file, linted at load for catastrophic-backtracking shapes — conservative, not a proof of linear time — and run, together with every other rule a declaration lists for one case, under a single stated wall-clock budget (post-v1.0, `specs/22` M17; default 5000 ms, bounding the whole ordered application for that case, not merely one `replace` rule's own match), exceeding which makes the case `error`, a typed refusal, never a hang — the lint at load is advisory defence in depth against a known catastrophic shape, never a substitute for this runtime bound, which also catches a pathological shape the lint's own heuristic misses or a merely large observation).",
       'The rules run in the order a declaration lists them: `line-endings` rewrites CRLF and a lone CR as LF; `strip-ansi` removes CSI escape sequences (`ESC [`, parameter and intermediate bytes, then a final byte); `trim-trailing-whitespace` removes the spaces and tabs at the end of each line; `sort-lines` orders lines by UTF-16 code unit; and `replace` replaces every match.',
       'A rule that would erase a non-empty observation entirely is refused, and so is a `replace` whose match is the entire content of a non-empty stream: a surface that does not want a stream says so with `streams` (below) rather than erasing it.',
       '**Equality is decided on the full normalised content**, never on a truncated display: a mismatch report shows the first differing line with context under a byte cap, labelled as display only, and printed only without `--json`: an envelope and a `ParityEvidence` record carry no observed text, and a `reason` says where a difference is (the surface, the case and the stream), never what the text was.',
@@ -4865,11 +4872,14 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it('M16 F-TEST-9 block [12] (r3g items 1/2): Where each side is observed.', () => {
+  it('M16 F-TEST-9 block [12] (r3g items 1/2): Where each side is observed. (reworded M17 P1: the candidate-side isolation sentence is inserted)', () => {
     const section = parity();
     expectBlock(section, [
       '**Where each side is observed.**',
       'The reference in a scratch worktree at the declared ref, placed under the `.forge/state/` of the tree a capture runs in (gitignored, `18` §18.2) and always removed; the candidate in place, with its head sha, a dirty flag and a digest of its working-tree delta recorded.',
+      "**Observing the candidate isolates `.forge/parity/` from the candidate's own case commands**",
+      "(post-v1.0, `specs/22` M17): the directory is either absent from the tree the case's own `run` sees, or mounted read-only for it, closing the self-reverting-tamper gap the honest boundary below used to disclose rather than close — a case that reads a capture's own stored observation while it runs, edits it, and restores it before the trust anchor's second comparison, which the anchor cannot see either way (its two comparisons bracket the run, never watch it continuously).",
+      "Which of the two mechanisms is used is this milestone's own BUILD decision; either makes a case's own `run` unable to write or restore anything under `.forge/parity/` for the duration of its run (a read-only mechanism still permits a read, which the honest boundary below states), which the anchor's own boundary sentence below is corrected to state.",
       "The scratch tree holds the ref's tracked files and nothing installed or built.",
       "Because it sits beneath the same project directory as the candidate, a runtime that finds dependencies by walking up the directory tree (Node's `node_modules`) reaches the same installed copy from both sides, so a change of installed dependency is not seen; for any other runtime, and for anything that must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an agent that needs one, so `setup` is meant to build from what is tracked, which vetting narrows and does not enforce: see the honest boundary), whose bytes are in the declaration digest and which run only in the scratch tree, before the reference is observed (so only at capture: a check observes the candidate alone and runs no `setup`).",
       'With none, a surface that needs more than the tracked files cannot be observed on the reference side, and the declaration must say how to get it.',
@@ -5035,7 +5045,7 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it('M16 F-TEST-9 block [30] (r3g items 1/2): The honest boundary.', () => {
+  it('M16 F-TEST-9 block [30] (r3g items 1/2): The honest boundary. (reworded M17 P1: the candidate-read sentence is replaced by the closed-tamper/read-only sentence)', () => {
     const section = parity();
     expectBlock(section, [
       '**The honest boundary.**',
@@ -5045,7 +5055,7 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
       '— never that behaviour is preserved.',
       'Everything undeclared is unobserved, and the evidence says so.',
       'Over-normalising can hide a real difference, which is why the rules sit in a digest-bound, human-reviewed declaration and none may erase everything.',
-      "The candidate is observed in place, so the code under test can read `.forge/parity/`, a capture's stored observation included: a change that reads its own expected output is a code change this check cannot tell from a faithful one, and review is what catches it.",
+      "The candidate is observed in place, and its own case command can no longer write or restore anything under `.forge/parity/` (above): where the chosen isolation mechanism makes the directory absent from the tree the command sees, it cannot read it either; where the mechanism is read-only instead, the command can still read it, including a capture's stored observation, and a change that reads its own expected output is a code change this check cannot tell from a faithful one — review is what catches that, exactly as it always has.",
       "Vetting judges a command's text against the engine's closed lists and, for a glob or a symlink, the project's tree as it is when the declaration loads.",
       "That judgement covers neither the reference's scratch tree, which a ref fills, nor what the program the command names does when it runs, nor a program that is on none of the lists, so a `run` or `setup` that names a script does whatever that script does, a fetch included, and a `setup` that runs a program the lists do not know can install dependencies: review of the declaration is what covers both.",
       "Timing, memory and concurrency ordering are not compared, a change of installed dependency is not seen where both sides run against one installed copy, the candidate's own build is not checked (FORGE builds nothing for it, so a stale build can read as `match`), and a reference that is not held at a ref in the project's own history is outside this definition.",
@@ -5194,7 +5204,7 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it('M16 specs/10 rule 8 block (r3g items 1/2): (Post-v1.0, specs/22 M16.) A gate may be workflow-scoped: a gate file wi...', () => {
+  it('M16 specs/10 rule 8 block (r3g items 1/2): (Post-v1.0, specs/22 M16.) A gate may be workflow-scoped: a gate file wi... (reworded M17 P1: G-TestAdopt is appended as the second workflow-scoped gate)', () => {
     const section = spec10Gates();
     expectBlock(section, [
       "(Post-v1.0, `specs/22` M16.) A gate may be **workflow-scoped**: a gate file with no lifecycle `phase`, scheduled only by a workflow's `kind: gate` step (§10.1, Step kinds).",
@@ -5205,6 +5215,12 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
       '`G-Adopt` (`17` §17.2) is a different kind of exception, a gate outside the lifecycle that is evaluated in-process with no gate file and that no `kind: gate` step reaches; `G-Parity` (`13` F-TEST-9) is the first workflow-scoped gate to have a file.',
       'Its one check, `behavior:parity`, is `forge parity check --json --no-record --trusted refs/heads/main`: the trust anchor is an explicit argument, trunk, and `--no-record` writes no `ParityEvidence`, because a gate check runs in the integration worktree and a file it writes there leaves the worktree dirty, so that the next run refuses to start (`VCS-INTEGRATION-DIRTY`).',
       'Run by hand, `forge gate check G-Parity` runs the same command, so it compares with trunk too.',
+      '**`G-TestAdopt`**',
+      "(post-v1.0, `specs/22` M17, `13` F-TEST-11) is the second workflow-scoped gate to have a file, scheduled by the `adopt-tests` workflow's own `kind: gate` step (P7 builds the workflow; this gate's own file).",
+      "Its one deterministic check, `checkId: test-adoption:approved`, reads `.forge/test-adopt/<layer>.proposal.yaml` (`13` F-TEST-11's staged proposal record, never the live `.forge/config.yaml` `execution.testCommands` entry: the live entry does not exist yet when this check first needs to pass, and this check existing to gate the live entry's own creation is exactly why it cannot be the thing that reads it) for the layer under review.",
+      "It passes when that staged record exists, was produced by `forge test adopt` (human-invoked directly, or via the `adopt-tests` agent workflow), and carries a RECORDED translator-proof result (`13` F-TEST-11) that (a) passed and (b) is no older than the translator's own current content hash and the detected runner's own current version — a proof taken against an earlier translator or an earlier runner version is stale and does not satisfy the check, which fails or is simply never reached otherwise.",
+      "`--write` (the promotion that copies the staged record into the live config, `13` F-TEST-11) runs only after this check has passed AND the approval itself has happened (rule 6's own `forge gate approve`), never on the check's pass alone: approving the gate is what certifies the staged record for promotion, and a `--write` attempted before that approval is a typed refusal, not a silent no-op.",
+      "This check is **conditional, not universal**: a layer whose `testCommands` entry is the legacy bare-string form (`18` §18.3) never needs this gate at all, because nothing about it was ever proposed by `forge test adopt` — a workflow that wires `adopt-tests` only ever schedules this gate's `kind: gate` step for a layer the structured form governs.",
     ]);
   });
 
@@ -5914,6 +5930,471 @@ describe('M16 naming rule (specs/22 M16 P1) — an empty `-t` selection exits 0,
     expect(
       violations,
       `every M16 describe title must carry (specs/22 M16 P<n>), n in 1..17:\n${violations.join('\n')}`,
+    ).toEqual([]);
+  });
+});
+
+/**
+ * `M17 P1` (`SPEC-QUESTIONS.md` Q313, `PLAN-M17.md` P1): the normative text this piece wrote —
+ * specs/22's two-phase M17 entry and the M16 exit-tests correction; specs/09 §9.5's
+ * `forge-test-report` v1 contract; specs/13 F-TEST-1/6/7/9/11; specs/18's structured
+ * `testCommands`, coverage `source`/`format`, `vcs.trunk` and the worktree-location move; specs/03's
+ * `forge test adopt`/`forge spec re-derive`/`forge migrate run` rows; specs/10's `G-TestAdopt` gate;
+ * specs/06 §6.4/§6.5/§6.8; specs/07 §7.2/§7.3 — pinned the identical way M16 P1 pinned its own new
+ * text (`expectPinned`/`expectBlock`/`expectLines`/`expectAbsent`, above). Not exhaustive: this is a
+ * single builder pass, not M16 P1's three-round gauntlet, so a number of new sentences (named in this
+ * piece's own report) are not individually pinned here — a gap to close, not a claim this file does
+ * not make.
+ *
+ * @see specs/03 §3.2.1, §3.2.2, §3.2.5
+ * @see specs/06 §6.4, §6.5, §6.8
+ * @see specs/07 §7.2, §7.3
+ * @see specs/09 §9.5
+ * @see specs/10 §10.3
+ * @see specs/13 F-TEST-1, F-TEST-6, F-TEST-7, F-TEST-9, F-TEST-11
+ * @see specs/18 §18.1, §18.2, §18.3
+ * @see specs/22 M17
+ * @see PLAN-M17.md P1
+ * @see SPEC-QUESTIONS.md Q313
+ */
+describe('pinned sentences (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313, PLAN-M17.md P1) — delete an `it` individually once a later piece legitimately rewords its sentence again', () => {
+  const spec22M17 = () => headingSection(readSpec('22-build-plan-and-milestones.md'), '## M17 — ');
+  const spec09 = () => headingSection(readSpec('09-spec-driven-development.md'), '## 9.5 ');
+  const ftest1 = () =>
+    headingSection(readSpec('13-frameworks-testing-and-debugging.md'), '### F-TEST-1 ');
+  const ftest6 = () =>
+    headingSection(readSpec('13-frameworks-testing-and-debugging.md'), '### F-TEST-6 ');
+  const ftest7 = () =>
+    headingSection(readSpec('13-frameworks-testing-and-debugging.md'), '### F-TEST-7 ');
+  const ftest9 = () =>
+    headingSection(readSpec('13-frameworks-testing-and-debugging.md'), '### F-TEST-9 ');
+  const ftest11 = () =>
+    headingSection(readSpec('13-frameworks-testing-and-debugging.md'), '### F-TEST-11 ');
+  const spec18Config = () =>
+    headingSection(readSpec('18-persistence-config-and-schemas.md'), '## 18.3 ');
+  const spec18Layout = () =>
+    headingSection(readSpec('18-persistence-config-and-schemas.md'), '## 18.2 ');
+  const spec18Tiers = () =>
+    headingSection(readSpec('18-persistence-config-and-schemas.md'), '## 18.1 ');
+  const spec03_321 = () => headingSection(readSpec('03-cli-and-installer.md'), '### 3.2.1 ');
+  const spec03_322 = () => headingSection(readSpec('03-cli-and-installer.md'), '### 3.2.2 ');
+  const spec03_325 = () => headingSection(readSpec('03-cli-and-installer.md'), '### 3.2.5 ');
+  const spec10 = () => headingSection(readSpec('10-workflow-engine-and-lifecycle.md'), '## 10.3 ');
+  const spec06_64 = () =>
+    headingSection(readSpec('06-orchestration-and-parallelism.md'), '## 6.4 ');
+  const spec06_65 = () =>
+    headingSection(readSpec('06-orchestration-and-parallelism.md'), '## 6.5 ');
+  const spec06_68 = () =>
+    headingSection(readSpec('06-orchestration-and-parallelism.md'), '## 6.8 ');
+  const spec07_72 = () => headingSection(readSpec('07-platform-adapters.md'), '## 7.2 ');
+  const spec07_73 = () => headingSection(readSpec('07-platform-adapters.md'), '## 7.3 ');
+
+  // --- specs/22 M17: two phases, the frozen tag, the M16 correction --------------------------------
+
+  it('M17 specs/22: two phases, in a fixed order, with a hard precondition between them', () => {
+    expectPinned(spec22M17(), [
+      '**Two phases, in a fixed order, with a hard precondition between them.** On 2026-10-11 the owner added a precondition: every disclosed defect is fixed before the trial starts, regardless of whether the trial project would ever actually hit it.',
+    ]);
+  });
+
+  it('M17 specs/22: hardening cannot happen concurrently with or after the trial starts', () => {
+    expectPinned(spec22M17(), [
+      "This is also what the trial's own measurement integrity requires, independent of the owner's instruction: the whole point of Phase B is a trial of a FORGE that does not change during the measurement window, so **hardening cannot happen concurrently with, or after, the trial starts** — a FORGE that changes mid-trial confounds the very before/after comparison the milestone exists to make.",
+    ]);
+  });
+
+  it('M17 specs/22: Phase A ends with the m17-hardened tag, and Phase B measures only that tag', () => {
+    expectPinned(spec22M17(), [
+      'Phase A ends with a real, owner-authorized live run and a git tag, **`m17-hardened`**: no Phase B work starts before that tag exists, and Phase B measures that exact tag and nothing newer — a defect the trial later finds is recorded and fixed only after the measurement window closes.',
+    ]);
+  });
+
+  it('M17 specs/22: the M16 correction — pnpm test was never run, and bin.ts is 0% covered', () => {
+    expectPinned(spec22M17(), [
+      "This milestone's own exit tests (below) are not the first to list `pnpm test` — M16's exit tests already did, and that was never honoured.",
+      'It has been failing the entire time: `packages/cli/src/bin.ts` reports 0% line coverage against the 85% per-file floor `vitest.config.ts` sets (`bin.ts` runs only as a spawned subprocess in every CLI test, and v8 coverage cannot see into a spawned child process), and every recent CI run on this repository is red for exactly that reason.',
+    ]);
+    expectAbsent(spec22M17(), [
+      'M16 was verified piece by piece with `node scripts/run-tests.mjs run`',
+    ]);
+  });
+
+  it('M17 specs/22: every M17 test carries its own piece marker, exactly as the M16 convention does', () => {
+    expectPinned(spec22M17(), [
+      'Every M17 test\'s `describe` name carries `(specs/22 M17 P<n>)`, which is what `-t "M17"` selects on, exactly as the M16 convention above works: that filter exits 0 when it selects nothing, so a green `-t "M17"` run is not by itself evidence that anything ran, and the exit gate also requires that every piece that adds tests has at least one test carrying its own marker.',
+    ]);
+    expectLines(spec22M17(), ['node scripts/run-tests.mjs run -t "M17"']);
+  });
+
+  it("M17 specs/22: Phase B do-not-build still names concealment as Decision 11's own non-goal", () => {
+    expectPinned(spec22M17(), [
+      '**Do not build (Phase B):** a second trial to replace a disappointing first one; any metric chosen after seeing the data; marketing claims not carried by the published result; concealment work of any kind — hiding the trial app from screen sharing, recording or proctoring (Decision 11).',
+    ]);
+    expectAbsent(spec22M17(), [
+      '**Do not build:** a second trial to replace a disappointing first one',
+    ]);
+  });
+
+  // --- specs/09 §9.5: the forge-test-report v1 contract ---------------------------------------------
+
+  it('M17 specs/09: only name and status are required, every other field degrades per 13 F-TEST-*', () => {
+    expectPinned(spec09(), [
+      "Only `name` and `status` are required on each entry; every other field is optional, and a consumer that needs a field the project's own test command did not supply degrades to a stated, typed outcome rather than guessing (`13` F-TEST-1 point 4, F-TEST-6, F-TEST-7 and F-TEST-10 each state theirs).",
+    ]);
+  });
+
+  it('M17 specs/09: status skip names a test the runner itself skipped, never run and never failed', () => {
+    expectPinned(spec09(), [
+      "`status: 'skip'` names a test the runner itself skipped — not run, and not failed.",
+    ]);
+  });
+
+  it('M17 specs/09: kind only applies on fail, and assertion is the conservative default for hunk credit', () => {
+    expectPinned(spec09(), [
+      "`kind` applies only when `status` is `'fail'` and is omitted for a pass or a skip; `assertion` is the default reading when the source format carries no finer failure signal than pass/fail (TAP, for one), which is the conservative choice `13` F-TEST-10's own hunk-mutation credit logic reads from here rather than guessing itself.",
+    ]);
+  });
+
+  it('M17 specs/09: acId is additive to the existing extractAcId convention, never a replacement', () => {
+    expectPinned(spec09(), [
+      "`acId`, when present, is an already-extracted AC id from a `forge-json`-emitting translator that knows its own project's naming convention better than a generic regex would; when absent, the `extractAcId` regex-over-`name` convention point 2 above describes still applies, unchanged — this field is additive, never a replacement for it.",
+    ]);
+    expectAbsent(spec09(), [
+      'Emit results into a normalised report (`docs/forge/reports/test-results.json`) mapping',
+    ]);
+  });
+
+  // --- specs/13 F-TEST-1/6/7: consumers re-stated in terms of forge-test-report ---------------------
+
+  it('M17 specs/13 F-TEST-1 point 4: the single layer command is the testCommands entry either form', () => {
+    expectPinned(ftest1(), [
+      "**Every layer has a single command** recorded in the KB: `test:unit`, `test:integration`, `test:contract`, `test:e2e`, `test:nfr` — the layer's own `execution.testCommands` entry (`18` §18.3's legacy bare string or post-v1.0 `specs/22` M17's structured form, converted into `09` §9.5's `forge-test-report` either way), never an ad-hoc invocation a gate composes for itself.",
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-6: no filter means the retry is skipped and recorded unclassified', () => {
+    expectPinned(ftest6(), [
+      '"In isolation" means the layer\'s own `filter` capability (`18` §18.3\'s structured `execution.testCommands`, post-v1.0 `specs/22` M17): a layer declared only as a legacy bare string, or declared structured with no `filter` template, cannot run one test in isolation at all, and the retry is skipped — the failure is recorded `unclassified`, never silently read as "not flaky" and never silently read as a confirmed regression either.',
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-7 point 2: forge-test-report is the one shape every consumer reads', () => {
+    expectPinned(ftest7(), [
+      "Whichever it is, FORGE converts it into **`forge-test-report` v1** (`09` §9.5), the one shape every later consumer of a test result — this section's own flake control, a binding check, hunk mutation, AC-coverage — actually reads; nothing downstream reasons about a runner-native format directly, and a project using only the legacy bare-string `testCommands` form keeps today's exact Vitest/pytest behaviour, converted the same way.",
+    ]);
+  });
+
+  it("M17 specs/13 F-TEST-7 point 5: no scope/filter is each consumer's own stated, bounded degradation", () => {
+    expectPinned(ftest7(), [
+      "A structured layer's own `scope`/`filter` templates (`18` §18.3) are how a project opts into file- and name-scoped runs; a layer with neither runs its whole suite every time, which the consumers that would otherwise scope to one file (F-TEST-6 above, F-TEST-5's binding, F-TEST-10's hunk mutation) each handle as their own stated, bounded, typed degradation, never an unbounded fallback.",
+    ]);
+  });
+
+  // --- specs/13 F-TEST-9: the three hardening additions ----------------------------------------------
+
+  it('M17 specs/13 F-TEST-9(a): the root-path token rewrite must not mask a replace-masked regression', () => {
+    expectPinned(ftest9(), [
+      "**This root-path rewrite must not be combinable with a declared `replace` rule in a way that can mask a real regression** (post-v1.0, `specs/22` M17): a root-path token substitution that does not preserve length parity between the reference and the candidate shifts a later, length-anchored `replace` rule's own cut point by a different offset on each side, which can turn a genuine PASS-vs-FAIL difference into byte-identical normalised text on both sides, silently erasing it.",
+      "The exact mechanism that closes this — a length-preserving token, a change to the order or composition of the root rewrite against a `replace` rule, or provenance tracking through the later rule so a cut point is reported in pre-rewrite coordinates — is this milestone's own BUILD decision, not fixed here: any of the three satisfies the requirement, and the build is proven against a real repro of the masking behaviour (and a new adversarial round beyond it), not merely asserted safe.",
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-9(c): normalisation runs under one stated wall-clock budget for the whole case', () => {
+    expectPinned(ftest9(), [
+      "The rules are `strip-ansi`, `line-endings`, `trim-trailing-whitespace`, `sort-lines`, `json-canonical` (parse, sort keys, re-serialise; a non-JSON observation is an error, not a pass), `ignore-json-pointers` and `replace` (a regular-expression source with a literal replacement, scoped to a stream or an output file, linted at load for catastrophic-backtracking shapes — conservative, not a proof of linear time — and run, together with every other rule a declaration lists for one case, under a single stated wall-clock budget (post-v1.0, `specs/22` M17; default 5000 ms, bounding the whole ordered application for that case, not merely one `replace` rule's own match), exceeding which makes the case `error`, a typed refusal, never a hang — the lint at load is advisory defence in depth against a known catastrophic shape, never a substitute for this runtime bound, which also catches a pathological shape the lint's own heuristic misses or a merely large observation).",
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-9(b): observing the candidate isolates .forge/parity/ from its own case commands', () => {
+    expectPinned(ftest9(), [
+      "**Observing the candidate isolates `.forge/parity/` from the candidate's own case commands** (post-v1.0, `specs/22` M17): the directory is either absent from the tree the case's own `run` sees, or mounted read-only for it, closing the self-reverting-tamper gap the honest boundary below used to disclose rather than close — a case that reads a capture's own stored observation while it runs, edits it, and restores it before the trust anchor's second comparison, which the anchor cannot see either way (its two comparisons bracket the run, never watch it continuously).",
+    ]);
+  });
+
+  it("M17 specs/13 F-TEST-9: the anchor's boundary is corrected — .forge/parity/ tamper is closed for the candidate", () => {
+    expectPinned(ftest9(), [
+      "A candidate case's own command cannot write or restore anything under `.forge/parity/` while it runs (above, a read-only isolation mechanism still permitting a read), which closes the one self-reverting-tamper gap this boundary used to carry for the candidate side; it can still change and restore any OTHER file in the tree between the two comparisons, which neither comparison sees (the harness uses only the bytes it loaded, so such a change alters nothing the harness itself writes into a tree or compares, but the case's own command can read that other file while it is changed, and can do anything else the user can outside `.forge/parity/`).",
+    ]);
+    expectAbsent(ftest9(), [
+      'code a case runs can change a file and restore it between the two comparisons',
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-9: the honest boundary is corrected — read-only still permits the review-caught read-cheat', () => {
+    expectPinned(ftest9(), [
+      "The candidate is observed in place, and its own case command can no longer write or restore anything under `.forge/parity/` (above): where the chosen isolation mechanism makes the directory absent from the tree the command sees, it cannot read it either; where the mechanism is read-only instead, the command can still read it, including a capture's stored observation, and a change that reads its own expected output is a code change this check cannot tell from a faithful one — review is what catches that, exactly as it always has.",
+    ]);
+    expectAbsent(ftest9(), ['the candidate is observed in place, so the code under test can read']);
+  });
+
+  // --- specs/13 F-TEST-11: test adoption and the translator proof -----------------------------------
+
+  it('M17 specs/13 F-TEST-11: testCommands is either the legacy or the structured form, never mixed', () => {
+    expectPinned(ftest11(), [
+      "A project's test configuration (`18` §18.3's `execution.testCommands.<layer>`) is EITHER the legacy bare-string form — unchanged meaning, Vitest JSON or pytest JUnit XML by `detectEcosystem`, F-TEST-1 point 4 — OR the structured form F-TEST-7 point 2 names.",
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-11: what detection cannot confidently recognise hands off to adopt-tests', () => {
+    expectPinned(ftest11(), [
+      'An unfamiliar framework, an in-house runner with its own output shape, a polyglot repository detection reads only partly, or a project with no test setup at all — anything detection does not confidently recognise — is handed to an AI-driven workflow instead of guessing: **`adopt-tests`** (P7 builds it).',
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-11: a failing translator proof is a typed refusal naming the failing check', () => {
+    expectPinned(ftest11(), [
+      'A failing proof is a typed refusal naming the check that failed, never a partial or a best-effort pass.',
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-11: a passing proof is evidence pinned to content hash and runner version', () => {
+    expectPinned(ftest11(), [
+      "A passing proof's result is itself evidence: pinned to the translator's own content hash and the detected runner's version, it is re-run by `forge doctor` whenever either changes, so a translator or a runner upgrade does not silently keep trusting a proof taken against an older pair.",
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-11: an agent-proposed config is copied in only after the proof AND G-TestAdopt', () => {
+    expectPinned(ftest11(), [
+      'An agent-proposed configuration — a translator, a runner choice proposed for a project with no test setup, or anything else `adopt-tests` produces — reaches its staged proposal record the identical way a confident detection\'s does, and is copied into `.forge/config.yaml` ONLY after it passes the translator proof AND a human approves it at the **`G-TestAdopt`** gate (`10` defines its one check, which reads that same staged record); a human-authored translator or a human-chosen runner for a no-tests project passes through the identical proof, record and gate, since F-TEST-9\'s own "a reference recorded from the code under test agrees with itself" danger applies equally to a translator nobody but its own author reviewed.',
+    ]);
+  });
+
+  it('M17 specs/13 F-TEST-11: the staged proposal record is what breaks the write/approve circularity', () => {
+    expectPinned(ftest11(), [
+      '**The staged proposal, and why writing and approving cannot be the same act.** Applying a proposal to the live config and approving `G-TestAdopt` cannot be ordered as "write, then the gate checks what was written": the gate\'s own deterministic check has to find something to evaluate before a human approves it, and nothing may reach the live `execution.testCommands.<layer>` entry before that approval — each side needs the other to have gone first.',
+    ]);
+  });
+
+  // --- specs/18: structured testCommands, coverage source/format, vcs.trunk, worktree location -----
+
+  it('M17 specs/18 §18.3: the legacy bare string keeps its exact current meaning', () => {
+    expectPinned(spec18Config(), [
+      '**`execution.testCommands.<layer>` — structured form (post-v1.0, `specs/22` M17).** The bare string shown above (`"pnpm test"`) keeps its EXACT current meaning: a single shell command, its output read as Vitest JSON for a `package.json`-having project or pytest JUnit XML for a Python-marker project, by the pre-existing `detectEcosystem` rule — the LEGACY path, not the only path, and never changed by a project that does not opt into the alternative below; `detectEcosystem` leaves the test-time path entirely once a layer uses it (`13` F-TEST-1).',
+    ]);
+  });
+
+  it('M17 specs/18 §18.3: {output} is FORGE-allocated and deleted before every run — a stale report is never read', () => {
+    expectPinned(spec18Config(), [
+      '`output.source: file` names `{output}`, a path FORGE itself allocates and deletes before every run of that layer: a stale report left over from an earlier run, a crash or an unrelated process is never read, which is a real, load-bearing guarantee, not a convenience — a command whose `run` does not itself write that exact path fails typed rather than silently reading an old result.',
+    ]);
+  });
+
+  it('M17 specs/18 §18.3: a translate that exits non-zero or prints invalid forge-json is a typed tool-error', () => {
+    expectPinned(spec18Config(), [
+      "`format` picks a built-in parser into `09` §9.5's `forge-test-report`; `translate`, when given, is an additional command run under the identical confined-command sandbox and timeout `run` itself runs under, with `{output}` available to it, and it MUST print a schema-valid `forge-test-report` on stdout — a `translate` that exits non-zero, or whose stdout does not parse as that shape, is a typed tool-error, never silently read as zero tests.",
+    ]);
+  });
+
+  it('M17 specs/18 §18.3: the degradation table — no filter, no scope, no file attribution, no kind', () => {
+    expectPinned(spec18Config(), [
+      'No `filter` → the flaky-retry-in-isolation mechanism (`13` F-TEST-6) is skipped for that layer and the test is recorded `unclassified`, never silently read as "not flaky".',
+      'No `scope` → a consumer that would otherwise scope to one file or story (binding, hunk mutation) runs the whole suite instead, bounded by a stated budget, with a typed refusal past it, never an unbounded fallback.',
+      'No per-test file attribution in the chosen `format` → a consumer attributes by test name alone and says so in its output, never guessing a file.',
+      "No `kind` signal in the chosen `format` (TAP, for one) → every failure reads `kind: 'assertion'`, `09` §9.5's own conservative default for hunk-mutation credit.",
+    ]);
+  });
+
+  it('M17 specs/18 §18.3: coverage source/format replaces the hard-coded Istanbul path', () => {
+    expectPinned(spec18Config(), [
+      "**`quality.coverage.source`/`.format` (post-v1.0, `specs/22` M17).** `source` (`istanbul-json` default | `lcov` | `cobertura` | `jacoco`) and an optional `format` override replace the previously hard-coded assumption that coverage always arrives as Istanbul's own `coverage/coverage-summary.json` (confirmed pre-M17: `packages/cli/src/commands/loop/test/coverage.ts`'s own `COVERAGE_SUMMARY_RELATIVE_PATH` constant named exactly that path, unconditionally) — a project whose own tooling emits `lcov.info`, Cobertura XML or a JaCoCo report declares which, and coverage reads that format at that layer's own conventional path instead.",
+    ]);
+  });
+
+  it('M17 specs/18 §18.3: vcs.trunk defaults to main and is proposed at init from origin/HEAD', () => {
+    expectPinned(spec18Config(), [
+      '**`vcs.trunk` (post-v1.0, `specs/22` M17).** A string, default `"main"`.',
+    ]);
+  });
+
+  it('M17 specs/18 §18.3: worktrees move under the user cache directory, keyed by a project hash', () => {
+    expectPinned(spec18Config(), [
+      "**Worktree location (post-v1.0, `specs/22` M17).** Lane and integration worktrees, and parity's own reference scratch tree, move out of the project's own working tree entirely: `18.1`'s \"Run state\" tier and `18.2`'s layout below are amended accordingly.",
+    ]);
+  });
+
+  it('M17 specs/18 §18.3: forge doctor reports an old in-tree worktree and offers to remove it', () => {
+    expectPinned(spec18Config(), [
+      '`forge doctor` reports any worktree it still finds under the old, in-tree location and offers to remove it (`06` §6.4).',
+    ]);
+  });
+
+  it('M17 specs/18 §18.1: the Run state tier no longer lists worktrees among what it holds', () => {
+    expectLines(spec18Tiers(), [
+      '| **Run state** | `.forge/state/**` | ❌ gitignored | partially | Event log (truth for runs), index, caches (lane/integration worktrees live outside the project tree entirely, post-v1.0 `specs/22` M17 — see 18.3) |',
+    ]);
+    expectAbsent(spec18Tiers(), ['Event log (truth for runs), index, worktrees, caches']);
+  });
+
+  it('M17 specs/18 §18.2: a short note points a reader of the layout diagram at the new worktree location', () => {
+    expectPinned(spec18Layout(), [
+      "**Lane and integration worktrees no longer live under `.forge/state/`** (post-v1.0, `specs/22` M17): they sit outside the project tree entirely, under the user's cache directory.",
+    ]);
+    expectAbsent(spec18Layout(), ['worktrees/<laneId>/         git worktrees']);
+  });
+
+  // --- specs/03: forge test adopt, forge spec re-derive, forge migrate run --------------------------
+
+  it('M17 specs/03 §3.2.1: the existing forge adopt row is unchanged (confirmed accurate, not a new row)', () => {
+    expectLines(spec03_321(), [
+      '| `forge adopt [dir]` | Brownfield: ingest an existing codebase into a KB (see `17`). |',
+    ]);
+  });
+
+  it('M17 specs/03 §3.2.2: forge spec re-derive is now a named subcommand, citing Q213', () => {
+    expectLines(spec03_322(), [
+      '| `forge spec <sub>` | `list`, `show <id>`, `validate`, `trace <id>`, `matrix`, `orphans`, `new <type>`, `re-derive` (post-v1.0, `specs/22` M17; not wired yet — `09` §9.7 point 4, `Q213`) |',
+    ]);
+  });
+
+  it('M17 specs/03 §3.2.5: forge test adopt proposes a structured testCommands entry per layer', () => {
+    expectLines(spec03_325(), [
+      '| `forge test <sub>` | `plan`, `generate`, `run`, `report`, `flaky`, `coverage`, `binding`, `exempt`, `adopt` (post-v1.0, `specs/22` M17) |',
+    ]);
+    expectPinned(spec03_325(), [
+      "(Post-v1.0, `specs/22` M17; not wired yet.) Detects, or hands off to the agent-run `adopt-tests` workflow for, a project's test runner per layer (`13` F-TEST-11): inspects manifests, CI configuration and build files; writes a structured `execution.testCommands` entry preferring the runner's richest machine-readable format to a STAGED proposal record, `.forge/test-adopt/<layer>.proposal.yaml`, never straight to `.forge/config.yaml`.",
+      "`--write`, run alone, is the separate PROMOTION step: it copies a layer's staged proposal into the live `.forge/config.yaml`, which it refuses (typed, not a silent no-op) until that proposal's translator proof has passed and a human has approved it at `G-TestAdopt` (`10`).",
+    ]);
+  });
+
+  it('M17 specs/03 §3.2.5: forge migrate run applies not-yet-applied migrations.yaml entries by phase', () => {
+    expectPinned(spec03_325(), [
+      "(Post-v1.0, `specs/22` M17; not wired yet — disclosed since `Q213`/`Q202`.) Applies every not-yet-applied entry of `docs/forge/kb/data/migrations.yaml` (`09` §9.7 point 4, the `model-data` brief's own shape) whose `phase` matches the given value, in the file's own apply order, honouring each entry's `after`/`expands` dependency: for each, runs the migration script or backfill routine the entry's own owning ADR named (built by the `expand`/`contract` workflow step that precedes this command in the `migrate` workflow), recording which entries this invocation applied so a repeat invocation is a no-op for them (the scripts themselves are also required to be independently idempotent, `12` F-DATA-6).",
+    ]);
+  });
+
+  // --- specs/10 §10.3: the G-TestAdopt gate ----------------------------------------------------------
+
+  it('M17 specs/10 §10.3: G-TestAdopt is the second workflow-scoped gate, conditional on the structured form', () => {
+    expectPinned(spec10(), [
+      "**`G-TestAdopt`** (post-v1.0, `specs/22` M17, `13` F-TEST-11) is the second workflow-scoped gate to have a file, scheduled by the `adopt-tests` workflow's own `kind: gate` step (P7 builds the workflow; this gate's own file).",
+    ]);
+    expectPinned(spec10(), [
+      "This check is **conditional, not universal**: a layer whose `testCommands` entry is the legacy bare-string form (`18` §18.3) never needs this gate at all, because nothing about it was ever proposed by `forge test adopt` — a workflow that wires `adopt-tests` only ever schedules this gate's `kind: gate` step for a layer the structured form governs.",
+    ]);
+  });
+
+  it('M17 specs/10 §10.3: G-TestAdopt reads the staged proposal record, never the live config entry', () => {
+    expectPinned(spec10(), [
+      "Its one deterministic check, `checkId: test-adoption:approved`, reads `.forge/test-adopt/<layer>.proposal.yaml` (`13` F-TEST-11's staged proposal record, never the live `.forge/config.yaml` `execution.testCommands` entry: the live entry does not exist yet when this check first needs to pass, and this check existing to gate the live entry's own creation is exactly why it cannot be the thing that reads it) for the layer under review.",
+    ]);
+  });
+
+  it('M17 specs/10 §10.3: `--write` promotes only after the check has passed AND the gate is approved', () => {
+    expectPinned(spec10(), [
+      "`--write` (the promotion that copies the staged record into the live config, `13` F-TEST-11) runs only after this check has passed AND the approval itself has happened (rule 6's own `forge gate approve`), never on the check's pass alone: approving the gate is what certifies the staged record for promotion, and a `--write` attempted before that approval is a typed refusal, not a silent no-op.",
+    ]);
+  });
+
+  // --- specs/18 §18.2: the staged test-adoption proposal directory -----------------------------------
+
+  it('M17 specs/18 §18.2: the on-disk layout lists `.forge/test-adopt/` as committed — staged proposals', () => {
+    const section = spec18Layout();
+    expectLines(section, [
+      '│  ├─ test-adopt/                    committed: staged (not-yet-live) testCommands proposals, one per layer (13 F-TEST-11)',
+    ]);
+  });
+
+  // --- specs/06: worktree location, landing on trunk, real retries ----------------------------------
+
+  it('M17 specs/06 §6.4: the worktree location moves outside the project tree, keyed by project hash', () => {
+    expectPinned(spec06_64(), [
+      "**Worktree location (post-v1.0, `specs/22` M17).** Before M17, a lane's worktree lived inside the project tree, at `.forge/state/worktrees/<laneId>/`, which required the `.gitignore` rule below to keep it from self-referencing, and let any runner that globs the whole project tree discover a lane's own in-progress copy of the project's test files.",
+    ]);
+  });
+
+  it('M17 specs/06 §6.5: two paths land a finished run on trunk, and the diverged refusal names the remedy', () => {
+    expectPinned(spec06_65(), [
+      "**Landing a finished run on trunk (post-v1.0, `specs/22` M17).** Before M17, a completed run's own integration branch was left exactly where the run's last merge put it: no command and no doc said how, or whether, it ever reaches `vcs.trunk` (`18` §18.3), and a person who committed it there by hand then blocked the next run (its lanes branch from the integration-branch tip, which a manual trunk commit never updates).",
+    ]);
+    expectPinned(spec06_65(), [
+      "Two paths now land a run, and a project picks one by its own `execution.integrationBranch` configuration: (1) a project that configures its integration branch to BE the trunk itself (the \"configurable to merge directly to a trunk\" form above) needs nothing further — each lane merge already lands on trunk as the run proceeds, which is also why F-TEST-9's trust anchor names this as a project that \"gets no protection\" from a rewritten oracle (`13` F-TEST-9, the anchor's boundary); (2) a project whose integration branch is the default, separate `forge/integration/<stage>` branch lands a finished run with an explicit command (P9 names and builds it) that fast-forwards or merges the run's own integration-branch tip onto `vcs.trunk`, refusing when trunk has diverged from the integration branch's own base since the run started — the refusal names the remedy (P9's own exact wording) rather than leaving the project blocked with no path forward: at minimum, which ref to rebase the integration branch onto and which command re-attempts the land once it is current.",
+    ]);
+  });
+
+  it('M17 specs/06 §6.8: driveToCompletion must actually consult decideRetry/computeBackoff, not merely describe them', () => {
+    expectPinned(spec06_68(), [
+      "**This table describes a policy, not merely a config shape (post-v1.0, `specs/22` M17).** A retryable failure is not retried because this table names a class `retryOn` lists; it is retried because `driveToCompletion`'s own failure handling actually consults the step's declared `RetryPolicy`, decides whether and when to retry, and computes the real backoff — the identical decision-and-backoff logic the Never-retry rule above already depends on — before any retry attempt is scheduled, recreating the lane and re-executing from the step's own idempotency key, and emitting a `retry` event (`07` §7.2's `AdapterEvent{type:'retry'}` is the adapter-level signal; the engine's own retry decision is a separate, run-level event).",
+    ]);
+  });
+
+  // --- specs/07 §7.2/§7.3: multi-event mapping, structured_output, cache tokens ----------------------
+
+  it('M17 specs/07 §7.2: one raw message may map to several AdapterEvents, in emission order', () => {
+    expectPinned(spec07_72(), [
+      '**One raw adapter message may map to several `AdapterEvent`s (post-v1.0, `specs/22` M17).** `SessionHandle.events` is already `AsyncIterable<AdapterEvent>`, so this was always representable; the normative gap is that an adapter transport MUST actually do it rather than collapsing one raw message into at most one `AdapterEvent` and silently dropping the rest.',
+    ]);
+  });
+
+  it('M17 specs/07 §7.3: the CLI transport is brought to the same multi-event shape as the SDK transport', () => {
+    expectPinned(spec07_73(), [
+      '**The CLI transport maps one raw message to several events, exactly as the SDK transport already does** (post-v1.0, `specs/22` M17).',
+    ]);
+  });
+
+  it('M17 specs/07 §7.3: SessionResult.structured is populated from the real structured_output field', () => {
+    expectPinned(spec07_73(), [
+      '**`SessionResult.structured` is populated from the real `structured_output` field when one is present** (post-v1.0, `specs/22` M17).',
+    ]);
+  });
+
+  it('M17 specs/07 §7.3: cacheReadTokens/cacheCreationTokens are summed from the per-model usage breakdown', () => {
+    expectPinned(spec07_73(), [
+      '**Honest cache-token accounting (post-v1.0, `specs/22` M17).** `SessionUsage` gains `cacheReadTokens`/`cacheCreationTokens` alongside its existing fields (above).',
+    ]);
+    expectPinned(spec07_73(), [
+      "Both are summed from the adapter's own real **per-model** usage breakdown the result message carries (every model call made through the query pipeline — the main loop, Task subagents, sidechains and internal calls), never read from the main-loop-only usage field alone: the main-loop-only field excludes exactly the subagent and sidechain spend a real multi-agent FORGE step routinely makes, so a ledger that reads only it under-reports real cache spend whenever a step uses either.",
+    ]);
+  });
+});
+
+/**
+ * The `(specs/22 M17 P<n>)` naming rule (companion to the M16 one above, same reason: an empty `-t`
+ * selection exits 0, so a renamed or mismarked `describe` must be caught by a test, not by convention
+ * alone). `n` is bounded 1..25 — `PLAN-M17.md` runs Phase A P1-P21 and outlines Phase B P22-P25.
+ */
+describe('M17 naming rule (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313) — an empty `-t` selection exits 0, so a renamed describe must be caught by a test, not just by convention', () => {
+  const MARKER = /\(specs\/22 M17 P(\d+)\)/;
+
+  function repoTestFiles(): string[] {
+    const out = execFileSync('git', ['ls-files', '-co', '--exclude-standard', '-z'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    return out
+      .split('\0')
+      .filter((file) => file.length > 0 && /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file));
+  }
+
+  function describeTitlesIn(text: string): string[] {
+    const titles: string[] = [];
+    const re = /\bdescribe\(\s*(['"])((?:\\.|(?!\1).)*)\1/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) titles.push(m[2]!.replace(/\\(.)/g, '$1'));
+    return titles;
+  }
+
+  it('every describe title containing "M17", across every test file in the repository, carries (specs/22 M17 P<n>) with n from 1 to 25', () => {
+    const violations: string[] = [];
+    let sawAny = false;
+    for (const file of repoTestFiles()) {
+      const text = readFileSync(path.join(repoRoot, file), 'utf8');
+      for (const title of describeTitlesIn(text)) {
+        if (!title.includes('M17')) continue;
+        sawAny = true;
+        const found = MARKER.exec(title);
+        const n = found ? Number(found[1]) : NaN;
+        if (!found || !Number.isInteger(n) || n < 1 || n > 25) {
+          violations.push(`${file}: ${JSON.stringify(title)}`);
+        }
+      }
+    }
+    expect(
+      sawAny,
+      'expected to find at least one M17 describe title (this scan found none at all)',
+    ).toBe(true);
+    expect(
+      violations,
+      `every M17 describe title must carry (specs/22 M17 P<n>), n in 1..25:\n${violations.join('\n')}`,
     ).toEqual([]);
   });
 });

@@ -117,13 +117,29 @@ export interface SessionResult {
   ok: boolean;
   finalText: string;
   structured?: unknown;
-  usage: { inputTokens: number; outputTokens: number; costUsd?: number; turns: number };
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    costUsd?: number;
+    turns: number;
+    // cacheReadTokens/cacheCreationTokens: post-v1.0, specs/22 M17 — see the Normative
+    // implementation notes below ("Honest cache-token accounting").
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+  };
   durationMs: number;
   changedFiles: string[];
   controlTokens: ParsedControlToken[];
   error?: { code: string; message: string };
 }
 ```
+
+**One raw adapter message may map to several `AdapterEvent`s (post-v1.0, `specs/22` M17).**
+`SessionHandle.events` is already `AsyncIterable<AdapterEvent>`, so this was always representable;
+the normative gap is that an adapter transport MUST actually do it rather than collapsing one raw
+message into at most one `AdapterEvent` and silently dropping the rest. A transport's own message
+mapper therefore returns zero, one or several events for one raw message, in emission order, never a
+single optional event.
 
 ### Tool grant mapping
 
@@ -194,6 +210,28 @@ users' environments differ (subscription auth vs API key, corporate proxies, Bed
   fix found this sibling path still zeroed (M16 P17). A session that fails after real spend (hitting
   `--max-turns`, a budget cap, a mid-turn API error, or any other terminal condition) must not be
   indistinguishable from one that spent nothing at all.
+- **The CLI transport maps one raw message to several events, exactly as the SDK transport already
+  does** (post-v1.0, `specs/22` M17). The SDK transport's own message mapper already returns an
+  array of `AdapterEvent`; the CLI transport's own NDJSON-line mapper returns at most one and must be
+  brought to the same shape, so a single `result` message that carries both a usage signal and (below)
+  a `structured_output` payload yields both events, on both transports, never only the first one a
+  mapper happens to construct.
+- **`SessionResult.structured` is populated from the real `structured_output` field when one is
+  present** (post-v1.0, `specs/22` M17). The real SDK's own result message carries an optional
+  `structured_output` field whenever the caller asked for schema-validated output
+  (`outputSchema`/`--output-format json --json-schema`); both transports' mappers read it into
+  `SessionResult.structured` (or the corresponding `AdapterEvent`) rather than discarding it, and
+  `AdapterCapabilities.structuredOutput` is reported `true` once this path is proven to round-trip a
+  real schema-validated response, not hard-coded `false` regardless of what the session actually did.
+- **Honest cache-token accounting (post-v1.0, `specs/22` M17).** `SessionUsage` gains
+  `cacheReadTokens`/`cacheCreationTokens` alongside its existing fields (above). Both are summed from
+  the adapter's own real **per-model** usage breakdown the result message carries (every model call
+  made through the query pipeline — the main loop, Task subagents, sidechains and internal calls),
+  never read from the main-loop-only usage field alone: the main-loop-only field excludes exactly the
+  subagent and sidechain spend a real multi-agent FORGE step routinely makes, so a ledger that reads
+  only it under-reports real cache spend whenever a step uses either. This milestone adds only the two
+  new fields from the per-model breakdown; it does not change where `inputTokens`/`outputTokens`/
+  `costUsd` are read from today.
 - Use `--bare` for all FORGE-driven steps by default (`platform.claudeCode.bare: true`) so runs are
   reproducible across machines and unaffected by a user's personal hooks/CLAUDE.md. Provide
   `bare: false` for users who *want* their project's own config to apply, and warn that runs become

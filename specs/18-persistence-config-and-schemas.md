@@ -11,7 +11,7 @@ another spec shows a fragment, this file is authoritative for the whole shape.
 | **Customization** | `<project>/.forge/overrides/**`, `config.yaml` | ✅ yes | ❌ no — source of truth | Team-owned configuration |
 | **Personal** | `.forge/overrides.local/**`, `config.local.yaml`, `secrets.local.yaml` | ❌ gitignored | ❌ no | Per-developer overrides |
 | **Resolved set** | `.forge/{agents,workflows,frameworks,templates,checks,skills}/` | ❌ gitignored | ✅ yes (`forge compile`) | Compiled customization layers |
-| **Run state** | `.forge/state/**` | ❌ gitignored | partially | Event log (truth for runs), index, worktrees, caches |
+| **Run state** | `.forge/state/**` | ❌ gitignored | partially | Event log (truth for runs), index, caches (lane/integration worktrees live outside the project tree entirely, post-v1.0 `specs/22` M17 — see 18.3) |
 
 **Invariant:** deleting `.forge/state/` and `.forge/<resolved dirs>` must leave a project fully
 functional after `forge compile`. Only completed-run history is lost, and that history is
@@ -30,6 +30,7 @@ gitignored space.
 │  ├─ overrides/                     committed customization (see 15)
 │  ├─ overrides.local/               gitignored personal customization
 │  ├─ parity/                        committed: parity declarations, probes, captures (13 F-TEST-9)
+│  ├─ test-adopt/                    committed: staged (not-yet-live) testCommands proposals, one per layer (13 F-TEST-11)
 │  ├─ agents/ workflows/ frameworks/ templates/ checks/ skills/    resolved set (gitignored)
 │  ├─ backups/                       upgrade backups, last 5
 │  └─ state/                         gitignored
@@ -46,7 +47,6 @@ gitignored space.
 │     │     ├─ context.json          context pack manifest (ids + token counts, not content)
 │     │     ├─ transcript.ndjson     normalised adapter events
 │     │     └─ result.json           SessionResult
-│     ├─ worktrees/<laneId>/         git worktrees
 │     └─ cache/                      adapter probes, catalog index, render cache
 ├─ docs/forge/
 │  ├─ kb/                            see 08
@@ -58,6 +58,10 @@ gitignored space.
 │  └─ reports/                       gates/, coverage/, flaky.json, drift/, cost/, diagrams/
 └─ FORGE.md
 ```
+
+**Lane and integration worktrees no longer live under `.forge/state/`** (post-v1.0, `specs/22` M17):
+they sit outside the project tree entirely, under the user's cache directory. `18.3`'s "Worktree
+location" paragraph below gives the exact path and its platform equivalents.
 
 ## 18.3 Configuration schema
 
@@ -141,7 +145,7 @@ diagrams:
   requireCaptions: true
 
 quality:
-  coverage: { lines: 85, branches: 80, ratchet: true }
+  coverage: { lines: 85, branches: 80, ratchet: true, source: istanbul-json }   # source/format: 18.3's own coverage paragraph below
   flake: { maxRatePct: 2, window: 20, quarantineCap: 5 }
   pyramid: { maxE2ESharePct: 15 }
   dodProfileDefault: backend-default
@@ -154,6 +158,7 @@ security:
   redactPatterns: [ "(?i)api[_-]?key", "(?i)authorization" ]
 
 vcs:
+  trunk: main                          # post-v1.0, specs/22 M17: proposed at `forge init` (18.3's own trunk paragraph below)
   allowCommits: true
   commitConvention: conventional
   signCommits: false
@@ -163,6 +168,74 @@ telemetry: { network: false, otlpEndpoint: null }
 
 output: { color: auto, ascii: false, style: acme-house }
 ```
+
+**`execution.testCommands.<layer>` — structured form (post-v1.0, `specs/22` M17).** The bare string
+shown above (`"pnpm test"`) keeps its EXACT current meaning: a single shell command, its output read
+as Vitest JSON for a `package.json`-having project or pytest JUnit XML for a Python-marker project, by
+the pre-existing `detectEcosystem` rule — the LEGACY path, not the only path, and never changed by a
+project that does not opt into the alternative below; `detectEcosystem` leaves the test-time path
+entirely once a layer uses it (`13` F-TEST-1). A layer MAY instead be a structured object:
+
+```yaml
+execution:
+  testCommands:
+    unit:
+      run: "command, with {files} and {name}/{name:regex} placeholders where the project supports them"
+      output: { source: stdout }           # or: { source: file, path: "relative/path" }
+      format: junit-xml   # | tap | forge-json | vitest-json | jest-json | go-test-json
+      translate: "optional command; must print forge-json (09 §9.5) on stdout; placeholders: {output}"
+      scope: "optional command template enabling a file-scoped run"
+      filter: "optional command template enabling a single-test retry"
+      timeoutMs: 600000   # optional
+```
+
+`output.source: file` names `{output}`, a path FORGE itself allocates and deletes before every run of
+that layer: a stale report left over from an earlier run, a crash or an unrelated process is never
+read, which is a real, load-bearing guarantee, not a convenience — a command whose `run` does not
+itself write that exact path fails typed rather than silently reading an old result. `format` picks a
+built-in parser into `09` §9.5's `forge-test-report`; `translate`, when given, is an additional command
+run under the identical confined-command sandbox and timeout `run` itself runs under, with `{output}`
+available to it, and it MUST print a schema-valid `forge-test-report` on stdout — a `translate` that
+exits non-zero, or whose stdout does not parse as that shape, is a typed tool-error, never silently
+read as zero tests. `scope` and `filter` are optional command templates: their absence, like every
+other undeclared capability here, degrades to a stated, typed, visible outcome, never a silent pass —
+
+- No `filter` → the flaky-retry-in-isolation mechanism (`13` F-TEST-6) is skipped for that layer and
+  the test is recorded `unclassified`, never silently read as "not flaky".
+- No `scope` → a consumer that would otherwise scope to one file or story (binding, hunk mutation) runs
+  the whole suite instead, bounded by a stated budget, with a typed refusal past it, never an
+  unbounded fallback.
+- No per-test file attribution in the chosen `format` → a consumer attributes by test name alone and
+  says so in its output, never guessing a file.
+- No `kind` signal in the chosen `format` (TAP, for one) → every failure reads `kind: 'assertion'`,
+  `09` §9.5's own conservative default for hunk-mutation credit.
+
+**`quality.coverage.source`/`.format` (post-v1.0, `specs/22` M17).** `source` (`istanbul-json` default
+| `lcov` | `cobertura` | `jacoco`) and an optional `format` override replace the previously hard-coded
+assumption that coverage always arrives as Istanbul's own `coverage/coverage-summary.json` (confirmed
+pre-M17: `packages/cli/src/commands/loop/test/coverage.ts`'s own `COVERAGE_SUMMARY_RELATIVE_PATH`
+constant named exactly that path, unconditionally) — a project whose own tooling emits `lcov.info`,
+Cobertura XML or a JaCoCo report declares which, and coverage reads that format at that layer's own
+conventional path instead.
+
+**`vcs.trunk` (post-v1.0, `specs/22` M17).** A string, default `"main"`. `forge init` proposes it from
+`origin/HEAD` when the project has a remote, or from `init.defaultBranch` when configured, falling back
+to the default only when neither is detectable. `06` §6.4/§6.5 and `10` §10.3 rule 8 read it wherever
+they would otherwise assume the literal string `main`.
+
+**Worktree location (post-v1.0, `specs/22` M17).** Lane and integration worktrees, and parity's own
+reference scratch tree, move out of the project's own working tree entirely: `18.1`'s "Run state" tier
+and `18.2`'s layout below are amended accordingly. They live under a per-project directory keyed by a
+stable project hash, inside the user's cache directory: `$XDG_CACHE_HOME/forge/<project-hash>/worktrees`
+when `XDG_CACHE_HOME` is set, and otherwise the platform's own real cache-directory default per the XDG
+Base Directory spec's own fallback rule — `~/Library/Caches/forge/<project-hash>/worktrees` on macOS,
+`%LOCALAPPDATA%\forge\<project-hash>\worktrees` on Windows, `~/.cache/forge/<project-hash>/worktrees`
+on Linux — never inside `<project>/.forge/state/` as before. This was the one `.gitignore`-reliant
+location (`06` §6.4's own old rule, "worktrees live there, so they never self-reference"); outside the
+project tree, no `.gitignore` entry is needed for them at all, and no glob rooted at the project rejects
+or discovers them by accident, which is the point: a test runner that globs the whole project tree for
+test files can no longer find a lane's own worktree copy of them. `forge doctor` reports any worktree
+it still finds under the old, in-tree location and offers to remove it (`06` §6.4).
 
 **Resolution order** is defined in `02` §2.8. `forge config explain <key>` prints value + source
 layer. Every key in this schema has a documented default; there are no undocumented keys.

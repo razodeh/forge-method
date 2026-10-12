@@ -54,7 +54,7 @@
  * @see PLAN-M13.md P7, P11, P15
  * @see SPEC-QUESTIONS.md Q208, Q209, Q220
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -67,6 +67,12 @@ import { evidenceBundleSchema, mutationEvidenceSchema } from '@forge/schemas/art
 import { MIGRATIONS } from '@forge/schemas/migrations';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { WORKFLOW_INDEX } from '@forge/templates';
+
+import {
+  applyNormalizeRulesToText,
+  rewriteRootPaths,
+  type ObservedRoot,
+} from '../packages/cli/src/commands/parity/normalize.ts';
 
 import { loadAgentRegistry, resolveExtends } from '../packages/agents/src/registry/index.ts';
 
@@ -467,5 +473,185 @@ describe('closed gaps: specs/18 named these for M16, and the code now has them (
       ),
     );
     expect(written).toEqual(V2_MIGRATIONS);
+  });
+});
+
+/**
+ * M17 Phase A (`PLAN-M17.md`, `SPEC-QUESTIONS.md` Q313): the surfaces `specs/22` M17's own spec text
+ * (this piece's own amendment) names as the hardening milestone's content, established here at their
+ * LARGEST, correct starting size — this list SHRINKS as later M17 pieces land, each test flipping to
+ * red the day its own surface is actually built, per this file's own standing rule (see the file's own
+ * header comment above: "the day a piece builds one of them, the matching test fails until the pin is
+ * updated on purpose"). Every check below reads the REAL, current source (or runs it), never a
+ * description of it, so a later piece that partially builds a surface is caught exactly where it still
+ * falls short, not just where it is entirely absent.
+ *
+ * @see specs/06 §6.4, §6.5, §6.8
+ * @see specs/07 §7.2, §7.3
+ * @see specs/09 §9.5
+ * @see specs/10 §10.3
+ * @see specs/13 F-TEST-9, F-TEST-11
+ * @see specs/18 §18.3
+ * @see specs/22 M17
+ * @see PLAN-M17.md P1
+ * @see SPEC-QUESTIONS.md Q313
+ */
+describe('M17 Phase A: surfaces specs/22 M17 names that are not yet built (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313, PLAN-M17.md P1) — this list SHRINKS as later pieces land', () => {
+  const repoRootAbs = repoRoot;
+
+  function readPkg(relativeToRepoRoot: string): string {
+    return readFileSync(path.join(repoRootAbs, relativeToRepoRoot), 'utf8');
+  }
+
+  it('1. the forge-test-report v1 parsers/schema module does not exist yet', () => {
+    expect(existsSync(path.join(repoRootAbs, 'packages/schemas/src/test-report.ts'))).toBe(false);
+    const reporter = readPkg('packages/cli/src/commands/loop/test/reporter.ts');
+    expect(reporter).not.toContain('forgeTestReport');
+    expect(reporter).not.toContain('forge-json');
+  });
+
+  it('2. `forge test adopt` is not wired in bin.ts', () => {
+    const bin = readPkg('packages/cli/src/bin.ts');
+    expect(bin).not.toContain("'test', 'adopt'");
+    expect(bin).not.toMatch(/case 'adopt':\s*{\s*\/\/ test adopt/);
+  });
+
+  it('3. the `adopt-tests` workflow template does not exist yet', () => {
+    expect(
+      existsSync(
+        path.join(repoRootAbs, 'packages/templates/templates/workflows/adopt-tests.workflow.yaml'),
+      ),
+    ).toBe(false);
+    expect(
+      existsSync(path.join(repoRootAbs, 'packages/templates/templates/briefs/adopt-tests.md')),
+    ).toBe(false);
+  });
+
+  it('4. the `G-TestAdopt` gate template does not exist yet', () => {
+    expect(
+      existsSync(
+        path.join(repoRootAbs, 'packages/templates/templates/checks/G-TestAdopt.gate.yaml'),
+      ),
+    ).toBe(false);
+  });
+
+  it('5. `forge migrate run` is not wired in bin.ts (also pinned in test/command-steps.test.ts)', () => {
+    const bin = readPkg('packages/cli/src/bin.ts');
+    expect(bin).not.toContain("'migrate'");
+  });
+
+  it('6. the engine never calls decideRetry outside its own definition file: real retries are not wired', () => {
+    const engineSrcDir = path.join(repoRootAbs, 'packages/engine/src');
+    const callers: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
+          const text = readFileSync(full, 'utf8');
+          if (
+            text.includes('decideRetry(') &&
+            full !== path.join(engineSrcDir, 'failures/retry.ts')
+          ) {
+            callers.push(path.relative(repoRootAbs, full));
+          }
+        }
+      }
+    };
+    walk(engineSrcDir);
+    expect(callers, `decideRetry has a real caller: ${callers.join(', ')}`).toEqual([]);
+  });
+
+  it('7. lane worktrees still live inside the project tree, at .forge/state/worktrees/<laneId>', () => {
+    const lanes = readPkg('packages/vcs/src/lanes.ts');
+    expect(lanes).toContain("path.join(cwd, '.forge', 'state', 'worktrees', laneId)");
+    expect(lanes).not.toContain('XDG_CACHE_HOME');
+  });
+
+  it('8. the root-path token rewrite still masks a replace-rule-detectable regression (a live repro, not a reading)', () => {
+    // The exact repro `normalize.ts`'s own doc comment on `rewriteRootPaths` describes: two trees of
+    // DIFFERENT root-path length, one real PASS, one real FAIL, and a trailing-content-trimming
+    // `replace` rule that a declaration author would plausibly write for an unrelated reason.
+    const refRoot: ObservedRoot = { asGiven: '/r', real: '/r' };
+    const candidateRoot: ObservedRoot = { asGiven: '/candidateroot', real: '/candidateroot' };
+    const refText = `${refRoot.asGiven}:XXPASS`;
+    const candidateText = `${candidateRoot.asGiven}:XXFAIL`;
+    const rules = [{ rule: 'replace' as const, pattern: '.{5}$', replacement: '' }];
+    const refOutcome = applyNormalizeRulesToText(rewriteRootPaths(refText, refRoot), rules, {});
+    const candidateOutcome = applyNormalizeRulesToText(
+      rewriteRootPaths(candidateText, candidateRoot),
+      rules,
+      {},
+    );
+    expect(refOutcome.ok).toBe(true);
+    expect(candidateOutcome.ok).toBe(true);
+    if (!refOutcome.ok || !candidateOutcome.ok) return;
+    // The real defect: a genuine PASS and a genuine FAIL read as byte-identical after normalisation,
+    // because the root-token substitution did not preserve length parity between the two sides.
+    expect(refOutcome.text).toBe(candidateOutcome.text);
+    expect(refText).not.toBe(candidateText);
+  });
+
+  it("9. observing the candidate does not yet isolate .forge/parity/ from the candidate's own case commands", () => {
+    const observe = readPkg('packages/cli/src/commands/parity/observe.ts');
+    expect(observe).not.toMatch(/\bchmod\b/i);
+    expect(observe).not.toContain('isolate');
+    expect(observe).not.toContain('self-reverting');
+    // The candidate side is observed in its own project root, in place, via `observeAgainstRoot`
+    // called with `options.projectRoot` as both the tree observed and the tree vetting runs
+    // against, with no third argument excluding or remounting `.forge/parity/` for the case.
+    expect(observe).toMatch(
+      /observeAgainstRoot\(\s*options\.declaration,\s*'candidate',\s*options\.projectRoot,\s*options\.projectRoot,/,
+    );
+  });
+
+  it("10. applyReplace has no runtime wall-clock budget: a catastrophic or merely slow pattern cannot be bounded (a static reading, not a live repro — a real catastrophic-backtracking call is unbounded by construction, so pinning it live would risk hanging THIS suite rather than only the command under test; see the DECISION in Q313/this test's own header)", () => {
+    const normalizeSrc = readPkg('packages/cli/src/commands/parity/normalize.ts');
+    // No async/concurrency machinery that could impose or simulate a deadline exists at all.
+    expect(normalizeSrc).not.toContain('worker_threads');
+    expect(normalizeSrc).not.toMatch(/applyReplace[\s\S]{0,200}setTimeout/);
+    expect(normalizeSrc).not.toMatch(/budgetMs|deadline|AbortSignal|AbortController|Worker\(/i);
+    // `applyReplace`'s own real, current body (not a description of it): exactly a `$`-escape and one
+    // synchronous `String.prototype.replace` with a `g`-flagged `RegExp` built from the declaration's
+    // own `pattern` — no third argument, no wrapping, no try/catch around a time-boxed call.
+    expect(normalizeSrc).toMatch(
+      /export function applyReplace\(text: string, pattern: string, replacement: string\): string \{\s*const literalReplacement = replacement\.replace\(\/\\\$\/g, '\$\$\$\$'\);\s*return text\.replace\(new RegExp\(pattern, 'g'\), literalReplacement\);\s*\}/,
+    );
+    // Both real call sites in `applyNormalizeRulesToText`'s `replace` case pass exactly these three
+    // arguments — no fourth (a deadline or signal) is threaded through from the case-level budget
+    // `13` F-TEST-9 names, because no such budget exists yet at this layer.
+    expect(normalizeSrc).toContain("applyReplace(before, rule.pattern, '')");
+    expect(normalizeSrc).toContain('applyReplace(working, rule.pattern, rule.replacement)');
+    // What this does NOT show: that a real catastrophic pattern actually hangs when run for real. A
+    // genuine live repro needs a hard, out-of-process kill (a worker thread with `terminate()`, or a
+    // child process with a `timeout`) to stay safe if the fix lands only partially — exactly the
+    // asymmetric cost `applyReplace`'s own doc comment above states for bounding this from inside the
+    // same synchronous process. That harness is more machinery than this one disclosed gap currently
+    // earns, so this test stays a static pin on the absence of ANY budget-enforcing code path, not a
+    // dynamic measurement of how long an unbounded one takes — a real repro is deferred to whichever
+    // M17 piece actually builds the F-TEST-9 wall-clock budget, which can then prove its own bound by
+    // running the adversarial case under its own hard guard.
+  });
+
+  it('11. structured_output is still discarded: AdapterCapabilities.structuredOutput is hard-coded false', () => {
+    const capabilities = readPkg('packages/adapter-claude-code/src/capabilities.ts');
+    expect(capabilities).toContain('structuredOutput: false');
+    const sessionResult = readPkg('packages/adapter-claude-code/src/session-result.ts');
+    expect(sessionResult).not.toContain('structured');
+    const parseEvent = readPkg('packages/adapter-claude-code/src/cli/parse-event.ts');
+    expect(parseEvent).toContain(
+      'export function parseCliEventLine(line: string): AdapterEvent | undefined {',
+    );
+    const mapMessage = readPkg('packages/adapter-claude-code/src/sdk/map-message.ts');
+    expect(mapMessage).toContain(
+      'export function mapSdkMessage(message: SDKMessage): readonly AdapterEvent[] {',
+    );
+  });
+
+  it('12. SessionUsage has no cacheReadTokens/cacheCreationTokens fields yet', () => {
+    const session = readPkg('packages/adapter-kit/src/types/session.ts');
+    expect(session).not.toContain('cacheReadTokens');
+    expect(session).not.toContain('cacheCreationTokens');
   });
 });
