@@ -7,13 +7,14 @@
  * @see PLAN-M10.md P10
  */
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import { ForgeError } from '@forge/core/errors';
 import { listDirSorted, readTextFile, writeFileAtomic, ProjectPaths } from '@forge/core/fs';
+import { worktreesRootFor } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import type { PlatformAdapter, SessionRequest, SessionResult } from '@forge/adapter-kit';
 import type { SessionRecord } from '@forge/schemas';
@@ -686,7 +687,10 @@ describe("runSessionStep — mergeDecideLane lands the DECIDE lane through landL
     const lines = await markerLines(marker);
     expect(lines).toHaveLength(2);
     const dirs = lines.map((line) => line.slice(line.indexOf(' ') + 1));
-    const inLaneWorktree = (dir: string) => dir.includes(path.join('.forge', 'state', 'worktrees'));
+    // Post-`PLAN-M17.md` P8: the lane worktree lives under the real per-project cache directory
+    // (`@forge/vcs`'s own `worktreesRootFor`), never inside the project tree.
+    const worktreesRoot = await worktreesRootFor(await realpath(projectRoot));
+    const inLaneWorktree = (dir: string) => dir.startsWith(`${worktreesRoot}${path.sep}`);
     // One ran in the DECIDE lane's own worktree (the pre-check, before any merge attempt)...
     expect(dirs.filter(inLaneWorktree)).toHaveLength(1);
     // ...and the other ran in the tree (the post-check, once the merge actually landed).

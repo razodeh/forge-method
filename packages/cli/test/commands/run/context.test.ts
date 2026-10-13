@@ -8,10 +8,11 @@
  * @see PLAN-M5.md P15
  */
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import { worktreesRootFor } from '@forge/vcs';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
 
@@ -152,7 +153,10 @@ describe('ensureIntegrationWorktree', () => {
 
   it("remakes a target directory that exists with no worktree in it at all (git would read the project's own repository through it)", async () => {
     const project = await createTestProject();
-    const target = project.paths.resolveState('worktrees/integration-forge-integration-current');
+    const target = path.join(
+      await worktreesRootFor(await realpath(project.dir)),
+      'integration-forge-integration-current',
+    );
     await mkdir(target, { recursive: true });
 
     const made = await ensureIntegrationWorktree(

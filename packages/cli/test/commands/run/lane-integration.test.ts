@@ -8,11 +8,12 @@
  * @see specs/06 §6.4
  */
 import { existsSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import type { ExpressionContext } from '@forge/engine/expr';
+import { worktreesRootFor } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -150,7 +151,7 @@ describe('forge run: lane visibility through the real CLI context', () => {
     expect(result.runState.runStatus).toBe('failed');
     expect(result.runState.runFailure?.message).toContain('prepare');
     const branch = await execa('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd: path.join(project.dir, '.forge/state/worktrees/integration-integ-P3'),
+      cwd: path.join(await worktreesRootFor(await realpath(project.dir)), 'integration-integ-P3'),
     });
     expect(branch.stdout.trim()).toBe('integ/P3');
   });

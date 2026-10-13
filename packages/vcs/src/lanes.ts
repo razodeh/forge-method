@@ -17,6 +17,7 @@ import { readFile, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import { existsAtRevision, resolveRevision, wrapGitFailure } from './git.ts';
+import { worktreesRootFor } from './worktree-root.ts';
 
 interface SortedDirEntry {
   readonly name: string;
@@ -47,8 +48,10 @@ async function listDirEntriesSorted(dir: string): Promise<readonly SortedDirEntr
 
 declare const LANE_ID_BRAND: unique symbol;
 
-/** `${runId}-${slugifyStepId(stepId)}` — the `.forge/state/worktrees/<laneId>/` path segment (`18`
- * §18.2). Deliberately not the same string as the branch name: a branch name uses `/` as a namespace
+/** `${runId}-${slugifyStepId(stepId)}` — the `<worktreesRootFor(...)>/<laneId>/` path segment
+ * (post-v1.0 `specs/22` M17, `18` §18.3's own "Worktree location" paragraph; before M17 this nested
+ * under the project's own `.forge/state/worktrees/<laneId>/`, `18` §18.2). Deliberately not the same
+ * string as the branch name: a branch name uses `/` as a namespace
  * separator (`forge/<runId>/<slug>`), which is exactly what a filesystem path segment must not contain
  * — flattening it here, once, is what keeps every other function in this module from having to think
  * about the difference. Branded so a plain string cannot be passed where a real, derived lane id is
@@ -87,9 +90,11 @@ const SLUG_HASH_LENGTH = 8;
  *    never omitted, the final path segment can never be *exactly* one of those words.
  *
  * The readable portion is also length-capped (`02` §2.1, Windows' legacy `MAX_PATH` budget matters more
- * here than on POSIX, and this segment nests under `.forge/state/worktrees/<laneId>/` plus a full
- * checked-out repository) — the hash suffix keeps the result unique even after truncation collapses two
- * different long ids' readable portions together. */
+ * here than on POSIX, and this segment nests under a worktrees root plus a full checked-out repository
+ * — post-v1.0 `specs/22` M17 a short, fixed cache-directory root, `worktreesRootFor`, deliberately
+ * chosen in part *because* it is shorter than the project's own, potentially deeply-nested path this
+ * used to nest under instead, `PLAN-M17.md` P8's own Decision 6) — the hash suffix keeps the result
+ * unique even after truncation collapses two different long ids' readable portions together. */
 export function slugifyStepId(stepId: string): string {
   const readable = stepId
     .toLowerCase()
@@ -121,10 +126,6 @@ function laneIdFor(runId: string, stepId: string): LaneId {
   return formatLaneId(runId, slugifyStepId(stepId));
 }
 
-function worktreePath(cwd: string, laneId: LaneId): string {
-  return path.join(cwd, '.forge', 'state', 'worktrees', laneId);
-}
-
 /** `cwd`, with every symlink in it resolved — required before computing or comparing any worktree path
  * against git's own `worktree list` output, which canonicalises the path it was given internally
  * before reporting it back. Confirmed empirically (not merely suspected): on macOS, `os.tmpdir()`
@@ -139,12 +140,14 @@ async function resolveCwd(cwd: string): Promise<string> {
   return wrapGitFailure(() => realpath(cwd), `resolving "${cwd}" to its real, symlink-free path`);
 }
 
-/** `git worktree add -b <branch> <path> <resolved-integration-base>`, into `.forge/state/worktrees/
- * <laneId>/` (git creates every missing parent directory itself, confirmed empirically — no separate
- * `mkdir` needed). Two lane creations for the same `(runId, stepId)` pair collide on the branch name;
- * git's own "a branch named '...' already exists" refusal is what surfaces that (wrapped into a
- * `VcsError` like every other failure in this package), not a separate check here — one collision
- * detector, not two that could disagree. */
+/** `git worktree add -b <branch> <path> <resolved-integration-base>`, into `<worktreesRootFor(
+ * resolvedCwd)>/<laneId>/` — post-v1.0 `specs/22` M17, a per-project directory under the user's cache
+ * directory, never inside `resolvedCwd` itself (`06` §6.4's own "Worktree location" paragraph; git
+ * creates every missing parent directory itself, confirmed empirically — no separate `mkdir` needed,
+ * including the very first time this project's own cache directory is ever used). Two lane creations
+ * for the same `(runId, stepId)` pair collide on the branch name; git's own "a branch named '...'
+ * already exists" refusal is what surfaces that (wrapped into a `VcsError` like every other failure in
+ * this package), not a separate check here — one collision detector, not two that could disagree. */
 export async function createLaneWorktree(
   cwd: string,
   options: { readonly runId: string; readonly stepId: string; readonly integrationBase: string },
@@ -152,7 +155,7 @@ export async function createLaneWorktree(
   const resolvedCwd = await resolveCwd(cwd);
   const laneId = laneIdFor(options.runId, options.stepId);
   const branch = laneBranchName(options.runId, options.stepId);
-  const target = worktreePath(resolvedCwd, laneId);
+  const target = path.join(await worktreesRootFor(resolvedCwd), laneId);
   const resolvedBase = await resolveRevision(resolvedCwd, options.integrationBase);
 
   await wrapGitFailure(
@@ -281,7 +284,8 @@ export async function removeLaneWorktree(
  * the way for can never actually be created.
  *
  * A no-op, with NO git subprocess spawned at all, when the deterministic worktree directory
- * (`worktreePath`, the identical path `createLaneWorktree` itself targets) does not exist on disk —
+ * (the identical path `createLaneWorktree` itself targets, under `worktreesRootFor`) does not exist
+ * on disk —
  * every ordinary, non-retried step's own first and only lane, the overwhelming common case. This
  * fast path is what an adversarial, real-process-kill test (`packages/engine/test/security/
  * s12-orphan-free-crash.test.ts`) found load-bearing, not merely an optimisation: two real,
@@ -299,8 +303,9 @@ export async function removeLaneWorktree(
  * unconditionally, before any step is ever (re-)dispatched.
  *
  * When the directory IS present, computes the identical `laneId`/`branch`/`path` triple
- * `createLaneWorktree` itself derives (`resolveCwd` then `laneIdFor`/`laneBranchName`/`worktreePath`,
- * the same three pure functions, not re-implemented) and hands it to `removeLaneWorktree` with
+ * `createLaneWorktree` itself derives (`resolveCwd` then `laneIdFor`/`laneBranchName`, then
+ * `worktreesRootFor`-joined, the same functions, not re-implemented) and hands it to
+ * `removeLaneWorktree` with
  * `retain: false` — reusing that function's own already-proven "only act on what git itself confirms
  * still exists" idempotence (its own doc comment: safely retriable after a partial prior failure)
  * rather than a second copy of the same existence checks.
@@ -315,7 +320,7 @@ export async function removeLaneIfPresent(
 ): Promise<void> {
   const resolvedCwd = await resolveCwd(cwd);
   const laneId = laneIdFor(options.runId, options.stepId);
-  const target = worktreePath(resolvedCwd, laneId);
+  const target = path.join(await worktreesRootFor(resolvedCwd), laneId);
   if (!existsSync(target)) return;
   const branch = laneBranchName(options.runId, options.stepId);
   await removeLaneWorktree(cwd, { laneId, path: target, branch }, { retain: false });
@@ -361,32 +366,36 @@ function extractWorktreePaths(porcelain: string): readonly string[] {
   return parseWorktreeBlocks(porcelain).map((block) => block.path);
 }
 
-/** `laneId` is derived from the worktree's own path (`worktreePath`'s own `.forge/state/worktrees/
- * <laneId>/` construction, the exact same segment a `createLaneWorktree` call used to build the path in
- * the first place), never from the branch — a gauntlet critic round found `git worktree add -b <branch>
- * <path> <base>` registers the worktree itself (`git worktree list --porcelain` already reports it) in a
- * real, observed `locked initializing`, detached, *branchless* placeholder state before it ever creates
- * the branch or finishes checkout, so a real crash landing in that early window leaves a worktree this
- * function must still recognise with no `branch refs/heads/...` line to derive anything from at all —
- * confirmed empirically (`git version 2.39.5`), not merely a theoretical gap. Deriving from the path
- * instead is unconditionally reliable (every forge-managed worktree's own path is fully deterministic,
- * `worktreePath`'s own construction), and doubles as the "is this even forge-managed" filter on its own
- * (a path outside `.forge/state/worktrees/` — a human's own unrelated worktree elsewhere in the same
- * repository — was never a candidate the branch-namespace check above was actually needed to exclude).
- * `branch` still comes from the porcelain output when present; `''` for the branchless placeholder case,
- * safe because every real caller of a returned `LaneHandle.branch` (`branchExists` before ever attempting
- * a delete) already treats "does not exist" as a safe no-op, never an error — `''` can never collide with
- * a real branch name. */
-function parseLaneWorktrees(porcelain: string, mainWorktreePath: string): readonly LaneHandle[] {
+/** `laneId` is derived from the worktree's own path (`worktreesRootFor(mainWorktreePath)`'s own
+ * `<laneId>/` construction, the exact same segment a `createLaneWorktree` call used to build the path
+ * in the first place), never from the branch — a gauntlet critic round found `git worktree add -b
+ * <branch> <path> <base>` registers the worktree itself (`git worktree list --porcelain` already
+ * reports it) in a real, observed `locked initializing`, detached, *branchless* placeholder state
+ * before it ever creates the branch or finishes checkout, so a real crash landing in that early window
+ * leaves a worktree this function must still recognise with no `branch refs/heads/...` line to derive
+ * anything from at all — confirmed empirically (`git version 2.39.5`), not merely a theoretical gap.
+ * Deriving from the path instead is unconditionally reliable (every forge-managed worktree's own path
+ * is fully deterministic, `worktreesRootFor`'s own construction), and doubles as the "is this even
+ * forge-managed" filter on its own (a path outside this project's own worktrees root — a human's own
+ * unrelated worktree elsewhere, or another project's own cache slot entirely — was never a candidate
+ * the branch-namespace check above was actually needed to exclude). `branch` still comes from the
+ * porcelain output when present; `''` for the branchless placeholder case, safe because every real
+ * caller of a returned `LaneHandle.branch` (`branchExists` before ever attempting a delete) already
+ * treats "does not exist" as a safe no-op, never an error — `''` can never collide with a real branch
+ * name. */
+async function parseLaneWorktrees(
+  porcelain: string,
+  mainWorktreePath: string,
+): Promise<readonly LaneHandle[]> {
   const resolvedMain = path.resolve(mainWorktreePath);
-  const worktreesRoot = path.join(resolvedMain, '.forge', 'state', 'worktrees');
+  const worktreesRoot = await worktreesRootFor(resolvedMain);
   const handles: LaneHandle[] = [];
   for (const { path: worktreePathValue, branch: branchName } of parseWorktreeBlocks(porcelain)) {
     const resolvedPath = path.resolve(worktreePathValue);
     const relative = path.relative(worktreesRoot, resolvedPath);
     // Must be a direct child of worktreesRoot -- not worktreesRoot itself (relative === ''), not
     // outside it (relative starting with '..'), and not nested deeper under it (a real path separator
-    // remaining in `relative`) -- `worktreePath`'s own construction never produces anything but a
+    // remaining in `relative`) -- `worktreesRootFor`'s own construction never produces anything but a
     // direct child, so anything else here is not a forge-managed lane worktree at all.
     if (relative === '' || relative.startsWith('..') || relative.includes(path.sep)) continue;
     handles.push({
@@ -582,7 +591,7 @@ export async function listOrphanedWorktrees(
       `listing worktrees for "${resolvedCwd}"`,
     ));
   }
-  return parseLaneWorktrees(stdout, resolvedCwd).filter(
+  return (await parseLaneWorktrees(stdout, resolvedCwd)).filter(
     (handle) => !knownLaneIds.has(handle.laneId),
   );
 }
@@ -635,15 +644,15 @@ export async function listOrphanedLaneBranches(
   return allBranches.filter((branch) => !branchesWithWorktrees.has(branch));
 }
 
-/** Every subdirectory of `<cwd>/.forge/state/worktrees/` whose name starts with `${runId}-` (this run's
- * own `laneId` namespace, `worktreePath`'s own naming convention) but which git itself does *not*
+/** Every subdirectory of `worktreesRootFor(cwd)` whose name starts with `${runId}-` (this run's own
+ * `laneId` namespace, the same function's own naming convention) but which git itself does *not*
  * currently recognise as a registered worktree (`git worktree list --porcelain`, the same real source
  * of truth `listOrphanedWorktrees` reads) — a third, distinct shape of leftover `git worktree add -b
  * <branch> <path> <base>` can produce when a real crash lands mid-command, on top of the other two this
  * module already reclaims (a bare branch ref with no worktree, `listOrphanedLaneBranches`; a stale lock
  * file, `clearStaleRepoLocks`): the target *directory* itself, created (`mkdir`, at minimum) before
  * registration with git ever completed, so `git worktree list --porcelain` has no trace of it at all —
- * yet `worktreePath`'s own naming is fully deterministic (no per-attempt nonce), so a retried
+ * yet `worktreesRootFor`'s own naming is fully deterministic (no per-attempt nonce), so a retried
  * `createLaneWorktree` for the identical `(runId, stepId)` collides with it regardless, refusing outright
  * ("fatal: '...' already exists," confirmed empirically, distinct from and unrelated to the *branch*
  * collision `listOrphanedLaneBranches` already guards against). Cross-checked against git's own real
@@ -657,7 +666,7 @@ export async function listOrphanedWorktreeDirectories(
   runId: string,
 ): Promise<readonly string[]> {
   const resolvedCwd = await resolveCwd(cwd);
-  const worktreesRoot = path.join(resolvedCwd, '.forge', 'state', 'worktrees');
+  const worktreesRoot = await worktreesRootFor(resolvedCwd);
   const entries = await listDirEntriesSorted(worktreesRoot);
   const candidates = entries
     .filter((entry) => entry.isDirectory && entry.name.startsWith(`${runId}-`))

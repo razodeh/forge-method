@@ -52,6 +52,18 @@ process.env['GIT_CONFIG_GLOBAL'] = emptyGitConfig;
 process.env['GIT_CONFIG_SYSTEM'] = emptyGitConfig;
 process.env['GIT_CONFIG_NOSYSTEM'] = '1';
 
+// `specs/22` M17 (`18` §18.3's own "Worktree location" paragraph): `@forge/vcs`'s own
+// `systemCacheDirRoot` reads the real `XDG_CACHE_HOME` to place lane/integration worktrees and
+// parity's own reference scratch tree. Pinned to the disposable directory `test/global-setup.ts`
+// already created, the identical "supplied by global-setup, which owns the lifetime" shape the
+// gitconfig above already follows — so no test in the whole workspace that creates a real worktree,
+// directly or indirectly, can ever reach (or litter) the real one on the machine running the suite.
+const testCacheDir = process.env['FORGE_TEST_CACHE_DIR'];
+if (testCacheDir === undefined) {
+  throw new Error('FORGE_TEST_CACHE_DIR is unset; test/global-setup.ts did not run.');
+}
+process.env['XDG_CACHE_HOME'] = testCacheDir;
+
 // A non-Node child — git is one — is outside the in-process guard, which covers Node children.
 // Denying git every credential source means a test that accidentally addresses a remote fails
 // immediately instead of blocking on a password prompt until the CI job's timeout.

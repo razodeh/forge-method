@@ -54,6 +54,7 @@ export {
   type RepoSnapshot,
 } from './git.ts';
 export { mergeIntoLane, type JoinConflictPolicy, type JoinOutcome } from './join.ts';
+export { systemCacheDirRoot } from './system-cache-dir.ts';
 export { createAnnotatedTag, resolveTagCommit, tagExists } from './tag.ts';
 export {
   clearStaleRepoLocks,
@@ -74,6 +75,7 @@ export {
   type LaneId,
   type ParsedWorktreeBlock,
 } from './lanes.ts';
+export { legacyInTreeWorktreesRoot, projectCacheHash, worktreesRootFor } from './worktree-root.ts';
 export {
   conflictStatuses,
   processMergeCandidate,

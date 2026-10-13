@@ -9,11 +9,15 @@
  * **One function, both sides.** `options.side` discriminates: `'candidate'` observes `projectRoot`
  * itself, in place, running no `setup`; `'reference'` builds a scratch worktree at
  * `options.referenceSha` (already resolved against a real repository — see `reference-commit.ts`,
- * which this function's own caller runs first) under `projectRoot`'s own `.forge/state/`
- * (`lanes.ts`'s own `createLaneWorktree`/`removeLaneWorktree`, the engine's lane mechanism reused for
- * a tree this piece is not actually a lane of — see this piece's own report for the synthetic
- * `{runId, stepId}` chosen and why), runs each surface's own `setup` first, observes the worktree,
- * and removes it — in a `finally`-equivalent that survives a thrown error from anywhere inside
+ * which this function's own caller runs first) via `lanes.ts`'s own `createLaneWorktree`/
+ * `removeLaneWorktree` (the engine's lane mechanism reused for a tree this piece is not actually a
+ * lane of — see this piece's own report for the synthetic `{runId, stepId}` chosen and why) — post-v1.0
+ * `specs/22` M17, under a per-project directory in the user's own cache directory, never under
+ * `projectRoot`'s own `.forge/state/` as before (`18` §18.3's "Worktree location" paragraph: moving
+ * every FORGE-managed worktree, including this one, out of the project tree is what keeps a test
+ * runner that globs the whole project from discovering it) — runs each surface's own `setup` first,
+ * observes the worktree, and removes it — in a `finally`-equivalent that survives a thrown error from
+ * anywhere inside
  * (a real `SIGKILL` delivered to THIS process cannot be survived by any code running inside it; the
  * worktree left behind by that case is reclaimed by the engine's own existing second-layer orphan
  * sweep, `@forge/vcs`'s `listOrphanedWorktrees`/`removeLaneWorktree`, exactly as `PLAN-M15.md`'s own
@@ -42,11 +46,16 @@
  */
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
-import path from 'node:path';
 
 import { ForgeError, isForgeError, renderValue } from '@forge/core/errors';
 import { runConfinedCommand, STORED_COMMAND_LIMITS } from '@forge/engine/dispatch';
-import { createLaneWorktree, removeLaneWorktree, VcsError, type LaneHandle } from '@forge/vcs';
+import {
+  createLaneWorktree,
+  removeLaneWorktree,
+  worktreesRootFor,
+  VcsError,
+  type LaneHandle,
+} from '@forge/vcs';
 
 import { withParityDirHidden } from './candidate-isolation.ts';
 import { composeArgs } from './compose-args.ts';
@@ -480,10 +489,18 @@ async function withReferenceWorktree<T>(
     });
   } catch (cause) {
     if (cause instanceof VcsError) {
+      // The real location `createLaneWorktree` itself just tried and failed against — post-v1.0
+      // `specs/22` M17, the per-project cache directory `worktreesRootFor` computes (removing this
+      // piece's own former in-tree special case, which hardcoded the pre-M17 `.forge/state/worktrees`
+      // path unconditionally and would otherwise now report somewhere this attempt never touched,
+      // `PLAN-M17.md` P8). Recomputed from a fresh `realpath`, exactly as `createLaneWorktree` computes
+      // it internally before this same failure: not returned by the failed call, which has no handle to
+      // read a resolved path back from.
+      const realProjectRoot = await realpath(projectRoot);
       throw new ForgeError(
         'RUN-124',
         {
-          path: path.join(projectRoot, '.forge', 'state', 'worktrees'),
+          path: await worktreesRootFor(realProjectRoot),
           vcsCode: cause.code,
           vcsMessage: cause.message,
         },

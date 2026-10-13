@@ -1,9 +1,10 @@
 /**
- * `forge doctor --fix` — real, safe, automatic remediation for the two real checks
- * (`stale-lock`/`orphaned-worktrees`) that have one. Every other failing check has no safe automatic
- * fix (deleting a possibly-unmerged dangling lane branch, guessing at a missing `${secret:...}` value,
- * rewriting a malformed `.forge/config.yaml`, ...) and is reported here as exactly that —
- * `applied: false`, with an honest reason — never a fabricated "fixed" claim.
+ * `forge doctor --fix` — real, safe, automatic remediation for the three real checks
+ * (`stale-lock`/`orphaned-worktrees`/`legacy-in-tree-worktrees`, the last since `PLAN-M17.md` P8) that
+ * have one. Every other failing check has no safe automatic fix (deleting a possibly-unmerged dangling
+ * lane branch, guessing at a missing `${secret:...}` value, rewriting a malformed `.forge/config.yaml`,
+ * ...) and is reported here as exactly that — `applied: false`, with an honest reason — never a
+ * fabricated "fixed" claim.
  *
  * Every real, external operation in this file (a git subprocess, a filesystem removal) is wrapped so a
  * genuine failure degrades to an honest `DoctorFixResult` rather than throwing out of `applyDoctorFix`
@@ -21,7 +22,7 @@
 import { rm } from 'node:fs/promises';
 
 import { execa } from 'execa';
-import type { ProjectPaths } from '@forge/core/fs';
+import { listDirEntriesSorted, pathExists, type ProjectPaths } from '@forge/core/fs';
 import { listOrphanedWorktrees } from '@forge/vcs';
 
 import { isProcessAlive, readRunLock, releaseRunLock } from '../run/lock.ts';
@@ -170,12 +171,76 @@ async function fixOrphanedWorktrees(projectRoot: string): Promise<DoctorFixResul
   };
 }
 
+/** `.forge/state/worktrees/` (`checkLegacyInTreeWorktrees`'s own report, `locks-and-worktrees.ts`) —
+ * each real entry removed the SAME way `fixOrphanedWorktrees` above removes one of ITS own real
+ * targets (`removeOrphanedWorktreeOnly`, reused directly rather than duplicated): a project "upgraded
+ * mid-run" (`06` §6.4's own "Worktree location" paragraph) can leave an entry here that git itself
+ * STILL has a real, registered worktree record for — created by an older FORGE version, before this
+ * piece's own `PLAN-M17.md` P8 moved where a new one is ever placed — so a plain filesystem `rm`
+ * alone, skipping git entirely, would leave a dangling `.git/worktrees/<name>/` administrative entry
+ * behind with nothing real to back it. `removeOrphanedWorktreeOnly`'s own `git worktree remove`-first,
+ * raw-`rm`-fallback shape handles both that case and a genuinely disconnected leftover (never
+ * registered with git at all, or already pruned) identically — never the branch-delete half
+ * `removeLaneWorktree` also performs, for the identical "a human decides a branch's fate, not `--fix`"
+ * reason `fixOrphanedWorktrees`'s own doc comment already gives. */
+async function fixLegacyInTreeWorktrees(
+  paths: ProjectPaths,
+  projectRoot: string,
+): Promise<DoctorFixResult> {
+  const legacyRoot = paths.resolveState('worktrees');
+  let entries: readonly { readonly name: string; readonly isDirectory: boolean }[];
+  try {
+    // `pathExists` first, same reasoning as `checkLegacyInTreeWorktrees`'s own doc comment
+    // (`locks-and-worktrees.ts`): a missing directory is the common, healthy case, read the same way
+    // for both the check and this fix, never itself a failure to fix.
+    entries = (await pathExists(legacyRoot)) ? await listDirEntriesSorted(legacyRoot) : [];
+  } catch (cause) {
+    return {
+      id: 'legacy-in-tree-worktrees',
+      applied: false,
+      message: `Could not list the legacy in-tree worktrees directory to fix it: ${causeMessage(cause)}.`,
+    };
+  }
+  if (entries.length === 0) {
+    return {
+      id: 'legacy-in-tree-worktrees',
+      applied: false,
+      message: 'No legacy in-tree worktrees remain to fix.',
+    };
+  }
+
+  let removedCount = 0;
+  const failures: string[] = [];
+  for (const entry of entries) {
+    const entryPath = paths.resolveState(`worktrees/${entry.name}`);
+    try {
+      await removeOrphanedWorktreeOnly(projectRoot, entryPath);
+      removedCount += 1;
+    } catch (cause) {
+      failures.push(`${entryPath}: ${causeMessage(cause)}`);
+    }
+  }
+
+  if (failures.length === 0) {
+    return {
+      id: 'legacy-in-tree-worktrees',
+      applied: true,
+      message: `Removed ${String(removedCount)} real legacy in-tree worktree entr${removedCount === 1 ? 'y' : 'ies'}.`,
+    };
+  }
+  return {
+    id: 'legacy-in-tree-worktrees',
+    applied: removedCount > 0,
+    message: `Removed ${String(removedCount)} of ${String(entries.length)} real legacy in-tree worktree entries; ${String(failures.length)} failed: ${failures.join('; ')}.`,
+  };
+}
+
 /** Applies `--fix`'s real remediation for one failed check, or reports honestly that none exists.
  * Never called for a check that already passed (`runDoctor`'s own caller only invokes this for
  * `checks.filter((c) => !c.ok)`). Never throws: every branch that performs a real, external side
- * effect (`fixStaleLock`/`fixOrphanedWorktrees`) already catches its own real failures into an honest
- * `applied: false` result, matching `runChecks`'s own "never throws" contract for the checks
- * themselves. */
+ * effect (`fixStaleLock`/`fixOrphanedWorktrees`/`fixLegacyInTreeWorktrees`) already catches its own
+ * real failures into an honest `applied: false` result, matching `runChecks`'s own "never throws"
+ * contract for the checks themselves. */
 export async function applyDoctorFix(
   check: DoctorCheck,
   paths: ProjectPaths,
@@ -186,6 +251,8 @@ export async function applyDoctorFix(
       return fixStaleLock(paths);
     case 'orphaned-worktrees':
       return fixOrphanedWorktrees(projectRoot);
+    case 'legacy-in-tree-worktrees':
+      return fixLegacyInTreeWorktrees(paths, projectRoot);
     default:
       return {
         id: check.id,

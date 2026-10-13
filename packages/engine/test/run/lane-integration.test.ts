@@ -15,7 +15,7 @@
  * @see PLAN-M13.md P19
  */
 import { existsSync } from 'node:fs';
-import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -23,7 +23,7 @@ import { execa } from 'execa';
 import { FAKE_MODEL_ID, FakePlatformAdapter, type FakeSessionScript } from '@forge/testkit';
 import type { PlatformAdapter, SessionRequest, ToolGrant } from '@forge/adapter-kit';
 import { readEvents } from '@forge/telemetry/events';
-import { slugifyStepId } from '@forge/vcs';
+import { slugifyStepId, worktreesRootFor } from '@forge/vcs';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -1099,8 +1099,12 @@ describe('a crash while integrating is resumed without merging anything twice', 
     await expect(
       runEngine(source, {}, crashingContext(project, first.adapter, 'MergeQueued')),
     ).rejects.toThrow('simulated crash at MergeQueued');
-    // What the crash left: the lane worktree stopped inside `git rebase -i` (a `break` before its only commit).
-    const worktrees = path.join(project.projectRoot, '.forge', 'state', 'worktrees');
+    // What the crash left: the lane worktree stopped inside `git rebase -i` (a `break` before its only
+    // commit). Lanes go through the real `@forge/vcs` facade (`createVcsFacade`'s own `createLane`),
+    // so they live under the real, post-`PLAN-M17.md`-P8 cache directory -- unlike this test's own
+    // hand-built `integrationPath` above, which bypasses that facade entirely and is this test
+    // harness's own convention, unaffected by where real lanes moved.
+    const worktrees = await worktreesRootFor(await realpath(project.projectRoot));
     const laneDir = (await readdir(worktrees)).find((name) => name.includes('cr-one'));
     if (laneDir === undefined) throw new Error('the crashed run left no lane for step one');
     const lane = path.join(worktrees, laneDir);

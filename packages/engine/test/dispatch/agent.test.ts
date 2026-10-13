@@ -11,14 +11,14 @@
  * @see PLAN-M5.md P15
  * @see PLAN-M14.md P3
  */
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import type { AdapterCapabilities, PlatformAdapter, SessionRequest } from '@forge/adapter-kit';
 import { ForgeError } from '@forge/core/errors';
-import { slugifyStepId } from '@forge/vcs';
+import { slugifyStepId, worktreesRootFor } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents } from '@forge/telemetry/events';
 import { TelemetryError } from '@forge/telemetry/errors';
@@ -81,7 +81,7 @@ describe('runAgentStep', () => {
 
     await executeStep(stepNode, ctx);
 
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     const entries = await readdir(worktreesDir);
     expect(entries).toHaveLength(1);
   });
@@ -104,7 +104,7 @@ describe('runAgentStep', () => {
 
     await executeStep(stepNode, ctx);
 
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     const [laneDir] = await readdir(worktreesDir);
     expect(laneDir).toBeDefined();
     const content = await readFileInRepo(path.join(worktreesDir, laneDir ?? ''), 'marker.txt');
@@ -129,7 +129,7 @@ describe('runAgentStep', () => {
 
     await executeStep(stepNode, ctx);
 
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     const [laneDir] = await readdir(worktreesDir);
     const { stdout } = await execa('git', ['log', '-1', '--format=%B'], {
       cwd: path.join(worktreesDir, laneDir ?? ''),
@@ -169,7 +169,7 @@ describe('runAgentStep', () => {
     // the out-of-claim file exactly as before, but the step itself now fails too.
     expect(outcome.status).toBe('failed');
     expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     const [laneDir] = await readdir(worktreesDir);
     const laneRoot = path.join(worktreesDir, laneDir ?? '');
     await expect(readFileInRepo(laneRoot, 'src/allowed.ts')).resolves.toContain('ok = 1');
@@ -420,7 +420,7 @@ describe('runAgentStep', () => {
     const outcome = await executeStep(stepNode, ctx);
 
     expect(outcome.status).toBe('failed');
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     const [laneDir] = await readdir(worktreesDir);
     const laneRoot = path.join(worktreesDir, laneDir ?? '');
     // Committed for real, not just left sitting uncommitted in the worktree -- confirmed via git log,
@@ -647,7 +647,7 @@ describe('runAgentStep', () => {
 
     await executeStep(stepNode, ctx);
 
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     const [laneDir] = await readdir(worktreesDir);
     const { stdout } = await execa('git', ['log', '-1', '--format=%s'], {
       cwd: path.join(worktreesDir, laneDir ?? ''),
@@ -994,7 +994,7 @@ describe('a declared KB output reserves a collision-free id before assembly (PLA
     expect(outcome.failure).toMatchObject({ source: 'prompt', code: 'RUN-109' });
     expect(ctx.laneRegistry.has('wf:write-risk')).toBe(false);
     await expect(
-      readdir(path.join(projectRoot, '.forge', 'state', 'worktrees')).catch(() => []),
+      readdir(await worktreesRootFor(await realpath(projectRoot))).catch(() => []),
     ).resolves.toEqual([]);
   });
 
@@ -1093,7 +1093,7 @@ describe('a declared KB output reserves a collision-free id before assembly (PLA
       TelemetryError,
     );
     // The worktree really was created before the throw.
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     await expect(readdir(worktreesDir)).resolves.toHaveLength(1);
 
     // If the reservation had leaked, this unrelated, later step would be told ADR-0002, not ADR-0001.

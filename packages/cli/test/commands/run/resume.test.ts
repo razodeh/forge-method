@@ -8,13 +8,14 @@
  * @see specs/06 §6.10
  */
 import { spawn } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
 import { pathExists, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
 import * as planIndexModule from '@forge/engine/plan';
+import { worktreesRootFor } from '@forge/vcs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { acquireRunLock, readRunLock } from '../../../src/commands/run/lock.ts';
@@ -224,7 +225,11 @@ steps:
     const laneId = lanes[0]?.laneId;
     if (laneId === undefined) throw new Error('resumed run left no lane');
     const written = await readFile(
-      project.paths.resolveState(`worktrees/${laneId}/${FIXTURE_ITEM_ID}.txt`),
+      path.join(
+        await worktreesRootFor(await realpath(project.dir)),
+        laneId,
+        `${FIXTURE_ITEM_ID}.txt`,
+      ),
       'utf8',
     );
     expect(written).toBe(`${FIXTURE_ITEM_ID}\n`);
@@ -247,8 +252,9 @@ steps:
     // waits for is always a crash *after* it).
     await spawnAndKill(project.paths, project.dir, runId);
 
-    const integrationPath = project.paths.resolveState(
-      'worktrees/integration-forge-integration-current',
+    const integrationPath = path.join(
+      await worktreesRootFor(await realpath(project.dir)),
+      'integration-forge-integration-current',
     );
 
     // Diverge main and the integration branch for real, *after* the crash the killed run already
@@ -298,7 +304,7 @@ steps:
     const lanes = await runLanes(project.paths, project.dir, runId);
     const laneId = lanes[0]?.laneId;
     if (laneId === undefined) throw new Error('resumed run left no lane');
-    const laneDir = project.paths.resolveState(`worktrees/${laneId}`);
+    const laneDir = path.join(await worktreesRootFor(await realpath(project.dir)), laneId);
     await expect(readFile(path.join(laneDir, 'hotfix-after-crash.txt'), 'utf8')).rejects.toThrow();
     await expect(
       readFile(path.join(laneDir, 'integration-only-after-crash.txt'), 'utf8'),
@@ -339,8 +345,8 @@ steps:
 
     const marker = await readFile(
       path.join(
-        project.dir,
-        '.forge/state/worktrees/integration-forge-integration-current',
+        await worktreesRootFor(await realpath(project.dir)),
+        'integration-forge-integration-current',
         'run-id-marker.txt',
       ),
       'utf8',

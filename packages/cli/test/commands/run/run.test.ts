@@ -6,14 +6,14 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M5.md P20
  */
-import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
 import { compileRunPlan } from '@forge/engine/plan';
 import { parseWorkflow } from '@forge/engine/workflow';
+import { listOrphanedWorktrees, worktreesRootFor } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents, type ForgeEvent } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -58,6 +58,19 @@ const REAL_FORGE_LAUNCHER: LauncherSpec = {
   entry: fileURLToPath(new URL('../../../bin/forge.mjs', import.meta.url)),
   env: process.env,
 };
+
+/** The real integration worktree's path for the default `forge/integration/current` branch, and the
+ * real lane worktree's path for a given `laneId` — post-`PLAN-M17.md` P8, under the per-project cache
+ * directory (`@forge/vcs`'s own `worktreesRootFor`), never inside the project tree. */
+async function expectedWorktreesRoot(projectDir: string): Promise<string> {
+  return worktreesRootFor(await realpath(projectDir));
+}
+async function expectedIntegrationPath(projectDir: string): Promise<string> {
+  return path.join(
+    await expectedWorktreesRoot(projectDir),
+    'integration-forge-integration-current',
+  );
+}
 
 describe('dryRunWorkflow', () => {
   it('plans and returns the real compiled plan without touching the filesystem or spawning a session', () => {
@@ -214,8 +227,11 @@ describe('runWorkflow', () => {
     // `SPEC-QUESTIONS.md` Q232 decision 18: `--dry-run` never syncs the integration branch either —
     // nothing plans or prints without spawning any session or writing any file (`03` §3.2's own
     // `--dry-run` contract) means never even creating the integration worktree this sync would run
-    // against.
-    expect(existsSync(project.paths.resolveState('worktrees'))).toBe(false);
+    // against. Checked against real git state (`listOrphanedWorktrees`), not a guessed path: post-
+    // `PLAN-M17.md` P8 nothing is ever created under the project's own `.forge/state/` any more, so a
+    // bare existence check there would pass trivially regardless of whether this test's own real
+    // claim held.
+    expect(await listOrphanedWorktrees(project.dir)).toEqual([]);
   });
 
   it('runs a real workflow to completion: real event log, real lock lifecycle, real produced artifact', async () => {
@@ -243,7 +259,7 @@ describe('runWorkflow', () => {
     const laneId = lanes[0]?.laneId;
     if (laneId === undefined) throw new Error('run left no lane');
     const written = await readFile(
-      project.paths.resolveState(`worktrees/${laneId}/${FIXTURE_ITEM_ID}.txt`),
+      path.join(await expectedWorktreesRoot(project.dir), laneId, `${FIXTURE_ITEM_ID}.txt`),
       'utf8',
     );
     expect(written).toBe(`${FIXTURE_ITEM_ID}\n`);
@@ -454,10 +470,7 @@ A test statement.
     await writeFile(path.join(project.dir, 'main-only.txt'), 'm\n');
     await execa('git', ['add', 'main-only.txt'], { cwd: project.dir });
     await execa('git', ['commit', '--quiet', '-m', 'main-only'], { cwd: project.dir });
-    const integrationPath = path.join(
-      project.dir,
-      '.forge/state/worktrees/integration-forge-integration-current',
-    );
+    const integrationPath = await expectedIntegrationPath(project.dir);
     await writeFile(path.join(integrationPath, 'integration-only.txt'), 'i\n');
     await execa('git', ['add', 'integration-only.txt'], { cwd: integrationPath });
     await execa('git', ['commit', '--quiet', '-m', 'integration-only'], { cwd: integrationPath });
@@ -502,10 +515,7 @@ A test statement.
     if (result.kind !== 'run') throw new Error('unreachable');
     expect(result.runState.runStatus).toBe('completed');
 
-    const integrationPath = path.join(
-      project.dir,
-      '.forge/state/worktrees/integration-forge-integration-current',
-    );
+    const integrationPath = await expectedIntegrationPath(project.dir);
     const written = await readFile(path.join(integrationPath, `${FIXTURE_ITEM_ID}.txt`), 'utf8');
     expect(written).toBe(`${FIXTURE_ITEM_ID}\n`);
 
@@ -560,10 +570,7 @@ A test statement.
     expect(first.runState.runStatus).toBe('completed');
 
     // Confirmed: run 1 left the integration branch exactly where it started, equal to `main`.
-    const integrationPathBefore = path.join(
-      project.dir,
-      '.forge/state/worktrees/integration-forge-integration-current',
-    );
+    const integrationPathBefore = await expectedIntegrationPath(project.dir);
     const mainTipBeforeHotfix = (
       await execa('git', ['rev-parse', 'main'], { cwd: project.dir })
     ).stdout.trim();
@@ -594,16 +601,13 @@ A test statement.
     const laneId = lanes[0]?.laneId;
     if (laneId === undefined) throw new Error('run 2 left no lane');
     const hotfixInLane = await readFile(
-      project.paths.resolveState(`worktrees/${laneId}/hotfix.txt`),
+      path.join(await expectedWorktreesRoot(project.dir), laneId, 'hotfix.txt'),
       'utf8',
     );
     expect(hotfixInLane).toBe('hotfix\n');
 
     // And the integration branch itself was really fast-forwarded, not merely the lane rebased past it.
-    const integrationPathAfter = path.join(
-      project.dir,
-      '.forge/state/worktrees/integration-forge-integration-current',
-    );
+    const integrationPathAfter = await expectedIntegrationPath(project.dir);
     const hotfixOnIntegration = await readFile(
       path.join(integrationPathAfter, 'hotfix.txt'),
       'utf8',
@@ -637,10 +641,7 @@ A test statement.
 
     // Confirmed: run 1's own lane really did land on the integration branch (it is genuinely ahead of
     // the `main` it started from), not merely still 'ready' and unmerged.
-    const integrationPath = path.join(
-      project.dir,
-      '.forge/state/worktrees/integration-forge-integration-current',
-    );
+    const integrationPath = await expectedIntegrationPath(project.dir);
     const mainTipBeforeHotfix = (
       await execa('git', ['rev-parse', 'main'], { cwd: project.dir })
     ).stdout.trim();
@@ -713,11 +714,7 @@ A test statement.
     expect(result.runState.runStatus).toBe('completed');
 
     const marker = await readFile(
-      path.join(
-        project.dir,
-        '.forge/state/worktrees/integration-forge-integration-current',
-        'run-id-marker.txt',
-      ),
+      path.join(await expectedIntegrationPath(project.dir), 'run-id-marker.txt'),
       'utf8',
     );
     expect(marker).toBe('run-gate-marker');

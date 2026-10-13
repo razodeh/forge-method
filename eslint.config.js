@@ -450,6 +450,65 @@ export default tseslint.config(
     },
   },
   {
+    // `@forge/vcs`'s own `systemCacheDirRoot` (`PLAN-M17.md` P8) is the identical injected-boundary
+    // split `clock.ts`/`system-temp.ts` above already establish, for "the real platform cache
+    // directory" instead of "now"/"an OS temp path": every other consumer in this codebase takes it
+    // as an injected value instead (`worktree-root.ts`'s own `worktreesRootFor`, whose `cacheDirRoot`
+    // parameter defaults to a call to this function rather than reading the environment itself) --
+    // this is the one file allowed to read `process.env`/`os.homedir()` directly. Narrowly by name,
+    // not by directory, for the identical reason those two files are; `no-restricted-imports` restates
+    // the global array minus only the one entry (`node:os`'s host-fact names) this file actually needs
+    // lifted, the same "narrowed to just the entries this file needs off" discipline `system-temp.ts`'s
+    // own override already follows, so a future addition to the shared array is still inherited here.
+    files: ['**/src/system-cache-dir.ts'],
+    rules: {
+      'no-restricted-syntax': 'off',
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:test',
+              message: 'specs/02 §2.1: node:test is not used; tests are written with vitest.',
+            },
+            {
+              name: 'node:crypto',
+              importNames: RANDOM_NAMES,
+              message: 'R10: use a seeded RNG, not crypto randomness.',
+            },
+            {
+              name: 'node:perf_hooks',
+              importNames: ['performance'],
+              message: 'R10: take the time from an injected clock, not perf_hooks.',
+            },
+            {
+              name: 'node:fs/promises',
+              importNames: LISTING_NAMES,
+              message:
+                'R10: directory listings are unordered; sort explicitly via @forge/core/fs listDirSorted.',
+            },
+            {
+              name: 'node:fs',
+              importNames: ['readdir', 'readdirSync', 'opendir', 'opendirSync', 'glob', 'globSync'],
+              message:
+                'R10: directory listings are unordered; sort explicitly via @forge/core/fs listDirSorted.',
+            },
+            {
+              name: 'node:process',
+              message: 'R10: read configuration through the config layer, not node:process.',
+            },
+          ],
+          patterns: [
+            {
+              regex: `^(${BARE_BUILTINS.join('|')})(/.*)?$`,
+              message: 'Import Node builtins with the node: protocol (specs/02 §2.1).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // The test harness and the launcher are the layer that *pins* the clock, the locale and the
     // environment, so they are the one place that must read and write them directly, and the one
     // place that lists directories before @forge/core/fs exists. R10 constrains production code.

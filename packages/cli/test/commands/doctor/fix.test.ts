@@ -6,11 +6,12 @@
  * @see specs/21 E10
  * @see PLAN-M11.md P14
  */
-import { chmod, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { chmod, mkdir, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import { worktreesRootFor } from '@forge/vcs';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { applyDoctorFix } from '../../../src/commands/doctor/fix.ts';
@@ -26,6 +27,13 @@ async function spawnDeadPid(): Promise<number> {
   if (pid === undefined) throw new Error('child process failed to spawn (no pid)');
   await new Promise((resolve) => child.on('exit', resolve));
   return pid;
+}
+
+/** The exact lane-worktree-root `createLaneWorktree` itself would compute for `projectDir` — this
+ * file builds its own orphans with a raw `git worktree add` (never `createLaneWorktree`), so it needs
+ * the identical real, post-`PLAN-M17.md`-P8 location independently. */
+async function expectedWorktreesRoot(projectDir: string): Promise<string> {
+  return worktreesRootFor(await realpath(projectDir));
 }
 
 describe('applyDoctorFix — stale-lock', () => {
@@ -70,11 +78,10 @@ describe('applyDoctorFix — stale-lock', () => {
 describe('applyDoctorFix — orphaned-worktrees', () => {
   it('removes a real orphaned lane worktree, deliberately leaving its own lane branch in place, and reports applied:true', async () => {
     const project = await createTestProject();
-    await execa(
-      'git',
-      ['worktree', 'add', '-b', 'forge/run-1/implement-abcd1234', '.forge/state/worktrees/orphan'],
-      { cwd: project.dir },
-    );
+    const target = path.join(await expectedWorktreesRoot(project.dir), 'orphan');
+    await execa('git', ['worktree', 'add', '-b', 'forge/run-1/implement-abcd1234', target], {
+      cwd: project.dir,
+    });
 
     const outcome = await applyDoctorFix(
       { id: 'orphaned-worktrees', ok: false, severity: 'warning', message: '1 orphan' },
@@ -99,6 +106,7 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
 
   it('removes every real orphan it can, and reports the count even when several exist', async () => {
     const project = await createTestProject();
+    const worktreesRoot = await expectedWorktreesRoot(project.dir);
     await execa(
       'git',
       [
@@ -106,7 +114,7 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
         'add',
         '-b',
         'forge/run-1/implement-aaaa1111',
-        '.forge/state/worktrees/orphan-a',
+        path.join(worktreesRoot, 'orphan-a'),
       ],
       { cwd: project.dir },
     );
@@ -117,7 +125,7 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
         'add',
         '-b',
         'forge/run-1/implement-bbbb2222',
-        '.forge/state/worktrees/orphan-b',
+        path.join(worktreesRoot, 'orphan-b'),
       ],
       { cwd: project.dir },
     );
@@ -147,6 +155,7 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
     'isolates one orphan’s own real removal failure from the rest, reporting a real partial success',
     async () => {
       const project = await createTestProject();
+      const worktreesRoot = await expectedWorktreesRoot(project.dir);
       await execa(
         'git',
         [
@@ -154,7 +163,7 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
           'add',
           '-b',
           'forge/run-1/implement-aaaa1111',
-          '.forge/state/worktrees/orphan-a',
+          path.join(worktreesRoot, 'orphan-a'),
         ],
         { cwd: project.dir },
       );
@@ -165,7 +174,7 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
           'add',
           '-b',
           'forge/run-1/implement-bbbb2222',
-          '.forge/state/worktrees/orphan-b',
+          path.join(worktreesRoot, 'orphan-b'),
         ],
         { cwd: project.dir },
       );
@@ -175,7 +184,6 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
       // shape of failure `removeOrphanedWorktreeOnly` has no special handling for, proving the *other*
       // orphan is still removed and the failure is reported honestly rather than silently swallowed or
       // propagated out of the whole fix pass.
-      const worktreesRoot = path.join(project.dir, '.forge/state/worktrees');
       const orphanBPath = path.join(worktreesRoot, 'orphan-b');
       await chmod(orphanBPath, 0o000);
 
@@ -198,6 +206,68 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
       }
     },
   );
+});
+
+describe('applyDoctorFix — legacy-in-tree-worktrees (specs/22 M17 P8)', () => {
+  it('removes real leftover entries under the pre-M17 .forge/state/worktrees/, reporting applied:true', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge', 'state', 'worktrees', 'leftover'), {
+      recursive: true,
+    });
+
+    const outcome = await applyDoctorFix(
+      { id: 'legacy-in-tree-worktrees', ok: false, severity: 'warning', message: '1 entry' },
+      project.paths,
+      project.dir,
+    );
+    expect(outcome.applied).toBe(true);
+    expect(outcome.message).toContain('Removed 1 real legacy in-tree worktree entry');
+
+    const checked = await applyDoctorFix(
+      { id: 'legacy-in-tree-worktrees', ok: true, severity: 'warning', message: 'clean' },
+      project.paths,
+      project.dir,
+    );
+    // Re-checking a clean project reports the honest "nothing to fix" outcome, not a fabricated
+    // repeat success.
+    expect(checked.applied).toBe(false);
+    expect(checked.message).toContain('No legacy in-tree worktrees remain to fix');
+  });
+
+  it('reports applied:false honestly when nothing is there to fix', async () => {
+    const project = await createTestProject();
+    const outcome = await applyDoctorFix(
+      { id: 'legacy-in-tree-worktrees', ok: true, severity: 'warning', message: 'clean' },
+      project.paths,
+      project.dir,
+    );
+    expect(outcome.applied).toBe(false);
+    expect(outcome.message).toContain('No legacy in-tree worktrees remain to fix');
+  });
+
+  it('uses git-mediated removal first (not a bare rm) for an entry that is STILL a real, git-registered worktree — the "project upgraded mid-run" case', async () => {
+    const project = await createTestProject();
+    const legacyTarget = path.join(project.dir, '.forge', 'state', 'worktrees', 'still-registered');
+    // Simulates a worktree a pre-M17 (or pre-upgrade) FORGE engine created directly in-tree, which
+    // git itself still has a real administrative record for.
+    await execa('git', ['worktree', 'add', '-b', 'forge/run-1/implement-abcd1234', legacyTarget], {
+      cwd: project.dir,
+    });
+
+    const outcome = await applyDoctorFix(
+      { id: 'legacy-in-tree-worktrees', ok: false, severity: 'warning', message: '1 entry' },
+      project.paths,
+      project.dir,
+    );
+    expect(outcome.applied).toBe(true);
+
+    // Git's own bookkeeping was genuinely reconciled, not left dangling behind a raw filesystem
+    // deletion git never heard about.
+    const { stdout: worktrees } = await execa('git', ['worktree', 'list', '--porcelain'], {
+      cwd: project.dir,
+    });
+    expect(worktrees).not.toContain('still-registered');
+  });
 });
 
 describe('applyDoctorFix — no safe automatic fix', () => {
@@ -242,7 +312,13 @@ describe('runDoctor({ fix: true })', () => {
     });
     await execa(
       'git',
-      ['worktree', 'add', '-b', 'forge/run-1/implement-abcd1234', '.forge/state/worktrees/orphan'],
+      [
+        'worktree',
+        'add',
+        '-b',
+        'forge/run-1/implement-abcd1234',
+        path.join(await expectedWorktreesRoot(project.dir), 'orphan'),
+      ],
       { cwd: project.dir },
     );
 

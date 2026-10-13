@@ -21,6 +21,7 @@ import {
 } from './environment.ts';
 import {
   checkDanglingLaneBranches,
+  checkLegacyInTreeWorktrees,
   checkOrphanedWorktrees,
   checkStaleLock,
 } from './locks-and-worktrees.ts';
@@ -221,6 +222,7 @@ async function runChecks(options: DoctorOptions): Promise<DoctorCheck[]> {
     },
     { id: 'stale-lock', promise: checkStaleLock(paths) },
     { id: 'orphaned-worktrees', promise: checkOrphanedWorktrees(projectRoot) },
+    { id: 'legacy-in-tree-worktrees', promise: checkLegacyInTreeWorktrees(paths) },
     { id: 'dangling-lane-branches', promise: checkDanglingLaneBranches(projectRoot) },
     { id: 'diagrams', promise: checkDiagrams(paths, kbRoot) },
     { id: 'secret-references', promise: checkSecretReferences(paths, env) },

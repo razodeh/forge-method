@@ -9,13 +9,13 @@
  * @see PLAN-M5.md P15
  * @see PLAN-M14.md P3
  */
-import { mkdtemp, readdir } from 'node:fs/promises';
+import { mkdtemp, readdir, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import { ForgeError } from '@forge/core/errors';
-import { VcsError } from '@forge/vcs';
+import { VcsError, worktreesRootFor } from '@forge/vcs';
 import { readEvents } from '@forge/telemetry/events';
 import { describe, expect, it } from 'vitest';
 
@@ -50,7 +50,7 @@ describe('runCommandStep', () => {
     expect(outcome.detail.kind).toBe('command');
     if (outcome.detail.kind === 'command') expect(outcome.detail.stdout.trim()).toBe('hello');
 
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     await expect(readdir(worktreesDir)).rejects.toThrow();
   });
 
@@ -106,7 +106,7 @@ describe('runCommandStep', () => {
     const outcome = await executeStep(stepNode, ctx);
 
     expect(outcome.status).toBe('succeeded');
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     const [laneDir] = await readdir(worktreesDir);
     expect(laneDir).toBeDefined();
     const content = await readFileInRepo(path.join(worktreesDir, laneDir ?? ''), 'out.txt');
@@ -129,7 +129,7 @@ describe('runCommandStep', () => {
     // before, but a `command` step's claim violation now fails it too, identically to an `agent` step's.
     expect(outcome.status).toBe('failed');
     expect(outcome.failure).toMatchObject({ source: 'claim', code: 'RUN-104' });
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     const [laneDir] = await readdir(worktreesDir);
     const laneRoot = path.join(worktreesDir, laneDir ?? '');
     const files = await readdir(laneRoot);
@@ -178,7 +178,7 @@ describe('runCommandStep', () => {
     // The lane's own changes are still committed and claim-enforced despite the failure -- a failing
     // command still produced real output worth preserving for inspection (06 §6.4 step 4: "On failure ->
     // keep the worktree for inspection").
-    const worktreesDir = path.join(projectRoot, '.forge', 'state', 'worktrees');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
     const [laneDir] = await readdir(worktreesDir);
     expect(laneDir).toBeDefined();
   });

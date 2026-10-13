@@ -12,7 +12,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { listOrphanedWorktrees, removeLaneWorktree } from '@forge/vcs';
+import { listOrphanedWorktrees, removeLaneWorktree, worktreesRootFor } from '@forge/vcs';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -1021,7 +1021,11 @@ describe('observeParityDeclaration: the observed root, as given and resolved (sp
       parentEnv: process.env,
     });
     expect(observation.root.real).toBe(observation.root.asGiven);
-    expect(observation.root.asGiven).toContain(path.join('.forge', 'state', 'worktrees'));
+    // Post-v1.0 `specs/22` M17 (`PLAN-M17.md` P8): the scratch worktree lives under the real,
+    // per-project cache directory, never under the project's own `.forge/state/` any more.
+    const expectedWorktreesRoot = await worktreesRootFor(await realpath(dir));
+    expect(observation.root.asGiven.startsWith(`${expectedWorktreesRoot}${path.sep}`)).toBe(true);
+    expect(path.relative(dir, observation.root.asGiven).startsWith('..')).toBe(true);
     // The worktree is gone by the time this call returns -- `root` names where it WAS.
     expect(await listOrphanedWorktrees(dir)).toEqual([]);
   });

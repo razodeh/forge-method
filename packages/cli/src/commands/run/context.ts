@@ -28,7 +28,13 @@ import {
 import type { AskPort } from '@forge/engine/dispatch';
 import type { RunEngineContext } from '@forge/engine/run';
 import type { ConcurrencyLimits } from '@forge/engine/scheduler';
-import { VcsError, getDirtyFiles, parseWorktreeBlocks, resolveRevision } from '@forge/vcs';
+import {
+  VcsError,
+  getDirtyFiles,
+  parseWorktreeBlocks,
+  resolveRevision,
+  worktreesRootFor,
+} from '@forge/vcs';
 import { legacyStringTestCommands, type ForgeConfig } from '@forge/schemas/config';
 import type { ToolGrant } from '@forge/adapter-kit/types';
 import { resolveClaimPolicy } from '@forge/kb/adopt';
@@ -316,6 +322,13 @@ export async function isTargetRegisteredWorktree(
  * concern)"; this is that later piece. Idempotent: a second call against an already-checked-out path
  * is a no-op, the same "nothing to do" real state `createLaneWorktree`'s own sibling operations treat
  * as success rather than an error.
+ *
+ * `paths` is unused since `PLAN-M17.md` P8: the target used to be `paths.resolveState('worktrees/
+ * integration-...')`, inside the project's own `.forge/state/` (`06` §6.4's pre-M17 rule); post-M17 it
+ * is `@forge/vcs`'s own `worktreesRootFor`, a per-project directory under the user's cache directory,
+ * outside the project entirely (`18` §18.3's "Worktree location" paragraph) — kept as a parameter
+ * rather than removed, so every one of this function's three real call sites (`bin.ts`, `run.ts`, this
+ * file's own `buildRunEngineContext` below) needs no change for an internal relocation.
  */
 export async function ensureIntegrationWorktree(
   paths: ProjectPaths,
@@ -324,9 +337,16 @@ export async function ensureIntegrationWorktree(
   base: string,
   options: { readonly graceMs?: number } = {},
 ): Promise<string> {
-  const target = paths.resolveState(
-    `worktrees/integration-${integrationBranch.replace(/\//g, '-')}`,
-  );
+  const realProjectRoot = await realpath(projectRoot);
+  // `worktreesRootFor`/`path.join` of two real absolute paths is always itself a real, well-formed
+  // absolute path -- the invariant `AbsolutePath` actually promises downstream (`pathExists`,
+  // `recoverFromWorktreeAddFailure`). It never passed (and, living outside the project entirely, never
+  // could pass) `ProjectPaths.resolveWithin`'s own containment check -- a DIFFERENT invariant this
+  // path is no longer asking to hold at all, by this piece's own design (`PLAN-M17.md` P8).
+  const target = path.join(
+    await worktreesRootFor(realProjectRoot),
+    `integration-${integrationBranch.replace(/\//g, '-')}`,
+  ) as AbsolutePath;
   if (await pathExists(target)) {
     // A `git worktree add` a killed process started keeps running (killing the parent does not kill git) and
     // finishes a moment later; a healthy tree is what a resume finds if it looks again. Only a tree that stays
@@ -634,9 +654,9 @@ export async function syncIntegrationBranchToTrunk(
         `The integration worktree for ${branch} has ${String(dirtyFiles.length)} uncommitted ` +
         `change(s), so it cannot be synced with ${trunk}: ${dirtyFilesText}.`,
       remedy:
-        'This is the integration worktree, not your own working tree — inspect it directly (under ' +
-        '`.forge/state/worktrees/`) and commit or discard what is there, then run again.',
-      details: { dirtyFiles, branch },
+        `This is the integration worktree, not your own working tree — inspect it directly at ` +
+        `${integrationPath} and commit or discard what is there, then run again.`,
+      details: { dirtyFiles, branch, integrationPath },
     });
   }
 
@@ -664,6 +684,10 @@ export async function syncIntegrationBranchToTrunk(
     trunk,
     integrationTip: integrationTip.slice(0, SHORT_SHA_LENGTH),
     trunkTip: trunkTip.slice(0, SHORT_SHA_LENGTH),
+    // Post-v1.0 `specs/22` M17: the integration worktree no longer lives at a fixed, guessable
+    // project-relative path (`18` §18.3's "Worktree location" paragraph), so the remedy below names
+    // this real, resolved one instead of a now-stale literal.
+    integrationPath,
   });
 }
 

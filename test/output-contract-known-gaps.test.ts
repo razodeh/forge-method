@@ -543,10 +543,26 @@ describe('M17 Phase A: surfaces specs/22 M17 names that are not yet built (specs
   // built" surfaces, and a real, tested caller belongs in that test suite instead
   // (`packages/engine/test/run/run-engine.test.ts`'s own "driveToCompletion retry wiring" describe).
 
-  it('7. lane worktrees still live inside the project tree, at .forge/state/worktrees/<laneId>', () => {
+  it('7. [CLOSED by PLAN-M17.md P8] lane and integration worktrees moved out of the project tree, to a per-project directory under the user cache, keyed by a stable project hash — pinned the identical way the gap used to be pinned, per this file\'s own standing rule ("the day a piece builds one of them, the matching test fails until the pin is updated on purpose")', () => {
     const lanes = readPkg('packages/vcs/src/lanes.ts');
-    expect(lanes).toContain("path.join(cwd, '.forge', 'state', 'worktrees', laneId)");
+    // The old in-tree construction is gone, not merely supplemented.
+    expect(lanes).not.toContain("path.join(cwd, '.forge', 'state', 'worktrees', laneId)");
+    expect(lanes).toContain('worktreesRootFor');
+    // `systemCacheDirRoot` (the one function allowed to read it, `system-cache-dir.ts`) is the real
+    // `$XDG_CACHE_HOME` reader; `lanes.ts` itself never reads the env var directly (R10) — it only
+    // ever reaches it through `worktreesRootFor`'s own default parameter.
     expect(lanes).not.toContain('XDG_CACHE_HOME');
+    const worktreeRoot = readPkg('packages/vcs/src/worktree-root.ts');
+    expect(worktreeRoot).toContain('systemCacheDirRoot');
+    const systemCacheDir = readPkg('packages/vcs/src/system-cache-dir.ts');
+    expect(systemCacheDir).toContain('XDG_CACHE_HOME');
+    // `forge doctor` detects and offers to clean up a worktree left at the old, in-tree location.
+    const locksAndWorktrees = readPkg('packages/cli/src/commands/doctor/locks-and-worktrees.ts');
+    expect(locksAndWorktrees).toContain('checkLegacyInTreeWorktrees');
+    // Parity's own former in-tree special case (observe.ts:458, the plan's own 2026-10-11 snapshot) no
+    // longer hardcodes the pre-M17 path in its RUN-124 failure detail.
+    const observe = readPkg('packages/cli/src/commands/parity/observe.ts');
+    expect(observe).not.toContain("path.join(projectRoot, '.forge', 'state', 'worktrees')");
   });
 
   it('8. the root-path token rewrite still masks a replace-rule-detectable regression (a live repro, not a reading)', () => {

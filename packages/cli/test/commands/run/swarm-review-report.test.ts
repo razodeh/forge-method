@@ -10,7 +10,7 @@
  * @see specs/10 §10.6
  * @see PLAN-M13.md P17
  */
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -18,7 +18,7 @@ import { ArtifactDocument, validateArtifact } from '@forge/core/artifacts';
 import type { SessionRequest } from '@forge/adapter-kit';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { readEvents, type ForgeEvent } from '@forge/telemetry/events';
-import { laneBranchName } from '@forge/vcs';
+import { laneBranchName, worktreesRootFor } from '@forge/vcs';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { runWorkflow } from '../../../src/commands/run/run.ts';
@@ -38,8 +38,15 @@ afterEach(cleanupAll);
 const WORKFLOW_ID = 'review-wf';
 const REVIEW_STEP = `${WORKFLOW_ID}:review`;
 const REPORT = 'docs/forge/sessions/reviews/REVIEW-001.md';
-/** Where a merge lands (`buildRunEngineContext`'s integration worktree), not the project's own checkout. */
-const INTEGRATION = '.forge/state/worktrees/integration-forge-integration-current';
+/** Where a merge lands (`buildRunEngineContext`'s integration worktree), not the project's own
+ * checkout — post-`PLAN-M17.md` P8, under the real per-project cache directory (`@forge/vcs`'s own
+ * `worktreesRootFor`), never inside the project tree. */
+async function expectedIntegrationPath(projectDir: string): Promise<string> {
+  return path.join(
+    await worktreesRootFor(await realpath(projectDir)),
+    'integration-forge-integration-current',
+  );
+}
 
 const WORKFLOW = `
 id: ${WORKFLOW_ID}
@@ -149,7 +156,7 @@ describe('forge run: a swarm-review step', () => {
     expect(events.some((event) => event.type === 'GateApproved')).toBe(true);
 
     // The merge carried the engine-written report into the integration branch.
-    const text = await readFile(path.join(p.dir, INTEGRATION, REPORT), 'utf8');
+    const text = await readFile(path.join(await expectedIntegrationPath(p.dir), REPORT), 'utf8');
     const doc = ArtifactDocument.parse(text, REPORT);
     expect(validateArtifact(doc)).toEqual({ valid: true });
     expect(doc.frontMatter).toMatchObject({
@@ -219,7 +226,9 @@ describe('forge run: a swarm-review step', () => {
     });
     expect(text.match(/^- Verdict: \*\*/gm)).toHaveLength(1);
     expect(text).toContain('- Verdict: **blocked**');
-    await expect(readFile(path.join(p.dir, INTEGRATION, REPORT), 'utf8')).rejects.toThrow();
+    await expect(
+      readFile(path.join(await expectedIntegrationPath(p.dir), REPORT), 'utf8'),
+    ).rejects.toThrow();
   });
 
   it('a blocking perspective fails the run at review: one dispatch round, the report committed on the lane, no merge commit', async () => {
@@ -250,7 +259,9 @@ describe('forge run: a swarm-review step', () => {
     const branch = laneBranchName(runId, REVIEW_STEP);
     const { stdout: text } = await execa('git', ['show', `${branch}:${REPORT}`], { cwd: p.dir });
     expect(text).toContain('- Verdict: **blocked**');
-    await expect(readFile(path.join(p.dir, INTEGRATION, REPORT), 'utf8')).rejects.toThrow();
+    await expect(
+      readFile(path.join(await expectedIntegrationPath(p.dir), REPORT), 'utf8'),
+    ).rejects.toThrow();
   });
 
   it('a perspective that fails fails the run: no lane, no report, no merge', async () => {
@@ -269,7 +280,9 @@ describe('forge run: a swarm-review step', () => {
     );
     expect(JSON.stringify(failed?.payload)).toContain('No ReviewReport was written');
     expect(events.map((event) => event.type)).not.toContain('LaneCreated');
-    await expect(readFile(path.join(p.dir, INTEGRATION, REPORT), 'utf8')).rejects.toThrow();
+    await expect(
+      readFile(path.join(await expectedIntegrationPath(p.dir), REPORT), 'utf8'),
+    ).rejects.toThrow();
   });
 
   it("a second run of the same workflow numbers its report after the first run's merged one", async () => {
@@ -277,13 +290,12 @@ describe('forge run: a swarm-review step', () => {
     await run(p, scripted(CLEAN, CLEAN), 'run-swarm-one');
     const { result } = await run(p, scripted(CLEAN, CLEAN), 'run-swarm-two');
     expect(result.runState.runStatus).toBe('completed');
+    const integrationPath = await expectedIntegrationPath(p.dir);
     const second = await readFile(
-      path.join(p.dir, INTEGRATION, 'docs/forge/sessions/reviews/REVIEW-002.md'),
+      path.join(integrationPath, 'docs/forge/sessions/reviews/REVIEW-002.md'),
       'utf8',
     );
     expect(second).toContain('run-swarm-two');
-    expect(await readFile(path.join(p.dir, INTEGRATION, REPORT), 'utf8')).toContain(
-      'run-swarm-one',
-    );
+    expect(await readFile(path.join(integrationPath, REPORT), 'utf8')).toContain('run-swarm-one');
   });
 });

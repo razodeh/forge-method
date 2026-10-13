@@ -41,7 +41,7 @@
  * @see PLAN-M14.md P3
  */
 import { execa } from 'execa';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +54,7 @@ import { configSchema, type ForgeConfig } from '@forge/schemas/config';
 import { FakePlatformAdapter, type FakeSessionScript } from '@forge/testkit';
 
 import { runWorkflow, type RunDeps } from '../packages/cli/src/commands/run/run.ts';
+import { worktreesRootFor } from '../packages/vcs/src/index.ts';
 import { runInit } from '../packages/cli/src/init/run-init.ts';
 import { OPERATING_CONTRACT } from '../packages/agents/src/prompt/index.ts';
 import { readEvents, type ForgeEvent } from '../packages/telemetry/src/events.ts';
@@ -558,13 +559,15 @@ const isRevert = (event: ForgeEvent): boolean =>
   event.type === 'LaneCommitted' &&
   (event.payload as { reason?: string } | undefined)?.reason === 'claim-revert';
 
-/** The step's own lane worktree (the integration worktree is not it). */
+/** The step's own lane worktree (the integration worktree is not it) — post-`PLAN-M17.md` P8, under
+ * the real per-project cache directory (`@forge/vcs`'s own `worktreesRootFor`), never inside `dir`. */
 async function laneDir(dir: string): Promise<string> {
-  const lanes = (
-    await readdir(path.join(dir, '.forge/state/worktrees')).catch(() => [] as string[])
-  ).filter((name) => !name.startsWith('integration'));
+  const worktreesRoot = await worktreesRootFor(await realpath(dir));
+  const lanes = (await readdir(worktreesRoot).catch(() => [] as string[])).filter(
+    (name) => !name.startsWith('integration'),
+  );
   expect(lanes.length, 'the step ran in its own lane').toBe(1);
-  return path.join(dir, '.forge/state/worktrees', lanes[0] ?? '');
+  return path.join(worktreesRoot, lanes[0] ?? '');
 }
 
 async function tracked(dir: string): Promise<string[]> {

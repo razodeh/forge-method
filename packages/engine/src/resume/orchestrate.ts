@@ -34,6 +34,7 @@ import {
   removeOrphanedWorktreeDirectory,
   resolveRevision,
   slugifyStepId,
+  worktreesRootFor,
   type LaneHandle,
 } from '@forge/vcs';
 import { readEvents } from '@forge/telemetry/events';
@@ -66,8 +67,19 @@ export interface ResumeContext extends ExecuteStepContext {
   readonly steps: ReadonlyMap<string, StepNode>;
 }
 
-function laneWorktreePath(projectRoot: string, laneId: string): string {
-  return path.join(projectRoot, '.forge', 'state', 'worktrees', laneId);
+/** `realProjectRoot` MUST already be resolved through `realpath` (every real call site below already
+ * is, before calling this) — `@forge/vcs`'s own `worktreesRootFor` hashes exactly the string it is
+ * given, and a resume must compute the identical path `createLaneWorktree` itself used, not a
+ * plausible-looking but unresolved variant of it (`lanes.ts`'s own `resolveCwd` doc comment: `os.
+ * tmpdir()` itself is a symlink on macOS, so an unresolved and a resolved path for the same real
+ * directory hash differently). This function used to join `.forge/state/worktrees/<laneId>` directly
+ * under the project root (`06` §6.4's own pre-M17 rule) — duplicated, independently, from `@forge/vcs`'s
+ * own internal construction, the identical "two places that could drift apart" shape this piece's own
+ * report found a second, unrelated instance of (`@forge/cli`'s own `mergeLane`, hand-building a
+ * `LaneHandle.path` from the same stale literal); delegating to the one real, shared function removes
+ * the possibility of either drifting again when the real location next changes. */
+async function laneWorktreePath(realProjectRoot: string, laneId: string): Promise<string> {
+  return path.join(await worktreesRootFor(realProjectRoot), laneId);
 }
 
 function emptySessionResult(): {
@@ -165,7 +177,7 @@ async function laneHandleFor(
   const laneId = `${runId}-${slugifyStepId(stepId)}`;
   return {
     laneId: laneId as LaneHandle['laneId'],
-    path: laneWorktreePath(resolvedProjectRoot, laneId),
+    path: await laneWorktreePath(resolvedProjectRoot, laneId),
     branch: laneBranchName(runId, stepId),
   };
 }
@@ -401,7 +413,7 @@ async function repopulateLaneRegistry(
     if (origin === undefined) continue;
     const lane: LaneHandle = {
       laneId: laneId as LaneHandle['laneId'],
-      path: laneWorktreePath(await realpath(ctx.projectRoot), laneId),
+      path: await laneWorktreePath(await realpath(ctx.projectRoot), laneId),
       branch: laneBranchName(runId, origin.stepId),
     };
     if (!existsSync(lane.path)) {
@@ -437,7 +449,7 @@ async function abortInterruptedRebases(
 ): Promise<void> {
   const projectRoot = await realpath(ctx.projectRoot);
   for (const laneId of runState.laneStatuses.keys()) {
-    const lanePath = laneWorktreePath(projectRoot, laneId);
+    const lanePath = await laneWorktreePath(projectRoot, laneId);
     if (!laneId.startsWith(`${runId}-`) || !existsSync(lanePath)) continue;
     for (const dir of ['rebase-merge', 'rebase-apply']) {
       const gitPath = await execa('git', ['rev-parse', '--git-path', dir], {

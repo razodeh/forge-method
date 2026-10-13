@@ -8,7 +8,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,7 @@ import YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
+import { listOrphanedWorktrees } from '@forge/vcs';
 
 const LAUNCHER = fileURLToPath(new URL('../../../../bin/forge.mjs', import.meta.url));
 
@@ -395,13 +396,14 @@ describe('forge test binding — a dirty working tree', () => {
     // Nothing was written: the refusal happened before any lane/test/evidence work.
     expect(result.stdout).not.toContain('MUT-');
     // A real, direct check -- not inferred from exit code/stdout alone -- that `createLaneWorktree`
-    // (`@forge/vcs`'s own `.forge/state/worktrees/<laneId>/`, `packages/vcs/src/lanes.ts`) never ran:
-    // a round-1 gauntlet critic (M15 P4) found this test's assertions alone would not catch a future
-    // regression that reordered `assertCleanWorkingTree` to run after lane creation, since a
-    // created-then-torn-down lane leaves no trace in exit code or stdout.
-    await expect(readdir(path.join(dir, '.forge', 'state', 'worktrees'))).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
+    // (`@forge/vcs`'s own `lanes.ts`) never ran: a round-1 gauntlet critic (M15 P4) found this test's
+    // assertions alone would not catch a future regression that reordered `assertCleanWorkingTree` to
+    // run after lane creation, since a created-then-torn-down lane leaves no trace in exit code or
+    // stdout. Checked against real git state (`listOrphanedWorktrees`), not a guessed path: post-
+    // `PLAN-M17.md` P8 nothing is ever created under the project's own `.forge/state/` any more, so a
+    // bare directory-absence check there would pass trivially regardless of whether a lane ever ran --
+    // exactly the kind of silent regression this check exists to catch.
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
   }, 30_000);
 });
 

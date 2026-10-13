@@ -24,6 +24,9 @@
  * @see specs/06 §6.5
  * @see PLAN-M14.md P40
  */
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
+
 import { ForgeError, SYSTEM_CLOCK, renderCause, type Clock } from '@forge/core';
 import { pathExists, readTextFile, type ProjectPaths } from '@forge/core/fs';
 import {
@@ -44,7 +47,7 @@ import { reconstructRunState } from '@forge/engine/resume';
 import { parseWorkflow } from '@forge/engine/workflow';
 import { legacyStringTestCommands, type ForgeConfig } from '@forge/schemas/config';
 import { readEvents } from '@forge/telemetry/events';
-import { laneBranchName } from '@forge/vcs';
+import { laneBranchName, worktreesRootFor } from '@forge/vcs';
 
 import { readManifest } from './resume.ts';
 
@@ -256,9 +259,18 @@ export async function mergeLane(
   // round-shaped bug caught before commit: `lane.branch` is what `processMergeCandidate` itself actually
   // reaches with `git merge`/`git rebase` (`merge-queue.ts`'s own doc comment), so using the bare `laneId`
   // there would target a branch that never exists.
+  //
+  // `path` is `@forge/vcs`'s own `worktreesRootFor` (`PLAN-M17.md` P8), the per-project cache directory
+  // `createLaneWorktree` itself placed this exact lane under — not `ctx.paths.resolveState(...)`
+  // (`.forge/state/worktrees/<laneId>`, this command's own pre-M17 construction, which would have
+  // silently pointed at a now-wrong, nonexistent path once P8 landed, the identical independent-
+  // recomputation bug this piece's own report found and fixed in `orchestrate.ts`'s own
+  // `laneWorktreePath`). Resolved through the SAME, one real function the lane was created with,
+  // rather than hand-built a second time here.
+  const realProjectRoot = await realpath(ctx.projectRoot);
   const lane: LaneHandle = {
     laneId,
-    path: ctx.paths.resolveState(`worktrees/${laneId}`),
+    path: path.join(await worktreesRootFor(realProjectRoot), laneId),
     branch: laneBranchName(ctx.runId, origin.stepId),
   };
 

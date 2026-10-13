@@ -8,7 +8,7 @@
  * @see PLAN-M5.md P2
  */
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -32,6 +32,7 @@ import {
   revertPathsToRevision,
   slugifyStepId,
 } from '../src/lanes.ts';
+import { legacyInTreeWorktreesRoot, worktreesRootFor } from '../src/worktree-root.ts';
 
 const SLUG_SHAPE = /^[a-z0-9-]+-[0-9a-f]{8}$/;
 
@@ -44,6 +45,14 @@ async function createTempRepo(): Promise<string> {
 
 async function mkdirRecursive(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
+}
+
+/** The exact lane-worktree-root `createLaneWorktree` itself computes for `cwd` (`worktreePath`'s own
+ * construction, `lanes.ts`) — mirrors the production code's own `resolveCwd` (a plain `realpath`) so a
+ * test-constructed path and the one the real function actually used always agree, the identical reason
+ * `laneHandleFor` (`@forge/engine/resume`) resolves `cwd` the same way before building one by hand. */
+async function expectedWorktreesRoot(cwd: string): Promise<string> {
+  return await worktreesRootFor(await realpath(cwd));
 }
 
 async function branchExistsInRepo(cwd: string, branch: string): Promise<boolean> {
@@ -344,7 +353,7 @@ describe('removeLaneIfPresent (specs/22 M17 P10) (#3 "recreate the lane")', () =
   });
 
   it('resolves the real, symlink-free cwd before comparing against git worktree list, the same as createLaneWorktree', async () => {
-    // A critic-class bug this repository has already hit once (lanes.ts's own worktreePath doc comment):
+    // A critic-class bug this repository has already hit once (lanes.ts's own resolveCwd doc comment):
     // a path built from an *unresolved* cwd and git's own canonicalised report compare unequal as plain
     // strings on a platform where the temp dir is itself a symlink (macOS's /tmp -> /private/tmp).
     const cwd = await createTempRepo();
@@ -358,6 +367,113 @@ describe('removeLaneIfPresent (specs/22 M17 P10) (#3 "recreate the lane")', () =
     await expect(
       createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' }),
     ).resolves.toBeDefined();
+  });
+});
+
+describe('Worktree location: outside the project tree, keyed by a stable project hash (specs/22 M17 P8)', () => {
+  it('never creates anything under the project tree itself — a runner that globs the whole project for test files finds no lane copy', async () => {
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+
+    const realCwd = await realpath(cwd);
+    expect(path.relative(realCwd, handle.path).startsWith('..')).toBe(true);
+    // The pre-M17 in-tree location (06 §6.4's own old rule) is never even created, not merely unused.
+    expect(existsSync(legacyInTreeWorktreesRoot(realCwd))).toBe(false);
+  });
+
+  it('places the worktree under the real, resolved worktrees root — the one `createLaneWorktree` and `worktreesRootFor` must always agree on', async () => {
+    const cwd = await createTempRepo();
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+
+    const root = await expectedWorktreesRoot(cwd);
+    expect(path.dirname(handle.path)).toBe(root);
+    // Genuinely under the sandboxed test cache directory (test/global-setup.ts's own
+    // FORGE_TEST_CACHE_DIR, read into XDG_CACHE_HOME by test/setup.ts) -- not secretly still under the
+    // project, which would defeat the whole point without this assertion ever failing. Realpath'd
+    // before comparing, the identical reason `worktreesRootFor` itself realpaths its own cache
+    // directory argument (its own doc comment): `XDG_CACHE_HOME` here is `os.tmpdir()`-derived, itself
+    // a symlink on macOS, so a bare, unresolved prefix check on `root` -- already fully resolved --
+    // would fail exactly as this assertion first did before being fixed.
+    const xdgCacheHome = process.env['XDG_CACHE_HOME'];
+    expect(xdgCacheHome).toBeDefined();
+    const realXdgCacheHome = await realpath(String(xdgCacheHome));
+    expect(root.startsWith(`${realXdgCacheHome}${path.sep}`)).toBe(true);
+  });
+
+  it('two independent checkouts of different projects never collide on one cache slot', async () => {
+    const cwdA = await createTempRepo();
+    const cwdB = await createTempRepo();
+
+    const handleA = await createLaneWorktree(cwdA, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    const handleB = await createLaneWorktree(cwdB, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+
+    expect(path.dirname(handleA.path)).not.toBe(path.dirname(handleB.path));
+    expect(existsSync(handleA.path)).toBe(true);
+    expect(existsSync(handleB.path)).toBe(true);
+  });
+
+  it('a symlinked path to the project hashes identically to the project’s own real path (the macOS os.tmpdir() case `resolveCwd` already guards against)', async () => {
+    const realCwd = await createTempRepo();
+    const linkDir = `${realCwd}-link`;
+    await execa('ln', ['-s', realCwd, linkDir]);
+    try {
+      const handle = await createLaneWorktree(linkDir, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: 'HEAD',
+      });
+      expect(path.dirname(handle.path)).toBe(await expectedWorktreesRoot(realCwd));
+    } finally {
+      await rm(linkDir, { force: true });
+    }
+  });
+
+  it('a project renamed on disk after a lane was created gets a fresh cache slot for its next lane — the old lane is not corrupted, only unreachable through this package’s own path-prefix filter (DECISION: hashing the real path, not a move-proof identity — see this piece’s own report)', async () => {
+    const originalCwd = await createTempRepo();
+    const beforeMove = await createLaneWorktree(originalCwd, {
+      runId: 'run-1',
+      stepId: 'before-move',
+      integrationBase: 'HEAD',
+    });
+    const beforeMoveRoot = path.dirname(beforeMove.path);
+
+    const movedCwd = `${originalCwd}-moved`;
+    await rename(originalCwd, movedCwd);
+
+    // The old lane is still a real, git-registered worktree -- nothing was corrupted by the move --
+    // but this package's own "is this one of mine" filter no longer recognises it: its real path sits
+    // under the OLD hash, while a fresh lookup from the new location computes the NEW one.
+    const { stdout: rawPorcelain } = await execa('git', ['worktree', 'list', '--porcelain'], {
+      cwd: movedCwd,
+    });
+    expect(rawPorcelain).toContain(beforeMove.path);
+    expect(await listOrphanedWorktrees(movedCwd)).toEqual([]);
+
+    // The project is still fully usable from its new location: a fresh lane is created cleanly, under
+    // a DIFFERENT cache slot than the pre-move lane used (a different real path hashes differently).
+    const afterMove = await createLaneWorktree(movedCwd, {
+      runId: 'run-1',
+      stepId: 'after-move',
+      integrationBase: 'HEAD',
+    });
+    expect(existsSync(afterMove.path)).toBe(true);
+    expect(path.dirname(afterMove.path)).not.toBe(beforeMoveRoot);
   });
 });
 
@@ -681,7 +797,7 @@ describe('listOrphanedWorktrees', () => {
     // discoverable via git's own bookkeeping, never this package's own in-memory state (which a crash
     // would simply lose). Bypassing createLaneWorktree entirely is what actually proves that.
     const cwd = await createTempRepo();
-    const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-1-a-00000000');
+    const target = path.join(await expectedWorktreesRoot(cwd), 'run-1-a-00000000');
     await execa('git', ['worktree', 'add', '-b', 'forge/run-1/a-00000000', target, 'HEAD'], {
       cwd,
     });
@@ -719,7 +835,7 @@ describe('listOrphanedWorktrees', () => {
     // itself already covers under real timing — this isolates the parsing fix on its own): laneId must
     // now come from the path, since a detached worktree has no branch line to derive one from at all.
     const cwd = await createTempRepo();
-    const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-1-a-00000000');
+    const target = path.join(await expectedWorktreesRoot(cwd), 'run-1-a-00000000');
     await execa('git', ['worktree', 'add', '--detach', target, 'HEAD'], { cwd });
 
     const orphans = await listOrphanedWorktrees(cwd);
@@ -897,7 +1013,7 @@ describe('listOrphanedWorktreeDirectories / removeOrphanedWorktreeDirectory', ()
     // yet) -- constructed here directly, since a real `git worktree add` always registers something,
     // however incomplete, by the time it can be interrupted.
     const cwd = await createTempRepo();
-    const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-1-a-00000000');
+    const target = path.join(await expectedWorktreesRoot(cwd), 'run-1-a-00000000');
     await mkdirRecursive(target);
     await writeFile(path.join(target, 'leftover.txt'), 'partial checkout content\n');
 
@@ -916,7 +1032,7 @@ describe('listOrphanedWorktreeDirectories / removeOrphanedWorktreeDirectory', ()
 
   it('excludes a directory belonging to a different run', async () => {
     const cwd = await createTempRepo();
-    const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-2-a-00000000');
+    const target = path.join(await expectedWorktreesRoot(cwd), 'run-2-a-00000000');
     await mkdirRecursive(target);
 
     expect(await listOrphanedWorktreeDirectories(cwd, 'run-1')).toEqual([]);
@@ -924,7 +1040,7 @@ describe('listOrphanedWorktreeDirectories / removeOrphanedWorktreeDirectory', ()
 
   it('removeOrphanedWorktreeDirectory deletes the directory via a plain filesystem removal', async () => {
     const cwd = await createTempRepo();
-    const target = path.join(cwd, '.forge', 'state', 'worktrees', 'run-1-a-00000000');
+    const target = path.join(await expectedWorktreesRoot(cwd), 'run-1-a-00000000');
     await mkdirRecursive(target);
 
     await removeOrphanedWorktreeDirectory(target);

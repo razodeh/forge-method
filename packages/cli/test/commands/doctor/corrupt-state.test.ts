@@ -10,11 +10,12 @@
  * @see specs/21 E10
  * @see PLAN-M11.md P14
  */
-import { mkdir, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import { worktreesRootFor } from '@forge/vcs';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { runDoctor } from '../../../src/commands/doctor/run-doctor.ts';
@@ -96,10 +97,12 @@ async function createCorruptStateProject() {
 
   // 3. An orphaned lane worktree — a real, forge-namespaced worktree `forge doctor` has no live run's
   //    own lane registry to exclude against, so it is genuinely orphaned from a standalone invocation's
-  //    point of view.
+  //    point of view. Post-`PLAN-M17.md` P8, created under the real per-project cache directory
+  //    (`@forge/vcs`'s own `worktreesRootFor`), never inside the project tree.
+  const worktreesRoot = await worktreesRootFor(await realpath(project.dir));
   await execa(
     'git',
-    ['worktree', 'add', '-b', 'forge/run-1/implement-abcd1234', '.forge/state/worktrees/orphan'],
+    ['worktree', 'add', '-b', 'forge/run-1/implement-abcd1234', path.join(worktreesRoot, 'orphan')],
     { cwd: project.dir },
   );
 

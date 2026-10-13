@@ -1759,10 +1759,23 @@ export const ERROR_CODES = {
     // neither one re-syncs the branch at all.
     severity: 'error',
     exitCode: EXIT_CODES.failure,
-    message: (d: { branch: string; trunk: string; integrationTip: string; trunkTip: string }) =>
-      `Integration branch ${show(d.branch)} (at ${show(d.integrationTip)}) has diverged from ${show(d.trunk)} (at ${show(d.trunkTip)}) and cannot be fast-forwarded.`,
+    // `integrationPath` (post-v1.0 `specs/22` M17: no longer a fixed, guessable project-relative path,
+    // `18` §18.3's "Worktree location" paragraph) is named in the MESSAGE, not the remedy -- `remedy`
+    // is a plain, per-code-fixed string on this codebase's own error contract, never a function of the
+    // detail bag (`RUN-115`'s own doc comment above has the fuller reasoning), so a real, resolved path
+    // that varies per failure cannot live there.
+    message: (d: {
+      branch: string;
+      trunk: string;
+      integrationTip: string;
+      trunkTip: string;
+      integrationPath: string;
+    }) =>
+      `Integration branch ${show(d.branch)} (at ${show(d.integrationTip)}) has diverged from ${show(d.trunk)} (at ${show(d.trunkTip)}) and cannot be fast-forwarded. The integration worktree is at ${show(d.integrationPath)}.`,
     remedy:
-      'Merge the trunk branch into the integration branch by hand in the integration worktree (under `.forge/state/worktrees/`) and push the resolution, or delete the branch once its work has been delivered so the next run creates it fresh from the trunk.',
+      'Merge the trunk branch into the integration branch by hand, at the path the message above ' +
+      'names, and push the resolution, or delete the branch once its work has been delivered so the ' +
+      'next run creates it fresh from the trunk.',
   },
   'RUN-108': {
     // `PLAN-M14.md` P14, `SPEC-QUESTIONS.md` Q232 decision 7: a swarm-review step's merged verdict is
@@ -2908,17 +2921,19 @@ export const ERROR_CODES = {
       'Fix the probe script so it prints exactly one {"ok":true,"value":...} or ' +
       '{"ok":false,"error":{"name":...,"message":...}} JSON object on stdout, then re-run.',
   },
-  // `specs/22` M16 P3 (`13` F-TEST-9: the reference is observed "in a scratch worktree ... placed
-  // under the `.forge/state/` of the tree a capture runs in"). `@forge/vcs`'s own `createLaneWorktree`
-  // throws a `VcsError`; wrapped here the identical `vcsCode`/`vcsMessage` shape `RUN-037` already
-  // gives a lane-worktree failure on the engine's own run path.
+  // `specs/22` M16 P3 (`13` F-TEST-9: the reference is observed in a scratch worktree). Post-v1.0
+  // `specs/22` M17, that worktree lives under a per-project directory in the user's own cache
+  // directory, never under the project's own `.forge/state/` (`18` §18.3's "Worktree location"
+  // paragraph) -- `d.path` is that real, resolved location, not a guess. `@forge/vcs`'s own
+  // `createLaneWorktree` throws a `VcsError`; wrapped here the identical `vcsCode`/`vcsMessage` shape
+  // `RUN-037` already gives a lane-worktree failure on the engine's own run path.
   'RUN-124': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,
     message: (d: { path: string; vcsCode: string; vcsMessage: string }) =>
       `Creating the reference's scratch worktree at ${show(d.path)} failed (${show(d.vcsCode)}): ${show(d.vcsMessage)}`,
     remedy:
-      'Fix the underlying git failure (remove a stale ".forge/state/worktrees/" entry, free disk ' +
+      'Fix the underlying git failure (remove a stale entry under the path named above, free disk ' +
       'space, or similar), then re-run the capture.',
   },
   // `specs/22` M16 P3 (`13` F-TEST-9: "a case whose output path passes through a symlink is

@@ -23,12 +23,13 @@
  * @see PLAN-M14.md P13
  * @see SPEC-QUESTIONS.md Q216, Q232 decision 5
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
 import { minimatch } from 'minimatch';
+import { worktreesRootFor } from '@forge/vcs';
 import type { SessionRequest } from '@forge/adapter-kit';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { isTestPath } from '@forge/engine/dispatch';
@@ -370,7 +371,7 @@ describe("enforced: a real 'debug' run keeps the reproduction test and reverts a
     expect(revertCommit).toBeDefined();
     const laneId = violation?.laneId;
     expect(laneId).toBeDefined();
-    const worktree = path.join(project.dir, '.forge', 'state', 'worktrees', laneId ?? '');
+    const worktree = path.join(await worktreesRootFor(await realpath(project.dir)), laneId ?? '');
 
     async function existsInLane(relativePath: string): Promise<boolean> {
       try {

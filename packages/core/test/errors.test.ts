@@ -137,11 +137,14 @@ const SAMPLE_DETAILS = {
   max: 999,
   // `RUN-104` (`PLAN-M14.md` P3): the claim policy an out-of-claim write violated.
   policy: 'strict',
-  // `RUN-107` (`PLAN-M14.md` P9): a diverged integration branch, naming both short shas.
+  // `RUN-107` (`PLAN-M14.md` P9): a diverged integration branch, naming both short shas and (post-v1.0
+  // `specs/22` M17, `PLAN-M17.md` P8) the real, resolved worktree path.
   branch: 'forge/integration/current',
   trunk: 'main',
   integrationTip: 'a1b2c3d4e5f6',
   trunkTip: '1a2b3c4d5e6f',
+  integrationPath:
+    '/home/user/.cache/forge/abc1234567890def/worktrees/integration-forge-integration-current',
   vcsCode: 'VCS-GIT-OPERATION-FAILED',
   vcsMessage: 'git worktree add failed: already exists',
   telemetryCode: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',

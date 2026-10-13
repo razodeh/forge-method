@@ -9,13 +9,14 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
+import { worktreesRootFor } from '@forge/vcs';
 import * as YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -31,6 +32,16 @@ async function scratch(prefix: string): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), `forge-cli-p12-${prefix}-`));
   dirs.push(dir);
   return dir;
+}
+
+/** The real integration worktree's path for the default `forge/integration/current` branch — post-
+ * `PLAN-M17.md` P8, the per-project cache directory (`@forge/vcs`'s own `worktreesRootFor`), never
+ * inside `dir` itself. */
+async function expectedIntegrationPath(dir: string): Promise<string> {
+  return path.join(
+    await worktreesRootFor(await realpath(dir)),
+    'integration-forge-integration-current',
+  );
 }
 
 interface Result {
@@ -342,10 +353,7 @@ describe('forge run: a diverged integration branch is a refusal, not a stack tra
     await writeFile(path.join(dir, 'main-only.txt'), 'm\n');
     await execa('git', ['add', 'main-only.txt'], { cwd: dir });
     await execa('git', ['commit', '--quiet', '-m', 'main-only'], { cwd: dir });
-    const integrationPath = path.join(
-      dir,
-      '.forge/state/worktrees/integration-forge-integration-current',
-    );
+    const integrationPath = await expectedIntegrationPath(dir);
     await writeFile(path.join(integrationPath, 'integration-only.txt'), 'i\n');
     await execa('git', ['add', 'integration-only.txt'], { cwd: integrationPath });
     await execa('git', ['commit', '--quiet', '-m', 'integration-only'], { cwd: integrationPath });
@@ -382,10 +390,7 @@ describe('forge run: a diverged integration branch is a refusal, not a stack tra
     await writeFile(path.join(dir, 'main-only.txt'), 'm\n');
     await execa('git', ['add', 'main-only.txt'], { cwd: dir });
     await execa('git', ['commit', '--quiet', '-m', 'main-only'], { cwd: dir });
-    const integrationPath = path.join(
-      dir,
-      '.forge/state/worktrees/integration-forge-integration-current',
-    );
+    const integrationPath = await expectedIntegrationPath(dir);
     await writeFile(path.join(integrationPath, 'integration-only.txt'), 'i\n');
     await execa('git', ['add', 'integration-only.txt'], { cwd: integrationPath });
     await execa('git', ['commit', '--quiet', '-m', 'integration-only'], { cwd: integrationPath });
@@ -423,10 +428,7 @@ describe('forge merge: never re-syncs the integration branch with main (M14 P9, 
     await writeFile(path.join(dir, 'main-only.txt'), 'm\n');
     await execa('git', ['add', 'main-only.txt'], { cwd: dir });
     await execa('git', ['commit', '--quiet', '-m', 'main-only'], { cwd: dir });
-    const integrationPath = path.join(
-      dir,
-      '.forge/state/worktrees/integration-forge-integration-current',
-    );
+    const integrationPath = await expectedIntegrationPath(dir);
     await writeFile(path.join(integrationPath, 'integration-only.txt'), 'i\n');
     await execa('git', ['add', 'integration-only.txt'], { cwd: integrationPath });
     await execa('git', ['commit', '--quiet', '-m', 'integration-only'], { cwd: integrationPath });

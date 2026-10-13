@@ -264,11 +264,13 @@ describe('runBindingCheck — a real SIGKILL at several real points during a gen
       if (killed) killsLanded += 1;
 
       // The genuinely absolute guarantee: the main repository's own TRACKED content, by construction,
-      // never touched. `.forge/state/worktrees/<laneId>/` living inside the main repo's own working
-      // directory (`@forge/vcs`'s own `worktreePath`) is real, benign, untracked noise on every lane
-      // creation, successful or killed alike -- confirmed directly, not assumed, against a clean,
-      // uninterrupted run before asserting this; a left-behind `.forge/` entry is exactly what the
-      // second-layer orphan sweep below exists to reclaim, not a tracked-content mutation.
+      // never touched. Before `PLAN-M17.md` P8, a lane's worktree lived inside the main repo's own
+      // working directory (`@forge/vcs`'s own now-removed `worktreePath`) as real, benign, untracked
+      // `.forge/` noise on every lane creation, successful or killed alike; post-P8 the lane worktree
+      // itself lives entirely outside the project tree (`worktreesRootFor`), so this filter now mostly
+      // guards `.forge/`'s own gitignored run state instead -- confirmed directly, not assumed, against
+      // a clean, uninterrupted run before asserting this; a left-behind entry either way is exactly
+      // what the second-layer orphan sweep below exists to reclaim, not a tracked-content mutation.
       const { stdout: headAfter } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
       expect(headAfter.trim()).toBe(headBefore.trim());
       const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: dir });

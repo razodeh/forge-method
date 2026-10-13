@@ -22,12 +22,13 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execa, execaSync } from 'execa';
+import { worktreesRootFor } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import type { SessionRequest } from '@forge/adapter-kit/types';
 import { ProjectPaths } from '@forge/core/fs';
@@ -806,8 +807,8 @@ unobservable:
       // -- a real forge parity check against the same integration worktree stops reading
       // oracle-changed.
       const integrationPath = path.join(
-        project.dir,
-        '.forge/state/worktrees/integration-forge-integration-current',
+        await worktreesRootFor(await realpath(project.dir)),
+        'integration-forge-integration-current',
       );
       const rewrittenDeclaration = await readFile(
         path.join(integrationPath, '.forge/parity/behavior.parity.yaml'),
