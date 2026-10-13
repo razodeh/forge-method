@@ -22,7 +22,7 @@ import type { StyleProfile } from '@forge/extensions/style';
 import { resolveContentReference } from '@forge/agents/prompt';
 import { readAgentDefinition, type AgentDefinition } from '@forge/agents/schema';
 import { JsonBackend, openKbIndex, parseKbTree } from '@forge/kb';
-import type { ForgeConfig } from '@forge/schemas/config';
+import { legacyStringTestCommands, type ForgeConfig } from '@forge/schemas/config';
 import { z } from 'zod';
 
 import type { KbAccess, PromptAssemblyContext } from './types.ts';
@@ -245,6 +245,9 @@ export function createPromptAssemblyContext(
     templatesPackageRoot: input.templatesPackageRoot,
     pinnedCore: { projectIdentity: config.project.name, level: config.project.level },
     styleProfile: input.styleProfile,
-    testCommands: config.execution.testCommands,
+    // `PromptConstraints.testCommands` is not yet taught the structured form (post-v1.0, `specs/22`
+    // M17 P3) -- `legacyStringTestCommands` narrows to this project's own bare-string layers, a no-op
+    // for every existing, string-only project.
+    testCommands: legacyStringTestCommands(config.execution.testCommands),
   };
 }

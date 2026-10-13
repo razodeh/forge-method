@@ -6,5 +6,14 @@
  */
 export { CONFIG_KEY_DOCS, type ConfigKeyPath } from './docs.ts';
 export { DEFAULT_CONFIG } from './defaults.ts';
-export { configSchema, type ForgeConfig } from './schema.ts';
+export {
+  configSchema,
+  legacyStringTestCommands,
+  testCommandEntrySchema,
+  TEST_REPORT_FORMATS,
+  type ForgeConfig,
+  type StructuredTestCommand,
+  type TestCommandEntry,
+  type TestReportFormat,
+} from './schema.ts';
 export { configLeafPaths } from './walk.ts';

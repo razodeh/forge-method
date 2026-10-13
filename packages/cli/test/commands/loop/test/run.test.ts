@@ -59,6 +59,48 @@ function ctx(dir: string, testCommands: TestCommands) {
   return { paths: new ProjectPaths(dir), projectRoot: dir, testCommands };
 }
 
+describe('testRun — a structured testCommands.<layer> entry is not yet routed through here (specs/22 M17 P3)', () => {
+  it('default rule: a structured unit entry is treated the same as "no command configured", never run', async () => {
+    const dir = await tempDir();
+    // A real package.json so ecosystem detection succeeds and execution reaches the per-layer loop
+    // this test is actually about -- the pre-existing ecosystem gate above it (`PLAN-M17.md` P4's own
+    // surface) is not this test's concern.
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    const result = await testRun(
+      ctx(dir, {
+        unit: { run: 'exit 1', output: { source: 'stdout' }, format: 'tap' },
+      }),
+      {},
+      UNUSED_TEMP_PATH,
+    );
+    expect(result.problems).toEqual([
+      'no test-layer command is configured (execution.testCommands has none of unit/integration/contract/e2e)',
+    ]);
+  });
+
+  it('--rule lint: a structured lint entry is treated the same as "not configured"', async () => {
+    const dir = await tempDir();
+    const result = await testRun(
+      ctx(dir, { lint: { run: 'exit 1', output: { source: 'stdout' }, format: 'tap' } }),
+      { rule: 'lint' },
+      UNUSED_TEMP_PATH,
+    );
+    expect(result.problems).toEqual(['no lint command configured (execution.testCommands.lint)']);
+  });
+
+  it('--rule typecheck: a structured typecheck entry is treated the same as "not configured"', async () => {
+    const dir = await tempDir();
+    const result = await testRun(
+      ctx(dir, { typecheck: { run: 'exit 1', output: { source: 'stdout' }, format: 'tap' } }),
+      { rule: 'typecheck' },
+      UNUSED_TEMP_PATH,
+    );
+    expect(result.problems).toEqual([
+      'no typecheck command configured (execution.testCommands.typecheck)',
+    ]);
+  });
+});
+
 describe('testRun — default rule (real vitest)', () => {
   it('reports failed: 1 against a real, deliberately failing unit test', async () => {
     const dir = await tempDir();

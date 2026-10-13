@@ -27,6 +27,7 @@
  */
 import { ForgeError } from '@forge/core/errors';
 import { runShellCommand, type ShellLimits } from '@forge/engine/dispatch';
+import type { TestCommandEntry } from '@forge/schemas/config';
 
 import type { TestCommands } from './run.ts';
 
@@ -74,10 +75,22 @@ export interface TestLayerResult {
 const CONTROL_CHARACTERS = new RegExp(`[${String.fromCharCode(0)}\\n\\r]`);
 
 /** The command as it will run: trailing whitespace removed (a YAML block scalar, `smoke: |`, ends in a newline, which
- * is not a second command), then refused if a line break or NUL remains, because that is another command. */
-function usableCommand(key: string, value: string | undefined): string {
+ * is not a second command), then refused if a line break or NUL remains, because that is another command.
+ *
+ * `value` may be the structured `testCommands.<layer>` form (post-v1.0, `specs/22` M17 P3) too -- refused the same
+ * way an unset one already is: this check is deliberately exit-code-driven, never reading `forge-test-report`
+ * outcomes at all (this function's own doc comment above), so a structured entry's `format`/`translate` have
+ * nothing for it to read regardless. */
+function usableCommand(key: string, value: TestCommandEntry | undefined): string {
   if (value === undefined) {
     throw new ForgeError('ENV-006', { field: key, reason: 'it is not set' });
+  }
+  if (typeof value !== 'string') {
+    throw new ForgeError('ENV-006', {
+      field: key,
+      reason:
+        'it is the structured testCommands form, which this exit-code-driven check cannot run',
+    });
   }
   const command = value.trimEnd();
   if (command.trim() === '') {

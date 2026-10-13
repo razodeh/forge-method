@@ -536,7 +536,10 @@ function outcomeFromRun(
 
 async function runRule(ctx: StoryVerifyContext, rule: 'lint' | 'typecheck'): Promise<Resolution> {
   const command = ctx.testCommands[rule];
-  if (command === undefined) {
+  // `lint`/`typecheck` have no `forge-test-report` outcomes to parse -- the structured form
+  // (post-v1.0, `specs/22` M17 P3) has no meaning here (`run.ts`'s own `runLintRule`/
+  // `runTypecheckRule` read the identical way).
+  if (command === undefined || typeof command !== 'string') {
     return {
       status: 'unverifiable',
       message: `execution.testCommands.${rule} is not configured, so the ${rule} check cannot run.`,
@@ -564,7 +567,10 @@ async function runLayer(
   memory: RunMemory,
 ): Promise<Resolution> {
   const command = ctx.testCommands[layer];
-  if (command === undefined) {
+  // The structured form (post-v1.0, `specs/22` M17 P3) is not yet routed through `forge story
+  // verify` -- `PLAN-M17.md` P4's own mandate ("Route forge test run... through P3"), not this
+  // piece's. Treated the same as "not configured" in the meantime.
+  if (command === undefined || typeof command !== 'string') {
     return {
       status: 'unverifiable',
       message: `execution.testCommands.${layer} is not configured, so the ${layer} tests cannot run.`,
@@ -686,7 +692,11 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
     };
   }
   const testCommand = ctx.testCommands.unit;
-  if (testCommand === undefined) {
+  // `runBindingCheck` is not yet taught the structured `testCommands.<layer>` form (post-v1.0,
+  // `specs/22` M17 P3) -- routing it there, with the identical `ecosystem`/degradation handling
+  // every other consumer needs, is `PLAN-M17.md` P4's own mandate, not this piece's. Treated the
+  // same as "not configured" in the meantime (zero-change for every legacy-string project).
+  if (testCommand === undefined || typeof testCommand !== 'string') {
     return {
       status: 'unverifiable',
       message: 'execution.testCommands.unit is not configured, so the binding check cannot run.',

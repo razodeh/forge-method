@@ -319,6 +319,22 @@ describe('forge story verify — test:binding (specs/22 M15 P5)', () => {
     expect(check?.message).toContain('execution.testCommands.unit');
   }, 30_000);
 
+  it('is unverifiable, the same as "not configured", for a structured execution.testCommands.unit entry (specs/22 M17 P3: not yet routed through runBindingCheck)', async () => {
+    const { ctx } = await freshProject();
+    const structured: StoryVerifyContext = {
+      ...ctx,
+      testCommands: { unit: { run: 'true', output: { source: 'stdout' }, format: 'tap' } },
+    };
+
+    const outcome = await storyVerify(structured, 'STORY-001');
+
+    expect(outcome.kind).toBe('verified');
+    if (outcome.kind !== 'verified') throw new Error('unreachable');
+    const check = outcome.report.checks.find((c) => c.check === 'test:binding');
+    expect(check?.status).toBe('unverifiable');
+    expect(check?.message).toContain('execution.testCommands.unit');
+  }, 30_000);
+
   it('is fail, never a silent pass, when the scratch worktree is not fully restored after the check', async () => {
     // A real, non-mocked way to force `restoreVerified: false` through `runBindingCheck`'s own normal
     // 'completed' path -- a round-2 gauntlet critic (M15 P5) found and verified it live: `resetLaneWorktree`

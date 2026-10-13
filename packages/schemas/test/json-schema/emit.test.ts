@@ -10,10 +10,11 @@ import { ARTIFACT_TYPES } from '../../src/registry/artifact-types.ts';
 import { emitJsonSchemas } from '../../src/json-schema/emit.ts';
 
 describe('emitJsonSchemas', () => {
-  it('emits exactly one file per registered artifact type, plus config.schema.json', () => {
+  it('emits exactly one file per registered artifact type, plus config.schema.json and forge-test-report.schema.json (specs/22 M17 P3)', () => {
     const schemas = emitJsonSchemas();
-    expect(schemas.size).toBe(ARTIFACT_TYPES.length + 1);
+    expect(schemas.size).toBe(ARTIFACT_TYPES.length + 2);
     expect(schemas.has('config.schema.json')).toBe(true);
+    expect(schemas.has('forge-test-report.schema.json')).toBe(true);
   });
 
   it('every emitted file name ends with .schema.json', () => {

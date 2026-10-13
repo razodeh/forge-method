@@ -87,7 +87,7 @@ import { pathExists, readTextFile, ProjectPaths } from '@forge/core/fs';
 import type { ExpressionContext } from '@forge/engine/expr';
 import { isWaiverOwnerIdentifier, waiverExceedsCap } from '@forge/engine/gates';
 import type { RunState } from '@forge/engine/resume';
-import { DEFAULT_CONFIG } from '@forge/schemas/config';
+import { DEFAULT_CONFIG, legacyStringTestCommands } from '@forge/schemas/config';
 import type { ForgeConfig } from '@forge/schemas/config';
 
 import { agentValidateAll } from './commands/agent.ts';
@@ -2254,7 +2254,10 @@ async function runTestBindingCommand(
   }
   const ecosystem = detectedEcosystem;
   const testCommand = config.execution.testCommands.unit;
-  if (testCommand === undefined) {
+  // The structured form (post-v1.0, `specs/22` M17 P3) is not yet routed through this ecosystem-
+  // detected binding path -- `PLAN-M17.md` P4's own mandate, not this piece's -- so it reads the
+  // same real "no usable command" refusal an unset layer already does.
+  if (testCommand === undefined || typeof testCommand !== 'string') {
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
   }
   const clock = SYSTEM_CLOCK;
@@ -2432,7 +2435,9 @@ async function runTestExemptCommand(
   }
   const ecosystem = detectedEcosystem;
   const testCommand = config.execution.testCommands.unit;
-  if (testCommand === undefined) {
+  // Same reasoning as the discover-mode path above: the structured form is not yet routed through
+  // here (`PLAN-M17.md` P4's own mandate), so it reads the same "no usable command" refusal.
+  if (testCommand === undefined || typeof testCommand !== 'string') {
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
   }
 
@@ -2988,7 +2993,9 @@ async function runDoctorCommand(
           kbRoot: config.paths.kb,
           reportsRoot: config.paths.reports,
           env: realEnvSnapshot(),
-          testCommands: config.execution.testCommands,
+          // `DoctorRuleContext.testCommands` is not yet taught the structured form (post-v1.0,
+          // `specs/22` M17 P3) -- a no-op narrowing for every existing, string-only project.
+          testCommands: legacyStringTestCommands(config.execution.testCommands),
         };
       },
       doctorRule,

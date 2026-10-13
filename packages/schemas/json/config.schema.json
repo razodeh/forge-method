@@ -223,8 +223,89 @@
         },
         "testCommands": {
           "additionalProperties": {
-            "minLength": 1,
-            "type": "string"
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "filter": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "format": {
+                    "enum": [
+                      "junit-xml",
+                      "tap",
+                      "forge-json",
+                      "vitest-json",
+                      "jest-json",
+                      "go-test-json"
+                    ],
+                    "type": "string"
+                  },
+                  "output": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "source": {
+                            "const": "stdout",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "source"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "path": {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "source": {
+                            "const": "file",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "source",
+                          "path"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "run": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "scope": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "timeoutMs": {
+                    "exclusiveMinimum": 0,
+                    "type": "integer"
+                  },
+                  "translate": {
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "run",
+                  "output",
+                  "format"
+                ],
+                "type": "object"
+              }
+            ]
           },
           "propertyNames": {
             "enum": [

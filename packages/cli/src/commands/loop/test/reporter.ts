@@ -7,15 +7,18 @@
  * @see specs/09 §9.5
  * @see PLAN-M8.md P3
  */
-import { readFile, realpath, rm } from 'node:fs/promises';
+import { readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { ForgeError } from '@forge/core';
 import { readTextFile, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
 import { runShellCommand } from '@forge/engine/dispatch';
+import { parseForgeTestReport, type ForgeTestReportEntry } from '@forge/schemas';
+import type { StructuredTestCommand } from '@forge/schemas/config';
 import { XMLParser } from 'fast-xml-parser';
 
 import { extractAcId } from './ac-binding.ts';
+import { PARSERS } from './parsers/index.ts';
 import { containsShellChaining } from './shell-safety.ts';
 
 /** Why a `'fail'` outcome failed (`specs/22` M16 P10, `13` F-TEST-10's own load-failure rule, which
@@ -662,6 +665,189 @@ export async function runAndNormalize(
       : await runVitest(command, cwd, effectiveTimeoutMs, testNameFilter, fileFilter, files);
   if (!result.ok) return { outcome: 'tool-error', message: result.message };
   return { outcome: 'ran', report: { outcomes: result.outcomes } };
+}
+
+// --- structured testCommands.<layer> (post-v1.0, `specs/22` M17 P3) -----------------------------
+
+/** Converts one `forge-test-report` (`09` §9.5) entry into this file's own `TestOutcome` shape.
+ * `acId`, when the entry already carries one (an already-extracted id from a `forge-json`-emitting
+ * translator that knows its own project's naming convention better than a generic regex would), is
+ * used verbatim; otherwise falls back to the identical `extractAcId`-over-`name` convention every
+ * other outcome in this file already uses -- additive, never a replacement for it (`09` §9.5). */
+function outcomeFromReportEntry(entry: ForgeTestReportEntry): TestOutcome {
+  return {
+    name: entry.name,
+    acId: entry.acId ?? extractAcId(entry.name),
+    status: entry.status,
+    ...(entry.file === undefined ? {} : { file: entry.file }),
+    ...(entry.kind === undefined ? {} : { kind: entry.kind }),
+  };
+}
+
+/** `{output}`'s own placeholder inside a `translate` command template, substituted with the real,
+ * shell-quoted path FORGE resolved it to -- the identical `shellQuote` every other FORGE-owned path
+ * this file interpolates into a shell command already goes through (`xmlPath`, above). */
+function substituteOutputPlaceholder(template: string, outputPath: string): string {
+  return template.replaceAll('{output}', shellQuote(outputPath));
+}
+
+/**
+ * Runs the `translate` command declared alongside a structured layer, under the identical confined
+ * runner and timeout `run` itself ran under, and reads its own stdout as `forge-test-report` (`09`
+ * §9.5, `13` F-TEST-11). `{output}` always names a real file on disk for it to read: the one `run`
+ * itself wrote (`declaredOutputPath`, when the layer declared `output.source: 'file'`), or, when the
+ * layer captures stdout instead, a fresh file FORGE writes the captured stdout into for exactly this
+ * purpose -- deleted first and cleaned up after, the identical "FORGE owns this path" guarantee a
+ * declared `output.path` already gets (`18` §18.3).
+ *
+ * A translator's own non-zero exit is ALWAYS a typed `tool-error`, independent of whether its stdout
+ * happens to parse as a valid report: a translator's one job is "did I translate," never "did the
+ * tests pass" -- `run`'s own exit code is never checked this strictly (an ordinary test runner exits
+ * non-zero on an ordinary test FAILURE, ambiguous with a tool crash; a translator that successfully
+ * translated has no such ambiguity and is expected to exit 0 regardless of the underlying result).
+ */
+async function runTranslator(
+  translate: string,
+  capturedStdout: string,
+  cwd: string,
+  timeoutMs: number,
+  declaredOutputPath: string | undefined,
+  createTempPath: () => string,
+): Promise<Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>> {
+  // `createTempPath()`'s own return type is unconditionally `string`, so `??` alone types this
+  // `string` with no cast or assertion needed. `declaredOutputPath === undefined` is re-read (not
+  // cached in a boolean) at each of the two points below that need to know which case this is.
+  const outputPath = declaredOutputPath ?? createTempPath();
+  try {
+    if (declaredOutputPath === undefined) {
+      await rm(outputPath, { force: true });
+      await writeFile(outputPath, capturedStdout, 'utf8');
+    }
+    const translateResult = await runShellCommand(
+      substituteOutputPlaceholder(translate, outputPath),
+      cwd,
+      undefined,
+      { timeoutMs },
+    );
+    if (translateResult.timedOut === true) {
+      return { outcome: 'ran', report: { outcomes: [timeoutOutcome(timeoutMs)] } };
+    }
+    if (translateResult.exitCode !== 0) {
+      return {
+        outcome: 'tool-error',
+        message: `translator (${JSON.stringify(translate)}) exited ${String(translateResult.exitCode)}: ${truncate(translateResult.stderr !== '' ? translateResult.stderr : translateResult.stdout)}`,
+      };
+    }
+    const parsed = parseForgeTestReport(translateResult.stdout);
+    if (!parsed.ok) {
+      return {
+        outcome: 'tool-error',
+        message: `translator (${JSON.stringify(translate)})'s stdout is not a valid forge-test-report (09 §9.5): ${parsed.message}`,
+      };
+    }
+    return {
+      outcome: 'ran',
+      report: { outcomes: parsed.report.tests.map(outcomeFromReportEntry) },
+    };
+  } finally {
+    if (declaredOutputPath === undefined) await rm(outputPath, { force: true });
+  }
+}
+
+/**
+ * Runs and normalises a STRUCTURED `execution.testCommands.<layer>` entry (`18` §18.3, post-v1.0
+ * `specs/22` M17) -- the sibling of `runAndNormalize` above, for a layer that opted into the
+ * structured form. `detectEcosystem` plays no part here at all (Decision 4, `PLAN-M17.md`:
+ * "`detectEcosystem` leaves the test-time path entirely" once a layer uses this form): `format` (or
+ * `translate`) already says how to read this layer's own output, so there is nothing to detect.
+ *
+ * `commandToRun`, when given, replaces `command.run` as the actual shell command executed, while
+ * every output-reading/translating/parsing step below stays exactly the same -- the seam a future
+ * `scope`/`filter` template-rendering step (file- or name-scoped retries, `18` §18.3) uses to run a
+ * narrower real command without reimplementing any of this function. Omitted, `command.run` itself
+ * runs.
+ *
+ * `paths` resolves `output.path` (when `output.source: 'file'`) through the same containment check
+ * every other project-relative path in this codebase already goes through (`CFG-003`/`CFG-004`,
+ * thrown, never swallowed into a `tool-error`: an escaping path is a configuration mistake, not a
+ * tool-runtime failure) -- unlike `runAndNormalize` above, which never touches a path inside the
+ * project at all (vitest's own output is read from stdout; pytest's junit-xml temp file lives
+ * outside the project tree entirely).
+ *
+ * `createTempPath` must be injected per `QUALITY-BAR.md` R10 (`system-temp.ts`'s own doc comment has
+ * the full reasoning) -- a real caller passes `createSystemTempPath`; a test injects a deterministic
+ * fake. Reached only when a `translate` is declared for an `output.source: 'stdout'` layer: there is
+ * no other reason this function ever needs a path FORGE itself allocates, as opposed to one
+ * `output.path` already names.
+ */
+export async function runStructuredTestLayer(
+  command: StructuredTestCommand,
+  cwd: string,
+  paths: ProjectPaths,
+  createTempPath: () => string,
+  commandToRun: string = command.run,
+): Promise<Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>> {
+  const timeoutMs = command.timeoutMs ?? DEFAULT_TEST_RUN_TIMEOUT_MS;
+  // Captured together, once: `command.output.path` only exists on the narrower 'file' branch of the
+  // discriminated union, which a later, separate read of `declaredOutputPath !== undefined` cannot
+  // re-narrow `command.output` itself back to.
+  const declaredOutputRelativePath =
+    command.output.source === 'file' ? command.output.path : undefined;
+  const declaredOutputPath =
+    declaredOutputRelativePath === undefined
+      ? undefined
+      : paths.resolveWithin(declaredOutputRelativePath);
+
+  // FORGE owns {output}: a stale report left over from an earlier run, a crash, or an unrelated
+  // process must never be read as this run's own result (18 §18.3, 13 F-TEST-7 point 2) -- deleted
+  // before `run` ever starts, tolerating "already absent" (there may be nothing to delete at all).
+  if (declaredOutputPath !== undefined) await rm(declaredOutputPath, { force: true });
+
+  const runResult = await runShellCommand(commandToRun, cwd, undefined, { timeoutMs });
+  // `ShellCommandResult.timedOut` fires only once the whole process tree has already been SIGKILLed
+  // (`shell.ts`'s own contract, confirmed by this file's own `runVitest`/`runPytest` precedent above)
+  // -- so a translator, invoked next otherwise, is never run against a process that might still be
+  // writing partial output; the single typed timeout outcome is reported directly instead, and
+  // `declaredOutputPath`/`runResult.stdout` are never read any further on this path.
+  if (runResult.timedOut === true) {
+    return { outcome: 'ran', report: { outcomes: [timeoutOutcome(timeoutMs)] } };
+  }
+
+  let declaredOutputText: string | undefined;
+  if (declaredOutputPath !== undefined) {
+    try {
+      declaredOutputText = await readFile(declaredOutputPath, 'utf8');
+    } catch (cause) {
+      return {
+        outcome: 'tool-error',
+        message: `the layer's "run" (${JSON.stringify(commandToRun)}) did not produce its declared output file (${String(declaredOutputRelativePath)}): ${describeCause(cause)}`,
+      };
+    }
+  }
+
+  if (command.translate !== undefined) {
+    return runTranslator(
+      command.translate,
+      runResult.stdout,
+      cwd,
+      timeoutMs,
+      declaredOutputPath,
+      createTempPath,
+    );
+  }
+
+  // `declaredOutputText` is undefined here only when `output.source` was `'stdout'` all along -- the
+  // branch above either populated it from a successful real read, or already returned a `tool-error`
+  // and never reached this line at all -- so `??` alone is exactly this function's real intent.
+  const rawText = declaredOutputText ?? runResult.stdout;
+  const parsed = PARSERS[command.format](rawText);
+  if (!parsed.ok) {
+    return {
+      outcome: 'tool-error',
+      message: `the layer's output could not be read as ${command.format}: ${parsed.message}`,
+    };
+  }
+  return { outcome: 'ran', report: { outcomes: parsed.tests.map(outcomeFromReportEntry) } };
 }
 
 // --- test-results.json round-trip --------------------------------------------------------------

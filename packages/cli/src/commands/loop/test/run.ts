@@ -160,7 +160,15 @@ async function runDefaultRule(
 
   for (const layer of DEFAULT_RUN_LAYERS) {
     const command = ctx.testCommands[layer];
-    if (command === undefined) continue;
+    // A structured entry (post-v1.0, `specs/22` M17 P3) is not yet routed through here: doing so --
+    // `runStructuredTestLayer`'s own output-reading/translating/parsing, plus `scope`/`filter`
+    // template rendering for the retry-in-isolation call below -- is `PLAN-M17.md` P4's own mandate
+    // ("Route forge test run... through P3, applying Decision 3's degradation table"), not a change
+    // this piece's own surface (`loop/test/{reporter,ecosystem}.ts`) extends to. Treated the same as
+    // "this layer has no command yet" in the meantime: no real project can have written a structured
+    // entry before P6/P7 exist to propose one, so this is inert for every real project today, and
+    // zero-change for every legacy-string one (`18` §18.3's own migration guarantee).
+    if (command === undefined || typeof command !== 'string') continue;
     declaredAny = true;
     const result = await runAndNormalize(
       command,
@@ -354,7 +362,10 @@ function countEslintErrors(raw: string): number | undefined {
 
 async function runLintRule(ctx: TestRunContext): Promise<TestRunResult> {
   const command = ctx.testCommands.lint;
-  if (command === undefined) {
+  // `lint` has no `forge-test-report` outcomes to parse (F-TEST-1's own pyramid never counts it as a
+  // layer) -- the structured form (post-v1.0, `specs/22` M17 P3) has no meaning here at all, so a
+  // non-string value reads the same real "not configured" problem a missing one already does.
+  if (command === undefined || typeof command !== 'string') {
     return {
       failed: 0,
       errors: 1,
@@ -408,7 +419,9 @@ function countTscErrors(output: string): number {
 
 async function runTypecheckRule(ctx: TestRunContext): Promise<TestRunResult> {
   const command = ctx.testCommands.typecheck;
-  if (command === undefined) {
+  // `typecheck` has no `forge-test-report` outcomes either (same reasoning as `runLintRule` above) --
+  // the structured form (post-v1.0, `specs/22` M17 P3) has no meaning here.
+  if (command === undefined || typeof command !== 'string') {
     return {
       failed: 0,
       errors: 1,

@@ -52,6 +52,7 @@ import {
   waiverSchema,
 } from '../artifacts/index.ts';
 import { configSchema } from '../config/schema.ts';
+import { forgeTestReportSchema } from '../test-report.ts';
 
 /** A committed schema file's name — always the `.schema.json` convention this piece establishes. */
 export type SchemaFileName = `${string}.schema.json`;
@@ -121,8 +122,12 @@ function canonicalize(schema: unknown): string {
 }
 
 /**
- * Emits one JSON Schema per registered artifact type, plus one for `configSchema` — sorted by file
- * name, so the `Map`'s own iteration order is as deterministic as each entry's content.
+ * Emits one JSON Schema per registered artifact type, plus one for `configSchema` and one for
+ * `forgeTestReportSchema` (post-v1.0, `specs/22` M17 P3: `09` §9.5's own canonical test-result shape,
+ * registered the same way `configSchema` already is — neither is an `ArtifactTypeId`, since neither
+ * carries front matter or lives in the `18` §18.7 registry, but both are still real, committed,
+ * byte-stable schemas this piece's own mechanism emits) — sorted by file name, so the `Map`'s own
+ * iteration order is as deterministic as each entry's content.
  */
 export function emitJsonSchemas(): ReadonlyMap<SchemaFileName, string> {
   const entries: [SchemaFileName, string][] = ARTIFACT_TYPES.map((type) => {
@@ -134,8 +139,13 @@ export function emitJsonSchemas(): ReadonlyMap<SchemaFileName, string> {
     return [`${fileStem}.schema.json`, canonicalize(zodToJsonSchema(schema as z.ZodSchema))];
   });
   entries.push(['config.schema.json', canonicalize(zodToJsonSchema(configSchema))]);
-  // No two entries ever tie: `ARTIFACT_SCHEMAS`'s file stems and the literal 'config' are all
-  // distinct, so an equality branch here would be dead code no real input can reach.
+  entries.push([
+    'forge-test-report.schema.json',
+    canonicalize(zodToJsonSchema(forgeTestReportSchema)),
+  ]);
+  // No two entries ever tie: `ARTIFACT_SCHEMAS`'s file stems and the literals 'config'/
+  // 'forge-test-report' are all distinct, so an equality branch here would be dead code no real
+  // input can reach.
   entries.sort(([a], [b]) => (a < b ? -1 : 1));
   return new Map(entries);
 }

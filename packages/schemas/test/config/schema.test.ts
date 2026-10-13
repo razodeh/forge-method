@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { configSchema } from '../../src/config/schema.ts';
+import { configSchema, legacyStringTestCommands } from '../../src/config/schema.ts';
 
 /**
  * `18` §18.3's canonical YAML block, transcribed as a plain object — field for field, value for
@@ -181,6 +181,167 @@ describe('configSchema — execution.testCommands (PLAN-M8.md P3)', () => {
       execution: { ...config.execution, testCommands: { unit: 'vitest run' } },
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('configSchema — execution.testCommands structured form (specs/22 M17 P3) (18 §18.3)', () => {
+  function withTestCommands(testCommands: unknown) {
+    const config = goldenConfig() as { execution: Record<string, unknown> };
+    return configSchema.safeParse({
+      ...config,
+      execution: { ...config.execution, testCommands },
+    });
+  }
+
+  it('accepts the minimal structured shape: run, output, format only', () => {
+    const result = withTestCommands({
+      unit: { run: 'custom-runner', output: { source: 'stdout' }, format: 'tap' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts output: {source: "file", path: ...}', () => {
+    const result = withTestCommands({
+      unit: {
+        run: 'custom-runner --report report.xml',
+        output: { source: 'file', path: 'report.xml' },
+        format: 'junit-xml',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects output: {source: "file"} with no path (18 §18.3: a real path FORGE allocates and deletes)', () => {
+    const result = withTestCommands({
+      unit: { run: 'custom-runner', output: { source: 'file' }, format: 'junit-xml' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects output: {source: "stdout", path: ...} -- path belongs to the file branch only', () => {
+    const result = withTestCommands({
+      unit: {
+        run: 'custom-runner',
+        output: { source: 'stdout', path: 'report.xml' },
+        format: 'tap',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an output.path that escapes the project (absolute, "..", drive letter)', () => {
+    for (const path of ['/etc/passwd', '../escape.xml', 'a/../../escape.xml', 'C:\\escape.xml']) {
+      const result = withTestCommands({
+        unit: { run: 'custom-runner', output: { source: 'file', path }, format: 'junit-xml' },
+      });
+      expect(result.success, path).toBe(false);
+    }
+  });
+
+  it('accepts every built-in format named in 13 F-TEST-7 point 2 / 18 §18.3', () => {
+    for (const format of [
+      'junit-xml',
+      'tap',
+      'forge-json',
+      'vitest-json',
+      'jest-json',
+      'go-test-json',
+    ]) {
+      const result = withTestCommands({
+        unit: { run: 'custom-runner', output: { source: 'stdout' }, format },
+      });
+      expect(result.success, format).toBe(true);
+    }
+  });
+
+  it('rejects a format outside the built-in six', () => {
+    const result = withTestCommands({
+      unit: { run: 'custom-runner', output: { source: 'stdout' }, format: 'xunit' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts translate, scope, filter, and timeoutMs when given', () => {
+    const result = withTestCommands({
+      unit: {
+        run: 'custom-runner',
+        output: { source: 'file', path: 'report.raw' },
+        format: 'forge-json',
+        translate: 'node .forge/test-translators/unit.js {output}',
+        scope: 'custom-runner {files}',
+        filter: 'custom-runner --name {name}',
+        timeoutMs: 600_000,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-positive or non-integer timeoutMs', () => {
+    for (const timeoutMs of [0, -1, 1.5]) {
+      const result = withTestCommands({
+        unit: { run: 'r', output: { source: 'stdout' }, format: 'tap', timeoutMs },
+      });
+      expect(result.success, String(timeoutMs)).toBe(false);
+    }
+  });
+
+  it('rejects an unknown key on the structured object', () => {
+    const result = withTestCommands({
+      unit: {
+        run: 'custom-runner',
+        output: { source: 'stdout' },
+        format: 'tap',
+        extra: 'nope',
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a blank run/translate/scope/filter string', () => {
+    for (const field of ['run', 'translate', 'scope', 'filter'] as const) {
+      const base = { run: 'r', output: { source: 'stdout' } as const, format: 'tap' as const };
+      const result = withTestCommands({ unit: { ...base, [field]: '' } });
+      expect(result.success, field).toBe(false);
+    }
+  });
+
+  it('one layer legacy-string, a sibling layer structured, in the same testCommands record', () => {
+    const result = withTestCommands({
+      unit: 'vitest run',
+      e2e: { run: 'custom-e2e-runner', output: { source: 'stdout' }, format: 'tap' },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('legacy-string goldens stay byte-identical: a plain string is still accepted, unchanged', () => {
+    const result = withTestCommands({ unit: 'vitest run', lint: 'eslint .' });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe('legacyStringTestCommands (specs/22 M17 P3)', () => {
+  it('an all-string record passes through completely unchanged', () => {
+    const input = { unit: 'vitest run', lint: 'eslint .' };
+    expect(legacyStringTestCommands(input)).toEqual(input);
+  });
+
+  it('drops a structured entry, keeping every string-valued sibling', () => {
+    const input = {
+      unit: 'vitest run',
+      e2e: { run: 'custom-runner', output: { source: 'stdout' } as const, format: 'tap' as const },
+    };
+    expect(legacyStringTestCommands(input)).toEqual({ unit: 'vitest run' });
+  });
+
+  it('an all-structured record narrows to an empty object, never throwing', () => {
+    const input = {
+      unit: { run: 'custom-runner', output: { source: 'stdout' } as const, format: 'tap' as const },
+    };
+    expect(legacyStringTestCommands(input)).toEqual({});
+  });
+
+  it('an empty record narrows to an empty object', () => {
+    expect(legacyStringTestCommands({})).toEqual({});
   });
 });
 

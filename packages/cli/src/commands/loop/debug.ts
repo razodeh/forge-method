@@ -76,7 +76,7 @@ import {
   type RcaSessionRequest,
   type RcaUntrustedInput,
 } from '@forge/engine/rca';
-import type { ForgeConfig } from '@forge/schemas/config';
+import { legacyStringTestCommands, type ForgeConfig } from '@forge/schemas/config';
 import { renderArtifactPath } from '@forge/schemas/registry';
 import { readEvents } from '@forge/telemetry/events';
 import {
@@ -858,8 +858,13 @@ async function runDebugLoop(
   // REPRODUCE and PROVE run a command the model proposes; the project's own test commands for the layers a
   // reproduction lives in are added to what the diagnostician may run, as exact commands and nowhere wider
   // (`test-command-grant.ts`, `PLAN-M13.md` P23). The FIX session never gets them: it is tainted, so its grant has no exec.
+  // `deriveTestExec` is not yet taught the structured `testCommands.<layer>` form (post-v1.0, `specs/22`
+  // M17 P3): `legacyStringTestCommands` narrows to this project's own bare-string layers only, which is a
+  // no-op for any project that has not opted into the structured form (every existing project) -- a
+  // structured layer's own command is simply not yet offered to this diagnostician's exec grant, not
+  // guessed at.
   const reproduceExec = deriveTestExec(
-    deps.config.execution.testCommands,
+    legacyStringTestCommands(deps.config.execution.testCommands),
     testLayersForBrief('debug-isolate'),
   );
   const fixGrant = grantWithTestExec(preflightGrant, reproduceExec);

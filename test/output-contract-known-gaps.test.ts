@@ -503,12 +503,9 @@ describe('M17 Phase A: surfaces specs/22 M17 names that are not yet built (specs
     return readFileSync(path.join(repoRootAbs, relativeToRepoRoot), 'utf8');
   }
 
-  it('1. the forge-test-report v1 parsers/schema module does not exist yet', () => {
-    expect(existsSync(path.join(repoRootAbs, 'packages/schemas/src/test-report.ts'))).toBe(false);
-    const reporter = readPkg('packages/cli/src/commands/loop/test/reporter.ts');
-    expect(reporter).not.toContain('forgeTestReport');
-    expect(reporter).not.toContain('forge-json');
-  });
+  // Item 1 (the forge-test-report v1 parsers/schema module) closed: specs/22 M17 P3 built
+  // packages/schemas/src/test-report.ts and reporter.ts's own structured-layer support. This list
+  // shrinks as later pieces land -- see this describe block's own title.
 
   it('2. `forge test adopt` is not wired in bin.ts', () => {
     const bin = readPkg('packages/cli/src/bin.ts');

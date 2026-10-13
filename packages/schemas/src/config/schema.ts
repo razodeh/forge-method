@@ -168,7 +168,84 @@ const TEST_LAYERS = [
   'lint',
   'typecheck',
 ] as const;
-const testCommandsSchema = z.record(z.enum(TEST_LAYERS), z.string().min(1));
+
+// Post-v1.0, `specs/22` M17 P3 (`13` F-TEST-7 point 2, `18` §18.3): the built-in parsers every
+// structured `testCommands.<layer>` entry may declare, each converting its own real shape into `09`
+// §9.5's `forge-test-report` before any FORGE command reads it. `forge-json` is `09` §9.5's own shape
+// directly -- a project (or translator) that already emits it needs no further mapping.
+export const TEST_REPORT_FORMATS = [
+  'junit-xml',
+  'tap',
+  'forge-json',
+  'vitest-json',
+  'jest-json',
+  'go-test-json',
+] as const;
+
+/** One of `TEST_REPORT_FORMATS` — `loop/test/parsers/index.ts`'s own `PARSERS` dispatch table takes
+ * exactly this type, so a future seventh format FORGE adds here cannot silently fall through that
+ * table unparsed (`pnpm typecheck` catches a missing `Record` key). */
+export type TestReportFormat = (typeof TEST_REPORT_FORMATS)[number];
+
+// `output.path` is a project-relative file FORGE itself allocates and deletes before every run of
+// that layer (`18` §18.3's own "a stale report is never read" guarantee) -- it is read with the same
+// `ProjectPaths.resolveWithin` containment every other project-relative write/delete in this codebase
+// already goes through, which rejects a traversal or an absolute path at the point of use (`CFG-003`).
+// This schema-level check exists so a bad path fails fast at `forge config set`/validation time
+// (`CFG-001`), not only the first time a test layer actually runs -- the identical reasoning
+// `isValidReleasePathEntry` above already states for `paths.release`; reused rather than re-derived.
+const testCommandOutputSchema = z.discriminatedUnion('source', [
+  z.object({ source: z.literal('stdout') }).strict(),
+  z
+    .object({
+      source: z.literal('file'),
+      path: z
+        .string()
+        .min(1)
+        .refine(isValidReleasePathEntry, (path) => ({
+          message:
+            `"${path}" is not a valid testCommands output.path: it must be non-blank and ` +
+            'project-relative (no leading "/" or "\\\\", no drive letter), contain no ".." segment, ' +
+            'and not start with "!".',
+        })),
+    })
+    .strict(),
+]);
+
+// `18` §18.3's structured `execution.testCommands.<layer>` form (post-v1.0, `specs/22` M17 P3):
+// `{run, output, format, translate?, scope?, filter?, timeoutMs?}`, alongside (never mixed with) the
+// legacy bare string. `run`/`translate`/`scope`/`filter` are shell-command TEMPLATES -- this schema
+// validates only that each is a real, non-blank string; the `{files}`/`{name}`/`{name:regex}`/
+// `{output}` placeholders inside them are a runtime (`loop/test/reporter.ts`) concern, not a shape
+// this package can check without running a shell.
+const structuredTestCommandSchema = z
+  .object({
+    run: z.string().min(1),
+    output: testCommandOutputSchema,
+    format: z.enum(TEST_REPORT_FORMATS),
+    translate: z.string().min(1).optional(),
+    scope: z.string().min(1).optional(),
+    filter: z.string().min(1).optional(),
+    timeoutMs: z.number().int().positive().optional(),
+  })
+  .strict();
+
+/** One `execution.testCommands.<layer>` entry: the legacy bare string (`18` §18.3's own exact
+ * current meaning, by `detectEcosystem`) or the structured form (post-v1.0, `specs/22` M17 P3).
+ * Exported so `@forge/cli`'s `loop/test/reporter.ts` narrows against this exact union rather than a
+ * second, hand-kept type that could drift from it -- the same discipline `run.ts`'s own pre-existing
+ * `TestCommands = ForgeConfig['execution']['testCommands']` alias already follows. */
+export const testCommandEntrySchema = z.union([z.string().min(1), structuredTestCommandSchema]);
+
+/** The structured `execution.testCommands.<layer>` shape alone, narrowed out of
+ * `testCommandEntrySchema` — `loop/test/reporter.ts`'s own structured-layer runner takes exactly
+ * this type. */
+export type StructuredTestCommand = z.infer<typeof structuredTestCommandSchema>;
+
+/** `execution.testCommands.<layer>`'s own value type: a legacy bare string or the structured form. */
+export type TestCommandEntry = z.infer<typeof testCommandEntrySchema>;
+
+const testCommandsSchema = z.record(z.enum(TEST_LAYERS), testCommandEntrySchema);
 
 // `06` §6.5 steps 3 and 5 (`PLAN-M13.md` P38): the pre- and post-merge check set the engine runs around a lane it
 // integrates on its own (one no `merge` step lands, `06` §6.4). Same vocabulary as a merge step's `policy.preChecks`
@@ -430,3 +507,28 @@ export const configSchema = z
   .strict();
 
 export type ForgeConfig = z.infer<typeof configSchema>;
+
+/**
+ * Narrows `execution.testCommands` down to only its legacy bare-string entries, dropping any
+ * structured ones (post-v1.0, `specs/22` M17 P3) — for a consumer that still declares its own
+ * `testCommands` field as a plain `Readonly<Partial<Record<string, string>>>` and has not yet been
+ * taught the structured shape (an exec-grant helper offering a diagnostician the project's own test
+ * commands to run, a prompt-assembly or run-engine context that passes this record straight through
+ * as display/constraint data). Every existing, string-only project is completely unaffected — every
+ * entry survives this filter byte-identical — and a newly-structured layer's own command is simply
+ * not yet visible to that one consumer, never guessed at or silently misrepresented as a plain
+ * string: the same zero-change-migration guarantee `18` §18.3 states for the legacy form generally,
+ * applied at this one remaining narrow-typed seam until each such consumer is itself widened.
+ *
+ * @see specs/18 §18.3
+ * @see specs/22 M17 P3
+ */
+export function legacyStringTestCommands(
+  testCommands: ForgeConfig['execution']['testCommands'],
+): Readonly<Partial<Record<string, string>>> {
+  const result: Record<string, string> = {};
+  for (const [layer, entry] of Object.entries(testCommands)) {
+    if (typeof entry === 'string') result[layer] = entry;
+  }
+  return result;
+}

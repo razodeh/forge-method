@@ -382,6 +382,28 @@ describe('storyVerify: build and test checks', () => {
     expect(report.checks[1]?.message).toContain('3 diagnostics');
   });
 
+  it('a structured testCommands entry (specs/22 M17 P3) is treated the same as "not configured" here: unverifiable, never calls the runner', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(
+      project,
+      profileWithVerify('{ check: build:lint }', '{ check: test:unit --scope story }'),
+    );
+    const { runner, calls } = recorder(() => CLEAN);
+    const report = await verify(
+      project,
+      {
+        lint: { run: 'true', output: { source: 'stdout' }, format: 'tap' },
+        unit: { run: 'true', output: { source: 'stdout' }, format: 'tap' },
+      },
+      runner,
+    );
+    expect(calls).toEqual([]);
+    expect(report.checks.map((entry) => entry.status)).toEqual(['unverifiable', 'unverifiable']);
+    expect(report.checks[0]?.message).toContain('execution.testCommands.lint');
+    expect(report.checks[1]?.message).toContain('execution.testCommands.unit');
+  });
+
   it('a check whose command is not configured is unverifiable and never calls the runner', async () => {
     const project = await createTestProject();
     await writeStory(project);

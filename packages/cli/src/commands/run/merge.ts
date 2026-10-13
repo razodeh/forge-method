@@ -42,7 +42,7 @@ import {
 import { compileRunPlan, mergeLandingScope } from '@forge/engine/plan';
 import { reconstructRunState } from '@forge/engine/resume';
 import { parseWorkflow } from '@forge/engine/workflow';
-import type { ForgeConfig } from '@forge/schemas/config';
+import { legacyStringTestCommands, type ForgeConfig } from '@forge/schemas/config';
 import { readEvents } from '@forge/telemetry/events';
 import { laneBranchName } from '@forge/vcs';
 
@@ -233,7 +233,10 @@ function landLaneDepsFor(ctx: MergeContext): LandLaneDeps {
     laneRegistry: new Map(),
     retainLaneWorktrees: ctx.config.execution.retainLaneWorktrees !== 'never',
     runId: ctx.runId,
-    testCommands: ctx.config.execution.testCommands,
+    // `LandLaneDeps.testCommands` is not yet taught the structured form (post-v1.0, `specs/22` M17
+    // P3) -- `legacyStringTestCommands` narrows to this project's own bare-string layers, a no-op
+    // for every existing, string-only project.
+    testCommands: legacyStringTestCommands(ctx.config.execution.testCommands),
     mergeChecks: ctx.config.execution.mergeChecks,
   };
 }

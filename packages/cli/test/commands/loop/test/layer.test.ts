@@ -54,6 +54,21 @@ describe('testRunLayer: a layer with no usable command is a typed failure, never
       expect(error.remedy).toMatch(/^Set /);
     });
 
+    it(`${rule}: a structured testCommands entry (specs/22 M17 P3) is unusable here -- this exit-code-driven check has no forge-test-report to parse`, async () => {
+      const dir = await project();
+      const error = await thrown(
+        testRunLayer(
+          {
+            projectRoot: dir,
+            testCommands: { [rule]: { run: 'true', output: { source: 'stdout' }, format: 'tap' } },
+          },
+          rule,
+        ),
+      );
+      expect(isForgeError(error) && error.code).toBe('ENV-006');
+      if (isForgeError(error)) expect(error.message).toContain('structured testCommands form');
+    });
+
     it(`${rule}: a command for a different layer does not stand in for it`, async () => {
       const dir = await project();
       const error = await thrown(

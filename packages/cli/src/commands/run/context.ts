@@ -29,7 +29,7 @@ import type { AskPort } from '@forge/engine/dispatch';
 import type { RunEngineContext } from '@forge/engine/run';
 import type { ConcurrencyLimits } from '@forge/engine/scheduler';
 import { VcsError, getDirtyFiles, parseWorktreeBlocks, resolveRevision } from '@forge/vcs';
-import type { ForgeConfig } from '@forge/schemas/config';
+import { legacyStringTestCommands, type ForgeConfig } from '@forge/schemas/config';
 import type { ToolGrant } from '@forge/adapter-kit/types';
 import { resolveClaimPolicy } from '@forge/kb/adopt';
 
@@ -710,7 +710,10 @@ export async function buildRunEngineContext(
     conflictPolicy: input.config.execution.conflictPolicy,
     // A merge check that names a set (`preChecks: fast`, `10` §10.1) runs the commands of its test layers, and a
     // lane the engine integrates on its own has the configured check set (`PLAN-M13.md` P38, `06` §6.5).
-    testCommands: input.config.execution.testCommands,
+    // `RunEngineContext.testCommands` is not yet taught the structured form (post-v1.0, `specs/22` M17
+    // P3) -- `legacyStringTestCommands` narrows to this project's own bare-string layers, a no-op for
+    // every existing, string-only project.
+    testCommands: legacyStringTestCommands(input.config.execution.testCommands),
     mergeChecks: input.config.execution.mergeChecks,
     // `specs/22` M15 P9: the one real call site that turns "unset at the bare engine-context layer means
     // zero rounds" into the project's own configured value, defaulting to `DEFAULT_CONFIG.execution.
