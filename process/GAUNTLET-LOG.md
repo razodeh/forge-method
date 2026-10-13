@@ -23211,3 +23211,65 @@ spot-check on the `vcs.trunk` default (round-1 verification fork) and a direct r
 round-2 citation fix (round 2), all red-for-the-right-reason and `cmp`-restored byte-identical.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q313`.
+
+## M17 P11 — Adapter: multi-event results, structured output, honest token accounting
+
+**Rounds: 2 (3 independent critic passes total, one an accidental-but-kept duplicate from a
+verification fork). Outcome: DONE.** `packages/adapter-claude-code/*`, `packages/adapter-kit/*`,
+`packages/engine/src/{dispatch,interaction}/*`, `packages/testkit/*`, `specs/07` §7.2 (one
+authorized code-block sync).
+
+### Round 1 — 2 real HIGH findings, independently confirmed by all 3 passes
+
+The builder's own verification fork, dispatched purely to check the builder's report, took it upon
+itself to also stand up 2 duplicate critics in the SAME worktree paths the orchestrator had already
+created for its own 2 critics — a real, live collision for several minutes before the fork caught
+and disclosed its own mistake. Both the orchestrator's own critic2 and the duplicate were stopped and
+a fresh critic2 redispatched in the now-exclusive worktree; see
+[[forge-critic-worktree-isolation]] for the standing lesson this added (a fork retains full tool
+access regardless of how its own task was framed).
+
+Across the 3 independent passes (critic1, the kept duplicate, and the redone critic2), convergent,
+confirmed findings: **`structuredOutput: true` was flipped without the mandate's own stated gate
+("once conformance passes") ever being satisfied** — the real conformance check (C8) needs a live
+key and had never run, grounded only in `.d.ts` declarations never an observed real response. The
+redone critic2 found the sharper, controlling fact: `specs/07:224-225` (already landed, in the
+piece's own Surface) explicitly states the real bar — reported `true` only once proven to round-trip
+a real schema-validated response, via the SAME `confirmedCapabilities` gate `partialText`/
+`sessionResume` already use, not a static, unconditional `true`. One critic also found this
+repeats a previously-corrected mistake: `SPEC-QUESTIONS.md` Q116 already recorded "a false capability
+claim is worse than an honest gap" after an earlier round made the identical error. Real stakes, not
+cosmetic: `dispatch-agent-step.ts:593-609` branches on this flag for real, so shipping an unverified
+`true` silently migrated every live swarm-review session off its own battle-tested prose-contract
+fallback onto an unproven mechanism.
+
+Also converged, by live mutation (not inference): **3 of 4 `cacheReadTokens`/`cacheCreationTokens`
+ledger fixes shipped with zero regression coverage** — reverting `conflict-resolver.ts`'s and
+`swarm-review-step.ts`'s fixes to the pre-M17 hardcoded `0` left their entire suites green (21/21,
+69/69). Root cause: `@forge/testkit`'s `FakePlatformAdapter` had no scripting hook for either field.
+
+A fourth, lower finding (specs/07's own verbatim `AdapterEvent` code block left out of sync with its
+own neighbouring prose) was fixed in the same round.
+
+### Round 2 — fix pass, orchestrator-verified directly (no 3rd critic round — 3 prior deep passes on
+this exact diff already existed)
+
+`structuredOutput` moved out of `staticCapabilities` into the `confirmedCapabilities` gate, reusing
+the exact existing mechanism rather than inventing a new one — spot-checked directly by the
+orchestrator against the real file. The 3 untested ledger sites: rather than replicate a hand-rolled
+adapter stub three more times, the builder extended `@forge/testkit`'s own `FakeSessionScript` with
+two new optional fields mirroring the existing `costUsd?` exactly — a reusable fix benefiting every
+future M17 piece that needs the same thing, not just this one. Three new tests, each proven by a
+real mutation (including a 2-leg `FORGE_REQUEST_CONTEXT` continuation test that proves the SUM, with
+each leg scripting a *different* cache-token pair, not just presence). `specs/07`'s code block
+updated per explicit, scoped authorization; 550/550 pins re-confirmed undisturbed.
+
+**Residual, disclosed, not this piece's to close**: the `confirmedCapabilities` gate is still not the
+full proof `07` §7.3 literally asks for — only a real `FORGE_LIVE=1` C8 pass against a genuine Claude
+Code install closes it completely, which is P21/live-run territory. `test/brief-write-paths-in-claim.test.ts`'s
+2 failures were independently reconfirmed pre-existing on the `73a378b` base (not this piece's) by
+three separate means across this piece's own gauntlet: a direct `git stash` comparison, and two
+further full `pnpm test` runs each reproducing the identical, byte-for-byte failure regardless of
+this diff's presence.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q315`.

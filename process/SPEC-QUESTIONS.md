@@ -29078,3 +29078,51 @@ clean textual rebase) when both pieces land, given the file is genuinely shared,
 coincidentally touched.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P8` (once P8 itself lands).
+
+## Q315 — M17 P11: adapter multi-event, structured output, honest token accounting — DECISIONs and the real gate `structuredOutput` now lives behind
+
+**Context.** P11's own mandate required `AdapterEvent`-returning functions to yield an array (one raw
+adapter message can map to several events), `structured_output` to be read into `SessionResult.structured`,
+and `structuredOutput` to flip `true` "once conformance passes." Three independent critic passes
+converged on two real problems in the first round; both are now fixed and independently re-verified.
+
+**DECISION 1 — `structuredOutput` lives behind `confirmedCapabilities`, not `staticCapabilities`.**
+`specs/07` §7.3 states the real bar explicitly: reported `true` only once this path is proven to
+round-trip a real schema-validated response, never a static claim regardless of what a session
+actually did. The real conformance check (C8) needs a live key and has never run in this environment.
+Rather than ship an unconditional `true` (which a critic traced to a real behavioural fork in
+`dispatch-agent-step.ts`'s own swarm-review prompt construction, and to a previously-corrected
+mistake of the identical shape, `Q116`), `structuredOutput` now joins `partialText`/`sessionResume`
+in the existing `confirmedCapabilities` gate — the same, already-accepted mechanism for "true only
+once a real session has actually been observed," not a new one. **Residual, explicitly not closed by
+this piece**: this still isn't the full proof `07` §7.3 asks for. A real `FORGE_LIVE=1` pass of C8
+against a genuine Claude Code install is the only thing that closes it completely — that is P21 (the
+live run) or a dedicated live-conformance piece's job, not retrofittable here without real API spend.
+
+**DECISION 2 — the 3 previously-untested `cacheReadTokens`/`cacheCreationTokens` ledger sites
+(`conflict-resolver.ts`, `swarm-review-step.ts`, `context-expansion.ts`'s `summedUsage`) are now
+covered by extending `@forge/testkit`'s `FakeSessionScript`**, not by replicating a hand-rolled
+`PlatformAdapter` stub three more times. Two new optional fields, mirroring the existing `costUsd?`
+field's exact "omitted, not defaulted to 0" semantics. Chosen because all three real call sites
+already have substantial, working `FakePlatformAdapter`-based test fixtures; extending the shared
+fake was cheaper than reimplementing each site's own protocol by hand, and durably benefits every
+future M17 piece needing the same thing. Each of the 3 new tests is proven by a real mutation; the
+`context-expansion.ts` one specifically proves the *sum* (two legs scripting different cache-token
+pairs), not merely that a non-zero value survives.
+
+**DECISION 3 — `specs/07` §7.2's own verbatim `AdapterEvent` code block updated** (an explicit, scoped
+exception to "only P1 edits specs," authorized by the orchestrator) to add the `'structured'` member
+and `cacheCreationTokens`, matching the shipped, tested shape and the prose two paragraphs below it.
+Re-confirmed zero pinned-sentence disturbance (550/550).
+
+**Confirmed NOT a defect, after real investigation**: `cacheCreationTokens` reaching the raw
+`UsageRecorded` event but not `@forge/telemetry`'s `LedgerEntry` is genuinely benign — the payload is
+`unknown`-typed end to end, follows the existing `storyId`/`role` additive-field precedent, and no
+current consumer sums token fields at all (only `costUsd`). Left as-is.
+
+**Also confirmed, independently, three separate times across this piece's own gauntlet** (a direct
+`git stash` comparison plus two further full `pnpm test` runs, each reproducing the identical failure
+with or without this diff): `test/brief-write-paths-in-claim.test.ts`'s 2 failures are pre-existing on
+the `73a378b` base, unrelated to this piece.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P11`.
