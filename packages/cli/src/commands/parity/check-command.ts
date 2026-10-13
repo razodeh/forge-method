@@ -59,6 +59,7 @@ import {
 import { loadParityDeclarationText, type VetCommand } from './declaration.ts';
 import type { ParityDeclaration, SurfaceKind } from './declaration-types.ts';
 import { SURFACE_KINDS } from './declaration-types.ts';
+import { firstNormalizeRuleSafetyProblem } from './replace-lint.ts';
 import { computeParityDeclarationDigest, type DigestFile } from './digest.ts';
 import { isExpired } from './expiry.ts';
 import { observeParityDeclaration } from './observe.ts';
@@ -488,6 +489,16 @@ async function processDeclaration(args: ProcessDeclarationArgs): Promise<Process
     );
   }
   const declaration = loaded.declaration;
+
+  // `specs/22` M17 P14: `CFG-511`/`512`/`513`/`516` were built and gauntleted by M16 P4 but never
+  // wired into either real parity command (`replace-lint.ts`'s own `firstNormalizeRuleSafetyProblem`
+  // doc comment has the full account) -- a genuinely dangerous declaration shape was never actually
+  // refused by a real `forge parity check` run. Reported as `invalid`, the identical verdict every
+  // other declaration-shape problem `loadParityDeclarationText` itself could have found already gets.
+  const unsafeRule = firstNormalizeRuleSafetyProblem(declaration);
+  if (unsafeRule !== undefined) {
+    return stopped(name, 'invalid', unsafeRule.message);
+  }
 
   const today = clock.now().slice(0, 10);
   if (isExpired(declaration.expires, clock)) {

@@ -55,9 +55,9 @@
  * @see specs/13-frameworks-testing-and-debugging.md F-TEST-9
  * @see process/plans/PLAN-M16.md P4
  */
-import { ForgeError } from '@forge/core/errors';
+import { ForgeError, isForgeError, type ForgeErrorCode } from '@forge/core/errors';
 
-import type { NormalizeRule, ParityDeclaration } from './declaration-types.ts';
+import type { NormalizeRule, ParityDeclaration, SurfaceKind } from './declaration-types.ts';
 import { SURFACE_KINDS } from './declaration-types.ts';
 
 /** One atom of a one-level tokenisation of a regex source: a group's own `groupContent` is its raw,
@@ -420,6 +420,56 @@ const CONTENT_DISCARDING_RULES: ReadonlySet<NormalizeRule['rule']> = new Set([
   'ignore-json-pointers',
 ]);
 
+/**
+ * The two content-discarding PAIRS `specs/22` M17 P14 proves safe, each with its own proof (the
+ * identical reasoning `SPEC-QUESTIONS.md` Q298 Decision 3 already worked out for M16 P4, now acted
+ * on instead of accepted as an over-restriction) — a case naming EXACTLY one of these two pairs, and
+ * no third content-discarding rule, is no longer refused by {@link hasConflictingContentDiscardingRules}.
+ *
+ * **Proof, `sort-lines` + `trim-trailing-whitespace`.** `applyTrimTrailingWhitespace` only ever
+ * removes a per-line run of spaces/tabs immediately before a line terminator or the text's own end
+ * (`normalize.ts`'s own regex, `/[ \t]+(?=\r\n|\r|\n|$)/g`); it can never touch a non-whitespace
+ * byte, never merge two lines into one, and never introduce a new line boundary. `applySortLines`
+ * only ever permutes whole lines, by their own (unchanged) content, never inspecting or depending on
+ * what trimming already did or will do to any line's trailing whitespace. Composed in EITHER order,
+ * the pair can therefore only ever (a) remove trailing whitespace and (b) reorder lines by their
+ * (post- or pre-trim) content — neither operation can make one line's own sort position depend on a
+ * DIFFERENT line's content (the hazard every other pairing in this set shares, `CONTENT_DISCARDING_
+ * RULES`'s own doc comment), because trimming is purely local to one line and sorting depends only on
+ * each line's own bytes. Two inputs that differ in any non-whitespace byte therefore still differ
+ * after either order of this pair — confirmed directly (not merely argued) by
+ * {@link PROVEN_SAFE_PAIR_PROOFS}'s own fixture in this module's test file, which composes the pair
+ * both ways over inputs designed to look like the exact shape the OTHER five pairings exploit, and
+ * shows none of them collapse.
+ *
+ * **Proof, `json-canonical` + `ignore-json-pointers`.** `ignore-json-pointers` resolves each of its
+ * own `pointers` as an RFC 6901 PATH into the parsed JSON tree and removes exactly the member or
+ * element that path names (`removeJsonPointer`'s own doc comment) — a pointer is a NAME/INDEX chain,
+ * never a text position, so re-ordering the document's own object keys before or after removal
+ * changes nothing about which logical field a given pointer names or removes (the one way `sort-lines`
+ * was unsafe with a position-sensitive `replace` — making a LATER rule's target content-independent —
+ * cannot arise here, because `ignore-json-pointers` never targets "whatever sorts last", only "the
+ * field this declared path names", whatever its new key position is). `json-canonical` is applied
+ * either as the first step (canonicalising before the named paths are removed, which only changes
+ * display key order, read by {@link removeJsonPointer} regardless) or the last (canonicalising
+ * what removal left, which cannot resurrect a removed field or rename a surviving one). Two documents
+ * that differ in any field `ignore-json-pointers` was not told to remove still differ after either
+ * order — confirmed directly by the identical fixture approach above.
+ */
+const PROVEN_SAFE_CONTENT_DISCARDING_PAIRS: readonly ReadonlySet<NormalizeRule['rule']>[] = [
+  new Set(['sort-lines', 'trim-trailing-whitespace']),
+  new Set(['json-canonical', 'ignore-json-pointers']),
+];
+
+/** True when `kinds` is EXACTLY one of {@link PROVEN_SAFE_CONTENT_DISCARDING_PAIRS} — not a subset,
+ * not a superset: a third content-discarding kind sharing the scope is never proven safe by either
+ * proof above, so it must still trip the general restriction. */
+function isProvenSafePair(kinds: ReadonlySet<NormalizeRule['rule']>): boolean {
+  return PROVEN_SAFE_CONTENT_DISCARDING_PAIRS.some(
+    (pair) => pair.size === kinds.size && [...pair].every((kind) => kinds.has(kind)),
+  );
+}
+
 /** The literal value {@link effectiveScopeKeyOf} returns for a rule with no explicit `stream`/`file`
  * — "every target" in the conflict count below. Named rather than inlined so every comparison site
  * reads the same word; typed as plain `string` (not a `'unscoped' | string` union, which ESLint's
@@ -474,9 +524,29 @@ function hasOverlappingScopes(rules: readonly NormalizeRule[]): boolean {
  * repros, and why. This is the cross-KIND restriction (two DIFFERENT content-discarding kinds
  * sharing a scope); {@link hasRepeatedRuleKindInScope} is the separate, same-KIND restriction a round
  * 5 finding added — a case can violate either independently of the other.
+ *
+ * **`specs/22` M17 P14: the two proven-safe pairs are exempted, not just accepted as a cost.**
+ * `replace` is the one content-discarding kind that EVER carries its own `stream`/`file` scope
+ * (`effectiveScopeKeyOf`'s own doc comment) — the other four are always {@link UNSCOPED}, so whenever
+ * no `replace` rule is present at all, every content-discarding rule in `rules` shares the identical
+ * single scope by construction, and "which KINDS are present" is the whole question: if that set is
+ * exactly one of {@link PROVEN_SAFE_CONTENT_DISCARDING_PAIRS}, it is not a conflict. The moment any
+ * `replace` rule is present, this exemption never applies (neither proof above covers a combination
+ * including `replace`) and the general, scope-aware check below runs exactly as it always has.
+ *
+ * The exemption fires only for EXACTLY two content-discarding rules, each a DIFFERENT kind, matching
+ * one proven-safe pair: two occurrences of the SAME kind (`sort-lines` twice, say) is not what either
+ * proof covers, and keeps tripping this check exactly as before (`hasRepeatedRuleKindInScope` already
+ * refuses that same shape independently, for the identical same-kind reason `CFG-513` exists).
  */
 export function hasConflictingContentDiscardingRules(rules: readonly NormalizeRule[]): boolean {
-  return hasOverlappingScopes(rules.filter((rule) => CONTENT_DISCARDING_RULES.has(rule.rule)));
+  const discarding = rules.filter((rule) => CONTENT_DISCARDING_RULES.has(rule.rule));
+  const hasReplace = discarding.some((rule) => rule.rule === 'replace');
+  if (!hasReplace && discarding.length === 2) {
+    const kinds = new Set(discarding.map((rule) => rule.rule));
+    if (kinds.size === 2 && isProvenSafePair(kinds)) return false;
+  }
+  return hasOverlappingScopes(discarding);
 }
 
 /**
@@ -654,4 +724,157 @@ export function assertNoRepeatedRuleKindInScope(declaration: ParityDeclaration):
       'observations down to the identical bytes',
     more: conflicts.length - 1,
   });
+}
+
+/**
+ * The surface kinds the always-on root-path rewrite reaches (`normalize.ts`'s own `rewriteRootPaths`
+ * doc comment; `compare.ts`'s own `normalizeTextOrThrow` runs it before any declared rule on every
+ * one of these). `library`'s own structured value is deliberately excluded: `compare.ts`'s own
+ * `normalizeObservationOrThrow` never calls the rewrite for `library` at all (confirmed by reading
+ * that function, not assumed — see its own doc comment), so a `replace` rule declared there has
+ * nothing to interact with and is already a complete no-op (the identical, already-confirmed reason
+ * {@link assertNoConflictingContentDiscardingRules}'s own doc comment gives for not special-casing
+ * `library` there either).
+ */
+const ROOT_REWRITTEN_SURFACES: ReadonlySet<SurfaceKind> = new Set(['process', 'file', 'http']);
+
+/**
+ * True when `rules` declares at least one `replace` rule — the one check
+ * {@link collectReplaceOnRootRewrittenSurfaceConflicts} needs per case on a root-rewritten surface.
+ */
+function hasReplaceRule(rules: readonly NormalizeRule[]): boolean {
+  return rules.some((rule) => rule.rule === 'replace');
+}
+
+/** One case whose `normalize` list declares a `replace` rule on a surface the always-on root-path
+ * rewrite reaches — the unit {@link assertNoReplaceRuleOnRootRewrittenSurface} reports against, named
+ * the identical way {@link ContentDiscardingConflict}/{@link RepeatedRuleKindConflict} are. */
+export interface ReplaceOnRootRewrittenSurfaceConflict {
+  readonly key: string;
+}
+
+/**
+ * Every case, on a {@link ROOT_REWRITTEN_SURFACES} member, whose `normalize` list declares a
+ * `replace` rule, in the identical fixed, sorted order {@link collectReplacePatterns} and its
+ * siblings all use.
+ *
+ * **`specs/22` M17 P14: closing the always-on root-token masking gap M16 P4 disclosed and left open**
+ * (`normalize.ts`'s own `rewriteRootPaths` doc comment, `SPEC-QUESTIONS.md` Q298 Decision 4). The
+ * rewrite substitutes a variable-length real root path for a FIXED-length token, unconditionally,
+ * before any declared rule — the two real roots being compared are essentially never the same
+ * length, so the substitution shifts the two sides' text by two different amounts. A later `replace`
+ * rule anchored at a text boundary (`.{N}$`, `^.{N}`, and the like — an entirely ordinary shape, e.g.
+ * "drop a trailing fixed-width id") then cuts a different offset into the real content on each side,
+ * which can turn a genuine difference into byte-identical normalised text (confirmed live: see this
+ * module's own test file for the repro, reproduced both as M16 P4 originally found it and as a fresh
+ * M17 P14 adversarial round independently re-derived it).
+ *
+ * **Why `replace` is refused outright here, rather than only the pattern shapes that are actually
+ * anchored.** `isPathologicalReplacePattern` already shows that statically classifying "is this
+ * pattern dangerous" is itself an open-ended problem this piece's own history (`SPEC-QUESTIONS.md`
+ * Q298 Decisions 1 and 4) has twice found a gap in; Decision 4 explicitly rejected a heuristic
+ * detector for "a dangerous, length-anchored `replace` pattern" for exactly that reason. The other
+ * six normalise rules are each either structural (addressed by content or JSON path, never by
+ * absolute text position or length — `line-endings`, `strip-ansi`, `sort-lines`, `json-canonical`,
+ * `ignore-json-pointers`) or content-BOUNDED (`trim-trailing-whitespace` can only ever consume
+ * whitespace, never a real byte, so it cannot be shifted into consuming part of a real difference);
+ * `replace` alone accepts an author-supplied, unconstrained regular expression, which is the one
+ * shape capable of depending on absolute position or length at all. Refusing it outright, on every
+ * surface the rewrite reaches, widens the EXISTING "coarse but provably sufficient" mechanism
+ * {@link hasConflictingContentDiscardingRules}/{@link hasRepeatedRuleKindInScope} already chose
+ * over a cleverer detector, rather than inventing a third one.
+ */
+export function collectReplaceOnRootRewrittenSurfaceConflicts(
+  declaration: ParityDeclaration,
+): readonly ReplaceOnRootRewrittenSurfaceConflict[] {
+  const conflicts: ReplaceOnRootRewrittenSurfaceConflict[] = [];
+  for (const kind of SURFACE_KINDS) {
+    if (!ROOT_REWRITTEN_SURFACES.has(kind)) continue;
+    const surface = declaration.surfaces[kind];
+    if (surface === undefined) continue;
+    surface.cases.forEach((parityCase, caseIndex) => {
+      if (hasReplaceRule(parityCase.normalize ?? [])) {
+        conflicts.push({ key: `surfaces.${kind}.cases[${String(caseIndex)}].normalize` });
+      }
+    });
+  }
+  return conflicts;
+}
+
+/**
+ * Throws `CFG-516` naming the first case {@link collectReplaceOnRootRewrittenSurfaceConflicts} finds
+ * whose `normalize` list declares a `replace` rule on a surface the always-on root-path rewrite
+ * reaches, or returns normally when there is none. The identical "load-adjacent, owned by this piece"
+ * timing every sibling assertion in this module already uses.
+ */
+export function assertNoReplaceRuleOnRootRewrittenSurface(declaration: ParityDeclaration): void {
+  const conflicts = collectReplaceOnRootRewrittenSurfaceConflicts(declaration);
+  const first = conflicts[0];
+  if (first === undefined) return;
+  throw new ForgeError('CFG-516', {
+    file: `.forge/parity/${declaration.name}.parity.yaml`,
+    key: first.key,
+    detail:
+      'declares a "replace" rule on a surface the always-on root-path rewrite reaches, which ' +
+      'cannot be proven safe against a length-anchored pattern (specs/13 F-TEST-9)',
+    more: conflicts.length - 1,
+  });
+}
+
+/** One problem {@link firstNormalizeRuleSafetyProblem} found — plain data, carrying the already-
+ * rendered `ForgeError.message` so a caller never has to re-derive or duplicate the code's own
+ * message/remedy text (`codes.ts` is the one place that renders it). */
+export interface NormalizeRuleSafetyProblem {
+  readonly code: ForgeErrorCode;
+  readonly key: string;
+  readonly message: string;
+}
+
+/**
+ * Runs every normalize-rule-shape safety check this module owns — `CFG-511` (catastrophic-
+ * backtracking shape), `CFG-512` (conflicting content-discarding rules), `CFG-513` (a repeated rule
+ * kind) and `CFG-516` (`specs/22` M17 P14: `replace` on a root-rewritten surface) — in that fixed
+ * order, and returns the FIRST problem found as plain data, never throwing.
+ *
+ * **Why this exists, beside the four throwing `assert*` functions above.** `capture-command.ts`'s
+ * own `captureOneDeclaration` already lets a `ForgeError` propagate (it throws `CFG-515` inline
+ * itself), so it calls the four `assert*` functions directly, in this identical order, needing no
+ * wrapper. `check-command.ts`'s own `processDeclaration` has the opposite contract — every outcome
+ * is a returned `ProcessedDeclaration`, never a thrown exception (`declaration.ts`'s own
+ * `loadParityDeclaration` doc comment: "Never throws") — so THIS function exists for it: one
+ * non-throwing call that still reports each hazard under its own real code and its own real,
+ * already-rendered message, rather than a generic one.
+ *
+ * **Why these four checks were never reachable from either real command before `specs/22` M17 P14.**
+ * Confirmed by reading every call site in this package before this piece's own build: none of the
+ * four `assert*`/`collect*` functions above had ANY caller outside this module's own test file —
+ * `capture-command.ts`/`check-command.ts`/`declaration.ts` never imported `replace-lint.ts` at all.
+ * Six real gauntlet rounds (`GAUNTLET-LOG.md`'s own `## M16 P4` entry) built and proved these checks
+ * against the primitive directly; nothing wired them into `forge parity capture`/`check` itself, so a
+ * real declaration with a genuinely dangerous shape was never actually refused by either command —
+ * only by a test calling the function in isolation. This piece wires both commands to this module for
+ * the first time; see this piece's own report for the full account.
+ */
+export function firstNormalizeRuleSafetyProblem(
+  declaration: ParityDeclaration,
+): NormalizeRuleSafetyProblem | undefined {
+  for (const assertSafe of [
+    assertParityDeclarationPatternsSafe,
+    assertNoConflictingContentDiscardingRules,
+    assertNoRepeatedRuleKindInScope,
+    assertNoReplaceRuleOnRootRewrittenSurface,
+  ]) {
+    try {
+      assertSafe(declaration);
+    } catch (cause) {
+      if (!isForgeError(cause)) throw cause;
+      const key = cause.details['key'];
+      return {
+        code: cause.code,
+        key: typeof key === 'string' ? key : '(unknown)',
+        message: cause.message,
+      };
+    }
+  }
+  return undefined;
 }

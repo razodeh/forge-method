@@ -425,6 +425,34 @@ describe('decideCaseVerdict: total precedence over unclean/unstable/error (specs
     expect(() => decideCaseVerdict(input({ candidateRawRuns: [] }))).toThrow(RangeError);
   });
 
+  it(
+    'specs/22 M17 P14: a catastrophic replace pattern is a RUN-152 error verdict through the REAL ' +
+      'decideCaseVerdict entry point -- never a hang, and never silently folded into RUN-130 -- ' +
+      'proven against the real, documented production budget (5000ms), not a shortened test-only ' +
+      'one, so this test genuinely runs for several seconds',
+    () => {
+      // The identical flat-adjacent-unbounded-groups shape `normalize-budget.test.ts` already proves
+      // times out at the primitive level; this test proves the SAME real shape also times out
+      // through the actual comparison entry point every real `forge parity check`/`capture`
+      // invocation uses, under the real, undocumented-override-free production default.
+      const pattern = `${'(a*)'.repeat(20)}b`;
+      const outcome = decideCaseVerdict(
+        input({
+          rules: [{ rule: 'replace', pattern, replacement: 'X' }],
+          referenceNormalized: processObservation('a'.repeat(33)),
+          candidateRawRuns: [processObservation('a'.repeat(33))],
+        }),
+      );
+      expect(outcome).toEqual({
+        verdict: 'error',
+        reason:
+          "Surface process case 0's normalize rules did not finish within 5000ms (a wall-clock " +
+          'budget, specs/13 F-TEST-9).',
+      });
+    },
+    15_000,
+  );
+
   it('the stability sampling-is-not-proof disclosure: stability.runs=2 can read match by chance even though the case varies', () => {
     // A seeded-but-genuinely-nondeterministic test double: a case that varies on 1 run in 5. With
     // only 2 stability runs sampled, there is a real, demonstrable chance both sampled runs land on

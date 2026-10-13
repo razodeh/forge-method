@@ -442,9 +442,9 @@ describe('observeHttpSurfaceCases: the two "already-validated by declaration.ts"
       stability: { runs: 3 },
       cases: [{ request: { method: 'GET', path: '/' } }],
     };
-    await expect(observeHttpSurfaceCases(malformed, dir, dir, process.env)).rejects.toThrow(
-      /unreachable.*port.*readiness/,
-    );
+    await expect(
+      observeHttpSurfaceCases(malformed, 'candidate', dir, dir, process.env),
+    ).rejects.toThrow(/unreachable.*port.*readiness/);
   });
 
   it('throws a plain programming-error if ever given an http case with no "request" (declaration.ts is supposed to refuse this at load), and still cleans up the real server it had already started', async () => {
@@ -468,9 +468,9 @@ describe('observeHttpSurfaceCases: the two "already-validated by declaration.ts"
       stability: { runs: 3 },
       cases: [{}], // no "request" -- the exact shape declaration.ts's loader refuses.
     };
-    await expect(observeHttpSurfaceCases(malformed, dir, dir, process.env)).rejects.toThrow(
-      /unreachable.*request/,
-    );
+    await expect(
+      observeHttpSurfaceCases(malformed, 'candidate', dir, dir, process.env),
+    ).rejects.toThrow(/unreachable.*request/);
     const pid = Number((await readFile(markerPath, 'utf8')).trim());
     try {
       expect(isAlive(pid)).toBe(false);

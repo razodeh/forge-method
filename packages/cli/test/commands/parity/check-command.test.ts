@@ -1020,13 +1020,18 @@ surfaces:
 });
 
 describe('runParityCheck: the oracle rewritten mid-run (after the first case, before the last comparison) (specs/22 M16 P7)', () => {
-  it("a case that rewrites .forge/parity/ itself still reads oracle-changed overall, overriding every declaration's own verdict", async () => {
-    const dir = await freshProject();
-    const sha = await headSha(dir);
-    await writeRawDeclaration(
-      dir,
-      'sample',
-      `name: sample
+  it(
+    'specs/22 M17 P14: a case that tries to rewrite .forge/parity/ itself now fails outright (the ' +
+      'directory is absent for the duration of its own run), so the rewrite never happens at all -- ' +
+      'the SECOND trust-anchor comparison finds nothing changed there, and the crash itself is what ' +
+      'the case-level comparison reports',
+    async () => {
+      const dir = await freshProject();
+      const sha = await headSha(dir);
+      await writeRawDeclaration(
+        dir,
+        'sample',
+        `name: sample
 reference:
   ref: ${sha}
 review:
@@ -1042,35 +1047,52 @@ surfaces:
     cases:
       - {}
 `,
-    );
-    await commitAll(dir, 'declare');
-    await runParityCapture(captureOptions(dir));
-    await commitAll(dir, 'capture');
+      );
+      await commitAll(dir, 'declare');
+      await runParityCapture(captureOptions(dir));
+      await commitAll(dir, 'capture');
 
-    // The candidate's own command rewrites the oracle WHILE being observed ("code a case runs can
-    // change a file", Q294 Decision 3's own boundary), caught here by the SECOND comparison even
-    // though the FIRST one (before any case ran) was clean.
-    await writeBehavior(
-      dir,
-      "require('fs').appendFileSync('.forge/parity/sample.parity.yaml', '\\n# rewritten\\n');\nprocess.stdout.write('ok');\n",
-    );
+      // Before M17 P14, this command's own `appendFileSync` persisted, caught only by the SECOND
+      // trust-anchor comparison (`oracle-changed`). With `.forge/parity/` absent for this command's
+      // own run, `appendFileSync` itself now throws ENOENT before `process.stdout.write('ok')` ever
+      // runs -- the rewrite never happens, so there is nothing for either trust-anchor comparison to
+      // find; the crash shows up as an ordinary case-level `mismatch` instead (its stdout/exit differ
+      // from the reference's successful "ok"/0).
+      await writeBehavior(
+        dir,
+        "require('fs').appendFileSync('.forge/parity/sample.parity.yaml', '\\n# rewritten\\n');\nprocess.stdout.write('ok');\n",
+      );
 
-    const result = await runParityCheck(
-      checkOptions(dir, { trusted: 'refs/heads/main', noRecord: true }),
-    );
-    expect(result.verdict).toBe('invalid');
-    expect(result.reason).toMatch(/^oracle-changed:/);
-  });
+      const result = await runParityCheck(
+        checkOptions(dir, { trusted: 'refs/heads/main', noRecord: true }),
+      );
+      expect(result.verdict).toBe('mismatch');
+      expect(result.reason).toBeUndefined(); // no oracle-changed: the directory was never touched
+
+      // The real proof, not merely the verdict word: `.forge/parity/` genuinely never changed.
+      const { stdout } = await execa('git', ['status', '--porcelain', '--', '.forge/parity'], {
+        cwd: dir,
+      });
+      expect(stdout).toBe('');
+    },
+  );
 });
 
-describe('runParityCheck: a case that tampers with .forge/parity/ and restores it before exiting is invisible to both anchor checks (specs/22 M16 P7)', () => {
-  it("reads match, not oracle-changed: a transient edit undone within one case's own run window is outside what the before/after comparison can see (Q294 Decision 7, disclosed, not a bug; MUST-FIX 3)", async () => {
-    const dir = await freshProject();
-    const sha = await headSha(dir);
-    await writeRawDeclaration(
-      dir,
-      'sample',
-      `name: sample
+describe(
+  'runParityCheck (specs/22 M17 P14): a case that tries to tamper with .forge/parity/ and ' +
+    'restore it is refused outright, closing the self-reverting-tamper gap (Q294 Decision 7)',
+  () => {
+    it(
+      'reads mismatch, never match: the always-on isolation makes the read this tamper depends on ' +
+        'fail before the write-then-restore can ever happen, so the gap this test used to document ' +
+        'as open (MUST-FIX 3) no longer exists',
+      async () => {
+        const dir = await freshProject();
+        const sha = await headSha(dir);
+        await writeRawDeclaration(
+          dir,
+          'sample',
+          `name: sample
 reference:
   ref: ${sha}
 review:
@@ -1086,52 +1108,84 @@ surfaces:
     cases:
       - {}
 `,
-    );
-    await commitAll(dir, 'declare');
-    await runParityCapture(captureOptions(dir));
-    await commitAll(dir, 'capture');
+        );
+        await commitAll(dir, 'declare');
+        await runParityCapture(captureOptions(dir));
+        await commitAll(dir, 'capture');
 
-    // Unlike the sibling scenario just above (which PERSISTS its rewrite, caught by the SECOND
-    // comparison), this candidate reads its own declaration file, writes different bytes, and then
-    // writes the EXACT original bytes back -- all synchronously, before the process exits. Run
-    // TWICE for `stability.runs: 2`, each run independently: reads whatever is currently on disk
-    // (the untouched original, since the previous run already restored it), tampers, restores.  By
-    // the time the AFTER comparison runs (once every declaration has finished), the file already
-    // reads byte-identical to the trusted commit again: the edit happened and ended entirely inside a
-    // window neither the BEFORE check (already run, before this process ever started) nor the AFTER
-    // check (the file is already restored by the time it runs) ever looks during. This is the exact
-    // boundary Q294 Decision 7 discloses rather than closes ("a case that runs can change a file and
-    // restore it... which neither sees") -- pinned here as a concrete, reproducible case, not left as
-    // prose.
-    await writeBehavior(
-      dir,
-      "const fs=require('fs');" +
-        "const p='.forge/parity/sample.parity.yaml';" +
-        "const original=fs.readFileSync(p,'utf8');" +
-        "fs.writeFileSync(p,original+'\\n# tampered\\n');" +
-        'fs.writeFileSync(p,original);' +
-        "process.stdout.write('ok');\n",
+        // Before M17 P14: this candidate read its own declaration file, wrote different bytes, then
+        // wrote the EXACT original bytes back -- all synchronously, before the process exited -- and
+        // was invisible to both trust-anchor comparisons (Q294 Decision 7's own disclosed gap).
+        // With `.forge/parity/` absent for this command's own run, the very first line --
+        // `readFileSync(p, 'utf8')` -- now throws ENOENT: the read this whole tamper depends on
+        // cannot succeed, so the write-then-restore never happens at all.
+        await writeBehavior(
+          dir,
+          "const fs=require('fs');" +
+            "const p='.forge/parity/sample.parity.yaml';" +
+            "const original=fs.readFileSync(p,'utf8');" +
+            "fs.writeFileSync(p,original+'\\n# tampered\\n');" +
+            'fs.writeFileSync(p,original);' +
+            "process.stdout.write('ok');\n",
+        );
+
+        const result = await runParityCheck(
+          checkOptions(dir, { trusted: 'refs/heads/main', noRecord: true }),
+        );
+        expect(result.verdict).toBe('mismatch');
+        expect(result.failing).toBe(1);
+
+        // `.forge/parity/` is restored to its own untouched state once the command exits -- the
+        // isolation mechanism's own bookkeeping, never left hidden after the check finishes.
+        const { stdout } = await execa('git', ['status', '--porcelain', '--', '.forge/parity'], {
+          cwd: dir,
+        });
+        expect(stdout).toBe('');
+      },
     );
 
-    const result = await runParityCheck(
-      checkOptions(dir, { trusted: 'refs/heads/main', noRecord: true }),
-    );
-    expect(result.verdict).toBe('match');
-    expect(result.failing).toBe(0);
+    it(
+      'specs/22 M17 P14: a command that merely READS something else while .forge/parity/ is hidden ' +
+        '(never touching it) is completely unaffected -- the isolation is scoped to one path, not a ' +
+        'wholesale sandbox',
+      async () => {
+        const dir = await freshProject();
+        const sha = await headSha(dir);
+        await writeRawDeclaration(
+          dir,
+          'sample',
+          `name: sample
+reference:
+  ref: ${sha}
+review:
+  by: tester
+  basis: read the diff by hand
+  at: 2026-01-01
+expires: 2999-01-01
+surfaces:
+  process:
+    run: ${JSON.stringify(FIXED_RUN)}
+    stability:
+      runs: 2
+    cases:
+      - {}
+`,
+        );
+        await commitAll(dir, 'declare');
+        await runParityCapture(captureOptions(dir));
+        await commitAll(dir, 'capture');
+        await writeBehavior(
+          dir,
+          "require('fs').readFileSync('.gitkeep');\nprocess.stdout.write('ok');\n",
+        );
 
-    // Not merely that this module failed to notice a real difference under `.forge/parity/`: the
-    // working tree really is byte-identical to the trusted commit there afterward, so there
-    // genuinely is none left to see. Scoped to that one path, not the whole working tree: every
-    // sibling test in this file varies the CANDIDATE by rewriting `behavior.cjs` on disk and never
-    // reverting it (that is the point of {@link writeBehavior}), so asserting a clean status
-    // tree-wide would fail on that unrelated, deliberate, always-uncommitted change instead of
-    // proving anything about this test's own claim.
-    const { stdout } = await execa('git', ['status', '--porcelain', '--', '.forge/parity'], {
-      cwd: dir,
-    });
-    expect(stdout).toBe('');
-  });
-});
+        const result = await runParityCheck(checkOptions(dir, { noRecord: true }));
+        expect(result.verdict).toBe('match');
+        expect(result.failing).toBe(0);
+      },
+    );
+  },
+);
 
 describe('runParityCheck: the library surface (specs/22 M16 P7)', () => {
   it("matches a returned value and mismatches once the candidate's own value changes", async () => {

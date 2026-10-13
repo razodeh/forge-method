@@ -308,7 +308,69 @@ describe('runParityCapture: declaration-level refusals are each distinguishable 
 
     await expect(runParityCapture(baseOptions(dir))).rejects.toMatchObject({ code: 'CFG-515' });
   });
+});
 
+describe(
+  'runParityCapture (specs/22 M17 P14): a surface declared "unobservable" is never observed at ' +
+    'all [#13], mirroring forge parity check',
+  () => {
+    it(
+      "the exempt surface's own command is genuinely never run -- it is wired to fail loudly " +
+        '(exit 3) if it ever is, and capture still succeeds because it never does',
+      async () => {
+        const dir = await freshProject();
+        const ref = await commitSha(dir);
+        const yaml = `name: sample
+reference:
+  ref: ${ref}
+review:
+  by: tester
+  basis: read the diff by hand
+  at: 2026-01-01
+expires: 2999-01-01
+surfaces:
+  process:
+    run: ${JSON.stringify('node -e "process.exit(3)"')}
+    stability:
+      runs: 2
+    cases:
+      - {}
+  file:
+    run: ${JSON.stringify("node -e \"require('fs').writeFileSync('out.txt', 'ok')\"")}
+    stability:
+      runs: 2
+    cases:
+      - outputs:
+          - path: out.txt
+unobservable:
+  - surface: process
+    reason: fixture -- this surface's own command deliberately fails if ever run
+    owner: t
+    expiry: 2999-01-01
+`;
+        await mkdir(path.join(dir, '.forge/parity'), { recursive: true });
+        await writeFile(path.join(dir, '.forge/parity', 'sample.parity.yaml'), yaml, 'utf8');
+
+        const result = await runParityCapture(baseOptions(dir));
+        expect(result.captured).toBe(1);
+
+        const files = await capturedFiles(dir);
+        const raw = await readFile(
+          path.join(dir, '.forge/parity/captures', files[0] ?? ''),
+          'utf8',
+        );
+        const parsed = parseCapture(raw, files[0] ?? '');
+        // Only the `file` surface's one case was ever observed -- the `process` surface contributes
+        // NOTHING to the capture, not even a failed/empty entry.
+        expect(parsed.capture?.cases).toEqual([
+          { surface: 'file', caseIndex: 0, observation: expect.anything() as unknown },
+        ]);
+      },
+    );
+  },
+);
+
+describe('runParityCapture: the rest of the suite (specs/22 M16 P6)', () => {
   it('refuses RUN-132 for a --name matching no declaration, naming those that do exist', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'real-one');

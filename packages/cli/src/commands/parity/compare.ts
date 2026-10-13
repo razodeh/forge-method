@@ -29,13 +29,12 @@ import type {
   SurfaceObservation,
 } from './capture.ts';
 import type { NormalizeRule, ProcessStream, SurfaceKind } from './declaration-types.ts';
-import type { ObservedRoot } from './normalize.ts';
 import {
-  applyNormalizeRulesToText,
-  removeJsonPointer,
-  reorderPointersForSafeRemoval,
-  rewriteRootPaths,
-} from './normalize.ts';
+  applyNormalizeRulesToTextBounded,
+  DEFAULT_NORMALIZE_BUDGET_MS,
+} from './normalize-budget.ts';
+import type { ObservedRoot } from './normalize.ts';
+import { removeJsonPointer, reorderPointersForSafeRemoval, rewriteRootPaths } from './normalize.ts';
 import type { StabilityOutcome } from './stability.ts';
 import { decideStability } from './stability.ts';
 
@@ -105,7 +104,19 @@ function normalizeTextOrThrow(
   // bullet; `normalize.ts`'s own `rewriteRootPaths` doc comment) — unconditional, never listed in a
   // declaration's own `normalize` array, and never itself subject to the erase-everything guard
   // (replacing a root-path substring with a non-empty token cannot erase a non-empty text to nothing).
-  const outcome = applyNormalizeRulesToText(rewriteRootPaths(text, root), rules, scope);
+  //
+  // `specs/22` M17 P14: the whole ordered rule application runs under a wall-clock budget, enforced by
+  // a worker thread `normalize-budget.ts` can forcibly terminate (never a racing `setTimeout`, which a
+  // catastrophic, never-yielding `replace` match would simply outlast — `replace-lint.ts`'s own file
+  // header has the full account of why).
+  const outcome = applyNormalizeRulesToTextBounded(rewriteRootPaths(text, root), rules, scope);
+  if (outcome.timedOut) {
+    throw new ForgeError('RUN-152', {
+      surface: context.surface,
+      index: context.index,
+      timeoutMs: DEFAULT_NORMALIZE_BUDGET_MS,
+    });
+  }
   if (outcome.ok) return outcome.text;
   const { rule, detail } =
     outcome.kind === 'rule-failed'

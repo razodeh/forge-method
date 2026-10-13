@@ -23,6 +23,7 @@
 import { isForgeError } from '@forge/core/errors';
 import { STORED_COMMAND_LIMITS } from '@forge/engine/dispatch';
 
+import { withParityDirHidden } from './candidate-isolation.ts';
 import type { ParityCase, SurfaceDeclaration } from './declaration-types.ts';
 import { sendHttpRequest } from './http-client.ts';
 import { LOOPBACK_HOST, startHttpServer, type HttpServerHandle } from './http-server.ts';
@@ -50,17 +51,26 @@ function requireHttpConfig(surface: SurfaceDeclaration): {
   return { port: surface.port, readiness: surface.readiness };
 }
 
+/** One case's overlay input, already READ from `.forge/parity/` — `specs/22` M17 P14: every input
+ * byte an http surface's cases need is read up front, before the server starts and before the
+ * candidate-side isolation window opens (`observeHttpSurfaceCases`'s own doc comment has the full
+ * account of why the http surface needs this extra step the other three surfaces do not). */
+interface PreReadOverlayInput {
+  readonly to: string;
+  readonly bytes: Uint8Array;
+}
+
 interface ObserveOneHttpCaseArgs {
   readonly parityCase: ParityCase;
   readonly port: number;
   readonly root: string;
-  readonly overlayRoot: string;
+  readonly preReadInputs: readonly PreReadOverlayInput[];
 }
 
 async function observeOneHttpCase(
   args: ObserveOneHttpCaseArgs,
 ): Promise<ParityCaseObservationOutcome> {
-  const { parityCase, port, root, overlayRoot } = args;
+  const { parityCase, port, root, preReadInputs } = args;
   const request = parityCase.request;
   if (request === undefined) {
     throw new Error(
@@ -70,9 +80,8 @@ async function observeOneHttpCase(
   }
   const writtenOverlayDestinations: string[] = [];
   try {
-    for (const input of parityCase.inputs ?? []) {
-      const bytes = await readOverlaySourceBytes(overlayRoot, input.from);
-      await writeOverlayFile(root, input.to, bytes);
+    for (const input of preReadInputs) {
+      await writeOverlayFile(root, input.to, input.bytes);
       writtenOverlayDestinations.push(input.to);
     }
 
@@ -131,31 +140,62 @@ async function observeOneHttpCase(
  * A server that never starts at all (the port was held, the server died before answering its
  * readiness probe, or never became ready) is reported as the IDENTICAL failure for every one of this
  * surface's cases: a declaration-wide precondition failure, never a partial or per-case retry.
+ *
+ * **`specs/22` M17 P14: candidate-side isolation spans the server's WHOLE lifetime, not one request.**
+ * Unlike a `process`/`file`/`library` case (one command, started and finished per case), an `http`
+ * surface's `run` starts a SERVER that stays alive, and able to read or write anything on disk, across
+ * every one of this surface's cases — hiding `.forge/parity/` only around one request would leave it
+ * visible to that same long-lived process between requests. So every case's own overlay INPUT bytes
+ * are read from `.forge/parity/` up front, before the server starts (`readOverlaySourceBytes`, still
+ * reading `overlayRoot`, never after this point) — `observeOneHttpCase`'s own per-case overlay WRITE
+ * (into the tree being observed, never under `.forge/parity/`) still happens per case, from those
+ * already-read bytes — and the directory is hidden from the moment the server starts until the moment
+ * it stops, bracketing the server's entire lifetime on the candidate side the identical way
+ * `observe.ts`'s own per-case bracket covers one command's entire lifetime.
  */
 export async function observeHttpSurfaceCases(
   surface: SurfaceDeclaration,
+  side: 'reference' | 'candidate',
   root: string,
   overlayRoot: string,
   parentEnv: Readonly<Record<string, string | undefined>>,
 ): Promise<readonly ParityCaseObservationOutcome[]> {
   const { port, readiness } = requireHttpConfig(surface);
 
-  let handle: HttpServerHandle;
-  try {
-    handle = await startHttpServer({ run: surface.run, port, readiness, root, parentEnv });
-  } catch (cause) {
-    if (!isForgeError(cause)) throw cause;
-    const failure: ParityCaseObservationOutcome = { outcome: 'failed', failure: { error: cause } };
-    return surface.cases.map(() => failure);
+  const preReadInputsByCase: (readonly PreReadOverlayInput[])[] = [];
+  for (const parityCase of surface.cases) {
+    const inputs: PreReadOverlayInput[] = [];
+    for (const input of parityCase.inputs ?? []) {
+      inputs.push({ to: input.to, bytes: await readOverlaySourceBytes(overlayRoot, input.from) });
+    }
+    preReadInputsByCase.push(inputs);
   }
 
-  try {
-    const outcomes: ParityCaseObservationOutcome[] = [];
-    for (const parityCase of surface.cases) {
-      outcomes.push(await observeOneHttpCase({ parityCase, port, root, overlayRoot }));
+  const runSurface = async (): Promise<readonly ParityCaseObservationOutcome[]> => {
+    let handle: HttpServerHandle;
+    try {
+      handle = await startHttpServer({ run: surface.run, port, readiness, root, parentEnv });
+    } catch (cause) {
+      if (!isForgeError(cause)) throw cause;
+      const failure: ParityCaseObservationOutcome = {
+        outcome: 'failed',
+        failure: { error: cause },
+      };
+      return surface.cases.map(() => failure);
     }
-    return outcomes;
-  } finally {
-    await handle.stop();
-  }
+
+    try {
+      const outcomes: ParityCaseObservationOutcome[] = [];
+      for (let index = 0; index < surface.cases.length; index += 1) {
+        const parityCase = surface.cases[index];
+        const preReadInputs = preReadInputsByCase[index];
+        if (parityCase === undefined || preReadInputs === undefined) continue; // unreachable: same length
+        outcomes.push(await observeOneHttpCase({ parityCase, port, root, preReadInputs }));
+      }
+      return outcomes;
+    } finally {
+      await handle.stop();
+    }
+  };
+  return side === 'candidate' ? withParityDirHidden(root, runSurface) : runSurface();
 }

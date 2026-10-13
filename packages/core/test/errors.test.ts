@@ -212,6 +212,9 @@ const SAMPLE_DETAILS = {
   // new keys these five codes need.
   port: 4123,
   method: 'GET',
+  // `CFG-516`/`RUN-152`/`RUN-153` (`specs/22` M17 P14): `file`/`key`/`detail`/`more` (`CFG-510`-style),
+  // `surface`/`index`/`timeoutMs` (`RUN-118`-style) and `path` (`CFG-053`-style) above already cover
+  // every key all three codes need; no new key is added for them.
 } satisfies Record<string, unknown> as never;
 
 /**

@@ -750,6 +750,14 @@ unobservable:
       // refactor-code's own lane commit not already landed there before this gate step ran.
       expect(verifyParity?.passed).toBe(true);
     },
+    // specs/22 M17 P14: a real, measured timeout, not "pass in isolation" -- this test's own two
+    // engine runs now also spawn a worker thread per normalize call (the wall-clock-budget mechanism
+    // CFG-511's own file header already named as the only sound fix for a catastrophic `replace`),
+    // which this test's own `G-Parity` evaluations pay for repeatedly; 90s is comfortably above the
+    // ~32s this test takes running alone, with headroom for contention from its sibling tests in the
+    // same file (`M13-AGENT-NOTES.md`'s own "a measured, explicit per-test timeout instead of 'pass
+    // in isolation'" rule).
+    90_000,
   );
 
   it(

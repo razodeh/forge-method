@@ -8,12 +8,17 @@ import { describe, expect, it } from 'vitest';
 
 import { ForgeError } from '@forge/core/errors';
 
-import { applyNormalizeRulesToText } from '../../../src/commands/parity/normalize.ts';
+import {
+  applyNormalizeRulesToText,
+  rewriteRootPaths,
+} from '../../../src/commands/parity/normalize.ts';
 import {
   assertNoConflictingContentDiscardingRules,
+  assertNoReplaceRuleOnRootRewrittenSurface,
   assertNoRepeatedRuleKindInScope,
   assertParityDeclarationPatternsSafe,
   collectContentDiscardingConflicts,
+  collectReplaceOnRootRewrittenSurfaceConflicts,
   collectRepeatedRuleKindConflicts,
   hasConflictingContentDiscardingRules,
   hasRepeatedRuleKindInScope,
@@ -341,10 +346,10 @@ describe('collectContentDiscardingConflicts / assertNoConflictingContentDiscardi
   });
 
   it(
-    'throws a typed ForgeError CFG-512, never a bare exception, naming the conflicting case -- ' +
-      'this exact pair (sort-lines + trim-trailing-whitespace) is a round-4-confirmed, DELIBERATE ' +
-      'conservative cost: a critic proved this specific pair cannot actually discard content, and ' +
-      'it is refused anyway rather than carved out (see replace-lint.ts’s own doc comment for why)',
+    'specs/22 M17 P14: sort-lines + trim-trailing-whitespace no longer throws -- round 4 proved this ' +
+      'exact pair harmless and M16 P4 refused it anyway as a deliberate conservative cost; M17 P14 ' +
+      'acts on that proof instead of merely accepting the cost (see replace-lint.ts’s own doc comment ' +
+      'for the proof)',
     () => {
       const declaration = minimalDeclaration({
         surfaces: {
@@ -357,15 +362,140 @@ describe('collectContentDiscardingConflicts / assertNoConflictingContentDiscardi
           }),
         },
       });
-      let caught: unknown;
-      try {
+      expect(() => {
         assertNoConflictingContentDiscardingRules(declaration);
-      } catch (error) {
-        caught = error;
+      }).not.toThrow();
+      expect(collectContentDiscardingConflicts(declaration)).toEqual([]);
+      // In BOTH orders -- the proof does not depend on which the declaration author wrote.
+      const reversed = minimalDeclaration({
+        surfaces: {
+          process: minimalSurface({
+            cases: [
+              minimalCase({
+                normalize: [{ rule: 'trim-trailing-whitespace' }, { rule: 'sort-lines' }],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(collectContentDiscardingConflicts(reversed)).toEqual([]);
+    },
+  );
+
+  it(
+    'specs/22 M17 P14: json-canonical + ignore-json-pointers no longer throws -- the second proven-' +
+      'safe pair (Q298 Decision 3’s second half), exempted for the identical reason',
+    () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          process: minimalSurface({
+            cases: [
+              minimalCase({
+                normalize: [
+                  { rule: 'json-canonical' },
+                  { rule: 'ignore-json-pointers', pointers: ['/x'] },
+                ],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(() => {
+        assertNoConflictingContentDiscardingRules(declaration);
+      }).not.toThrow();
+      expect(collectContentDiscardingConflicts(declaration)).toEqual([]);
+    },
+  );
+
+  it(
+    'specs/22 M17 P14: a THIRD content-discarding rule alongside a proven-safe pair still throws -- ' +
+      'the exemption covers exactly the two-member pair, never a superset',
+    () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          process: minimalSurface({
+            cases: [
+              minimalCase({
+                normalize: [
+                  { rule: 'sort-lines' },
+                  { rule: 'trim-trailing-whitespace' },
+                  { rule: 'json-canonical' },
+                ],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(collectContentDiscardingConflicts(declaration)).toEqual([
+        { key: 'surfaces.process.cases[0].normalize' },
+      ]);
+    },
+  );
+
+  it(
+    'specs/22 M17 P14: mixing members of the TWO different safe pairs is not itself proven safe, and ' +
+      'still throws -- the exemption is keyed to each exact pair, not to "any of these four kinds"',
+    () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          process: minimalSurface({
+            cases: [
+              minimalCase({
+                normalize: [{ rule: 'sort-lines' }, { rule: 'json-canonical' }],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(collectContentDiscardingConflicts(declaration)).toEqual([
+        { key: 'surfaces.process.cases[0].normalize' },
+      ]);
+    },
+  );
+
+  it(
+    'specs/22 M17 P14: the proof holds directly against applyNormalizeRulesToText, not just against ' +
+      'the check -- two genuinely different inputs stay genuinely different after BOTH orders of ' +
+      'each proven-safe pair (this test does not call the check at all, so a mutation that disables ' +
+      'the check cannot hide a regression here)',
+    () => {
+      const sortThenTrim = [
+        { rule: 'sort-lines' as const },
+        { rule: 'trim-trailing-whitespace' as const },
+      ];
+      const trimThenSort = [
+        { rule: 'trim-trailing-whitespace' as const },
+        { rule: 'sort-lines' as const },
+      ];
+      // Shaped exactly like the repros this file's own CONTENT_DISCARDING_RULES doc comment warns
+      // about (one line genuinely differs), to confirm the safe pair does NOT reproduce them.
+      const a = 'ERROR: disk full   \nAAA_STATUS_OK   ';
+      const b = 'ERROR: timeout!!   \nAAA_STATUS_OK   ';
+      for (const rules of [sortThenTrim, trimThenSort]) {
+        const resultA = applyNormalizeRulesToText(a, rules, {});
+        const resultB = applyNormalizeRulesToText(b, rules, {});
+        expect(resultA).toEqual({ ok: true, text: 'AAA_STATUS_OK\nERROR: disk full' });
+        expect(resultB).toEqual({ ok: true, text: 'AAA_STATUS_OK\nERROR: timeout!!' });
+        expect(resultA).not.toEqual(resultB); // genuinely different inputs, still different output
       }
-      expect(caught).toBeInstanceOf(ForgeError);
-      expect((caught as ForgeError).code).toBe('CFG-512');
-      expect((caught as ForgeError).details['key']).toBe('surfaces.process.cases[0].normalize');
+
+      const canonicalThenIgnore = [
+        { rule: 'json-canonical' as const },
+        { rule: 'ignore-json-pointers' as const, pointers: ['/aaaStatusOk'] },
+      ];
+      const ignoreThenCanonical = [
+        { rule: 'ignore-json-pointers' as const, pointers: ['/aaaStatusOk'] },
+        { rule: 'json-canonical' as const },
+      ];
+      const c = '{"errorMsg":"disk full","aaaStatusOk":"OK"}';
+      const d = '{"errorMsg":"timeout!!!","aaaStatusOk":"OK"}';
+      for (const rules of [canonicalThenIgnore, ignoreThenCanonical]) {
+        const resultC = applyNormalizeRulesToText(c, rules, {});
+        const resultD = applyNormalizeRulesToText(d, rules, {});
+        expect(resultC).toEqual({ ok: true, text: '{"errorMsg":"disk full"}' });
+        expect(resultD).toEqual({ ok: true, text: '{"errorMsg":"timeout!!!"}' });
+        expect(resultC).not.toEqual(resultD); // genuinely different inputs, still different output
+      }
     },
   );
 
@@ -380,19 +510,26 @@ describe('collectContentDiscardingConflicts / assertNoConflictingContentDiscardi
     'is a no-op for a library-surface case carrying two content-discarding rules, confirmed (not ' +
       'merely assumed) harmless: those rules already have zero effect on a library value',
     () => {
-      // Library applies ONLY `ignore-json-pointers` to its structured result (`compare.ts`'s own
-      // `normalizeLibraryOrThrow`); `replace`/`sort-lines`/`trim-trailing-whitespace` are already
-      // complete no-ops there. This function does NOT special-case `library` -- it still refuses
-      // this combination (simpler, uniform, matches `collectReplacePatterns`'s own surface-agnostic
-      // walk, and costs nothing real since no legitimate declaration needs two content-discarding
-      // rules on a surface where neither does anything).
+      // `sort-lines` + `trim-trailing-whitespace` is now one of the two proven-safe pairs
+      // (`specs/22` M17 P14, above), so it no longer demonstrates "library gets no special case" on
+      // its own -- it would read `[]` on ANY surface now. `replace` + `sort-lines` is NOT a proven-
+      // safe pair (only `replace`-free combinations are ever exempted), so it still exercises the
+      // real claim this test makes: library applies ONLY `ignore-json-pointers` to its structured
+      // result (`compare.ts`'s own `normalizeLibraryOrThrow`) -- `replace`/`sort-lines` are already
+      // complete no-ops there -- and this function does NOT special-case `library` anyway: it still
+      // refuses this combination (simpler, uniform, matches `collectReplacePatterns`'s own surface-
+      // agnostic walk, and costs nothing real since no legitimate declaration needs two content-
+      // discarding rules on a surface where neither does anything).
       const declaration = minimalDeclaration({
         surfaces: {
           library: minimalSurface({
             run: 'node probe.mjs',
             cases: [
               minimalCase({
-                normalize: [{ rule: 'sort-lines' }, { rule: 'trim-trailing-whitespace' }],
+                normalize: [
+                  { rule: 'replace', pattern: 'a', replacement: 'b' },
+                  { rule: 'sort-lines' },
+                ],
               }),
             ],
           }),
@@ -536,14 +673,13 @@ describe('collectRepeatedRuleKindConflicts / assertNoRepeatedRuleKindInScope (sp
   });
 
   it('CFG-512 and CFG-513 are independent: a case can trip one, both, or neither', () => {
+    // `sort-lines` + `trim-trailing-whitespace` no longer trips CFG-512 at all (specs/22 M17 P14,
+    // the proven-safe-pair exemption, above) -- `sort-lines` + `json-canonical` is NOT one of the
+    // two proven-safe pairs, so it still demonstrates "trips CFG-512, not CFG-513" here.
     const tripsOnlyCfg512 = minimalDeclaration({
       surfaces: {
         process: minimalSurface({
-          cases: [
-            minimalCase({
-              normalize: [{ rule: 'sort-lines' }, { rule: 'trim-trailing-whitespace' }],
-            }),
-          ],
+          cases: [minimalCase({ normalize: [{ rule: 'sort-lines' }, { rule: 'json-canonical' }] })],
         }),
       },
     });
@@ -571,3 +707,198 @@ describe('collectRepeatedRuleKindConflicts / assertNoRepeatedRuleKindInScope (sp
     expect(collectRepeatedRuleKindConflicts(tripsBoth)).toHaveLength(1);
   });
 });
+
+describe(
+  '(specs/22 M17 P14) collectReplaceOnRootRewrittenSurfaceConflicts / ' +
+    'assertNoReplaceRuleOnRootRewrittenSurface: closing the always-on root-token masking gap',
+  () => {
+    it.each(['process', 'file', 'http'] as const)(
+      'flags a "replace" rule on the %s surface, which the always-on root rewrite reaches',
+      (kind) => {
+        const surfaceOverrides =
+          kind === 'http'
+            ? {
+                run: 'node server.mjs',
+                port: 4100,
+                readiness: { path: '/health', timeoutMs: 1000 },
+                network: 'loopback' as const,
+                cases: [
+                  {
+                    request: { method: 'GET', path: '/' },
+                    normalize: [{ rule: 'replace' as const, pattern: '.{3}$', replacement: '' }],
+                  },
+                ],
+              }
+            : {
+                cases: [
+                  minimalCase({
+                    normalize: [{ rule: 'replace' as const, pattern: '.{3}$', replacement: '' }],
+                  }),
+                ],
+              };
+        const declaration = minimalDeclaration({
+          surfaces: { [kind]: minimalSurface(surfaceOverrides) },
+        });
+        expect(collectReplaceOnRootRewrittenSurfaceConflicts(declaration)).toEqual([
+          { key: `surfaces.${kind}.cases[0].normalize` },
+        ]);
+      },
+    );
+
+    it('does NOT flag a "replace" rule on the library surface, which the rewrite never reaches', () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          library: minimalSurface({
+            run: 'node probe.mjs',
+            cases: [
+              minimalCase({
+                normalize: [{ rule: 'replace', pattern: '.{3}$', replacement: '' }],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(collectReplaceOnRootRewrittenSurfaceConflicts(declaration)).toEqual([]);
+    });
+
+    it('does not flag a case with no "replace" rule at all, however many other rules it declares', () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          process: minimalSurface({
+            cases: [
+              minimalCase({
+                normalize: [
+                  { rule: 'line-endings' },
+                  { rule: 'strip-ansi' },
+                  { rule: 'sort-lines' },
+                  { rule: 'trim-trailing-whitespace' },
+                  { rule: 'json-canonical' },
+                  { rule: 'ignore-json-pointers', pointers: ['/x'] },
+                ],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(collectReplaceOnRootRewrittenSurfaceConflicts(declaration)).toEqual([]);
+    });
+
+    it('locates every conflicting case, in a fixed surface/case order, regardless of scope', () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          process: minimalSurface({
+            cases: [
+              minimalCase({ normalize: [{ rule: 'line-endings' }] }),
+              minimalCase({
+                normalize: [{ rule: 'replace', pattern: 'a', replacement: 'b', stream: 'stderr' }],
+              }),
+            ],
+          }),
+          file: minimalSurface({
+            cases: [
+              minimalCase({
+                outputs: [{ path: 'out.txt' }],
+                normalize: [{ rule: 'replace', pattern: 'a', replacement: 'b', file: 'out.txt' }],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(collectReplaceOnRootRewrittenSurfaceConflicts(declaration)).toEqual([
+        { key: 'surfaces.process.cases[1].normalize' },
+        { key: 'surfaces.file.cases[0].normalize' },
+      ]);
+    });
+
+    it('returns normally for a declaration with no "replace" rule on a root-rewritten surface', () => {
+      const declaration = minimalDeclaration();
+      expect(() => {
+        assertNoReplaceRuleOnRootRewrittenSurface(declaration);
+      }).not.toThrow();
+    });
+
+    it('throws a typed ForgeError CFG-516, never a bare exception, naming the conflicting case', () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          process: minimalSurface({
+            cases: [
+              minimalCase({ normalize: [{ rule: 'replace', pattern: '.{3}$', replacement: '' }] }),
+            ],
+          }),
+        },
+      });
+      let caught: unknown;
+      try {
+        assertNoReplaceRuleOnRootRewrittenSurface(declaration);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ForgeError);
+      expect((caught as ForgeError).code).toBe('CFG-516');
+      expect((caught as ForgeError).details['key']).toBe('surfaces.process.cases[0].normalize');
+    });
+
+    it(
+      'the M16 P4 repro itself: an ordinary root-path difference plus an ordinary trailing-content ' +
+        'replace masks a genuine PASS-vs-FAIL difference -- this is exactly what CFG-516 now refuses ' +
+        'before the case ever runs (reproduced directly against rewriteRootPaths + ' +
+        'applyNormalizeRulesToText, not merely asserted; see normalize.ts’s own doc comment for the ' +
+        'full account)',
+      () => {
+        const rules = [{ rule: 'replace' as const, pattern: '.{5}$', replacement: '' }];
+        const reference = applyNormalizeRulesToText(
+          rewriteRootPaths('/r:XXPASS', { asGiven: '/r', real: '/r' }),
+          rules,
+          {},
+        );
+        const candidate = applyNormalizeRulesToText(
+          rewriteRootPaths('/candidateroot:XXFAIL', {
+            asGiven: '/candidateroot',
+            real: '/candidateroot',
+          }),
+          rules,
+          {},
+        );
+        // The masking still happens at the primitive level (this piece did not change
+        // `rewriteRootPaths`/`applyNormalizeRulesToText` themselves) -- CFG-516 prevents it by
+        // refusing the DECLARATION before `decideCaseVerdict` ever reaches this combination.
+        expect(reference).toEqual(candidate);
+        const declaration = minimalDeclaration({
+          surfaces: { process: minimalSurface({ cases: [minimalCase({ normalize: rules })] }) },
+        });
+        expect(() => {
+          assertNoReplaceRuleOnRootRewrittenSurface(declaration);
+        }).toThrow(ForgeError);
+      },
+    );
+
+    it(
+      'a fresh M17 P14 adversarial round: a start-anchored replace, and a root occurring in the ' +
+        'MIDDLE of the text (a logged cwd), mask a genuine difference the identical way -- confirming ' +
+        'the gap is not limited to the one repro shape M16 P4 happened to find',
+      () => {
+        const rules = [{ rule: 'replace' as const, pattern: '^.{6}', replacement: '' }];
+        const reference = applyNormalizeRulesToText(
+          rewriteRootPaths('PASS!! running in /short', { asGiven: '/short', real: '/short' }),
+          rules,
+          {},
+        );
+        const candidate = applyNormalizeRulesToText(
+          rewriteRootPaths('FAIL!! running in /much/longer/checkout/path', {
+            asGiven: '/much/longer/checkout/path',
+            real: '/much/longer/checkout/path',
+          }),
+          rules,
+          {},
+        );
+        expect(reference).toEqual(candidate); // a genuine PASS vs FAIL, masked the same way
+        const declaration = minimalDeclaration({
+          surfaces: { process: minimalSurface({ cases: [minimalCase({ normalize: rules })] }) },
+        });
+        expect(() => {
+          assertNoReplaceRuleOnRootRewrittenSurface(declaration);
+        }).toThrow(ForgeError);
+      },
+    );
+  },
+);

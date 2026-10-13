@@ -3435,6 +3435,77 @@ export const ERROR_CODES = {
       'Fix the caller so it only ever asks this client to contact a loopback host -- this refusal ' +
       'cannot be configured away.',
   },
+  // `specs/22` M17 P14, `13` F-TEST-9 (post-v1.0 M17 addition): the always-on root-path rewrite runs
+  // unconditionally, over the whole text, on every `process`/`file`/`http` case (never `library`,
+  // whose structured value the rewrite never touches) -- so it behaves as an always-present occupant
+  // of exactly the hazard `CFG-512`'s content-discarding restriction already polices, for the one rule
+  // kind whose own match can depend on absolute text position or length: `replace`. A root-rewrite
+  // whose substitution token is not the same length as the root path it replaces shifts the text by a
+  // different amount on each side being compared (the two real roots are essentially never the same
+  // length), which a later `replace` rule anchored at a text boundary (`.{N}$`, `^.{N}`, and similar)
+  // can turn into a cut at a different relative offset on each side -- confirmed live against a real
+  // repro (`replace-lint.ts`'s own doc comment has the worked example and the repro this piece ran).
+  // Closing it with a detector for "is this specific pattern dangerous" was rejected for the identical
+  // reason `SPEC-QUESTIONS.md` Q298 Decision 1/4 already rejected one for this exact file: a clever,
+  // mechanism-specific detector has twice already turned out to have its own gap on this surface, so
+  // this widens the EXISTING, already-proven mechanism instead -- `replace` is refused outright on any
+  // surface the rewrite reaches, full stop, the identical "coarse but provably sufficient" shape
+  // `CFG-512`/`CFG-513` already chose. The identical `file`/`key`/`detail`/`more` shape those three
+  // codes already give an invalid parity file, reused here with its own dedicated remedy (see
+  // `CFG-511`'s neighbouring comment for why a new code, not a shared one): `replace-lint.ts`'s own
+  // `assertNoReplaceRuleOnRootRewrittenSurface` is this code's one throw site.
+  'CFG-516': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; key: string; detail: string; more?: number }) =>
+      `Parity file ${show(d.file)} is invalid at ${show(d.key)}: ${show(d.detail)}` +
+      (typeof d.more === 'number' && d.more > 0
+        ? ` (${String(d.more)} more problem(s) follow it)`
+        : '.'),
+    remedy:
+      'Remove this "replace" rule (the always-on root-path rewrite cannot be proven safe combined ' +
+      'with any "replace" pattern on this surface); use one of the other six normalize rules instead.',
+  },
+  // `specs/22` M17 P14, `13` F-TEST-9 (post-v1.0 M17 addition): a case's `normalize` rules did not
+  // finish within the stated wall-clock budget (default 5000ms, bounding the whole ordered rule
+  // application for one text target, not merely one `replace` rule's own match) -- `replace-lint.ts`'s
+  // own file header already discloses that a synchronous regex match cannot be interrupted from
+  // within the same single-threaded process, so this is enforced by running the rule application in a
+  // worker thread this piece can forcibly terminate, never by racing a `setTimeout` against a call that
+  // might never yield the event loop back. The identical `surface`/`index` shape `RUN-118`..`RUN-130`
+  // already give an observation-time failure, reused here with `timeoutMs` (already a `RUN-118` key)
+  // naming the budget that was exceeded: `compare.ts`'s own `normalizeTextOrThrow` is this code's one
+  // throw site.
+  'RUN-152': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { surface: string; index: number; timeoutMs: number }) =>
+      `Surface ${show(d.surface)} case ${show(d.index)}'s normalize rules did not finish within ` +
+      `${show(d.timeoutMs)}ms (a wall-clock budget, specs/13 F-TEST-9).`,
+    remedy:
+      'Simplify this case\'s normalize rules (a "replace" pattern most of all) so they run well ' +
+      'under the budget -- a rule that needs longer than this is refused, never left to hang.',
+  },
+  // `specs/22` M17 P14, `13` F-TEST-9 (post-v1.0 M17 addition): observing the candidate isolates
+  // `.forge/parity/` from the candidate's own case command (absent for the duration of the command,
+  // never merely read-only -- `observe.ts`'s own report has the full account), closing the
+  // self-reverting-tamper gap `SPEC-QUESTIONS.md` Q294 Decision 7 and M16 P7's own report disclosed.
+  // A command that re-creates `.forge/parity/` while it is supposed to be absent is refused outright
+  // rather than silently restored over (which could discard whatever the command wrote, or silently
+  // adopt it) -- the identical "refuse outright on anything unexpected" rule this surface already
+  // follows for a destination that already exists (`13` F-TEST-9's own `error` verdict). The identical
+  // `path` key `CFG-053`'s own bag already carries, reused here: `observe.ts`'s own
+  // `restoreParityDir` is this code's one throw site.
+  'RUN-153': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string }) =>
+      `The candidate's own case command recreated ${show(d.path)} while it was isolated (absent) for ` +
+      'the duration of that command, which is refused rather than silently restored over.',
+    remedy:
+      'Fix the case\'s command so it never writes to ".forge/parity/" -- isolation makes the ' +
+      "directory absent for the command's own duration precisely so it cannot.",
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

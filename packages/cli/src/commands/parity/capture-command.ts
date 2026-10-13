@@ -53,6 +53,12 @@ import {
 } from './declaration.ts';
 import type { ParityCase, ParityDeclaration, SurfaceKind } from './declaration-types.ts';
 import { SURFACE_KINDS } from './declaration-types.ts';
+import {
+  assertNoConflictingContentDiscardingRules,
+  assertNoReplaceRuleOnRootRewrittenSurface,
+  assertNoRepeatedRuleKindInScope,
+  assertParityDeclarationPatternsSafe,
+} from './replace-lint.ts';
 import { computeParityDeclarationDigest, type DigestFile } from './digest.ts';
 import { isExpired } from './expiry.ts';
 import { observeParityDeclaration } from './observe.ts';
@@ -423,6 +429,15 @@ async function captureOneDeclaration(
   );
   const loaded = await loadParityDeclarationText(yamlText, file, projectRoot, vet);
   const declaration = assertParityDeclarationValid(loaded, file);
+  // `specs/22` M17 P14: these four checks (`CFG-511`/`512`/`513`/`516`) were built and gauntleted by
+  // M16 P4 but never wired into either real parity command (this piece's own report has the full
+  // account) -- a genuinely dangerous declaration shape was never actually refused by a real
+  // `forge parity capture` run. Run in this fixed order so the FIRST hazard found is always the one
+  // reported, never a later one that happens to be cheaper to detect.
+  assertParityDeclarationPatternsSafe(declaration);
+  assertNoConflictingContentDiscardingRules(declaration);
+  assertNoRepeatedRuleKindInScope(declaration);
+  assertNoReplaceRuleOnRootRewrittenSurface(declaration);
 
   const today = clock.now().slice(0, 10);
   if (isExpired(declaration.expires, clock)) {
@@ -441,6 +456,27 @@ async function captureOneDeclaration(
       });
     }
   }
+
+  // `specs/22` M17 P14 [#13]: a surface a human declared `unobservable` must not be observed at all
+  // -- `13` F-TEST-9: "The surface's cases are not run and have no verdict." Before this fix, capture
+  // passed `observeParityDeclaration` the real, unmodified declaration, which has no notion of
+  // `unobservable` of its own (it runs every surface a `ParityDeclaration` names) -- so an exempt
+  // surface's own case commands ran anyway, spending real process time on exactly what the
+  // declaration says cannot be observed, while `forge parity check` (`check-command.ts`'s own
+  // `processDeclaration`) already built this identical `observableDeclaration` variant. Mirrored here
+  // rather than touching `observe.ts` itself, for the identical reason that module's own doc comment
+  // gives.
+  const declaredSurfaces = SURFACE_KINDS.filter((kind) => declaration.surfaces[kind] !== undefined);
+  const exemptSurfaceSet = new Set(declaration.unobservable.map((entry) => entry.surface));
+  const nonExemptSurfaces = declaredSurfaces.filter((kind) => !exemptSurfaceSet.has(kind));
+  const observableSurfaces: Partial<
+    Record<SurfaceKind, NonNullable<ParityDeclaration['surfaces'][SurfaceKind]>>
+  > = {};
+  for (const kind of nonExemptSurfaces) {
+    const surface = declaration.surfaces[kind];
+    if (surface !== undefined) observableSurfaces[kind] = surface;
+  }
+  const observableDeclaration: ParityDeclaration = { ...declaration, surfaces: observableSurfaces };
 
   const { overlays, probes } = await gatherDigestFiles(projectRoot, declaration);
   const digest = computeParityDeclarationDigest(declaration, overlays, probes);
@@ -469,14 +505,14 @@ async function captureOneDeclaration(
     });
   }
 
-  const runs = maxStabilityRuns(declaration);
+  const runs = maxStabilityRuns(observableDeclaration);
   const rawRunsByCase = new Map<string, RawSurfaceObservation[]>();
   let referenceRoot: ObservedRoot | undefined;
 
   for (let round = 1; round <= runs; round += 1) {
     const observation = await observeParityDeclaration({
       side: 'reference',
-      declaration,
+      declaration: observableDeclaration,
       projectRoot,
       referenceSha,
       parentEnv,
@@ -505,9 +541,9 @@ async function captureOneDeclaration(
   }
 
   const cases: ParityCaptureCaseEntry[] = [];
-  for (const kind of SURFACE_KINDS) {
+  for (const kind of nonExemptSurfaces) {
     const surface = declaration.surfaces[kind];
-    if (surface === undefined) continue;
+    if (surface === undefined) continue; // unreachable: kind came from declaredSurfaces
     for (let index = 0; index < surface.cases.length; index += 1) {
       const parityCase = surface.cases[index];
       if (parityCase === undefined) continue;

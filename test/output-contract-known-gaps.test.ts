@@ -590,17 +590,30 @@ describe('M17 Phase A: surfaces specs/22 M17 names that are not yet built (specs
     expect(refText).not.toBe(candidateText);
   });
 
-  it("9. observing the candidate does not yet isolate .forge/parity/ from the candidate's own case commands", () => {
+  it("9. CLOSED by specs/22 M17 P14: observing the candidate now isolates .forge/parity/ from the candidate's own case commands", () => {
+    // `observe.ts`'s own `observeOneCase` (process/file surfaces) and `observe-http.ts`'s own
+    // `observeHttpSurfaceCases` (bracketing the http surface's whole server lifetime, since its
+    // `run` stays alive across every case) now wrap the candidate's own command with
+    // `candidate-isolation.ts`'s `withParityDirHidden`, which renames `.forge/parity/` away for
+    // exactly that duration and restores it after -- real, live proof in
+    // `packages/cli/test/commands/parity/candidate-isolation.test.ts` (the mechanism itself, incl.
+    // the typed `RUN-153` refusal if a command re-creates the directory while it is hidden) and
+    // `packages/cli/test/commands/parity/check-command.test.ts`'s own "a case that tries to tamper
+    // with .forge/parity/..." describe block (the exact self-reverting-tamper repro this item's own
+    // original title named, closed end to end through the real `forge parity check` entry point:
+    // the read the tamper depends on now fails with `ENOENT` before it can do anything).
+    //
+    // DISCLOSED, remaining gap (named, not hidden): the `library` surface's own case command is NOT
+    // isolated -- its `run` is itself a script living under `.forge/parity/probes/` (`13` F-TEST-9:
+    // "a reviewed probe script under `.forge/parity/probes/`"), so hiding the directory would make
+    // the very surface being observed unrunnable (confirmed directly: a real probe test failed
+    // `ENOENT` on its own script before this exclusion existed). See `observe.ts`'s own comment at
+    // the `surfaceKind !== 'library'` exclusion for the full account.
     const observe = readPkg('packages/cli/src/commands/parity/observe.ts');
-    expect(observe).not.toMatch(/\bchmod\b/i);
-    expect(observe).not.toContain('isolate');
-    expect(observe).not.toContain('self-reverting');
-    // The candidate side is observed in its own project root, in place, via `observeAgainstRoot`
-    // called with `options.projectRoot` as both the tree observed and the tree vetting runs
-    // against, with no third argument excluding or remounting `.forge/parity/` for the case.
-    expect(observe).toMatch(
-      /observeAgainstRoot\(\s*options\.declaration,\s*'candidate',\s*options\.projectRoot,\s*options\.projectRoot,/,
-    );
+    expect(observe).toContain("import { withParityDirHidden } from './candidate-isolation.ts';");
+    expect(observe).toMatch(/side === 'candidate' && surfaceKind !== 'library'/);
+    const candidateIsolation = readPkg('packages/cli/src/commands/parity/candidate-isolation.ts');
+    expect(candidateIsolation).toContain('export async function withParityDirHidden');
   });
 
   it("10. applyReplace has no runtime wall-clock budget: a catastrophic or merely slow pattern cannot be bounded (a static reading, not a live repro — a real catastrophic-backtracking call is unbounded by construction, so pinning it live would risk hanging THIS suite rather than only the command under test; see the DECISION in Q313/this test's own header)", () => {

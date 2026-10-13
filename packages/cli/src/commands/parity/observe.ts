@@ -48,6 +48,7 @@ import { ForgeError, isForgeError, renderValue } from '@forge/core/errors';
 import { runConfinedCommand, STORED_COMMAND_LIMITS } from '@forge/engine/dispatch';
 import { createLaneWorktree, removeLaneWorktree, VcsError, type LaneHandle } from '@forge/vcs';
 
+import { withParityDirHidden } from './candidate-isolation.ts';
 import { composeArgs } from './compose-args.ts';
 import type {
   DeclaredOutput,
@@ -96,6 +97,7 @@ interface ObserveOneCaseArgs {
   readonly surfaceKind: SurfaceKind;
   readonly surface: SurfaceDeclaration;
   readonly parityCase: ParityCase;
+  readonly side: 'reference' | 'candidate';
   readonly root: string;
   readonly overlayRoot: string;
   readonly parentEnv: Readonly<Record<string, string | undefined>>;
@@ -112,7 +114,7 @@ function librarySurfaceProbePaths(surface: SurfaceDeclaration): readonly string[
 }
 
 async function observeOneCase(args: ObserveOneCaseArgs): Promise<ParityCaseObservationOutcome> {
-  const { surfaceKind, surface, parityCase, root, overlayRoot, parentEnv } = args;
+  const { surfaceKind, surface, parityCase, side, root, overlayRoot, parentEnv } = args;
   const declaredOutputs: readonly DeclaredOutput[] = parityCase.outputs ?? [];
   const writtenOverlayDestinations: string[] = [];
 
@@ -152,12 +154,31 @@ async function observeOneCase(args: ObserveOneCaseArgs): Promise<ParityCaseObser
       timeoutMs: parityCase.timeoutMs ?? STORED_COMMAND_LIMITS.timeoutMs,
       maxOutputBytes: parityCase.outputCapBytes ?? STORED_COMMAND_LIMITS.maxOutputBytes,
     };
-    const result = await runConfinedCommand(composed, root, {
-      limits,
-      parentEnv,
-      extraEnv: PINNED_ENV,
-      preserveRawOutput: true,
-    });
+    // `specs/22` M17 P14: on the candidate side only, `.forge/parity/` is absent for exactly this
+    // command's own run (never wider -- this piece's own `candidate-isolation.ts` doc comment has the
+    // full account of why precisely here, between the overlay writes above and the snapshot below).
+    //
+    // EXCEPT for `library`: that surface's own `run` is itself a script UNDER `.forge/parity/probes/`
+    // (`13` F-TEST-9: "a reviewed probe script under `.forge/parity/probes/`") -- hiding the directory
+    // would make the very command being observed unrunnable, confirmed directly (not assumed) against
+    // a real `library` case before this exclusion was added: the probe's own `node <path>` invocation
+    // failed outright with `ENOENT` on its own script. DISCLOSED GAP: a `library` probe's own command
+    // therefore keeps the self-reverting-tamper exposure this piece closes for `process`/`file`/`http`
+    // -- closing it too needs the isolation to stage ONLY the probe path(s) a case's `run`/`setup`
+    // actually names back into an otherwise-still-hidden directory (so the probe can run while nothing
+    // else under `.forge/parity/` is reachable), a materially bigger mechanism than this piece's own
+    // scope; see this piece's own report.
+    const runCase = (): Promise<Awaited<ReturnType<typeof runConfinedCommand>>> =>
+      runConfinedCommand(composed, root, {
+        limits,
+        parentEnv,
+        extraEnv: PINNED_ENV,
+        preserveRawOutput: true,
+      });
+    const result =
+      side === 'candidate' && surfaceKind !== 'library'
+        ? await withParityDirHidden(root, runCase)
+        : await runCase();
 
     if (result.timedOut === true) {
       return {
@@ -384,7 +405,7 @@ async function observeAgainstRoot(
       const outcomes: readonly ParityCaseObservationOutcome[] =
         setupFailure !== undefined
           ? surface.cases.map(() => ({ outcome: 'failed', failure: { error: setupFailure } }))
-          : await observeHttpSurfaceCases(surface, root, overlayRoot, parentEnv);
+          : await observeHttpSurfaceCases(surface, side, root, overlayRoot, parentEnv);
       outcomes.forEach((outcome, caseIndex) => {
         results.push({ surface: surfaceKind, caseIndex, result: outcome });
       });
@@ -403,6 +424,7 @@ async function observeAgainstRoot(
               surfaceKind,
               surface,
               parityCase,
+              side,
               root,
               overlayRoot,
               parentEnv,
