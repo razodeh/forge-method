@@ -11,6 +11,7 @@
  */
 import { execa } from 'execa';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import { readFile, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -270,6 +271,54 @@ export async function removeLaneWorktree(
       `deleting lane branch "${handle.branch}"`,
     );
   }
+}
+
+/** Removes the worktree and branch for `(runId, stepId)` if either currently exists — `specs/22` M17
+ * P10 (#3), the step `@forge/engine/run`'s own retry wiring calls before asking `createLaneWorktree`
+ * for the identical pair again: that function's own doc comment is explicit that two creations for one
+ * `(runId, stepId)` collide on the branch name BY DESIGN, with no de-duplication of its own, so a
+ * retried step's previous, superseded attempt must be cleared first or the fresh attempt this clears
+ * the way for can never actually be created.
+ *
+ * A no-op, with NO git subprocess spawned at all, when the deterministic worktree directory
+ * (`worktreePath`, the identical path `createLaneWorktree` itself targets) does not exist on disk —
+ * every ordinary, non-retried step's own first and only lane, the overwhelming common case. This
+ * fast path is what an adversarial, real-process-kill test (`packages/engine/test/security/
+ * s12-orphan-free-crash.test.ts`) found load-bearing, not merely an optimisation: two real,
+ * CONCURRENT fanned-out steps each creating their own lane already run their own real `git worktree
+ * add` subprocesses at the same time (`06` §6.3's own ordinary concurrency, long since proven safe by
+ * that same test on an unmodified checkout); adding a second, unconditional git subprocess
+ * (`isRegisteredWorktree`'s own `git worktree list --porcelain`) into that identical window, for
+ * *every* lane creation rather than only a genuine retry's, measurably — reproduced directly, by
+ * disabling just this one call and confirming the test passes again — turned a real supervisor-level
+ * SIGKILL mid-worktree-creation into a resumed run that hangs rather than the typed git refusal this
+ * file's own `removeLaneWorktree` doc comment already expects as the only failure shape. A directory
+ * that is missing while its own branch somehow survives (no call in this codebase's own real lane
+ * lifecycle ever removes one without the other) is not this fast path's concern: `@forge/engine/
+ * resume`'s own `reclaimOrphanedLaneBranches` already sweeps every orphaned branch for the run,
+ * unconditionally, before any step is ever (re-)dispatched.
+ *
+ * When the directory IS present, computes the identical `laneId`/`branch`/`path` triple
+ * `createLaneWorktree` itself derives (`resolveCwd` then `laneIdFor`/`laneBranchName`/`worktreePath`,
+ * the same three pure functions, not re-implemented) and hands it to `removeLaneWorktree` with
+ * `retain: false` — reusing that function's own already-proven "only act on what git itself confirms
+ * still exists" idempotence (its own doc comment: safely retriable after a partial prior failure)
+ * rather than a second copy of the same existence checks.
+ *
+ * Always removes, never retains: a lane a retry is about to redo from scratch is not `06` §6.4 step 5's
+ * own "final failed lane" a human later inspects — that retain policy still applies to whichever attempt
+ * actually becomes the step's last one, decided by `@forge/engine/failures`' own `decideRetry`, not by
+ * this function. */
+export async function removeLaneIfPresent(
+  cwd: string,
+  options: { readonly runId: string; readonly stepId: string },
+): Promise<void> {
+  const resolvedCwd = await resolveCwd(cwd);
+  const laneId = laneIdFor(options.runId, options.stepId);
+  const target = worktreePath(resolvedCwd, laneId);
+  if (!existsSync(target)) return;
+  const branch = laneBranchName(options.runId, options.stepId);
+  await removeLaneWorktree(cwd, { laneId, path: target, branch }, { retain: false });
 }
 
 const WORKTREE_BLOCK_SEPARATOR = /\r?\n\r?\n/;

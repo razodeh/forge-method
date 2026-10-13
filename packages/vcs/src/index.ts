@@ -63,6 +63,7 @@ export {
   listOrphanedWorktreeDirectories,
   listOrphanedWorktrees,
   parseWorktreeBlocks,
+  removeLaneIfPresent,
   removeLaneWorktree,
   removeOrphanedLaneBranch,
   removeOrphanedWorktreeDirectory,

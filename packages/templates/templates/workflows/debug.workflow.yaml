@@ -37,6 +37,11 @@ steps:
     # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The defect names no paths.
     produces: ['**', '!@protected']
     retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
+    # Characterise-then-change (specs/22 M17 P10, #8): "Read the diagnosis, then confirm the
+    # reproduction fails now. Only then change code" -- run-rca's own diagnosis is already in hand
+    # (its own 45-turn override, above), but fix still reads the code the diagnosis names, writes the
+    # change, and runs the reproduction before and after. Past the 20-turn default's fit.
+    limits: { maxTurns: 35, wallClockMs: 900000, maxCostUsd: 3.0 }
 
   # A Defect has no Story, so `forge story verify` (a story's DoD profile, 10 §10.6) does not apply here. This runs
   # the project's test layers: the whole suite, including any regression test written in this loop, must be green.

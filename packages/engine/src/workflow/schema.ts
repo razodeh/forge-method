@@ -38,6 +38,10 @@ const stepLimitsSchema = z
   .object({
     maxTurns: z.number().int().positive().optional(),
     maxCostUsd: z.number().nonnegative().optional(),
+    // `specs/22` M17 P10 (#8): `06` §6.2's own inline `limits` shape always named this field; only this
+    // DSL's own schema left it unauthorable, so a wide-scope step had no way to raise it past the
+    // compile-time placeholder default.
+    wallClockMs: z.number().int().positive().optional(),
   })
   .strict();
 

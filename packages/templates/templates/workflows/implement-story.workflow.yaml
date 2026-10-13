@@ -59,6 +59,10 @@ steps:
     # The story's own file claim, as `green`'s (P36): the brief refactors "your own change, still inside the story's file claim",
     # and says test files are not the refactorer's to change.
     produces: ['{{run.filesExpected}}', '!{{run.testPaths}}']
+    # Characterise-then-change (specs/22 M17 P10, #8): scoped to this story's own lane diff, narrower than
+    # refactor.workflow.yaml's refactor-code, but still "improve the structure of what you just wrote"
+    # with the guarding tests kept green between moves -- past the 20-turn default's fit.
+    limits: { maxTurns: 35, wallClockMs: 900000, maxCostUsd: 3.0 }
 
   - id: self-verify
     kind: command

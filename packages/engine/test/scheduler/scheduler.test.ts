@@ -136,6 +136,48 @@ describe('Scheduler', () => {
     expect(scheduler.next()).toEqual([]);
   });
 
+  describe('resetToPending (specs/22 M17 P10)', () => {
+    it('reverts a failed step back to pending, so a later tick admits it again like a step never attempted', () => {
+      const a = node({ id: 'a' });
+      const scheduler = new Scheduler([a], limits(), 'seed');
+      scheduler.markRunning('a');
+      scheduler.markFailed('a');
+      expect(scheduler.status('a')).toBe('failed');
+      expect(scheduler.next()).toEqual([]);
+
+      scheduler.resetToPending('a');
+
+      expect(scheduler.status('a')).toBe('pending');
+      expect(scheduler.next().map((n) => n.id)).toEqual(['a']);
+    });
+
+    it('a dependent still only becomes ready once the retried step actually succeeds, not merely once it is reset', () => {
+      const a = node({ id: 'a' });
+      const b = node({ id: 'b', dependsOn: ['a'] });
+      const scheduler = new Scheduler([a, b], limits(), 'seed');
+      scheduler.markRunning('a');
+      scheduler.markFailed('a');
+      scheduler.resetToPending('a');
+
+      expect(scheduler.next().map((n) => n.id)).toEqual(['a']);
+      scheduler.markRunning('a');
+      scheduler.markSucceeded('a');
+      expect(scheduler.next().map((n) => n.id)).toEqual(['b']);
+    });
+
+    it('also clears a step out of the live-running set, so a step reset mid-retry never double-counts against a concurrency limit', () => {
+      const architect = toAgentId('architect');
+      const a = node({ id: 'a', agent: architect });
+      const scheduler = new Scheduler([a], limits({ perAgent: new Map([[architect, 1]]) }), 'seed');
+      scheduler.markRunning('a');
+      scheduler.resetToPending('a');
+      // If "running" had leaked, the exclusive-agent ceiling (1) would still count 'a' as occupying the
+      // only slot and refuse to re-admit it -- the identical shape the "exclusive agent" tests above
+      // already prove the ceiling actually enforces.
+      expect(scheduler.next().map((n) => n.id)).toEqual(['a']);
+    });
+  });
+
   it('uses the caller-supplied resourceClassOf function for per-resource-class limits', () => {
     const a = node({ id: 'a' });
     const b = node({ id: 'b' });

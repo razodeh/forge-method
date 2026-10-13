@@ -32,6 +32,7 @@ import {
 } from '../budget/index.ts';
 import type { BudgetState } from '../budget/types.ts';
 import { createAgentConflictResolver } from '../dispatch/conflict-resolver.ts';
+import { classifyFailure, computeBackoff, decideRetry } from '../failures/index.ts';
 import { readRecordedAnswers } from '../dispatch/elicit.ts';
 import { executeStep } from '../dispatch/execute.ts';
 import { integrateLane, resolveLaneChecks } from '../dispatch/integrate.ts';
@@ -73,6 +74,29 @@ export interface RunEngineContext extends ExecuteStepContext {
   // (a round-1 gauntlet critic finding: `dispatch/assemble.ts` needs the identical set too, at assembly
   // time, not only this module's own compile-time use below) -- `dispatch/types.ts`'s own doc comment on
   // it has the full reasoning; `ctx.externalKbIds` below is unchanged.
+  /** `specs/22` M17 P10 (#3), `06` §6.8's own "computes the real backoff... before any retry attempt is
+   * scheduled": the real delay `driveToCompletion` awaits, once per retried step, between
+   * `computeBackoff`'s own return value and the fresh attempt it gates -- otherwise a retry loop with
+   * nothing left to await would spin at CPU speed between one tick and the next rather than genuinely
+   * backing off, the one real-world cost an injected clock alone (`now`, read-only) cannot stand in for.
+   * Deliberately defaults to a REAL timer when omitted, the opposite direction from this interface's
+   * other optional seams (`canAdmit`/`budget`/`resourceClassOf` all default to "always admit" / "pay
+   * nothing for it"): omitting THIS one would otherwise silently reproduce the exact "the decision is
+   * real, the backoff is never actually honoured" gap `specs/22` M17 P10 exists to close, for any real
+   * caller that forgets to wire it, rather than a safe, documented no-op a caller can legitimately not
+   * care about. A test that wants a fast, deterministic run (most of them) supplies its own, e.g. one
+   * that records the requested delay and resolves immediately, rather than actually waiting out a
+   * `backoffMs` in the hundreds or thousands. */
+  readonly sleep?: (ms: number) => Promise<void>;
+}
+
+/** `RunEngineContext.sleep`'s own real default — a genuine `setTimeout`, not a no-op — see that field's
+ * own doc comment for why this is the one optional seam on this interface that defaults to the real
+ * thing rather than to "pay nothing for it." */
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function formatIssues(issues: readonly { readonly message: string }[]): string {
@@ -139,6 +163,93 @@ export function seedScheduler(
   }
 }
 
+/** A placeholder `SessionResult` for a `StepOutcome` this module reconstructs from a durable event
+ * rather than a real dispatch — `@forge/engine/dispatch`'s own `execute.ts`/`steps.ts` each already
+ * duplicate an identical-shaped constant locally for the identical reason (a real session's own
+ * `SessionResult` is gone the moment the attempt that produced it ends; nothing here ever needs it
+ * back), so this is that same established, deliberate duplication, not an import this module's own
+ * boundary (`02` §2.2) does not otherwise need. */
+const REPLAYED_FAILURE_SESSION = {
+  sessionId: '',
+  ok: false,
+  finalText: '',
+  usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
+  durationMs: 0,
+  changedFiles: [],
+  controlTokens: [],
+} as const;
+
+/** Loosely validates `payload` as a replayable `StepFailureInfo` — `source`/`message` are the only two
+ * fields `classifyFailure`/`normaliseErrorSignature` (`@forge/engine/failures`) ever read, so those are
+ * the only two checked; `code`/`cause` are passed through whatever they are (absent, or not a string,
+ * both legitimate — `cause` is never itself replayed as a real `Error`, nothing downstream of this
+ * reconstruction needs it to be one). Not a schema validation: a malformed `StepFailed.payload` (a
+ * corrupted log line this run's own earlier process already wrote, `18` §18.4's append-only guarantee
+ * aside) contributes nothing to this step's attempt history rather than throwing reconstruction itself
+ * — the identical "a corrupted single event should not make the whole reconstruction impossible" stance
+ * `resume/reconstruct.ts`'s own `extractPlanRef`/`extractCostUsd` already take. */
+function asReplayableFailure(payload: unknown): StepFailureInfo | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const record = payload as Record<string, unknown>;
+  const source = record['source'];
+  const message = record['message'];
+  if (typeof source !== 'string' || typeof message !== 'string') return undefined;
+  const code = record['code'];
+  return {
+    // `StepFailureInfo.source` is a closed union `classifyFailure`'s own switch is exhaustive over; a
+    // string this run's own earlier attempt never actually produced (hand-corrupted, or a future
+    // version's new source this build does not know) matches none of its cases and `classifyFailure`
+    // falls through to its own TypeScript-assumed-exhaustive default -- the same "fails closed, toward
+    // escalation rather than toward an unrecognised value quietly meaning 'retry forever'" direction
+    // every other defensive read in this reconstruction already takes, never a crash.
+    source: source as StepFailureInfo['source'],
+    message,
+    ...(typeof code === 'string' ? { code } : {}),
+  };
+}
+
+/** `06` §6.8's own never-retry rule needs this step's FULL attempt history, across every attempt this
+ * run has already made of it — not only the one `driveToCompletion` itself just saw fail, which is all
+ * an in-memory accumulator started fresh this process would ever know on a resumed run (`06` §6.10:
+ * `runEngine` may be a brand-new process that has never seen this run's earlier, pre-crash attempts at
+ * all). Replays every `StepFailed` event this run's own durable log already holds, grouped by `stepId`,
+ * in the log's own `seq` order (`readEvents`'s own guarantee) — the identical order the never-retry
+ * rule's own "ending with the just-failed one" comparison depends on. `specs/22` M17 P10's own "resume
+ * mid-retry is deterministic" Checks text rests on this: a crash between a retry's own `StepRetried`
+ * event and the fresh attempt it authorises leaves the step `'scheduled'` (`applyEvent`'s own
+ * `StepRetried` case, `resume/reconstruct.ts`), so the resumed process dispatches it again through the
+ * ordinary ready-set path -- and when THAT attempt is the one that fails or succeeds, this function is
+ * what lets `decideRetry` see the full, pre-crash history instead of silently restarting the never-retry
+ * count at one. A run just starting (no `StepFailed` event yet, or none at all) yields empty histories --
+ * `readEvents` itself already yields nothing for a run with no log, or a run whose log so far holds no
+ * failures, the identical "legitimate state, not an error" stance besides. */
+export async function reconstructAttemptHistories(
+  projectRoot: string,
+  runId: string,
+): Promise<Map<string, StepOutcome[]>> {
+  const histories = new Map<string, StepOutcome[]>();
+  for await (const event of readEvents(projectRoot, runId)) {
+    if (event.type !== 'StepFailed' || event.stepId === undefined) continue;
+    const failure = asReplayableFailure(event.payload);
+    if (failure === undefined) continue;
+    const outcome: StepOutcome = {
+      stepId: event.stepId,
+      status: 'failed',
+      // Never read by classifyFailure/normaliseErrorSignature/decideRetry (confirmed directly against
+      // their own source): a replayed attempt's real startedAt/finishedAt/detail are gone the moment the
+      // process that held them exits, and nothing downstream of this reconstruction needs them back.
+      startedAt: 0,
+      finishedAt: 0,
+      detail: { kind: 'agent', session: REPLAYED_FAILURE_SESSION },
+      failure,
+    };
+    const existing = histories.get(event.stepId);
+    if (existing === undefined) histories.set(event.stepId, [outcome]);
+    else existing.push(outcome);
+  }
+  return histories;
+}
+
 /** One full pass to completion: repeatedly asks the scheduler for the next admissible batch, runs the
  * whole batch concurrently (`Promise.all`, `06` §6.3's own concurrency limits are what bound how large a
  * batch can be, not this loop), and folds each real `StepOutcome` back in before asking again. Every
@@ -166,14 +277,36 @@ export function seedScheduler(
  * fully-drained-batch-per-tick execution model: nothing is ever left "in flight" between one tick and
  * the next for `finish-lanes` to let drain that `abort` would not already have let finish, and `pause`
  * has no cooperative resume mechanism this milestone builds either (`run.ts`'s own doc comment, "no
- * cooperative mid-batch pause exists"). Recorded here, not silently assumed distinguishable. */
+ * cooperative mid-batch pause exists"). Recorded here, not silently assumed distinguishable.
+ *
+ * `specs/22` M17 P10 (#3): a failed outcome is no longer unconditionally `markFailed` -- `decideRetry`
+ * (`@forge/engine/failures`) is consulted first, against `attemptHistories`' own full record of every
+ * attempt this run has made of that exact step so far (`reconstructAttemptHistories`, built once by
+ * `runEngine` before this loop ever starts, so a resumed process sees its own pre-crash attempts too,
+ * not just what this one process happens to have seen). A `'retry'` decision: emits `StepRetried` (the
+ * run-level signal `06` §6.8 names, distinct from `07` §7.2's adapter-level `AdapterEvent{type:'retry'}`)
+ * BEFORE the one real side effect that follows it (`18` §18.10's write-ahead order: durable record
+ * before the action it authorises), clears the failed attempt's own superseded lane
+ * (`createLaneForStep`'s own unconditional `removeLaneIfPresent` call handles this; nothing extra is
+ * needed here), awaits the computed backoff for real (`ctx.sleep`, this context's own injected timer),
+ * then `resetToPending` so the VERY NEXT `next()` call -- not a special-cased re-dispatch inline here --
+ * re-admits it through the ordinary ready-set path, subject to the identical concurrency/claim/budget
+ * admission every other candidate is (`06` §6.8's own "respects budget admission": `combinedCanAdmit`,
+ * below in `runEngine`, already wraps every `next()` call this loop ever makes, retried step included,
+ * with no separate code path of its own to keep in sync). An `'escalate'` decision falls through to the
+ * unchanged `markFailed` -- byte-identical to this function's own pre-P10 behaviour for a step whose
+ * policy never retries at all (`compileRetry`'s own `NON_AGENT_DEFAULT_MAX_ATTEMPTS: 1` already makes
+ * every non-agent kind escalate on its very first failure, unless a workflow explicitly widens it). */
 async function driveToCompletion(
   nodes: readonly StepNode[],
   scheduler: Scheduler,
   ctx: RunEngineContext,
-  refreshBudget?: () => Promise<void>,
+  refreshBudget: (() => Promise<void>) | undefined,
+  attemptHistories: Map<string, StepOutcome[]>,
 ): Promise<void> {
   const landedByMerges = stepsLandedByMerges(nodes);
+  const byId = new Map(nodes.map((node) => [node.id, node] as const));
+  const sleep = ctx.sleep ?? defaultSleep;
   for (;;) {
     if (refreshBudget !== undefined) await refreshBudget();
     await integrateSucceededLanes(nodes, scheduler, ctx, landedByMerges);
@@ -186,16 +319,48 @@ async function driveToCompletion(
     }
 
     const outcomes = await Promise.all(admitted.map((node) => executeStep(node, ctx)));
-    admitted.forEach((node, index) => {
-      // noUncheckedIndexedAccess: `outcomes` is `Promise.all`'s own result over `admitted.map(...)`,
-      // always exactly one entry per `admitted` element in the same order -- never actually undefined.
-      // `as`, not `!` (banned in src/**): the more succinct style the linter suggests is exactly what
-      // is not allowed here (the identical exception `lanes.ts`'s own `parseLaneWorktrees` already uses).
-      // eslint-disable-next-line @typescript-eslint/non-nullable-type-assertion-style
-      const outcome = outcomes[index] as StepOutcome;
-      if (outcome.status === 'succeeded') scheduler.markSucceeded(node.id);
-      else scheduler.markFailed(node.id);
-    });
+    await Promise.all(
+      admitted.map(async (node, index) => {
+        // noUncheckedIndexedAccess: `outcomes` is `Promise.all`'s own result over `admitted.map(...)`,
+        // always exactly one entry per `admitted` element in the same order -- never actually undefined.
+        // `as`, not `!` (banned in src/**): the more succinct style the linter suggests is exactly what
+        // is not allowed here (the identical exception `lanes.ts`'s own `parseLaneWorktrees` already uses).
+        // eslint-disable-next-line @typescript-eslint/non-nullable-type-assertion-style
+        const outcome = outcomes[index] as StepOutcome;
+        if (outcome.status === 'succeeded') {
+          scheduler.markSucceeded(node.id);
+          return;
+        }
+
+        const history = [...(attemptHistories.get(node.id) ?? []), outcome];
+        attemptHistories.set(node.id, history);
+        // `byId.get(node.id)` is never actually undefined: `node` is itself one of this exact `nodes`
+        // array's own elements (`admitted` is always a subset `scheduler.next()` returned from it), and
+        // `byId` is built from that same array just above -- `as`, not `!` (banned in src/**), matching
+        // this same function's own established exception for the identical `noUncheckedIndexedAccess`
+        // shape just above.
+        // eslint-disable-next-line @typescript-eslint/non-nullable-type-assertion-style
+        const retryPolicy = (byId.get(node.id) as StepNode).retry;
+        if (decideRetry(retryPolicy, history) === 'retry') {
+          const attemptNumber = history.length;
+          const backoffMs = computeBackoff(retryPolicy, attemptNumber, `${ctx.runId}:${node.id}`);
+          await ctx.telemetry.emit({
+            type: 'StepRetried',
+            stepId: node.id,
+            payload: {
+              attempt: attemptNumber,
+              maxAttempts: retryPolicy.maxAttempts,
+              backoffMs,
+              failureClass: classifyFailure(outcome),
+            },
+          });
+          await sleep(backoffMs);
+          scheduler.resetToPending(node.id);
+          return;
+        }
+        scheduler.markFailed(node.id);
+      }),
+    );
   }
 }
 
@@ -494,7 +659,11 @@ export async function runEngine(
     ...stepGraphCtx,
     conflictResolver: ctx.conflictResolver ?? createAgentConflictResolver(stepGraphCtx),
   };
-  await driveToCompletion(nodes, scheduler, runCtx, refreshBudget);
+  // `specs/22` M17 P10: replayed from THIS run's own durable log, which by now holds at least
+  // RunPlanned/RunStarted (a fresh run) or everything a resumed run's own earlier process already
+  // wrote (a crash mid-retry included) -- see `reconstructAttemptHistories`'s own doc comment.
+  const attemptHistories = await reconstructAttemptHistories(ctx.projectRoot, ctx.runId);
+  await driveToCompletion(nodes, scheduler, runCtx, refreshBudget, attemptHistories);
 
   if (allSucceeded(nodes, scheduler)) {
     await ctx.telemetry.emit({ type: 'RunCompleted' });

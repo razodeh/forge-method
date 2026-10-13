@@ -200,19 +200,29 @@ describe('runCommandStep', () => {
 
   it('a genuine VCS failure (a colliding lane) is folded into a failed StepOutcome, not thrown', async () => {
     const projectRoot = await createTempRepo('command-vcs-failure');
-    const ctx = createTestContext({ projectRoot });
+    const runId = 'run-test';
+    // `removeLaneIfPresent` overridden to a no-op, not omitted: `specs/22` M17 P10 (#3)'s "recreate the
+    // lane" fix makes createLaneForStep clear any stale lane for this exact (runId, stepId) pair before
+    // every creation, so simply calling executeStep twice for the identical node no longer collides the
+    // way it did before that fix (the first, successful attempt's own lane is cleared out of the way,
+    // and the second attempt creates a fresh one and succeeds too). The underlying "two real
+    // createLaneWorktree calls for the identical pair collide" fact is unchanged and still covered
+    // directly against @forge/vcs itself (packages/vcs/test/lanes.test.ts); this test's own job is
+    // narrower -- proving runVcsStep really does fold a real VcsError into StepOutcome data end to end,
+    // rather than letting one escape this module uncaught -- so the collision is engineered directly:
+    // disabling only that one optional cleanup call leaves the stale lane the first attempt leaves
+    // behind (never merged or removed) there to collide with on the second, exactly as it always was.
+    const vcsWithoutCleanup = {
+      ...createVcsFacade(projectRoot, runId),
+      removeLaneIfPresent: () => Promise.resolve(),
+    };
+    const ctx = createTestContext({ projectRoot, runId, vcs: vcsWithoutCleanup });
     const stepNode = node({
       id: 'wf:generate',
       kind: 'command',
       run: 'echo done > out.txt',
       produces: ['out.txt'],
     });
-    // The first call creates a real lane for wf:generate and leaves it alive (never merged or
-    // removed). @forge/vcs's own createLaneWorktree refuses a second call for the identical
-    // (runId, stepId) pair with a real VcsError while that lane is still alive
-    // (packages/vcs/test/lanes.test.ts already covers this directly against @forge/vcs itself); this
-    // proves runVcsStep really does catch and fold that failure into StepOutcome data end to end,
-    // rather than letting a real VcsError escape this module uncaught.
     const first = await executeStep(stepNode, ctx);
     expect(first.status).toBe('succeeded');
 

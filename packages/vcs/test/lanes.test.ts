@@ -24,6 +24,7 @@ import {
   listOrphanedWorktreeDirectories,
   listOrphanedWorktrees,
   parseWorktreeBlocks,
+  removeLaneIfPresent,
   removeLaneWorktree,
   removeOrphanedLaneBranch,
   removeOrphanedWorktreeDirectory,
@@ -306,6 +307,57 @@ describe('createLaneWorktree / removeLaneWorktree', () => {
 
     // And no lane worktree/branch should exist as a side effect of the rejected attempt.
     expect(await listOrphanedWorktrees(cwd)).toEqual([]);
+  });
+});
+
+describe('removeLaneIfPresent (specs/22 M17 P10) (#3 "recreate the lane")', () => {
+  it('is a no-op when neither the worktree nor the branch for (runId, stepId) exists', async () => {
+    const cwd = await createTempRepo();
+    await expect(
+      removeLaneIfPresent(cwd, { runId: 'run-1', stepId: 'never-created' }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('clears an existing lane so the identical (runId, stepId) pair can be created again without colliding', async () => {
+    const cwd = await createTempRepo();
+    const first = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    expect(existsSync(first.path)).toBe(true);
+
+    await removeLaneIfPresent(cwd, { runId: 'run-1', stepId: 'a' });
+
+    expect(existsSync(first.path)).toBe(false);
+    expect(await branchExistsInRepo(cwd, first.branch)).toBe(false);
+    // The real proof: a second createLaneWorktree for the identical pair, which collided above (the
+    // describe block above this one) without this call, now succeeds instead of rejecting with
+    // VCS-GIT-OPERATION-FAILED.
+    const second = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: 'HEAD',
+    });
+    expect(second.laneId).toBe(first.laneId);
+    expect(existsSync(second.path)).toBe(true);
+  });
+
+  it('resolves the real, symlink-free cwd before comparing against git worktree list, the same as createLaneWorktree', async () => {
+    // A critic-class bug this repository has already hit once (lanes.ts's own worktreePath doc comment):
+    // a path built from an *unresolved* cwd and git's own canonicalised report compare unequal as plain
+    // strings on a platform where the temp dir is itself a symlink (macOS's /tmp -> /private/tmp).
+    const cwd = await createTempRepo();
+    await createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' });
+
+    await expect(
+      removeLaneIfPresent(cwd, { runId: 'run-1', stepId: 'a' }),
+    ).resolves.toBeUndefined();
+    // Proven the same way as the test above: the pair is reusable, which it could not be if the lane's
+    // own worktree/branch had silently survived a path-mismatched "removal".
+    await expect(
+      createLaneWorktree(cwd, { runId: 'run-1', stepId: 'a', integrationBase: 'HEAD' }),
+    ).resolves.toBeDefined();
   });
 });
 

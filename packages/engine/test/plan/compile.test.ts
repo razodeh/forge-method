@@ -1321,6 +1321,34 @@ describe('compilePlan — limits defaults', () => {
   });
 });
 
+describe('compilePlan — limits defaults (specs/22 M17 P10)', () => {
+  it('authors wallClockMs directly, the one limits.* field the DSL could not take from a step before (#8)', () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'a', limits: { maxTurns: 60, maxCostUsd: 5, wallClockMs: 1_800_000 } }),
+        ]),
+        {},
+      ),
+    );
+    expect(nodes[0]?.limits).toEqual({ maxTurns: 60, maxCostUsd: 5, wallClockMs: 1_800_000 });
+  });
+
+  it('still falls back to the placeholder default when wallClockMs is authored for one step but not another', () => {
+    const nodes = expectOk(
+      compilePlan(
+        workflow([
+          agentStep({ id: 'a', limits: { wallClockMs: 1_200_000 } }),
+          agentStep({ id: 'b' }),
+        ]),
+        {},
+      ),
+    );
+    expect(findNode(nodes, 'w:a').limits.wallClockMs).toBe(1_200_000);
+    expect(findNode(nodes, 'w:b').limits.wallClockMs).toBe(600_000);
+  });
+});
+
 describe('compilePlan — onFailure', () => {
   it("uses the step's own onFailure when it is one of the four valid values", () => {
     const nodes = expectOk(

@@ -21,6 +21,7 @@ import {
   enforceClaim,
   mergeIntoLane,
   processMergeCandidate,
+  removeLaneIfPresent as removeVcsLaneIfPresent,
   removeLaneWorktree,
   resetLaneWorktree,
   resolveRevision,
@@ -114,6 +115,9 @@ export function createVcsFacade(
     },
     async removeLane(handle, retain) {
       await removeLaneWorktree(projectRoot, asVcsLaneHandle(handle), { retain });
+    },
+    async removeLaneIfPresent(stepId) {
+      await removeVcsLaneIfPresent(projectRoot, { runId, stepId });
     },
     async commit(handle, message, sign) {
       return commitInLane(asVcsLaneHandle(handle), { message, sign });

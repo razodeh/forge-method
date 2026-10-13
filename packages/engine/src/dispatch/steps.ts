@@ -20,13 +20,16 @@
  * @see SPEC-QUESTIONS.md Q62
  * @see PLAN-M5.md P15
  */
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 import { FORGE_AGENT_ID, FORGE_RUN_ID, FORGE_STEP_ID } from '@forge/core';
 import { ArtifactDocument } from '@forge/core/artifacts';
 import { ForgeError, isForgeError } from '@forge/core/errors';
+import { listDirEntriesSorted, type AbsolutePath } from '@forge/core/fs';
 import type { SessionRequest, SessionResult } from '@forge/adapter-kit';
 import { artifactTypeById } from '@forge/schemas';
+import { readEvents } from '@forge/telemetry/events';
 import { minimatch } from 'minimatch';
 
 import { recordChecks } from '../gates/index.ts';
@@ -48,6 +51,7 @@ import { restoreIntegrationTree, snapshotIntegrationTree } from './inline-tree.t
 import { resolveLaneBase } from './lane-base.ts';
 import { reserveDeclaredKbOutputIds, type KbOutputReservation } from './output-ids.ts';
 import {
+  checkDeclaredOutputs,
   docRootsOf,
   outputGlob,
   outputPathFor,
@@ -309,6 +313,23 @@ export async function createLaneForStep(
   | { readonly ok: true; readonly lane: LaneHandle; readonly baseSha: string }
   | { readonly ok: false; readonly failure: StepFailureInfo }
 > {
+  // `specs/22` M17 P10 (#3, "recreate the lane"): a step this function is about to build a FRESH lane
+  // for may already have one on disk from a previous, now-superseded attempt of the identical step --
+  // `@forge/engine/run`'s own retry wiring (`driveToCompletion`) resets a retried step back to
+  // 'pending' without ever landing its failed attempt's lane (never merged, so clearing it loses no
+  // real work), and a resumed run that crashed between that retry's own `StepRetried` event and this
+  // same cleanup completing reaches this exact function again the identical way. `createLaneWorktree`'s
+  // own doc comment is explicit that it collides on the branch name for a repeated `(runId, stepId)`
+  // pair BY DESIGN, so every real caller clears first rather than each remembering to on its own --
+  // optional (`ctx.vcs.removeLaneIfPresent?.`) so a hand-built facade with no real backing lane store
+  // (a unit-test fake exercising claim/output logic alone) pays nothing for a retry concern it never
+  // creates, exactly as every other optional VcsFacade seam already does.
+  const cleared = await runVcsStep(
+    node.id,
+    () => ctx.vcs.removeLaneIfPresent?.(node.id) ?? Promise.resolve(),
+  );
+  if (!cleared.ok) return cleared;
+
   const base = await resolveLaneBase(node, ctx);
   if (!base.ok) return base;
   const { tipSha, heads } = base.value;
@@ -370,6 +391,12 @@ export async function createLaneForStep(
     else joinedFrom.push(head.id);
   }
 
+  // `specs/22` M17 P10 (defect D, BLOCKING round 2): recorded on EVERY lane, not only an agent step's --
+  // cheap for a command-kind step too (`computeStepFingerprint`'s own doc comment), and the alternative
+  // (computing it only inside `runAgentStep`, the fingerprint's one real consumer) would mean threading
+  // a new parameter through this function's signature for no real benefit, since `createLaneForStep`
+  // already has everything `computeStepFingerprint` needs.
+  const stepFingerprint = await computeStepFingerprint(node, ctx);
   await ctx.telemetry.emit({
     type: 'LaneCreated',
     stepId: node.id,
@@ -377,6 +404,7 @@ export async function createLaneForStep(
     payload: {
       baseSha,
       integrationTip: tipSha,
+      stepFingerprint,
       ...(stackedOn === undefined ? {} : { stackedOn }),
       ...(joinedFrom.length === 0 ? {} : { joinedFrom }),
     },
@@ -940,6 +968,289 @@ export async function runAgentWork(
   };
 }
 
+/** A placeholder `SessionResult` for a step this call reuses from an earlier run's own already-landed
+ * work (`findReusableSuccess`, below) rather than a real dispatch: `ok: true` (the step genuinely did
+ * succeed, by the output check's own real verdict against the current integration tip, not a faked
+ * pass), empty usage/cost (no real session ran, so none was spent) and no changed files (nothing new
+ * was produced this attempt -- the content was already there). */
+const REUSED_OUTPUT_SESSION: SessionResult = {
+  sessionId: '',
+  ok: true,
+  finalText:
+    'Reused: this step’s declared output already validates against a predecessor run’s already-integrated work; no new session was dispatched.',
+  usage: { inputTokens: 0, outputTokens: 0, turns: 0 },
+  durationMs: 0,
+  changedFiles: [],
+  controlTokens: [],
+};
+
+/** The `payload.baseSha` of a `LaneCreated` event (`createLaneForStep`'s own emit) — the one field this
+ * module's own reuse detection needs back out of a replayed event. Defensive the identical way
+ * `@forge/engine/resume`'s own `reconstruct.ts` already reads this same field: a missing or malformed
+ * value is simply absent, never fabricated. */
+function extractBaseSha(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const value = (payload as Record<string, unknown>)['baseSha'];
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+/** A content fingerprint of `node`'s own agent/brief/declared-outputs shape (`specs/22` M17 P10, the
+ * BLOCKING gap a critic found in this piece's first round: the reuse mechanism below matched candidates
+ * by STEP ID alone, so a step whose own authored definition changed between two runs -- the SAME
+ * workflow id, the SAME step id, but a materially different `brief`/`agent` -- could still wrongly
+ * inherit a historical run's success for the OLD definition's work, never dispatching a real session
+ * for the new one. Deliberately narrower than `StepNode.idempotencyKey`'s own "same position, different
+ * authored content" gap (`plan/types.ts`'s own doc comment there already names this exact class of
+ * problem and defers it to resume, P19/P20's own future piece): this fingerprint exists only to gate
+ * THIS module's own cross-run reuse check, not to redefine what counts as "the same step" anywhere else.
+ *
+ * Covers exactly three things, matching what `findReusableSuccess` actually depends on being unchanged
+ * for a historical success to still mean anything: the agent id, the brief's own REAL CONTENT (not just
+ * its path -- `node.brief` is a `briefs/<name>.md` reference, `ctx.assembly.loadContent` is the same real
+ * loader `assemble.ts`'s own prompt build already uses, so an edited brief with an unchanged path still
+ * fingerprints differently), and the declared outputs contract. Nothing about `inputs`/`produces`/
+ * `consumes`/limits/retry policy: none of those change what a historical SESSION actually did or
+ * produced, only how a FRESH one would be dispatched or governed, which has no bearing on whether a past
+ * success is still trustworthy evidence of real, matching work.
+ *
+ * A brief reference that fails to load (a bad path, a missing file) falls back to hashing the reference
+ * string itself rather than throwing out of this function: the real, typed failure for an unloadable
+ * brief belongs to prompt assembly's own later `loadContent` call on the normal dispatch path
+ * (`CFG-053`/`RUN-079`), not to this best-effort fingerprint -- but a renamed/retargeted brief still
+ * fingerprints differently than before, rather than this function silently treating every unloadable
+ * brief as identical to every other one. */
+async function computeStepFingerprint(node: StepNode, ctx: ExecuteStepContext): Promise<string> {
+  let briefContent = '';
+  if (node.brief !== undefined) {
+    try {
+      briefContent = await ctx.assembly.loadContent(node.brief);
+    } catch {
+      briefContent = node.brief;
+    }
+  }
+  const canonical = JSON.stringify({
+    agent: node.agent ?? null,
+    brief: briefContent,
+    outputs: node.outputs,
+  });
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+/** The `payload.stepFingerprint` of a `LaneCreated` event -- `extractBaseSha`'s own sibling, the
+ * identical defensive read (a missing or malformed value is simply absent, never fabricated). */
+function extractFingerprint(payload: unknown): string | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const value = (payload as Record<string, unknown>)['stepFingerprint'];
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+/**
+ * `specs/22` M17 P10 (defect D, the `RUN-083`-adjacent collision the M16 P9 log disclosed): every
+ * `baseSha` a DIFFERENT, earlier run's own event log shows this exact step id (`stepId`) was LAST
+ * created from, immediately before that same run's own log last recorded it `StepSucceeded` — in other
+ * words, every historical base a predecessor run's own, real, already-verified success for this exact
+ * step can be re-checked against. `currentRunId`'s own log is never scanned (there is nothing to reuse
+ * from the run this call is itself part of).
+ *
+ * Tracks `StepRetried`/`StepFailed` too, not only `LaneCreated`/`StepSucceeded`: a step retried inside
+ * that OTHER run leaves a trail of several `LaneCreated`s for the identical id, and only the one whose
+ * own, immediately-following terminal event was `StepSucceeded` (never a later `StepFailed` for a
+ * *subsequent* attempt the log also holds) is a real candidate -- `succeededSinceCreated` is reset to
+ * `false` on every `StepFailed`/`StepRetried` for this id so a retried-then-eventually-failed earlier
+ * attempt is never mistaken for one that succeeded.
+ *
+ * A candidate run that itself reached `RunCompleted` is excluded outright, however this exact step id
+ * fared inside it: compiled step ids are pure functions of the workflow definition
+ * (`${workflowId}:${stepId}[:${itemKey}]`, `compileStepId`), not of anything run-specific, so running
+ * the identical workflow twice as two genuinely separate, deliberate invocations recomputes the
+ * identical id both times -- a real, previously-shipped scenario (`packages/cli/test/commands/run/
+ * kb-output-ids.test.ts` runs one workflow id three times on purpose, the third deliberately wrong, to
+ * prove its own output check is still live-enforced). "A fresh run after PARTIAL integration" means the
+ * predecessor did NOT finish; a run that reached `RunCompleted` is a finished, independent unit of
+ * work with nothing left to recover, and reusing anything from it would silently skip the very check a
+ * later, independent invocation of the same workflow exists to run for real.
+ *
+ * A different run's own genuinely corrupted event log (`readEvents` refuses to read past a real `seq`
+ * gap, `18` §18.4) is skipped, not allowed to throw out of this function: the identical "an unrelated,
+ * already-broken run must never halt an otherwise-healthy one just by existing" stance
+ * `@forge/engine/budget`'s own `computeLiveBudgetState`/`allEntries` already takes for the identical
+ * cross-run scan shape, duplicated here rather than imported for the same reason that module's own doc
+ * comment already gives (`@forge/engine` has no caller into itself across this kind of boundary, and the
+ * underlying "list every run directory, replay one run's own log" logic is small enough that duplicating
+ * it is the same deliberate, disclosed choice already made elsewhere in this codebase).
+ *
+ * Returns `[]`, never throws, when the project has no runs directory at all (a project's very first
+ * run) -- a legitimate state, the identical stance `listRunIds` already takes in `budget/live-state.ts`.
+ *
+ * Each candidate carries its own `fingerprint` (the `LaneCreated` that produced it, `extractFingerprint`)
+ * alongside its `baseSha` -- `undefined` when the historical event predates this field or is otherwise
+ * malformed. Round 2's own BLOCKING fix: the `RunCompleted` exclusion above only ever ruled out a
+ * candidate whose PREDECESSOR run itself finished; it says nothing about a predecessor that genuinely
+ * never finished (a real "partial integration") but whose own step DEFINITION was edited before the
+ * current run started -- the same workflow id, the same step id, a materially different `agent`/`brief`.
+ * This function itself does not decide whether a fingerprint still matches (it has no "current" step to
+ * compare against); it only ever hands every candidate's own recorded fingerprint back to the one caller
+ * that does, `findReusableSuccess`.
+ */
+async function findHistoricalLaneBases(
+  projectRoot: string,
+  currentRunId: string,
+  stepId: string,
+): Promise<readonly { readonly baseSha: string; readonly fingerprint: string | undefined }[]> {
+  let runIds: readonly string[];
+  try {
+    const entries = await listDirEntriesSorted(
+      path.join(projectRoot, '.forge', 'state', 'runs') as AbsolutePath,
+    );
+    runIds = entries.filter((entry) => entry.isDirectory).map((entry) => entry.name);
+  } catch (error) {
+    // `listDirEntriesSorted` wraps every failure as `ForgeError('RUN-034')`, folding a genuinely
+    // missing runs directory (a project's very first run) together with a real, unexpected one --
+    // unwrapped here via the standard `Error.cause` `ForgeError` itself sets, the identical "distinguish
+    // ENOENT structurally, not by message text" discipline `budget/live-state.ts`'s own `listRunIds`
+    // already establishes for the exact same directory. Anything else (a permissions failure, say) is
+    // this project's own real problem and must not be silently read as "nothing to reuse."
+    const cause = error instanceof Error ? error.cause : undefined;
+    if (
+      cause instanceof Error &&
+      'code' in cause &&
+      (cause as NodeJS.ErrnoException).code === 'ENOENT'
+    ) {
+      return [];
+    }
+    throw error;
+  }
+
+  const bases: { readonly baseSha: string; readonly fingerprint: string | undefined }[] = [];
+  for (const runId of runIds) {
+    if (runId === currentRunId) continue;
+    let lastCreatedBase: string | undefined;
+    let lastCreatedFingerprint: string | undefined;
+    let succeededSinceCreated = false;
+    // `specs/22` M17 P10 (defect D): a candidate run that reached `RunCompleted` is a finished,
+    // independent unit of work, not an interrupted one this fresh run could be recovering from -- "a
+    // fresh run after PARTIAL integration" means the predecessor did NOT finish. Compiled step ids are
+    // derived purely from the workflow definition (`${workflowId}:${stepId}`), never from anything
+    // run-specific, so the identical id recurs every time the identical workflow is run again as a
+    // genuinely separate, deliberate invocation -- `packages/cli/test/commands/run/kb-output-ids.test.ts`
+    // runs the SAME workflow id three times on purpose and, on the third, deliberately writes a WRONG id
+    // to prove the output check is still live-enforced, not vacuous; without this guard, the second run's
+    // own prior (correct, already-`RunCompleted`) success was wrongly reused for the third, skipping the
+    // very check that run exists to probe. Checked across the WHOLE candidate run's log, not only the
+    // events naming this stepId: `RunCompleted` itself never carries one.
+    let runCompleted = false;
+    try {
+      for await (const event of readEvents(projectRoot, runId)) {
+        if (event.type === 'RunCompleted') {
+          runCompleted = true;
+          continue;
+        }
+        if (event.stepId !== stepId) continue;
+        if (event.type === 'LaneCreated') {
+          lastCreatedBase = extractBaseSha(event.payload);
+          lastCreatedFingerprint = extractFingerprint(event.payload);
+          succeededSinceCreated = false;
+        } else if (event.type === 'StepSucceeded') {
+          succeededSinceCreated = lastCreatedBase !== undefined;
+        } else if (event.type === 'StepFailed' || event.type === 'StepRetried') {
+          succeededSinceCreated = false;
+        }
+      }
+    } catch {
+      // A different run's own corrupted log -- see this function's own doc comment.
+      continue;
+    }
+    if (!runCompleted && succeededSinceCreated && lastCreatedBase !== undefined) {
+      bases.push({ baseSha: lastCreatedBase, fingerprint: lastCreatedFingerprint });
+    }
+  }
+  return bases;
+}
+
+/**
+ * `specs/22` M17 P10 (defect D): whether `node`'s own declared outputs already, verifiably, validate
+ * against the project's CURRENT integration tip, as of the end of some DIFFERENT, earlier run that this
+ * exact step id (`findHistoricalLaneBases`) really did succeed in. When one does, this step's own work
+ * is already done and already landed — reused as a real `succeeded` outcome, with no new lane and no new
+ * session, rather than colliding with `RUN-083` the way a fresh, empty-diff lane branching from a tip
+ * that already holds a predecessor run's landed work otherwise would (the exact mechanism M16 P9's own
+ * log disclosed: `checkDeclaredOutputs`'s "produced by THIS session" diff is measured against the
+ * lane's own base, and a fresh lane's base is the current tip itself, so a session that correctly does
+ * nothing — the work is already there — reads as "produced nothing" instead of "already satisfied").
+ *
+ * Reuses `checkDeclaredOutputs` completely unmodified: `input.baseSha` is simply a DIFFERENT, EARLIER
+ * sha than the one this fresh lane would otherwise use (the historical attempt's own pre-session base,
+ * not today's tip), so the SAME diff-based "produced by this session" logic that already defends against
+ * one step free-riding on a sibling step's work in the single-run case now also, correctly, finds THIS
+ * step's own historical work still present — and still only this step's: `findHistoricalLaneBases`'s own
+ * gate (a DIFFERENT run's log naming this EXACT step id as the one that succeeded) is what makes that
+ * safe, not a change to what counts as "produced." `input.lane` is a read-only probe pointed at the
+ * project's own integration worktree (`ctx.integrationPath`), never a new worktree of its own: every
+ * `VcsFacade` method this check calls (`changedFiles`/`readAtRevision`) only ever uses `lane.path` as a
+ * `cwd` for a read-only git command against the shared object database every worktree of one repository
+ * already sees identically, so no lane needs to exist for this probe to read the tip's own current `HEAD`
+ * correctly.
+ *
+ * A wider diff window than the historical attempt's own original, single-session one (this tip may hold
+ * later, unrelated commits the historical base predates) only risks a FALSE NEGATIVE, never a false
+ * positive: an unrelated later step's own output happening to also match this step's declared glob would
+ * only ever ADD a candidate file to check (and `checkOne`'s own cardinality rule already accepts several
+ * matching files for a `one` output), while a genuine problem on EITHER the historical file or anything
+ * else the check finds still fails the whole call, correctly falling through to a normal, fresh,
+ * real-session attempt (`runAgentStep`'s own caller) — superseding instead of reusing, exactly the
+ * other half of this defect's own "reuse or cleanly supersede" Mandate text.
+ *
+ * `undefined` (not reusable, proceed to a normal dispatch) when `findHistoricalLaneBases` found nothing,
+ * or when every candidate it found fails the check (the work was reverted, invalidated, or never actually
+ * landed despite that other run's own record).
+ *
+ * Round 2's own BLOCKING fix: a candidate whose own recorded `fingerprint` does not match `node`'s
+ * CURRENT one (`computeStepFingerprint`) is skipped before `checkDeclaredOutputs` ever runs against it,
+ * however good its `baseSha` otherwise looks -- a historical success is only real evidence for THIS
+ * step's current definition when it is provably evidence of running that same definition, not merely of
+ * running something that once shared its id. A candidate with no recorded fingerprint at all (an event
+ * predating this field) is treated identically to a mismatch, never as a free pass: the conservative
+ * default here is always "run the real session," never "silently reuse on uncertain evidence."
+ */
+async function findReusableSuccess(
+  node: StepNode,
+  ctx: ExecuteStepContext,
+): Promise<StepOutcome | undefined> {
+  // Only an agent step with declared outputs is ever exposed to the RUN-083 collision this exists to
+  // avoid (`verifyDeclaredOutputs`'s own identical gate) — a step with nothing declared has nothing for
+  // this mechanism to verify, and reusing it would mean inventing a "succeeded" this function has no
+  // real evidence for.
+  if (node.outputs.length === 0) return undefined;
+  const candidates = await findHistoricalLaneBases(ctx.projectRoot, ctx.runId, node.id);
+  if (candidates.length === 0) return undefined;
+
+  const currentFingerprint = await computeStepFingerprint(node, ctx);
+  const probe: LaneHandle = {
+    laneId: `reuse-probe:${node.id}`,
+    path: ctx.integrationPath,
+    branch: ctx.integrationBase,
+  };
+  for (const candidate of candidates) {
+    if (candidate.fingerprint === undefined || candidate.fingerprint !== currentFingerprint) {
+      continue;
+    }
+    const problem = await checkDeclaredOutputs({
+      node,
+      vcs: ctx.vcs,
+      lane: probe,
+      baseSha: candidate.baseSha,
+      docRoots: docRootsOf(ctx),
+      claimReverted: [],
+      writeForbidden: false,
+    });
+    if (problem === undefined) {
+      const at = ctx.now();
+      return succeeded(node.id, at, at, { kind: 'agent', session: REUSED_OUTPUT_SESSION });
+    }
+  }
+  return undefined;
+}
+
 export async function runAgentStep(
   node: StepNode,
   ctx: ExecuteStepContext,
@@ -949,6 +1260,15 @@ export async function runAgentStep(
     readonly briefKey?: string | undefined;
   } = {},
 ): Promise<StepOutcome> {
+  // `specs/22` M17 P10 (defect D): checked before anything else -- no reservation, no assembly, no
+  // lane, and (deliberately) no `StepStarted` either, since nothing here is really "starting" a session.
+  // `driveToCompletion`'s own `StepScheduled` (already emitted before this function is ever called) plus
+  // the `StepSucceeded` `executeStep` emits once this returns are the only two events a reused step
+  // needs; `reconstructRunState`'s own fold accepts any prior status transitioning straight to
+  // `'succeeded'`, so skipping the intermediate ones is not a gap resume needs to account for.
+  const reused = await findReusableSuccess(node, ctx);
+  if (reused !== undefined) return reused;
+
   const startedAt = ctx.now();
   // `PLAN-M14.md` P19: `agentId` and (when the compiled plan attached any) `payload.gateEvidence` --
   // `approve.ts`'s own "same-run conflict of interest" refusal (`GATE-511`) reads exactly these two

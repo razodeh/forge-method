@@ -61,6 +61,9 @@ export interface RetryPolicy {
 export interface StepLimits {
   readonly maxTurns?: number | undefined;
   readonly maxCostUsd?: number | undefined;
+  /** `06` §6.2's own inline `limits` shape names this field too; this DSL left it unauthorable until
+   * `specs/22` M17 P10 (#8) closed the gap for a wide-scope step whose default 600_000ms is too short. */
+  readonly wallClockMs?: number | undefined;
 }
 
 export interface AgentStep extends WorkflowStepBase {

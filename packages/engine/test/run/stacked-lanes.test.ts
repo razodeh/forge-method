@@ -149,6 +149,10 @@ function contextFor(project: Project, options: ContextOptions): RunEngineContext
     laneRegistry: options.laneRegistry ?? new Map<string, LaneHandle>(),
     limits: UNLIMITED,
     seed: 'seed-1',
+    // specs/22 M17 P10 (#3): see the identical override and comment in lane-integration.test.ts's own
+    // contextFor -- this file's own persistently-failing agent steps drive real retries too, and a
+    // critic measured them becoming measurably slower once `sleep` defaulted to a real timer.
+    sleep: () => Promise.resolve(),
     conflictPolicy: 'abort',
     ...(options.testCommands === undefined ? {} : { testCommands: options.testCommands }),
     ...(options.mergeChecks === undefined ? {} : { mergeChecks: options.mergeChecks }),

@@ -115,6 +115,12 @@ function contextFor(project: Project, options: ContextOptions): RunEngineContext
     laneRegistry: options.laneRegistry ?? new Map<string, LaneHandle>(),
     limits: UNLIMITED,
     seed: 'seed-1',
+    // specs/22 M17 P10 (#3): `RunEngineContext.sleep` defaults to a REAL timer so production retries
+    // actually wait out their backoff -- a critic measured this file's own persistently-failing agent
+    // steps (which drive real retries through `driveToCompletion`) becoming measurably slower once that
+    // real default landed, even though nothing here is testing retry timing itself. Overridden the
+    // identical way `run-engine.test.ts`'s own retry tests already do.
+    sleep: () => Promise.resolve(),
     ...(options.conflictPolicy === undefined ? {} : { conflictPolicy: options.conflictPolicy }),
     ...(options.conflictResolver === undefined
       ? {}

@@ -537,28 +537,11 @@ describe('M17 Phase A: surfaces specs/22 M17 names that are not yet built (specs
     expect(bin).not.toContain("'migrate'");
   });
 
-  it('6. the engine never calls decideRetry outside its own definition file: real retries are not wired', () => {
-    const engineSrcDir = path.join(repoRootAbs, 'packages/engine/src');
-    const callers: string[] = [];
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full);
-        } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
-          const text = readFileSync(full, 'utf8');
-          if (
-            text.includes('decideRetry(') &&
-            full !== path.join(engineSrcDir, 'failures/retry.ts')
-          ) {
-            callers.push(path.relative(repoRootAbs, full));
-          }
-        }
-      }
-    };
-    walk(engineSrcDir);
-    expect(callers, `decideRetry has a real caller: ${callers.join(', ')}`).toEqual([]);
-  });
+  // 6. (specs/22 M17 P10, #3) CLOSED: `driveToCompletion` (`packages/engine/src/run/run-engine.ts`)
+  // now consults `decideRetry`/`computeBackoff` on every failed outcome -- the real caller this entry
+  // used to assert did not exist. Removed rather than inverted: this describe's own job is "not yet
+  // built" surfaces, and a real, tested caller belongs in that test suite instead
+  // (`packages/engine/test/run/run-engine.test.ts`'s own "driveToCompletion retry wiring" describe).
 
   it('7. lane worktrees still live inside the project tree, at .forge/state/worktrees/<laneId>', () => {
     const lanes = readPkg('packages/vcs/src/lanes.ts');

@@ -275,7 +275,10 @@ function compileLimits(
   return {
     limits: {
       maxTurns: step?.limits?.maxTurns ?? DEFAULT_LIMITS.maxTurns,
-      wallClockMs: DEFAULT_LIMITS.wallClockMs,
+      // `specs/22` M17 P10 (#8): authored, same as maxTurns/maxCostUsd just above -- a wide-scope
+      // characterise-then-change step (refactor-code, migrate's expand/contract, ...) now declares its
+      // own realistic wall-clock ceiling instead of inheriting this placeholder unconditionally.
+      wallClockMs: step?.limits?.wallClockMs ?? DEFAULT_LIMITS.wallClockMs,
       maxCostUsd: models ? (declared ?? DEFAULT_LIMITS.maxCostUsd) : 0,
     },
     ...(models

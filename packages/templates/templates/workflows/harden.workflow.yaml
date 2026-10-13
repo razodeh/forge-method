@@ -70,6 +70,11 @@ steps:
     # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
     # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The findings name no paths.
     produces: ['**', '!@protected']
+    # Characterise-then-change (specs/22 M17 P10, #8): the same fix-defect.md brief as debug:fix and
+    # quick-fix:fix, but "every finding, one at a time in severity order" inside ONE agent turn -- a
+    # whole hardening pass's worth of diagnose-then-change cycles, not one defect's. The largest bump
+    # of this piece's audit for exactly that reason.
+    limits: { maxTurns: 60, wallClockMs: 1800000, maxCostUsd: 6.0 }
 
   - id: stable-gate
     kind: gate

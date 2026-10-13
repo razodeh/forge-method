@@ -98,6 +98,27 @@ export class Scheduler {
     this.running.delete(id);
   }
 
+  /** `06` §6.8's own retry decision (`specs/22` M17 P10, #3), made real: `@forge/engine/run`'s own
+   * `driveToCompletion` is the one caller, for a step `decideRetry` said to retry rather than escalate.
+   * Reverts straight to this scheduler's own default, unmarked `'pending'` state (deleting the entry
+   * rather than writing `'pending'` explicitly, matching `status`'s own `?? 'pending'` fallback for a
+   * node this scheduler has never heard of at all) — never a dedicated `'retrying'` status: the very next
+   * `next()` call must treat this id exactly like an ordinary, never-yet-attempted candidate, re-running
+   * every admission check (claims, concurrency, `canAdmit`) a fresh attempt is subject to, not a status
+   * carved out to skip them. Distinct from `markFailed`/`markSkipped`, both of which are *terminal* here
+   * (`computeReadySet`'s own "status !== 'pending'" gate permanently excludes them): this is the one
+   * non-terminal way a status already recorded can become a ready candidate again, which is exactly why
+   * a step reset this way — unlike a truly failed one — lets its own dependents become ready once the
+   * fresh attempt this clears the way for actually succeeds. Also drops `id` from the live-running set:
+   * a step this is called for is never actually still running (its own attempt already resolved to
+   * `'failed'` before `driveToCompletion` ever decides to retry it), but clearing it unconditionally
+   * costs nothing and removes any doubt that a stale entry could over-count against `perAgent`/
+   * `perResourceClass`/`global` on the very next tick. */
+  resetToPending(id: string): void {
+    this.statuses.delete(id);
+    this.running.delete(id);
+  }
+
   /** Replaces the limits this scheduler enforces on every subsequent `next()` call — the seam
    * `@forge/engine/backpressure` (`PLAN-M5.md` P13) uses to feed its own, independently-computed
    * concurrency ceiling in: a caller owning both a `Scheduler` and a `BackpressureState` calls this once

@@ -27,17 +27,19 @@
  * `adapter-generic`'s own `session-handle.ts`/`changed-files.ts` already made against
  * `adapter-claude-code`'s proven shapes (`GAUNTLET-LOG.md`'s M11 P7 entry).
  *
- * **Disclosed, not fixed, in this same piece**: `06` §6.8's own retry machinery
- * (`@forge/engine/failures`'s `decideRetry`/`computeBackoff`) has zero production callers anywhere in
- * this codebase — `run-engine.ts`'s own `driveToCompletion` marks a failed step `'failed'` on its very
- * first attempt and never retries it. `attributedSpend`'s own "sums every entry for a stepId, across
- * every retry" property is real and correctly tested (`@forge/telemetry/ledger` P7's own test suite,
- * plus this piece's own `s9-budget-enforcement.test.ts`), but a real `forge run` today never actually
- * produces more than one `UsageRecorded` event for the same `stepId` to sum, since no real retry ever
- * happens. Building a full retry loop is judged disproportionate scope for a security-invariant piece
- * (a materially larger, riskier change than S9's own proportionate ask), the same judgement `taint-
- * guard.ts`'s own doc comment already made for S6's grant-escalation surface — recorded here, and in
- * `SPEC-QUESTIONS.md`, rather than silently implied to already work end to end.
+ * **Disclosed, not fixed, in this (`PLAN-M11.md` P11) piece; fixed in `specs/22` M17 P10**: `06` §6.8's
+ * own retry machinery (`@forge/engine/failures`'s `decideRetry`/`computeBackoff`) had zero production
+ * callers anywhere in this codebase — `run-engine.ts`'s own `driveToCompletion` marked a failed step
+ * `'failed'` on its very first attempt and never retried it. Building a full retry loop was judged
+ * disproportionate scope for THIS security-invariant piece (a materially larger, riskier change than
+ * S9's own proportionate ask), the same judgement `taint-guard.ts`'s own doc comment already made for
+ * S6's grant-escalation surface — recorded here, and in `SPEC-QUESTIONS.md`, rather than silently
+ * implied to already work end to end. `driveToCompletion` now consults `decideRetry`/`computeBackoff`
+ * for real (M17 P10): `attributedSpend`'s own "sums every entry for a stepId, across every retry"
+ * property, already real and correctly tested before this (`@forge/telemetry/ledger` P7's own test
+ * suite, plus this piece's own `s9-budget-enforcement.test.ts`), now has a real production caller that
+ * genuinely produces more than one `UsageRecorded` event for the same `stepId` to sum
+ * (`packages/engine/test/run/run-engine.test.ts`'s own "retry spend is attributed per step" test).
  *
  * @see specs/06 §6.9
  * @see specs/20 §20.8

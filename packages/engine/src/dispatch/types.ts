@@ -142,6 +142,18 @@ export interface VcsFacade {
    * stacked chain, `PLAN-M13.md` P38) from an unrelated one. Optional so a hand-built facade need not implement
    * it; absent, two lanes are never known to be related. */
   isAncestor?(ancestor: string, descendant: string): Promise<boolean>;
+  /** Removes any existing worktree/branch for `(this facade's own runId, stepId)` — `specs/22` M17 P10
+   * (#3): `createLaneForStep` (`steps.ts`) calls this, unconditionally, before every lane it creates, so
+   * a retried step's own previous, superseded attempt (never merged — a failed lane is kept for
+   * inspection, never landed) cannot collide with the fresh one `@forge/engine/run`'s own retry wiring
+   * is about to dispatch (`@forge/vcs`'s own `createLaneWorktree` doc comment: two creations for the
+   * identical pair collide on the branch name by design). A no-op for every lane's own first, ordinary
+   * attempt (nothing yet exists for that pair) — real cost only on a genuine retry or a resumed run that
+   * crashed between a retry's own `StepRetried` event and this same cleanup completing. Optional so a
+   * hand-built facade need not implement it; absent, `createLaneForStep` skips the cleanup exactly as it
+   * always did before this piece (a caller that supplies no real backing lane store, e.g. a unit-test
+   * fake exercising claim/output logic alone, pays nothing for a retry concern it never creates). */
+  removeLaneIfPresent?(stepId: string): Promise<void>;
   /** Whether `handle`'s own worktree differs from `baseSha` at all — a `command`-kind step's own work
    * callback (`steps.ts`) has no cheaper, already-computed signal the way an agent session's own
    * `SessionResult.changedFiles` is: an arbitrary shell command's stdout/exit code say nothing about

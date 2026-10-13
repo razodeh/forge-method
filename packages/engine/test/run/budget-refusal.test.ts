@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { BudgetConfig } from '../../src/budget/index.ts';
 import { runEngine, type RunEngineContext } from '../../src/run/run-engine.ts';
+import { sessionRecordText } from '../dispatch/artifact-fixtures.ts';
 import { createFixtureAssembly, createTestContext, fixtureAgent } from '../dispatch/helpers.ts';
 
 const REPO = path.resolve(import.meta.dirname, '../../../..');
@@ -75,7 +76,20 @@ async function runRetro(
 ) {
   const projectRoot = await tempRepo('retro');
   const adapter = new FakePlatformAdapter();
-  adapter.script(() => true, { text: ['a retrospective'], costUsd: options.costUsd ?? 0.4 });
+  // `specs/22` M17 P10 (#3): `run-retro` declares a SessionRecord(subtype: retrospective) output
+  // (the shipped retro.workflow.yaml); a script that writes nothing fails that output contract
+  // (RUN-083) on every attempt, which retry wiring now retries once before escalating -- a second,
+  // real session the agent's own $3 ceiling plus the first attempt's already-recorded spend no longer
+  // fits under `perRunUsd: 3.01`, breaching the very budget this test exists to prove is NOT breached.
+  // Writing a real, valid SessionRecord makes the step genuinely succeed on its first attempt, as this
+  // test's own name ("is admitted") already assumed before retries existed to expose the gap.
+  adapter.script(() => true, {
+    text: ['a retrospective'],
+    costUsd: options.costUsd ?? 0.4,
+    writeFiles: [
+      { relativePath: 'docs/forge/sessions/SESSION-001.md', content: sessionRecordText('retro') },
+    ],
+  });
   const agent = emAgent();
   const base = createTestContext({
     projectRoot,
@@ -91,6 +105,10 @@ async function runRetro(
     seed: 'seed',
     commandEnv: await fakeForgeEnv(),
     budget: { dailyUsd: 100, onBreach: 'pause', ...budget },
+    // `specs/22` M17 P10 (#3): a fast, deterministic stand-in for the real backoff delay. None of this
+    // file's own scenarios care about wall-clock retry timing; without this, a genuinely retried step
+    // here would wait out a real `backoffMs` (hundreds to tens of thousands of ms, DEFAULT_BACKOFF_MS).
+    sleep: () => Promise.resolve(),
   };
   const runState = await runEngine(RETRO_SOURCE, {}, ctx);
   return { runState, log: await events(projectRoot, 'run-retro') };

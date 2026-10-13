@@ -21,15 +21,19 @@
  *    budget` (new), `@forge/engine/budget`'s new `computeLiveBudgetState` (`live-state.ts`), and a real
  *    `canAdmit` wired into `runEngine`'s own `Scheduler` construction, refreshed before every scheduling
  *    tick. `@forge/cli`'s own `buildRunEngineContext` now supplies a real one from `.forge/config.yaml`.
- * 3. **`06` §6.8's own retry machinery has zero production callers** — `decideRetry`/`computeBackoff`
- *    (`@forge/engine/failures`) are real, correct, and unit-tested, but `runEngine`'s own
- *    `driveToCompletion` marks a failed step `'failed'` on its very first attempt and never retries it.
- *    This is **disclosed, not fixed**, in this same piece — building a full retry loop is judged
- *    disproportionate scope for a security-invariant piece (`live-state.ts`'s own doc comment has the
- *    fuller reasoning, the identical judgement `taint-guard.ts` already made for S6's grant-escalation
- *    surface). `attributedSpend`'s own "sums every entry for a stepId, across every retry" property is
- *    real and tested below directly against the ledger, at the level a real retry loop would actually
- *    rely on — not against a live `driveToCompletion` retry that does not exist today.
+ * 3. **`06` §6.8's own retry machinery had zero production callers** — `decideRetry`/`computeBackoff`
+ *    (`@forge/engine/failures`) were real, correct, and unit-tested, but `runEngine`'s own
+ *    `driveToCompletion` marked a failed step `'failed'` on its very first attempt and never retried it.
+ *    Disclosed, not fixed, in THIS piece — building a full retry loop was judged disproportionate scope
+ *    for a security-invariant piece (the identical judgement `taint-guard.ts` already made for S6's
+ *    grant-escalation surface) — and fixed for real in `specs/22` M17 P10 (`run-engine.ts`'s own
+ *    `driveToCompletion`, now consulting `decideRetry`/`computeBackoff` on every failed outcome,
+ *    recreating the lane, re-executing, respecting budget admission the identical way any other
+ *    candidate does, and resuming deterministically). `attributedSpend`'s own "sums every entry for a
+ *    stepId, across every retry" property is tested below directly against the ledger, at the level a
+ *    real retry loop relies on; `packages/engine/test/run/run-engine.test.ts`'s own "retry spend is
+ *    attributed per step" test (M17 P10) now proves the same property end to end, through a real,
+ *    live `driveToCompletion` retry rather than a hand-constructed ledger shape.
  *
  * @see specs/06 §6.8, §6.9
  * @see specs/20 §20.8
@@ -439,10 +443,11 @@ describe('runEngine (real, live budget enforcement wired into a real run)', () =
 
 describe('attributedSpend: retry attribution (20 §20.10 S9\'s own "reports $6, not $2" property)', () => {
   it('sums every real ledger entry sharing one stepId across multiple real attempts -- never just the latest, never double-counted', async () => {
-    // Disclosed above (this file's own header comment): no real retry loop exists in
-    // `driveToCompletion` today, so this constructs the exact shape two real, independent attempts of
-    // the *same* step would each genuinely emit via runAgentWork's own new UsageRecorded emission --
-    // proving the property at the level a real future retry loop would actually rely on.
+    // `specs/22` M17 P10 now wires a real retry loop (this file's own header comment, point 3) --
+    // `packages/engine/test/run/run-engine.test.ts`'s own "retry spend is attributed per step" test
+    // proves this exact property end to end, through a live driveToCompletion retry. Kept here too,
+    // hand-constructing the identical shape directly against the ledger: a pure, fast unit-level proof
+    // of the summing property on its own, independent of whichever real failure/retry path produces it.
     const projectRoot = await createTempRepo('retry-attribution');
     const usagePayload = (costUsd: number) => ({
       model: 'm',
