@@ -362,14 +362,24 @@ function countEslintErrors(raw: string): number | undefined {
 
 async function runLintRule(ctx: TestRunContext): Promise<TestRunResult> {
   const command = ctx.testCommands.lint;
-  // `lint` has no `forge-test-report` outcomes to parse (F-TEST-1's own pyramid never counts it as a
-  // layer) -- the structured form (post-v1.0, `specs/22` M17 P3) has no meaning here at all, so a
-  // non-string value reads the same real "not configured" problem a missing one already does.
-  if (command === undefined || typeof command !== 'string') {
+  if (command === undefined) {
     return {
       failed: 0,
       errors: 1,
       problems: ['no lint command configured (execution.testCommands.lint)'],
+    };
+  }
+  // `lint` has no `forge-test-report` outcomes to parse (F-TEST-1's own pyramid never counts it as a
+  // layer) -- the structured form (post-v1.0, `specs/22` M17 P3) has no meaning here at all. A real,
+  // honest message naming what IS configured (`layer.ts`'s own `usableCommand` reads identically),
+  // never the misleading "not configured" a structured entry is not.
+  if (typeof command !== 'string') {
+    return {
+      failed: 0,
+      errors: 1,
+      problems: [
+        'execution.testCommands.lint is the structured testCommands form, which this exit-code-driven check cannot run',
+      ],
     };
   }
   // A fresh critic round reproduced this directly: `testCommands.lint` is a project-authored shell
@@ -419,13 +429,23 @@ function countTscErrors(output: string): number {
 
 async function runTypecheckRule(ctx: TestRunContext): Promise<TestRunResult> {
   const command = ctx.testCommands.typecheck;
-  // `typecheck` has no `forge-test-report` outcomes either (same reasoning as `runLintRule` above) --
-  // the structured form (post-v1.0, `specs/22` M17 P3) has no meaning here.
-  if (command === undefined || typeof command !== 'string') {
+  if (command === undefined) {
     return {
       failed: 0,
       errors: 1,
       problems: ['no typecheck command configured (execution.testCommands.typecheck)'],
+    };
+  }
+  // `typecheck` has no `forge-test-report` outcomes either (same reasoning as `runLintRule` above) --
+  // the structured form (post-v1.0, `specs/22` M17 P3) has no meaning here. A real, honest message
+  // naming what IS configured, never the misleading "not configured" a structured entry is not.
+  if (typeof command !== 'string') {
+    return {
+      failed: 0,
+      errors: 1,
+      problems: [
+        'execution.testCommands.typecheck is the structured testCommands form, which this exit-code-driven check cannot run',
+      ],
     };
   }
   const result = await runShellCommand(command, ctx.projectRoot);

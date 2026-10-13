@@ -136,17 +136,20 @@ describe('parseJunitXml (specs/22 M17 P3)', () => {
     expect(fail?.[1].kind, 'the fail entry').toBe('assertion');
   });
 
-  it('never attributes a file: classname means something different (or nothing) in every real dialect', () => {
-    for (const xml of [
-      PYTEST_XML,
-      NODE_TEST_XML,
-      JEST_JUNIT_XML,
-      MOCHA_JUNIT_XML,
-      VITEST_JUNIT_XML,
-    ]) {
+  it('never attributes a file from classname: pytest/node/jest-junit/vitest set no <testsuite file> attribute at all, so every entry omits file', () => {
+    for (const xml of [PYTEST_XML, NODE_TEST_XML, JEST_JUNIT_XML, VITEST_JUNIT_XML]) {
       const result = parseJunitXml(xml);
       if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
       for (const entry of result.tests) expect(entry.file, entry.name).toBeUndefined();
+    }
+  });
+
+  it('DOES attribute a file from a real <testsuite file="..."> attribute (mocha-junit-reporter) -- a dialect-unambiguous signal, unlike classname', () => {
+    const result = parseJunitXml(MOCHA_JUNIT_XML);
+    if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+    expect(result.tests.length).toBeGreaterThan(0);
+    for (const entry of result.tests) {
+      expect(entry.file, entry.name).toBe('/fixture/sample.test.cjs');
     }
   });
 

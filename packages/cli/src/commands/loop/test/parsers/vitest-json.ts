@@ -12,11 +12,32 @@
  * 1. A file that fails to load (an unresolved import, a syntax error) reports `assertionResults: []`
  *    with the file's own `status: 'failed'` — every AC that file's tests would have proven is
  *    unverifiable, not silently absent; read as one `kind: 'load'` failure.
- * 2. A `beforeAll`/`afterAll` hook that throws reports EVERY assertion in that file as
- *    `status: 'skipped'` — including one that was genuinely, deliberately `.skip()`-ed, which this
- *    format gives no way to tell apart from a hook's victim — disambiguated only by the file's own
- *    `message` being non-empty (an ordinary file where some other test merely failed also sets the
- *    file `status` to `'failed'`, but leaves `message` empty).
+ * 2. A **top-level** `beforeAll`/`afterAll` hook that throws (one declared outside any `describe()`)
+ *    reports EVERY assertion in that file as `status: 'skipped'` — including one that was genuinely,
+ *    deliberately `.skip()`-ed, which this format gives no way to tell apart from a hook's victim at
+ *    the per-assertion level — disambiguated only by the file's own `message` being non-empty.
+ *
+ * DISCLOSED LIMIT, confirmed two ways (a real run against this monorepo's own installed Vitest
+ * 4.1.11, and reading that exact version's bundled `JsonReporter.onTestRunEnd`,
+ * `vitest/dist/chunks/index.*.js`): the hook-throw reclassification above fires ONLY for a top-level
+ * hook. The realistic, common case — a hook declared INSIDE a `describe()` block, which this
+ * codebase's own fixtures use throughout — does not: `message` is computed as
+ * `file.result?.errors?.[0]?.message ?? ''`, read off the FILE task's own `errors` alone, and a
+ * nested suite's hook failure is recorded on the SUITE's task, never the file's — so `message` is the
+ * empty string for a nested hook throw, structurally indistinguishable from an ordinary file where no
+ * hook failed. Verified directly: a `beforeAll` thrown inside a `describe()`, next to a deliberately
+ * `.skip()`-ed test, produces `message: ""` and `status: "skipped"` for BOTH tests, with no other
+ * field (per-test `failureMessages` included) carrying the hook's error anywhere in the JSON. This
+ * parser therefore does the only honest thing available from this data: it reads both as `'skip'`,
+ * exactly as `09` §9.5's own "degrade to a stated outcome rather than guessing" principle requires,
+ * rather than claiming a disambiguation Vitest's own `--reporter=json` does not actually carry for
+ * this case. `format: junit-xml` (Vitest's own `--reporter=junit`) does carry it, confirmed directly
+ * against the identical fixture: a nested hook failure adds one EXTRA `<testcase>`, named after the
+ * `describe()` block itself, with a real `<failure message="...">` — alongside the two genuinely
+ * `<skipped/>` testcases for the tests that never ran — so `parseJunitXml` (this directory's own
+ * `junit-xml.ts`) surfaces it as a real `fail`/`kind: 'assertion'` entry (oddly named after the suite,
+ * not a real test, but visible) rather than silently losing it. A project that needs this
+ * disambiguation reliably from Vitest should prefer `format: junit-xml` over `format: vitest-json`.
  *
  * @see specs/09 §9.5
  * @see specs/13 F-TEST-7 point 2

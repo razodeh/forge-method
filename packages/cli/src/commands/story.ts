@@ -536,13 +536,20 @@ function outcomeFromRun(
 
 async function runRule(ctx: StoryVerifyContext, rule: 'lint' | 'typecheck'): Promise<Resolution> {
   const command = ctx.testCommands[rule];
-  // `lint`/`typecheck` have no `forge-test-report` outcomes to parse -- the structured form
-  // (post-v1.0, `specs/22` M17 P3) has no meaning here (`run.ts`'s own `runLintRule`/
-  // `runTypecheckRule` read the identical way).
-  if (command === undefined || typeof command !== 'string') {
+  if (command === undefined) {
     return {
       status: 'unverifiable',
       message: `execution.testCommands.${rule} is not configured, so the ${rule} check cannot run.`,
+    };
+  }
+  // `lint`/`typecheck` have no `forge-test-report` outcomes to parse -- the structured form
+  // (post-v1.0, `specs/22` M17 P3) has no meaning here (`run.ts`'s own `runLintRule`/
+  // `runTypecheckRule` read the identical way). A real, honest message naming what IS configured,
+  // never the misleading "not configured" a structured entry is not.
+  if (typeof command !== 'string') {
+    return {
+      status: 'unverifiable',
+      message: `execution.testCommands.${rule} is the structured testCommands form, which this exit-code-driven check cannot run.`,
     };
   }
   const result = await (ctx.runTests ?? testRun)(

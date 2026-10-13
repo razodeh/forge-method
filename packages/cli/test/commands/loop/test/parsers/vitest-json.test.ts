@@ -5,12 +5,15 @@
  * unchanged by this piece).
  *
  * Every fixture below is REAL `vitest --reporter=json` output, captured directly during this piece's
- * own build against this monorepo's own installed Vitest, including the same two edge cases
- * `reporter.ts`'s own legacy vitest handling already documents and this parser mirrors for the
- * identical, confirmed reason: a file that fails to load reports `assertionResults: []` with the
- * file's own `status: 'failed'`; a `beforeAll` hook that throws reports EVERY assertion in that file
- * as `status: 'skipped'` (even one that was never going to run anyway, and one that WAS deliberately
- * `.skip()`-ed), distinguishable only by the file's own non-empty `message`.
+ * own build against this monorepo's own installed Vitest (4.1.11), including: a file that fails to
+ * load (`assertionResults: []`, file `status: 'failed'`); a **top-level** `beforeAll` throw (declared
+ * outside any `describe()`), where the file's own `message` IS populated and the reclassification
+ * fires; and a **nested** `beforeAll` throw (inside a `describe()` block — the realistic, common
+ * case this codebase's own fixtures use throughout), where `message` is confirmed EMPTY and no other
+ * field carries the hook's error either — `parseVitestJson`'s own doc comment has the full citation
+ * (Vitest's bundled `JsonReporter` reads `file.result?.errors?.[0]?.message` only, never a nested
+ * suite's own). The nested case is a disclosed, real limitation of Vitest's `--reporter=json` output
+ * itself, not a gap in this parser: there is no signal left to read.
  *
  * @see specs/09 §9.5
  * @see specs/13 F-TEST-7 point 2
@@ -41,10 +44,10 @@ const BASE_JSON = JSON.stringify({
 const BROKEN_FILE_JSON =
   '{"testResults":[{"assertionResults":[],"status":"failed","message":"Cannot find package \'this-module-does-not-exist-xyz\' imported from /fixture/broken/x.test.js","name":"/fixture/broken/x.test.js"}]}';
 
-// Real capture: `vitest run --root hook --reporter=json` against a `beforeAll` that throws, next to
-// a test that was ALSO deliberately `.skip()`-ed -- both report `status: "skipped"`, disambiguated
-// only by the file's own non-empty `message`.
-const HOOK_THREW_JSON = JSON.stringify({
+// Real capture: `vitest run --root hook --reporter=json` against a TOP-LEVEL `beforeAll` (declared
+// outside any describe()) that throws, next to a test that was ALSO deliberately `.skip()`-ed -- both
+// report `status: "skipped"`, disambiguated only by the file's own non-empty `message`.
+const TOP_LEVEL_HOOK_THREW_JSON = JSON.stringify({
   testResults: [
     {
       assertionResults: [
@@ -54,6 +57,38 @@ const HOOK_THREW_JSON = JSON.stringify({
       status: 'failed',
       message: 'boom',
       name: '/fixture/hook/x.test.js',
+    },
+  ],
+});
+
+// Real capture (re-confirmed directly, critic-prompted): the IDENTICAL fixture, but with the
+// beforeAll declared INSIDE a describe() block -- `vitest run --reporter=json` against:
+//   describe('a describe block', () => {
+//     beforeAll(() => { throw new Error('boom in nested beforeAll'); });
+//     test('AC-300-1 never actually runs either', () => {});
+//     test.skip('a real skip next to the hook failure', () => {});
+//   });
+// Real, byte-for-byte output: file-level "message" is the EMPTY STRING, and neither assertionResult
+// carries the hook's error anywhere (no failureMessages field in vitest's own JSON shape at all) --
+// confirmed there is no recoverable signal, not merely that this parser does not read one.
+const NESTED_HOOK_THREW_JSON = JSON.stringify({
+  testResults: [
+    {
+      assertionResults: [
+        {
+          ancestorTitles: ['a describe block'],
+          fullName: 'a describe block AC-300-1 never actually runs either',
+          status: 'skipped',
+        },
+        {
+          ancestorTitles: ['a describe block'],
+          fullName: 'a describe block a real skip next to the hook failure',
+          status: 'skipped',
+        },
+      ],
+      status: 'failed',
+      message: '',
+      name: '/fixture/nested-hook/sample.test.js',
     },
   ],
 });
@@ -89,12 +124,22 @@ describe('parseVitestJson (specs/22 M17 P3)', () => {
     });
   });
 
-  it('a thrown beforeAll reclassifies every "skipped" assertion in that file into fail/crash -- including one that was genuinely .skip()-ed, which this format cannot tell apart from the hook victim', () => {
-    const result = parseVitestJson(HOOK_THREW_JSON);
+  it('a TOP-LEVEL thrown beforeAll reclassifies every "skipped" assertion in that file into fail/crash -- including one that was genuinely .skip()-ed, which this format cannot tell apart from the hook victim', () => {
+    const result = parseVitestJson(TOP_LEVEL_HOOK_THREW_JSON);
     if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
     expect(result.tests).toHaveLength(2);
     for (const entry of result.tests)
       expect(entry).toMatchObject({ status: 'fail', kind: 'crash' });
+  });
+
+  it('DISCLOSED LIMIT: a NESTED (inside describe()) thrown beforeAll carries no recoverable signal at all -- both the real victim and the genuine skip read as plain "skip", never a false "crash"', () => {
+    const result = parseVitestJson(NESTED_HOOK_THREW_JSON);
+    if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+    expect(result.tests).toHaveLength(2);
+    for (const entry of result.tests) {
+      expect(entry.status).toBe('skip');
+      expect(entry.kind).toBeUndefined();
+    }
   });
 
   it('a genuinely empty testResults array is ok with zero tests, never a tool-error', () => {

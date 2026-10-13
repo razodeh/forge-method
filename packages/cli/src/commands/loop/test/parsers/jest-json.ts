@@ -9,7 +9,11 @@
  *    a deliberately `.skip()`-ed test was confirmed to report the real test that never ran as
  *    `status: "failed"` DIRECTLY (its own `failureMessages` carrying the hook's error), while the
  *    genuinely skipped one still reads `status: "pending"` — Jest already tells the two apart on its
- *    own, so this parser trusts `status` as given.
+ *    own, so this parser trusts `status` as given. Re-confirmed with the hook declared INSIDE a
+ *    `describe()` block too (the case `vitest-json.ts`'s own doc comment discloses Vitest cannot
+ *    recover at all): Jest's own behaviour is identical either way — the real victim still reads
+ *    `"failed"` with the hook's error in `failureMessages`, the genuine skip still reads `"pending"`,
+ *    nesting changes nothing.
  *
  * @see specs/09 §9.5
  * @see specs/13 F-TEST-7 point 2

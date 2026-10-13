@@ -78,17 +78,19 @@ describe('testRun — a structured testCommands.<layer> entry is not yet routed 
     ]);
   });
 
-  it('--rule lint: a structured lint entry is treated the same as "not configured"', async () => {
+  it('--rule lint: a structured lint entry cannot be run here, with an honest message naming what IS configured (never the misleading "not configured")', async () => {
     const dir = await tempDir();
     const result = await testRun(
       ctx(dir, { lint: { run: 'exit 1', output: { source: 'stdout' }, format: 'tap' } }),
       { rule: 'lint' },
       UNUSED_TEMP_PATH,
     );
-    expect(result.problems).toEqual(['no lint command configured (execution.testCommands.lint)']);
+    expect(result.problems).toEqual([
+      'execution.testCommands.lint is the structured testCommands form, which this exit-code-driven check cannot run',
+    ]);
   });
 
-  it('--rule typecheck: a structured typecheck entry is treated the same as "not configured"', async () => {
+  it('--rule typecheck: a structured typecheck entry cannot be run here, with an honest message naming what IS configured', async () => {
     const dir = await tempDir();
     const result = await testRun(
       ctx(dir, { typecheck: { run: 'exit 1', output: { source: 'stdout' }, format: 'tap' } }),
@@ -96,7 +98,7 @@ describe('testRun — a structured testCommands.<layer> entry is not yet routed 
       UNUSED_TEMP_PATH,
     );
     expect(result.problems).toEqual([
-      'no typecheck command configured (execution.testCommands.typecheck)',
+      'execution.testCommands.typecheck is the structured testCommands form, which this exit-code-driven check cannot run',
     ]);
   });
 });

@@ -5,15 +5,22 @@
  * directly, with no `<testsuite>` at all (Node's own `--test-reporter=junit`) — both confirmed
  * directly against a real run of each during this piece's own build, so both are walked here.
  *
- * `file` is never set on an entry this parser produces: `classname` — the one candidate most JUnit
- * XML consumers read as a file hint — means something DIFFERENT, and sometimes actively misleading,
- * in every one of the five real dialects confirmed directly: pytest/Vitest use it as the real test
- * module; Jest+jest-junit duplicates `name` into it verbatim (with a stray leading space); Mocha
- * puts the BARE test title there while `name` carries the describe-block-prefixed full title (the
- * reverse of pytest's own convention); Node sets it to the literal, useless string `"test"` for
- * every case. Guessing which convention a given producer follows is exactly the kind of guess `13`
- * F-TEST-7 point 5's own degradation rule exists to prevent — every entry this parser returns
- * attributes by name alone.
+ * `file` is NEVER read from `classname`: that attribute — the one candidate most JUnit XML consumers
+ * reach for — means something DIFFERENT, and sometimes actively misleading, in every one of the five
+ * real dialects confirmed directly: pytest/Vitest use it as the real test module; Jest+jest-junit
+ * duplicates `name` into it verbatim (with a stray leading space); Mocha puts the BARE test title
+ * there while `name` carries the describe-block-prefixed full title (the reverse of pytest's own
+ * convention); Node sets it to the literal, useless string `"test"` for every case. Guessing which
+ * convention a given producer follows is exactly the kind of guess `13` F-TEST-7 point 5's own
+ * degradation rule exists to prevent.
+ *
+ * `file` IS read from a `<testsuite file="...">` attribute, when present, and attributed to every
+ * `<testcase>` that suite directly contains — confirmed real and dialect-unambiguous (unlike
+ * `classname`, no producer this parser was built against gives a literal `file` attribute any other
+ * meaning): Mocha's own `mocha-junit-reporter` sets it to the real spec file's path. pytest,
+ * Jest+jest-junit, this monorepo's own Vitest and Node's `--test-reporter=junit` were each confirmed
+ * directly to never set it at all (absent, not merely empty) — this parser attributes nothing by file
+ * for those, exactly as the degradation rule requires; it reads the one case that is real.
  *
  * @see specs/09 §9.5
  * @see specs/13 F-TEST-7 point 2, point 5
@@ -33,6 +40,7 @@ interface JunitTestCase {
 }
 interface JunitTestSuite {
   readonly testcase?: unknown;
+  readonly '@_file'?: unknown;
 }
 interface JunitTestSuites {
   readonly testsuite?: unknown;
@@ -64,7 +72,13 @@ function durationMsFrom(testcase: JunitTestCase): number | undefined {
   return Number.isFinite(seconds) ? seconds * 1000 : undefined;
 }
 
-function entryFrom(testcase: JunitTestCase): ForgeTestReportEntry | undefined {
+/** `file`, when given, is the enclosing `<testsuite file="...">` attribute (confirmed real for
+ * Mocha's own `mocha-junit-reporter`, confirmed absent for every other dialect this parser was built
+ * against) — never derived from `classname`, this file's own doc comment has the full reasoning. */
+function entryFrom(
+  testcase: JunitTestCase,
+  file: string | undefined,
+): ForgeTestReportEntry | undefined {
   const rawName = testcase['@_name'];
   const name = typeof rawName === 'string' ? rawName.trim() : '';
   // A testcase element with no real name names nothing `forge-test-report` (09 §9.5, name required,
@@ -72,12 +86,14 @@ function entryFrom(testcase: JunitTestCase): ForgeTestReportEntry | undefined {
   // rather than fabricated.
   if (name === '') return undefined;
   const durationMs = durationMsFrom(testcase);
+  const fileField = file === undefined ? {} : { file };
   if (testcase.failure !== undefined) {
     return {
       name,
       status: 'fail',
       kind: 'assertion',
       ...(durationMs === undefined ? {} : { durationMs }),
+      ...fileField,
     };
   }
   if (testcase.error !== undefined) {
@@ -86,12 +102,23 @@ function entryFrom(testcase: JunitTestCase): ForgeTestReportEntry | undefined {
       status: 'fail',
       kind: 'crash',
       ...(durationMs === undefined ? {} : { durationMs }),
+      ...fileField,
     };
   }
   if (testcase.skipped !== undefined) {
-    return { name, status: 'skip', ...(durationMs === undefined ? {} : { durationMs }) };
+    return {
+      name,
+      status: 'skip',
+      ...(durationMs === undefined ? {} : { durationMs }),
+      ...fileField,
+    };
   }
-  return { name, status: 'pass', ...(durationMs === undefined ? {} : { durationMs }) };
+  return {
+    name,
+    status: 'pass',
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...fileField,
+  };
 }
 
 /** Parses `raw` as a JUnit XML report (any of the real dialects this parser's own tests capture). */
@@ -123,19 +150,19 @@ export function parseJunitXml(raw: string): ParseResult {
     };
   }
   const testsuites = document.testsuites as JunitTestSuites;
-  const testcases: JunitTestCase[] = [
-    // Node's own `--test-reporter=junit`: <testcase> children live directly under <testsuites>,
-    // with no <testsuite> wrapper at all -- confirmed directly, so both shapes are walked.
-    ...(toArray(testsuites.testcase) as readonly JunitTestCase[]),
-  ];
-  for (const suite of toArray(testsuites.testsuite) as readonly JunitTestSuite[]) {
-    testcases.push(...(toArray(suite.testcase) as readonly JunitTestCase[]));
-  }
-
   const tests: ForgeTestReportEntry[] = [];
-  for (const testcase of testcases) {
-    const entry = entryFrom(testcase);
+  // Node's own `--test-reporter=junit`: <testcase> children live directly under <testsuites>, with
+  // no <testsuite> wrapper at all -- confirmed directly -- so there is no suite-level `file` either.
+  for (const testcase of toArray(testsuites.testcase) as readonly JunitTestCase[]) {
+    const entry = entryFrom(testcase, undefined);
     if (entry !== undefined) tests.push(entry);
+  }
+  for (const suite of toArray(testsuites.testsuite) as readonly JunitTestSuite[]) {
+    const suiteFile = typeof suite['@_file'] === 'string' ? suite['@_file'] : undefined;
+    for (const testcase of toArray(suite.testcase) as readonly JunitTestCase[]) {
+      const entry = entryFrom(testcase, suiteFile);
+      if (entry !== undefined) tests.push(entry);
+    }
   }
   return { ok: true, tests };
 }

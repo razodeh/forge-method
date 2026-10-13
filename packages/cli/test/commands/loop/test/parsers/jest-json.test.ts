@@ -71,6 +71,39 @@ const HOOK_THREW_JSON = JSON.stringify({
   ],
 });
 
+// Re-confirmed directly (critic-prompted, after vitest-json.ts's own identical scenario turned out
+// NOT to be recoverable): the IDENTICAL beforeAll, declared INSIDE a describe() block this time --
+//   describe('a describe block', () => {
+//     beforeAll(() => { throw new Error('boom in nested beforeAll'); });
+//     test('AC-300-1 never actually runs either', () => {});
+//     test.skip('a real skip next to the hook failure', () => {});
+//   });
+// Real, byte-for-byte jest --json output (stack trace trimmed for readability; the fields this
+// parser reads are verbatim): nesting changes NOTHING -- the real victim still reads "failed" with
+// the hook's error in failureMessages, the genuine skip still reads "pending".
+const NESTED_HOOK_THREW_JSON = JSON.stringify({
+  testResults: [
+    {
+      assertionResults: [
+        {
+          ancestorTitles: ['a describe block'],
+          fullName: 'a describe block AC-300-1 never actually runs either',
+          status: 'failed',
+          failureMessages: ['Error: boom in nested beforeAll'],
+        },
+        {
+          ancestorTitles: ['a describe block'],
+          fullName: 'a describe block a real skip next to the hook failure',
+          status: 'pending',
+          failureMessages: ['Error: boom in nested beforeAll'],
+        },
+      ],
+      status: 'failed',
+      name: '/fixture/hook-nested.test.js',
+    },
+  ],
+});
+
 describe('parseJestJson (specs/22 M17 P3)', () => {
   it('a real pass, fail, plain pass and skip ("pending") are each read correctly', () => {
     const result = parseJestJson(BASE_JSON);
@@ -111,6 +144,19 @@ describe('parseJestJson (specs/22 M17 P3)', () => {
       kind: 'assertion',
     });
     expect(byName.get('a real skip next to the hook failure')?.status).toBe('skip');
+  });
+
+  it('a thrown beforeAll NESTED inside describe(): re-confirmed nesting changes nothing -- still a clean fail/pending split, no reclassification needed', () => {
+    const result = parseJestJson(NESTED_HOOK_THREW_JSON);
+    if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+    const byName = new Map(result.tests.map((entry) => [entry.name, entry]));
+    expect(byName.get('a describe block AC-300-1 never actually runs either')).toMatchObject({
+      status: 'fail',
+      kind: 'assertion',
+    });
+    expect(byName.get('a describe block a real skip next to the hook failure')?.status).toBe(
+      'skip',
+    );
   });
 
   it('a genuinely empty testResults array is ok with zero tests, never a tool-error', () => {
