@@ -23323,3 +23323,57 @@ directly against the real files before landing; one known, already-disclosed `MA
 contention flake reconfirmed clean in isolation.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q316`.
+
+## M17 P14 — Parity oracle hardening
+
+**Rounds: 2 (4 independent critic passes total). Outcome: DONE except one disclosed gap.**
+`packages/cli/src/commands/parity/*` (3 new files), `packages/core/src/errors/codes.ts`, `13`
+F-TEST-9. The most adversarially-hardened surface in the project — M16 P4 took six real rounds on
+these same files — held to the identical bar.
+
+### Round 1 — 2 critics: 1 BLOCKING + 1 BLOCKING/MAJOR + 1 MAJOR + 1 doc + 1 minor, all real
+
+The piece's own prerequisite discovery, before any of the Mandate's five bullets could matter in
+production: `CFG-511/512/513` (M16 P4's own six-round-hardened lint) had never actually been wired
+into the real `forge parity capture`/`check` command path — only called by their own unit tests.
+Wired in first.
+
+Critic 1 found the worker-thread budget has no crash handling: a worker that crashes blocks the
+*entire* budget before the process dies anyway, confirmed by a real mutation producing actual
+uncaught-exception events escaping Vitest's own safety net. Also found candidate isolation has zero
+signal/crash recovery — an ordinary Ctrl+C could leave a user's real `.forge/parity/` renamed away
+with nothing to restore it, no orphan sweep, unlike how `@forge/vcs`'s own lane-worktree mechanism
+already handles the identical risk class. Plus a new, previously-untracked library-surface path-
+redaction gap (confirmed via real adversarial construction) and a stale `normalize.ts` doc comment
+directly contradicting what this piece shipped.
+
+Critic 2, independently, found the tamper-detection catch branch never checks for a recreated
+`.forge/parity/` when the tampering command also throws — defeating the mechanism's own purpose in
+exactly the ordinary case of a case command failing while touching the directory. **More
+consequentially, critic 2 corrected critic 1's own scoping**: the "library-only" isolation gap critic
+1 flagged turned out, confirmed live, to be a real regression for `process`/`file`/`http` surfaces
+too — any surface using a probe-script `run`, a pattern `specs/13`'s own definition of `library`
+implies is valid for other surfaces, not library-exclusive. Also independently reproduced the
+worker-crash mechanism via a different method, with a concretely realistic trigger (EMFILE/ENOMEM
+thread-spawn failure under ordinary load at scale, not an adversarial input).
+
+### Round 2 — fix pass, orchestrator-verified directly (no 3rd critic round — 4 prior deep passes
+already exist)
+
+The worker-crash fix needed real experimentation to get right, not just an error listener: direct
+testing showed `worker.on('error', ...)` structurally cannot fire in time, because the event loop
+cannot run while the main thread blocks in `Atomics.wait` (confirmed: 170 polling iterations over 5s
+never let the handler fire once). The real fix signals through the same shared-memory mechanism the
+success path already uses, synchronously, from inside the worker's own `uncaughtException` handler —
+confirmed ~14ms turnaround against a 5000ms budget. A real bug in the fix's own first draft (importing
+the new sentinel as a value forced Node to evaluate the whole worker file, crashing every test that
+merely imported the budget module) was caught and fixed with a side-effect-free protocol extraction
+before it ever reached review. Candidate isolation's recovery is two layers mirroring two existing
+codebase precedents exactly (signal handlers matching `run/run.ts`'s own; orphan recovery matching
+`@forge/vcs`'s own SIGKILL-case reasoning). The library-only exemption was replaced with the real,
+surface-agnostic `probeSourcePaths` check. The tamper-detection catch branch and `capture`'s own
+nothing-compared refusal were both brought in line with their own success-path/sibling-command
+counterparts. The deeper library path-redaction gap remains disclosed, not fixed — tracked for a
+dedicated follow-up, the identical treatment M17 P8's own `node_modules` regression got.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q317`.

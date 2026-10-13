@@ -29177,3 +29177,89 @@ slips) — worth remembering that a critic's claim about external tool behaviour
 "verify before trusting" discipline as a claim about this codebase's own files.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P3`.
+## Q317 — M17 P14: parity oracle hardening — the Atomics-wait crash-signalling mechanism, the two-layer isolation-recovery design, and one disclosed, not-yet-fixed gap
+
+**Context.** P14's mandate: close the root-token masking gap, isolate the candidate side from
+`.forge/parity/` during observation, make `capture` skip unobservable surfaces like `check` already
+does, give `normalize` a real wall-clock budget, and replace two "accepted as unsafe" rule pairings
+with proven-safe ones. Two gauntlet rounds, two critics each round (4 independent passes total),
+found real issues in every round; all now fixed except one, deliberately disclosed rather than
+force-fixed.
+
+**DECISION 1 — root-token masking closed by widening the existing CFG-512 mechanism (new CFG-516),
+not a new detector.** Both the length-preserving-token and rule-reordering options were disproved by
+direct construction before building anything (a length-preserving token cannot survive two different-
+length root paths; reordering the rewrite against a `replace` rule collapses to the identical masked
+text either way — both re-confirmed independently by a round-2 verification pass). `replace` is now
+refused outright on every root-rewritten surface (`process`/`file`/`http`; `library` is exempt, since
+the rewrite never reaches it). Zero real pipeline tests used a content-discarding rule on the affected
+surfaces, confirmed by grep. Proven against M16 P4's own six-round repro set plus a new adversarial
+round (a start-anchored pattern with the root occurring mid-text, not just the one end-anchored shape
+M16 P4 found).
+
+**DECISION 2 — candidate isolation needed a prerequisite fix before it could be hardened: `CFG-511/
+512/513` (M16 P4's own six-round-hardened catastrophic-pattern and content-discarding-conflict
+checks) had never actually been wired into the real `forge parity capture`/`check` command path —
+only their own unit tests called them.** Wired in as the piece's own necessary first step, confirmed
+via grep that neither command imported this module before.
+
+**DECISION 3 — the worker-thread wall-clock budget's own crash path needed a genuinely different
+mechanism than a `worker.on('error', ...)` listener, discovered by direct experiment, not assumed.**
+A worker that throws before signalling its own completion leaves the shared `Atomics.wait` blocked for
+the *entire* budget — and a bare `worker.on('error', ...)` handler cannot shorten that, because the
+event loop structurally cannot run while the main thread is blocked in `Atomics.wait` (confirmed: a
+170-iteration polling experiment over 5 real seconds never once let the event fire). The real fix: the
+worker's own `process.on('uncaughtException', ...)`, registered as its first statement, writes a new
+`SYNC_CRASHED` sentinel into the same shared memory the success path already uses, synchronously,
+before the crash can propagate further — `Atomics.wait` observes this the instant it's written,
+typically within ~14ms, confirmed by direct experiment. `worker.on('error', () => {})` is also kept,
+purely to suppress Node's default process-crashing behaviour for the one narrower race the handler
+genuinely cannot win in time either way. New, distinct `{status:'crashed'}` outcome, never confused
+with `{status:'timed-out'}`. A real bug the builder introduced and caught before it ever reached
+review: importing the new sentinel as a runtime value forced Node to evaluate the whole worker file's
+real logic on mere import, crashing every test that merely imported the budget module — fixed by
+extracting the shared protocol into its own side-effect-free file.
+
+**DECISION 4 — candidate isolation's crash/interrupt recovery is two layers, mirroring two existing
+codebase precedents exactly, not one new mechanism.** Signal handlers (`SIGINT`/`SIGHUP`/`SIGTERM`),
+installed only while a window is open, performing a **synchronous** restore (never the promise API,
+since `process.exit` abandons pending awaits) — mirroring `run/run.ts`'s own `installRunSignalHandlers`
+almost verbatim. Orphan recovery on the next invocation, decidable from the filesystem alone with no
+process-liveness check (the mechanism's own invariants make any other explanation for a leftover
+hidden directory impossible) — mirroring `@forge/vcs`'s `listOrphanedWorktrees` reasoning exactly, for
+the one case no signal handler can ever catch: `SIGKILL`.
+
+**DECISION 5 — the "library-only" isolation exemption was a real, confirmed regression for process/
+file/http surfaces too, not library-specific as first scoped.** `specs/13` F-TEST-9 defines `library`
+as "a `process` surface whose command is a reviewed probe script under `.forge/parity/probes/`" —
+nothing library-specific, and the existing `probeSourcePaths` helper is already surface-agnostic.
+Replaced the hardcoded `surfaceKind !== 'library'` check with a real `probeSourcePaths(...).length ===
+0` check in both `observe.ts` and `observe-http.ts`, confirmed via a red-first repro (a `process`
+surface with a real probe-script `run`, previously `ERR_MODULE_NOT_FOUND`, now succeeds).
+
+**DECISION 6 — tamper detection's catch branch now checks for recreation too, with an explicit,
+narrow precedence rule.** Previously only the success path checked whether `fn` recreated
+`.forge/parity/`; a case that both recreated the directory AND threw its own error silently skipped
+`RUN-153`. Both branches now run the identical check; when both a recreation and a thrown error are
+true, `RUN-153` wins — a deliberate, narrow exception to "a real failure always wins," since the
+recreation is itself real evidence about `.forge/parity/`'s own trustworthiness that an unrelated
+`fn` failure must not bury.
+
+**DECISION 7 — `capture` now refuses "nothing-compared" the same way `check` already does**, via the
+identical `nonExemptSurfaces.length === 0` guard (new `CFG-517`), closing a real asymmetry where an
+all-exempt declaration silently produced a trivial, empty capture file with zero diagnostic.
+
+**DECISION 8 — the deeper library-surface path-redaction gap is disclosed, not fixed.** A gauntlet
+round constructed a real adversarial case: two `library` observations differing only in which of two
+physical checkout roots the probe ran under read `mismatch` with zero rules, and **still** read
+`mismatch` after adding an explicit, reviewed `replace` rule written specifically to redact the path —
+because `replace` is a complete no-op on `library` (confirmed: `LibraryObservation` has no raw-text
+field for it to act on), and the one rule that is live there, `ignore-json-pointers`, can only delete
+a whole field by its structural path, never redact a substring embedded inside one (an error message,
+a `stack`, a `__dirname`-derived value). Closing this needs a real, new mechanism — a structural,
+pointer-targeted substring-redaction rule, not a field-deletion one — substantial engineering scope
+this piece's own time did not allow. Tracked for a dedicated follow-up piece, the identical treatment
+M17 P8's own `node_modules` regression (`Q314`) got. `compare.ts`'s own `normalizeLibraryOrThrow` doc
+comment carries the full account.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P14`.
