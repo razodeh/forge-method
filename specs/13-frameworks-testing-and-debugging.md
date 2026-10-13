@@ -436,7 +436,8 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   `LC_ALL=C.UTF-8` and `LANG=C.UTF-8`, so a locale or timezone difference between machines is not a
   behaviour difference.
 - **Where each side is observed.** The reference in a scratch worktree at the declared ref, placed
-  under the `.forge/state/` of the tree a capture runs in (gitignored, `18` §18.2) and always removed;
+  outside the project's own working tree, under the user's cache directory (`18`'s Worktree
+  location paragraph, post-v1.0 `specs/22` M17) and always removed;
   the candidate in place, with its head sha, a dirty flag and a digest of its working-tree delta
   recorded. **Observing the candidate isolates `.forge/parity/` from the candidate's own case
   commands** (post-v1.0, `specs/22` M17): the directory is either absent from the tree the case's own
@@ -448,10 +449,13 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   `run` unable to write or restore anything under `.forge/parity/` for the duration of its run (a
   read-only mechanism still permits a read, which the honest boundary below states), which the
   anchor's own boundary sentence below is corrected to state. The scratch tree holds the
-  ref's tracked files and nothing installed or built. Because it
-  sits beneath the same project directory as the candidate, a runtime that finds dependencies by
-  walking up the directory tree (Node's `node_modules`) reaches the same installed copy from both
-  sides, so a change of installed dependency is not seen; for any other runtime, and for anything that
+  ref's tracked files and nothing installed or built. Before M17 P8, this tree lived beneath the
+  project directory, so a runtime that finds dependencies by walking up the directory tree (Node's
+  `node_modules`) reached the candidate's own installed copy from both sides as an emergent property
+  of that nesting, never something the engine itself implemented. Once P8 moved it outside the
+  project's own working tree, that walk-up no longer reaches the candidate's installed packages — a
+  disclosed, open gap for any reference-side command that is a Node program importing a third-party
+  package this way (`SPEC-QUESTIONS.md` Q314); for any runtime, and for anything that
   must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as
   `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine
   knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an

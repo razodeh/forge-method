@@ -1639,16 +1639,16 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it('M16 specs/13 F-TEST-9: the reference is observed in a scratch worktree under the `.forge/state/` of the tree a capture runs in and always removed, the candidate in place with its head sha, a dirty flag and a delta digest recorded', () => {
+  it('M16 specs/13 F-TEST-9: the reference is observed in a scratch worktree outside the project tree (reworded M17 P8) and always removed, the candidate in place with its head sha, a dirty flag and a delta digest recorded', () => {
     const section = parity();
     expectPinned(section, [
-      '**Where each side is observed.** The reference in a scratch worktree at the declared ref, placed under the `.forge/state/` of the tree a capture runs in (gitignored, `18` §18.2) and always removed; the candidate in place, with its head sha, a dirty flag and a digest of its working-tree delta recorded.',
+      "**Where each side is observed.** The reference in a scratch worktree at the declared ref, placed outside the project's own working tree, under the user's cache directory (`18`'s Worktree location paragraph, post-v1.0 `specs/22` M17) and always removed; the candidate in place, with its head sha, a dirty flag and a digest of its working-tree delta recorded.",
     ]);
   });
 
-  it("M16 specs/13 F-TEST-9: the reference's scratch worktree is placed under the `.forge/state/` of the tree a capture runs in", () => {
+  it("M16 specs/13 F-TEST-9: the reference's scratch worktree is placed outside the project's own working tree (reworded M17 P8)", () => {
     const section = parity();
-    expectClause(section, ['placed under the `.forge/state/` of the tree a capture runs in']);
+    expectClause(section, ["placed outside the project's own working tree"]);
   });
 
   it("M16 specs/13 F-TEST-9: the scratch tree holds the ref's tracked files and nothing installed or built", () => {
@@ -1658,10 +1658,10 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it('M16 specs/13 F-TEST-9: a runtime that walks up the directory tree reaches the same installed copy from both sides, so anything else built from the tracked files takes vetted `setup` commands whose install-refusal and registry-allowlist absence vetting narrows but does not enforce', () => {
+  it('M16 specs/13 F-TEST-9: once M17 P8 moved the reference tree outside the project, directory-walk dependency resolution no longer reaches it — a disclosed gap (Q314) — so anything built from the tracked files takes vetted `setup` commands whose install-refusal and registry-allowlist absence vetting narrows but does not enforce', () => {
     const section = parity();
     expectPinned(section, [
-      "Because it sits beneath the same project directory as the candidate, a runtime that finds dependencies by walking up the directory tree (Node's `node_modules`) reaches the same installed copy from both sides, so a change of installed dependency is not seen; for any other runtime, and for anything that must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an agent that needs one, so `setup` is meant to build from what is tracked, which vetting narrows and does not enforce: see the honest boundary), whose bytes are in the declaration digest and which run only in the scratch tree, before the reference is observed (so only at capture: a check observes the candidate alone and runs no `setup`).",
+      "Before M17 P8, this tree lived beneath the project directory, so a runtime that finds dependencies by walking up the directory tree (Node's `node_modules`) reached the candidate's own installed copy from both sides as an emergent property of that nesting, never something the engine itself implemented. Once P8 moved it outside the project's own working tree, that walk-up no longer reaches the candidate's installed packages — a disclosed, open gap for any reference-side command that is a Node program importing a third-party package this way (`SPEC-QUESTIONS.md` Q314); for any runtime, and for anything that must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an agent that needs one, so `setup` is meant to build from what is tracked, which vetting narrows and does not enforce: see the honest boundary), whose bytes are in the declaration digest and which run only in the scratch tree, before the reference is observed (so only at capture: a check observes the candidate alone and runs no `setup`).",
     ]);
   });
 
@@ -4872,16 +4872,17 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it('M16 F-TEST-9 block [12] (r3g items 1/2): Where each side is observed. (reworded M17 P1: the candidate-side isolation sentence is inserted)', () => {
+  it('M16 F-TEST-9 block [12] (r3g items 1/2): Where each side is observed. (reworded M17 P1: the candidate-side isolation sentence is inserted; reworded M17 P8: the reference tree moves outside the project)', () => {
     const section = parity();
     expectBlock(section, [
       '**Where each side is observed.**',
-      'The reference in a scratch worktree at the declared ref, placed under the `.forge/state/` of the tree a capture runs in (gitignored, `18` §18.2) and always removed; the candidate in place, with its head sha, a dirty flag and a digest of its working-tree delta recorded.',
+      "The reference in a scratch worktree at the declared ref, placed outside the project's own working tree, under the user's cache directory (`18`'s Worktree location paragraph, post-v1.0 `specs/22` M17) and always removed; the candidate in place, with its head sha, a dirty flag and a digest of its working-tree delta recorded.",
       "**Observing the candidate isolates `.forge/parity/` from the candidate's own case commands**",
       "(post-v1.0, `specs/22` M17): the directory is either absent from the tree the case's own `run` sees, or mounted read-only for it, closing the self-reverting-tamper gap the honest boundary below used to disclose rather than close — a case that reads a capture's own stored observation while it runs, edits it, and restores it before the trust anchor's second comparison, which the anchor cannot see either way (its two comparisons bracket the run, never watch it continuously).",
       "Which of the two mechanisms is used is this milestone's own BUILD decision; either makes a case's own `run` unable to write or restore anything under `.forge/parity/` for the duration of its run (a read-only mechanism still permits a read, which the honest boundary below states), which the anchor's own boundary sentence below is corrected to state.",
       "The scratch tree holds the ref's tracked files and nothing installed or built.",
-      "Because it sits beneath the same project directory as the candidate, a runtime that finds dependencies by walking up the directory tree (Node's `node_modules`) reaches the same installed copy from both sides, so a change of installed dependency is not seen; for any other runtime, and for anything that must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an agent that needs one, so `setup` is meant to build from what is tracked, which vetting narrows and does not enforce: see the honest boundary), whose bytes are in the declaration digest and which run only in the scratch tree, before the reference is observed (so only at capture: a check observes the candidate alone and runs no `setup`).",
+      "Before M17 P8, this tree lived beneath the project directory, so a runtime that finds dependencies by walking up the directory tree (Node's `node_modules`) reached the candidate's own installed copy from both sides as an emergent property of that nesting, never something the engine itself implemented.",
+      "Once P8 moved it outside the project's own working tree, that walk-up no longer reaches the candidate's installed packages — a disclosed, open gap for any reference-side command that is a Node program importing a third-party package this way (`SPEC-QUESTIONS.md` Q314); for any runtime, and for anything that must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an agent that needs one, so `setup` is meant to build from what is tracked, which vetting narrows and does not enforce: see the honest boundary), whose bytes are in the declaration digest and which run only in the scratch tree, before the reference is observed (so only at capture: a check observes the candidate alone and runs no `setup`).",
       'With none, a surface that needs more than the tracked files cannot be observed on the reference side, and the declaration must say how to get it.',
       'FORGE builds nothing for the candidate.',
       "A case's command is the same on both sides, so one that reads build output must build it itself: ignored build output is outside the declaration digest, the anchor and the snapshot below, so a stale build of the candidate is not detected and can read as `match`.",

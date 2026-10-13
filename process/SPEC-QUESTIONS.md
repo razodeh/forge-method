@@ -29014,3 +29014,67 @@ being a real constraint there). Restating it for `G-TestAdopt` alone would be in
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P1` (orchestrator writes the log entry at commit time,
 after this piece's own report and the critics').
+
+## Q314 — M17 P8's own build found a real contradiction in P1's just-landed spec text, plus a genuine, disclosed regression the relocation itself causes
+
+**Context.** M17 P8 (worktrees move outside the project tree) found, while building against the spec
+text P1 landed in `31fac32`/`73a378b`, that `specs/13` F-TEST-9 and `specs/18`'s new "Worktree
+location" paragraph — both landed by the *same* P1 commit — directly contradicted each other on
+where the parity reference scratch tree lives. `specs/18` (the newer, more specific, more recently
+reasoned paragraph, matching P8's own Mandate instruction to remove parity's in-tree special case)
+says lane/integration worktrees "and parity's own reference scratch tree" move out of the project
+tree entirely. `specs/13`'s own, unedited-by-P1 sentence still said the reference tree is "placed
+under the `.forge/state/` of the tree a capture runs in" — the old, in-tree shape. Neither P1's own
+two gauntlet rounds, two critics each round, nor the orchestrator's own direct verification caught
+this, because nobody was specifically cross-checking specs/13 against specs/18's own new paragraph
+sentence-by-sentence; each read specs/13 or specs/18 in isolation and found their own paragraph
+internally consistent.
+
+**Fixed directly by the orchestrator** (prose-only correction, no design decision required — specs/18
+is unambiguously the correct, intended shape): `specs/13-frameworks-testing-and-debugging.md`'s
+"Where each side is observed" sentence now says the reference tree is "placed outside the project's
+own working tree, under the user's cache directory (`18`'s Worktree location paragraph...)" instead
+of the stale in-tree literal. Four pre-existing M16-era pins in `test/spec-cli-examples.test.ts`
+updated to match (one `expectPinned`, one `expectClause`, one more `expectPinned`, and one
+`expectBlock` whose own array needed the reworded paragraph split into two sentences to match the
+real sentence-splitter's own boundary) — all four legitimately reworded, not deleted, since each
+still pins a real, meaningful sentence.
+
+**A second, more substantive thing P8 found while building: a genuine regression the relocation
+itself causes, not a text error.** `specs/13`'s very next sentence made a now-false claim: "Because
+it sits beneath the same project directory as the candidate, a runtime that finds dependencies by
+walking up the directory tree (Node's `node_modules`) reaches the same installed copy from both
+sides." This was true only as an *emergent property* of the reference tree's old, in-project nesting
+— never something the engine itself implemented (confirmed by P8 via a direct grep: no file under
+`packages/cli/src/commands/parity/*.ts` has any symlinking, `NODE_PATH` injection, or documentation
+of this reliance). Once the reference tree moves outside the project (P8's own, correct, Decision-1
+change), that directory-walk-up resolution no longer reaches the candidate's installed packages.
+
+**Real consequence**: any parity declaration whose reference-side `run` or `setup` command is a
+Node program that imports a third-party (non-builtin) package — relying on the old, accidental
+nesting rather than installing its own dependencies inside the scratch tree, or being told to via
+`setup` — previously worked by accident and will now fail to resolve that import once P8 lands.
+
+**DECISION (not yet fixed; disclosed, tracked, routed):** this is a genuine engineering gap requiring
+its own design decision (symlink `node_modules` into the scratch tree before running? inject
+`NODE_PATH` pointing at the project's own `node_modules`? require every such `setup` to install its
+own dependencies, accepting the cost?) — correctly judged by P8's own builder as outside its narrow
+Mandate ("remove parity's own in-tree special case *at `observe.ts:458`*," not a redesign of parity's
+dependency-resolution guarantee) and risking collision with P14's own, concurrent, deliberate
+parity-oracle-hardening work on the same files. The orchestrator is tracking this as a new, disclosed
+M17 defect-register item (not one of the original 21+6) for a dedicated follow-up piece once the
+current wave of chain-head pieces lands — specs/13's own text (fixed above) now honestly discloses
+the gap and cites this Q-entry, rather than asserting the false "reaches the same installed copy"
+claim. Not blocking P8's own landing: the regression is a necessary, foreseeable consequence of a
+correct architectural change the owner explicitly asked for, not a defect in P8's own implementation
+of that change.
+
+**Also found by P8, disclosed, not yet reconciled:** a real Surface overlap with P10 on
+`packages/engine/src/resume/orchestrate.ts` (P10's own Mandate text names `engine/src/resume/*`,
+which literally includes this file; P8 needed one narrow fix there too) — P8 kept its own edit
+surgical (only the `laneWorktreePath` helper, its doc comment, and its 3 call sites) specifically to
+minimize reconciliation difficulty, but this needs real, careful manual-merge attention (not just a
+clean textual rebase) when both pieces land, given the file is genuinely shared, not just
+coincidentally touched.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P8` (once P8 itself lands).
