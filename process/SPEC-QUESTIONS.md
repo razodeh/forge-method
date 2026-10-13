@@ -29126,3 +29126,54 @@ with or without this diff): `test/brief-write-paths-in-claim.test.ts`'s 2 failur
 the `73a378b` base, unrelated to this piece.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P11`.
+
+## Q316 — M17 P3: the canonical test report, structured testCommands, parsers — the vitest-json hookThrew limit, and the DECISIONs this piece made
+
+**Context.** P3's mandate: a `forge-test-report` v1 schema, a structured `testCommands` config shape
+(legacy string or `{run, output, format, translate?, scope?, filter?, timeoutMs?}`), 6 built-in
+parsers, and a new `runStructuredTestLayer`. Two independent critics reviewed it; one found zero real
+defects despite genuine adversarial effort (raising a Go `test -json` concern the orchestrator
+independently verified via web search against Go's real `test2json` docs and found factually wrong —
+Go's `Action` enum is fixed, build failures still use `Action:'fail'`, which the parser already
+handles, plus a newer `FailedBuild` field the parser doesn't use yet, a minor precision opportunity
+not a defect). The other found one real BLOCKING issue via direct reproduction against this
+monorepo's own installed Vitest, plus a real missed-enrichment opportunity and a diagnostic-honesty
+inconsistency.
+
+**DECISION 1 — `vitest-json.ts`'s hook-throw disambiguation is honestly scoped to the top-level case,
+not falsely claimed for the realistic, `describe()`-nested one.** The critic reproduced the exact
+scenario (a throwing `beforeAll` inside a `describe()` block, next to a genuinely `.skip()`-ed test)
+against Vitest 4.1.11 and found both tests report `status:'skip'` with no error anywhere — the
+builder independently re-confirmed this, then went further and read Vitest's own bundled
+`JsonReporter` source to find the structural root cause: the file-level `message` field reads only
+the file task's own `errors`; a nested suite's hook failure is recorded on the suite's task, never
+the file's. **There is no signal anywhere in `--reporter=json` output for this case** — confirmed
+structurally, not merely for one fixture. Rather than ship a false fix, the doc comment and test
+fixture now state the real, narrower scope (renamed `HOOK_THREW_JSON` → `TOP_LEVEL_HOOK_THREW_JSON`;
+added `NESTED_HOOK_THREW_JSON` pinning the honest, current behaviour: both read `'skip'`, never a
+false `'crash'`). A genuinely useful alternative was found and documented: `--reporter=junit` against
+the identical fixture produces an *extra* `<testcase>` named after the `describe()` block carrying a
+real `<failure>` — so `format: junit-xml` surfaces this specific failure where `vitest-json`
+structurally cannot. The sibling Jest claim (unaffected by this same nesting) was independently
+re-verified against real Jest 30.5.2 rather than taken on faith, and confirmed to hold.
+
+**DECISION 2 — `junit-xml.ts` now reads a `<testsuite file="...">` attribute** (Mocha's
+`mocha-junit-reporter` only), confirmed to carry no cross-dialect ambiguity (pytest, Vitest, Jest+
+jest-junit, and Node's own `--test-reporter=junit` were each confirmed to never set it), unlike
+`classname`, which genuinely does mean different, contradictory things across dialects and is
+correctly still never read as a file.
+
+**DECISION 3 — honest "structured form" messages at 3 sites** (`run.ts`'s `runLintRule`/
+`runTypecheckRule`, `story.ts`'s `runRule`) that previously said "not configured" for a layer the user
+HAD configured, just in the structured shape these particular exit-code-driven checks can't run —
+now matching `layer.ts`'s own already-correct wording exactly. `story.ts`'s `runLayer` (a different
+function, for actual test layers rather than lint/typecheck) deliberately left untouched — outside
+the critic's flagged scope and arguably a different, more defensible case once P4 wires it.
+
+**Also confirmed, independently, by the orchestrator**: the Go-parser concern above is the second
+time this milestone a critic's own "recollection" of an external tool's behaviour turned out
+incorrect under direct verification (the first being the M17 P1 fix-pass's own F-TEST-9 citation
+slips) — worth remembering that a critic's claim about external tool behaviour deserves the same
+"verify before trusting" discipline as a claim about this codebase's own files.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P3`.

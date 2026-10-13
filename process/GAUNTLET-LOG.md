@@ -23273,3 +23273,53 @@ further full `pnpm test` runs each reproducing the identical, byte-for-byte fail
 this diff's presence.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q315`.
+
+## M17 P3 — The canonical test report, structured `testCommands`, parsers and translators
+
+**Rounds: 2. Outcome: DONE.** `packages/schemas/src/test-report.ts` (new), `packages/schemas/src/
+config/*`, `packages/cli/src/commands/loop/test/{reporter,run}.ts`, `packages/cli/src/commands/loop/
+test/parsers/*` (new), `packages/cli/src/commands/story.ts`.
+
+### Round 1 — 2 independent critics: 1 found nothing despite real adversarial effort, 1 found a real
+BLOCKING issue via direct reproduction
+
+Both critics ran the full scoped matrix and tried hard to break the translator sandbox/timeout
+parity, R2/R8, the `forge-test-report` schema's `superRefine`, and schema registration — all held.
+One critic raised a concern about `go-test-json.ts` possibly missing a newer Go `test -json` "build-
+fail" action string, based on recollection rather than a locally-available Go toolchain. **The
+orchestrator independently settled this via a web search against Go's own real `test2json`
+documentation and found the recollection factually wrong**: Go's `Action` enum is fixed (no such
+string exists); build failures still use `Action:'fail'`, which the parser already handles, plus a
+newer `FailedBuild` field the parser doesn't use yet — a minor precision opportunity, not a defect.
+No fix needed from this finding; worth remembering as the second time this milestone a critic's own
+recollection of external tool behaviour (not this codebase's own files) needed, and received, the
+identical verify-before-trusting discipline as any other claim.
+
+The other critic built the real scenario `vitest-json.ts`'s own Decision 4 depends on — a `describe()`
+-nested `beforeAll` throw next to a genuine `.skip()` — ran it against this monorepo's own installed
+Vitest 4.1.11, and found the parser's whole hook-throw disambiguation never fires for it: both tests
+read `status:'skip'`, no error anywhere, confirmed with async hooks and `afterAll` too. Also found a
+real, free precision win in `junit-xml.ts`: Mocha's own `<testsuite file="...">` attribute, present in
+the builder's own captured fixture but never read, with no cross-dialect ambiguity (unlike
+`classname`). Plus a diagnostic-honesty inconsistency (3 sites said "not configured" for a layer the
+user had configured, just in the structured shape).
+
+### Round 2 — fix pass, orchestrator-verified directly (no 3rd critic round — 2 prior deep passes
+already exist)
+
+Rather than invent a false fix for the `vitest-json.ts` gap, the builder read Vitest's own bundled
+`JsonReporter` source and confirmed the structural root cause: the file-level `message` field only
+ever reads the file task's own errors; a nested suite's hook failure lives on the suite's task, never
+the file's — **there is no signal anywhere in `--reporter=json` output for this case.** The fix is
+honest disclosure, not a fabricated detector: the doc comment and fixture now state the real,
+narrower scope, with a new pin proving the honest current behaviour. A genuinely useful finding
+alongside it: `--reporter=junit` on the identical fixture surfaces this exact failure (oddly named,
+but visible) where `vitest-json` structurally cannot. The sibling Jest claim, which the original
+critic couldn't verify (no Jest install in its own sandbox), was independently re-run against real
+Jest 30.5.2 and confirmed to hold — nesting doesn't break Jest's own disambiguation the way it breaks
+Vitest's. `junit-xml.ts` now reads the Mocha `file` attribute; the 3 diagnostic messages now match
+`layer.ts`'s own already-correct wording. All fixes independently spot-checked by the orchestrator
+directly against the real files before landing; one known, already-disclosed `MAX_DIRS_VISITED`
+contention flake reconfirmed clean in isolation.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q316`.
