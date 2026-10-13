@@ -23377,3 +23377,47 @@ counterparts. The deeper library path-redaction gap remains disclosed, not fixed
 dedicated follow-up, the identical treatment M17 P8's own `node_modules` regression got.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q317`.
+
+## M17 P10 — Retries for real, agent-step limits, and re-running after partial integration
+
+**Rounds: 2 full gauntlet passes, 4 independent critics total, plus the builder's own self-caught
+regressions between rounds. Outcome: DONE.** `packages/engine/src/{budget,dispatch,plan,run,scheduler,
+workflow}/*`, `@forge/vcs`'s `lanes.ts`, 6 workflow templates.
+
+The real wiring (`Scheduler.resetToPending`, `driveToCompletion` consulting `decideRetry`/
+`computeBackoff`, `wallClockMs` made authorable across 8 characterise-then-change steps) was the
+smaller part of this piece. The reuse-after-partial-integration mechanism — re-verifying
+`checkDeclaredOutputs` against a historical success instead of colliding with a stale lane — needed
+TWO separate correctness gates, each found by a different, independent pass, and together they're
+the strongest example this milestone of why the gauntlet runs in full even on a "pure wiring" piece.
+
+**Gate A, self-caught by the builder between its own two reports**: the original mechanism matched on
+step id alone, so a deliberate re-invocation of an already-COMPLETED workflow could still "reuse" its
+own prior completion — caught via a production test (`kb-output-ids.test.ts`) flipping from `'failed'`
+to `'completed'` as a side effect of unrelated work, not by design. Fixed: any run that reached
+`RunCompleted` is excluded from reuse outright. The same follow-up also caught two of the builder's
+own process violations (2 scratch commits made despite COMMON-HEAD's explicit prohibition, recovered
+via a verified-byte-identical soft+mixed reset) and 3 more naming-rule mistakes.
+
+**Gate B, found independently by a critic reviewing the pre-Gate-A state**: even a genuinely partial
+(never-completed) predecessor offered no guarantee it used the SAME workflow/step definition as the
+current run — an edited workflow sharing old ids could still wrongly reuse stale work from a crashed
+run under the OLD definition, since Gate A's own completion check doesn't apply to a run that never
+completed. Proven via live repro: two different workflow definitions sharing one workflow+step id,
+the second run silently reusing the first's output, a real session never dispatched. This survives
+Gate A and needed its own, structurally different fix: a per-step content fingerprint (agent + brief
+CONTENT, loaded the same way prompt assembly itself loads it, plus declared outputs) recorded on
+`LaneCreated` and checked before any historical success is trusted. A second critic, independently,
+found and proved via mutation that the "zero declared outputs" guard and the write-ahead
+`StepRetried`-before-`sleep` ordering both had zero regression coverage — both closed with tests
+designed to actually distinguish the failure mode (an event-log read-back probe for the ordering case,
+since a naive event-type check can't tell two orderings apart).
+
+**One more self-caught bug while fixing the ordering test**: the test file's own shared context
+builder silently dropped every `sleep` override passed to it, meaning every retry test in that file —
+old and new — had been running against the real timer regardless of what it asked for. This is the
+exact same class of undisclosed cost an independent critic separately measured in two OTHER,
+untouched sibling test files — found twice, independently, in different places, which is itself a
+useful signal about how an easy-to-miss a silently-ignored test parameter can be.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q318`.

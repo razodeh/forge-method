@@ -29263,3 +29263,72 @@ M17 P8's own `node_modules` regression (`Q314`) got. `compare.ts`'s own `normali
 comment carries the full account.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P14`.
+## Q318 — M17 P10: real retry wiring, authorable wallClockMs, reuse-after-partial-integration — the two correctness gates the reuse mechanism needed, found across two full gauntlet rounds
+
+**Context.** P10's mandate: wire `decideRetry`/`computeBackoff` into real production use (previously
+correct but unused — a pure wiring job), make `wallClockMs` authorable, and close the real `RUN-083`-
+adjacent collision M16 P9's own log disclosed (a fresh run whose predecessor already integrated some
+steps colliding with a stale lane instead of reusing or superseding it). The reuse mechanism this
+third requirement needed turned out to be the highest-stakes, most-scrutinized part of the whole
+piece — correctly, since a bug here means a step gets silently, permanently treated as already done.
+
+**DECISION 1 — `Scheduler.resetToPending` is a distinct, explicit non-terminal primitive, not an
+overload of `markFailed`/`markSkipped`.** A retried step is in neither terminal state; it needs to
+re-enter the SAME admission path (`computeReadySet`/`combinedCanAdmit`) a fresh candidate would, with
+no shortcut past budget or concurrency checks. Verified directly: deleting `running.delete(id)` from
+the real implementation is caught decisively by 6 tests, confirming the retried step really is
+indistinguishable from fresh to every downstream check.
+
+**DECISION 2 — `RunEngineContext.sleep` defaults to a REAL timer, the opposite direction from
+`canAdmit`/budget's own permissive no-op seams.** Production retries must actually wait out backoff;
+omitting the override must never silently skip it. This default choice had a real, undisclosed cost
+the gauntlet itself caught twice: two pre-existing, unmodified test files (`lane-integration.test.ts`,
+`stacked-lanes.test.ts`) that drive real retries without overriding `sleep` became measurably slower
+(up to 3.6s per test) — fixed by threading the same override into their own shared test-context
+helpers. And, found by the builder itself while building a different test: the test file's own
+`fixtureContext` helper had silently never copied `overrides.sleep` into the context it returned at
+all — every sleep override anywhere in that file, old and new, was being ignored, which is exactly why
+nobody had noticed the slowdown pattern until an independent critic measured it directly in a
+different pair of files.
+
+**DECISION 3 (the piece's own real center of gravity) — the reuse mechanism needed TWO independent
+correctness gates, each found necessary by a full, independent gauntlet pass, neither obvious from
+the Mandate's own prose.**
+
+*Gate A — a candidate run that itself reached `RunCompleted` is never a reuse source.* Found by the
+builder's own diligence (a production test, `kb-output-ids.test.ts`, caught it as a side effect) after
+its first report: the original mechanism matched on step id alone, so a deliberate, independent
+RE-INVOCATION of a workflow that had already fully completed could still have its own steps "reused"
+from that prior completion, skipping real work a user explicitly asked to run again. Fixed: any
+candidate run that reached `RunCompleted` is excluded outright, regardless of that step's own outcome
+inside it — "a fresh run after PARTIAL integration" specifically means the predecessor did not finish.
+
+*Gate B — a per-step content fingerprint must match the CURRENT definition, not just the id strings.*
+Found independently by a gauntlet critic, reviewing the pre-Gate-A state: even restricting reuse to
+genuinely partial (never-completed) predecessors, nothing checked that the historical run used the
+SAME workflow/step DEFINITION. A crashed run under an OLD workflow definition, followed by someone
+editing the project's own workflow YAML (same workflow id, same step id, materially different
+`agent`/`brief`) and starting a fresh run, could still wrongly reuse the OLD run's historical success
+for the step id — Gate A alone doesn't catch this, since the historical run genuinely never completed.
+Proven via live repro (two different workflow definitions sharing one workflow+step id; the second
+run silently reused the first's output, and a real session was never dispatched). Fixed: a SHA-256
+fingerprint of `{agent, brief CONTENT (loaded via the same real loader prompt assembly uses, not just
+the brief's path), outputs}`, recorded on every `LaneCreated` event, compared against the CURRENT
+step's own freshly-computed fingerprint before a historical success is ever trusted — a missing or
+mismatched fingerprint is always treated as "run the real session," never a free pass on uncertain
+evidence.
+
+**Noted connection for a future piece**: `plan/types.ts`'s own `StepNode.idempotencyKey` doc comment
+already names an almost identical problem ("same position, different authored content") and
+explicitly defers it to a future P19/P20. This piece's own fingerprint is deliberately narrower and
+local to the reuse-check module only — not a redesign of what counts as "the same step" anywhere else
+`idempotencyKey` is read. P19/P20 should be aware this narrower, parallel mechanism exists and either
+reuse or explicitly supersede it, not reinvent it independently.
+
+**Also closed in the same gauntlet**: a regression test for the pre-existing "zero declared outputs"
+reuse guard (code was already correct, simply untested — mutation-confirmed it's the sole protection
+against an ordinary agent step with no declared outputs being silently, permanently skipped); a test
+that can genuinely distinguish the write-ahead `StepRetried`-before-`sleep` ordering from its reverse
+(the event-log read-back technique, since a naive event-type check can't tell the two orderings apart).
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P10`.
