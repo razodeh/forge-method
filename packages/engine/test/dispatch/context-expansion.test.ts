@@ -470,6 +470,64 @@ describe('FORGE_REQUEST_CONTEXT expansion (PLAN-M14.md P44) -- via runAgentStep'
     }
   });
 
+  // M17 P11: `summedUsage` (this module's own merge of every real leg's usage into the step's outcome)
+  // gained `cacheReadTokens`/`cacheCreationTokens` summing, mirroring `costUsd`'s own identical
+  // "summed across the legs that reported one" treatment just above (`07` §7.3's own "Honest
+  // cache-token accounting") -- a real, adjacent gap found while fixing the milestone's own defect
+  // #11: each LEG's own per-leg `UsageRecorded` ledger event already carried its real cache tokens
+  // once that defect was fixed, but the step's own MERGED outcome-level `session.usage` (what a
+  // multi-leg step's own caller actually reads) had nothing summing them across legs, so a multi-leg
+  // step's own reported total would have silently stayed at the single-leg value. Two legs, each with
+  // its own distinct, non-zero cache-token values, prove the sum, not a coincidental pass-through of
+  // one leg's own number.
+  it('(f2) two real legs, each with distinct cacheReadTokens/cacheCreationTokens: the outcome-level usage is their real sum, not either leg alone (specs/22 M17 P11)', async () => {
+    const projectRoot = await createTempRepo('f2');
+    const { access: kb, cleanup } = buildKbAccess();
+    try {
+      const adapter = new FakePlatformAdapter();
+      adapter.script((request) => request.prompt.startsWith('Carry out step'), {
+        text: ['FORGE_REQUEST_CONTEXT: KB-ARCH-0101'],
+        cacheReadTokens: 100,
+        cacheCreationTokens: 10,
+      });
+      adapter.script((request) => request.prompt.includes('### KB-ARCH-0101'), {
+        text: ['all done now'],
+        cacheReadTokens: 50,
+        cacheCreationTokens: 5,
+      });
+      const ctx = createTestContext({
+        projectRoot,
+        adapter,
+        assembly: createFixtureAssembly(projectRoot, { openKb: () => Promise.resolve(kb) }),
+      });
+      const stepNode = node({
+        id: STEP_ID,
+        kind: 'agent',
+        agent: toAgentId('engineer'),
+        brief: NEUTRAL_BRIEF,
+      });
+
+      const outcome = await executeStep(stepNode, ctx);
+      expect(outcome.status).toBe('succeeded');
+      if (outcome.detail.kind !== 'agent') throw new Error('unreachable');
+      expect(outcome.detail.session.usage.cacheReadTokens).toBe(150);
+      expect(outcome.detail.session.usage.cacheCreationTokens).toBe(15);
+
+      const events: ForgeEvent[] = [];
+      for await (const event of readEvents(projectRoot, ctx.runId)) events.push(event);
+      const usageEvents = events.filter((event) => event.type === 'UsageRecorded');
+      expect(usageEvents).toHaveLength(2);
+      // Each LEG's own per-leg ledger event still carries only its own leg's real figure, never the
+      // merged total -- `20` §20.8's own "reports $6, not $2" rule sums across the ledger's own rows
+      // itself; this module must not pre-sum them into one inflated row.
+      expect(
+        usageEvents.map((event) => (event.payload as { cacheReadTokens: number }).cacheReadTokens),
+      ).toEqual([100, 50]);
+    } finally {
+      cleanup();
+    }
+  });
+
   it('(g) the expansion record is byte-equal to the exact ResumeRequest.prompt, and prompt.md is left exactly as originally compiled', async () => {
     const projectRoot = await createTempRepo('g');
     const { access: kb, cleanup } = buildKbAccess();

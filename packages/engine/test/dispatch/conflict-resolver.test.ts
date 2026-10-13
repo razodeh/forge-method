@@ -420,6 +420,34 @@ describe('createAgentConflictResolver -- (b)+(c) session and verification', () =
     const usage = events.find((event) => event.type === 'UsageRecorded');
     expect(usage?.payload).toMatchObject({ storyId: 'STORY-009' });
   });
+
+  // M17 P11 (the milestone's own defect #11): `UsageRecorded.payload.cacheReadTokens` on a resolver
+  // session was hardcoded `0` regardless of what the session reported, identically to `runAgentWork`'s
+  // own now-fixed sibling bug. A gauntlet critic round found this specific call site had never had a
+  // real, non-zero value proven through it: reverting the fix leaves this file's own full suite green,
+  // since every other test here either never sets the script fields or never checks the ledger payload
+  // for them. This is that missing regression test.
+  it('a real, non-zero cacheReadTokens/cacheCreationTokens from the resolver session reaches the ledger event, not a hardcoded 0 (specs/22 M17 P11)', async () => {
+    const worktreePath = await conflictWorktree('usage-cache-tokens');
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId.endsWith(':resolve-conflict'), {
+      text: ['fixed'],
+      writeFiles: [{ relativePath: 'same.txt', content: 'merged\n' }],
+      cacheReadTokens: 37,
+      cacheCreationTokens: 11,
+    });
+    const stepNode = baseNode({ id: 'wf:step', kind: 'agent' });
+    const projectRoot = await freshProjectRoot('x');
+    const base = createTestContext({ projectRoot, adapter, runId: 'run-cache-tokens' });
+    const ctx: ExecuteStepContext = { ...base, stepGraph: new Map([[stepNode.id, stepNode]]) };
+    const resolver = createAgentConflictResolver(ctx);
+
+    expect(await resolver(describeConflict(worktreePath, 'wf:step'))).toBe('resolved');
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-cache-tokens')) events.push(event);
+    const usage = events.find((event) => event.type === 'UsageRecorded');
+    expect(usage?.payload).toMatchObject({ cacheReadTokens: 37, cacheCreationTokens: 11 });
+  });
 });
 
 describe('createAgentConflictResolver -- end to end through the real merge queue (executeStep)', () => {

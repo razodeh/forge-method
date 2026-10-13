@@ -25,13 +25,18 @@
  * never populated... add the mechanism when one does") until `PLAN-M11.md` P11 became that real
  * consumer: `FakeSessionScript.costUsd` now threads a script-supplied figure straight onto
  * `usage.costUsd`, omitted (not defaulted to `0`) when unset, matching a real adapter's own "cost
- * reporting is optional" shape.
+ * reporting is optional" shape. `cacheReadTokens`/`cacheCreationTokens` (M17 P11) are the identical
+ * mechanism, added for the identical reason once `@forge/engine`'s own `UsageRecorded` ledger wiring
+ * (`dispatch/steps.ts`, `dispatch/conflict-resolver.ts`, `interaction/swarm-review-step.ts`) became a
+ * real consumer that needed to exercise a non-zero, non-hardcoded value through this fake.
  *
  * @see specs/07 §7.2
+ * @see specs/07 §7.3
  * @see specs/15 §15.6
  * @see specs/20 §20.5
  * @see SPEC-QUESTIONS.md Q61
  * @see PLAN-M4.md P5
+ * @see PLAN-M17.md P11
  */
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -738,6 +743,11 @@ export class FakePlatformAdapter implements PlatformAdapter {
       outputTokens: 5 * effectiveTurns,
       turns: outcome.turnsRun,
       ...(script.costUsd !== undefined ? { costUsd: script.costUsd } : {}),
+      // M17 P11: mirrors `costUsd` immediately above, for the identical reason.
+      ...(script.cacheReadTokens !== undefined ? { cacheReadTokens: script.cacheReadTokens } : {}),
+      ...(script.cacheCreationTokens !== undefined
+        ? { cacheCreationTokens: script.cacheCreationTokens }
+        : {}),
     };
     yield { type: 'usage', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
 
@@ -852,6 +862,11 @@ export class FakePlatformAdapter implements PlatformAdapter {
       outputTokens: 5 * effectiveTurns,
       turns: outcome.turnsRun,
       ...(script.costUsd !== undefined ? { costUsd: script.costUsd } : {}),
+      // M17 P11: mirrors `costUsd` immediately above, for the identical reason.
+      ...(script.cacheReadTokens !== undefined ? { cacheReadTokens: script.cacheReadTokens } : {}),
+      ...(script.cacheCreationTokens !== undefined
+        ? { cacheCreationTokens: script.cacheCreationTokens }
+        : {}),
     };
     yield { type: 'usage', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
 

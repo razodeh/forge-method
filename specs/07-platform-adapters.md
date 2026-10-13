@@ -102,15 +102,21 @@ export type AdapterEvent =
   | { type: 'file.changed'; path: string; change: 'created' | 'modified' | 'deleted' }
   | { type: 'control'; token: ForgeControlToken; payload: unknown }   // parsed FORGE_* tokens
   | { type: 'retry'; attempt: number; maxRetries: number; reason: string; delayMs: number }
-  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; costUsd?: number }
-  // `inputTokens`/`outputTokens`/`cacheReadTokens`/`costUsd` are OPTIONAL here, not a second copy of
-  // `'usage'`'s own required fields: a session that ends in error still consumed real tokens and real
-  // money up to the point of failure, and the adapter SHOULD report them on this same event when the
-  // underlying platform makes them available, rather than only on a clean success (M16 P17's own real
-  // live run found every FORGE run silently recorded $0 for a step that failed after real spend,
-  // because no adapter ever looked for them here).
-  | { type: 'error'; code: string; message: string; retryable: boolean; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; costUsd?: number }
-  | { type: 'session.ended'; reason: 'complete' | 'aborted' | 'error' | 'limit'; };
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; costUsd?: number }
+  // `inputTokens`/`outputTokens`/`cacheReadTokens`/`cacheCreationTokens`/`costUsd` are OPTIONAL here, not
+  // a second copy of `'usage'`'s own required fields: a session that ends in error still consumed real
+  // tokens and real money up to the point of failure, and the adapter SHOULD report them on this same
+  // event when the underlying platform makes them available, rather than only on a clean success (M16
+  // P17's own real live run found every FORGE run silently recorded $0 for a step that failed after real
+  // spend, because no adapter ever looked for them here).
+  | { type: 'error'; code: string; message: string; retryable: boolean; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; costUsd?: number }
+  | { type: 'session.ended'; reason: 'complete' | 'aborted' | 'error' | 'limit'; }
+  // `structured_output`'s own real carrier (post-v1.0, `specs/22` M17): a session run with `outputSchema`
+  // set produces this alongside (never instead of) the `'usage'`/`'error'` event the same `result`
+  // message also yields, once a real payload is present. `data?:`, not a required field, matching Zod's
+  // own "a `z.unknown()`-typed object field is an optional key" inference for the schema that validates
+  // this shape (`@forge/adapter-kit/events`).
+  | { type: 'structured'; data?: unknown };
 
 export interface SessionResult {
   sessionId: string;

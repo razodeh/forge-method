@@ -16,26 +16,20 @@ import type { AdapterCapabilities } from '@forge/adapter-kit';
  * either transport depending on config (P4's own transport-selection policy), and the two real
  * vocabularies genuinely differ (`SPEC-QUESTIONS.md` Q115).
  *
- * Every field except `sessionResume`/`partialText` is fixed by this adapter's own construction, not
- * by which real CLI/SDK version a given end-user's machine happens to have installed -- this code
- * either builds the `--allowedTools`/`Options.allowedTools` mapping or it does not, regardless of the
- * remote environment, so there is no meaningful "unconfirmed" state for those to occupy.
- * `structuredOutput` (M17 P11) belongs in this group too, now that `parse-event.ts`/`map-message.ts`
- * genuinely read `structured_output` into a real `structured` event on both transports and
- * `session-result.ts` genuinely carries it through to `SessionResult.structured` -- a fresh gauntlet
- * round (M17 P11) closed the real, previously-disclosed gap `SPEC-QUESTIONS.md` Q116 recorded. The
- * conformance suite's own C8 test (`07` §7.6, `@forge/adapter-kit/conformance/capabilities.ts`) skips
- * only when `!capabilities.structuredOutput`, so this flip is also what makes C8 itself actually run
- * against this adapter rather than silently skip -- proved here only against fixture data (this
- * package's own unit tests, never a live call); a real pass of C8 itself against a genuine Claude Code
- * install is the live conformance run's job (`07` §7.6's own suite), not this piece's. The two fields
- * that genuinely *do* depend on the real, remote CLI/SDK version's own actual behaviour (`07` §7.3:
+ * Every field except `sessionResume`/`partialText`/`structuredOutput` is fixed by this adapter's own
+ * construction, not by which real CLI/SDK version a given end-user's machine happens to have installed
+ * -- this code either builds the `--allowedTools`/`Options.allowedTools` mapping or it does not,
+ * regardless of the remote environment, so there is no meaningful "unconfirmed" state for those to
+ * occupy. The three that *do* stay gated behind `confirmedCapabilities` -- `partialText`/
+ * `sessionResume` genuinely for the real, remote CLI/SDK version's own actual behaviour (`07` §7.3:
  * "Feature-detect via the `capabilities` array in the `system/init` event... rather than comparing
- * version strings") default conservatively `false` here -- this milestone's own confirmed, live
- * testing found both true on *this* environment's real, installed version, but a different end-user's
- * older/different install is a real unknown until this adapter has actually observed one real
- * `session.started` event (the mapped `system/init` line) against it -- `confirmedCapabilities` is
- * called as soon as that one event arrives, not only once a whole session finishes.
+ * version strings"), and `structuredOutput` (M17 P11) for a stricter reason spelled out on
+ * `confirmedCapabilities`'s own doc comment below -- default conservatively `false` here. This
+ * milestone's own confirmed, live testing found `partialText`/`sessionResume` both true on *this*
+ * environment's real, installed version, but a different end-user's older/different install is a real
+ * unknown until this adapter has actually observed one real `session.started` event (the mapped
+ * `system/init` line) against it -- `confirmedCapabilities` is called as soon as that one event
+ * arrives, not only once a whole session finishes.
  *
  * Not, in fact, a per-flag read of the real `capabilities` array's own contents: the one real value
  * this milestone ever captured live (`test/cli/parse-event.test.ts`'s own fixture: exactly
@@ -56,7 +50,7 @@ export function staticCapabilities(
     partialText: false,
     sessionResume: false,
     interject: false,
-    structuredOutput: true,
+    structuredOutput: false,
     toolAllowlist: true,
     permissionModes: [...permissionModes],
     subagents: true,
@@ -87,16 +81,29 @@ export function staticCapabilities(
 /**
  * Called once this adapter has actually observed a real `session.started` event for real (i.e. at
  * least one real session against the current environment's own real CLI/SDK install has genuinely
- * begun) -- flips `partialText`/`sessionResume` (the two version-dependent fields this adapter can
- * genuinely back up) to their real, now-confirmed-for-this-environment `true` values.
+ * begun) -- flips `partialText`/`sessionResume`/`structuredOutput` to their real,
+ * now-confirmed-for-this-environment `true` values.
  *
- * `structuredOutput` is deliberately *not* flipped here (M17 P11): it is already `true` in
- * `staticCapabilities` above, since -- unlike `partialText`/`sessionResume` -- whether this adapter's
- * own code reads `structured_output` into a real event does not depend on which remote CLI/SDK version
- * happens to be installed; it depends only on this package's own mapping logic, which is now genuinely
- * correct on both transports regardless of environment. Every other field is unchanged here too, since
- * nothing about observing one real session changes what this adapter's own code does or does not
- * implement.
+ * `structuredOutput` (M17 P11) joined this gate rather than `staticCapabilities`'s own
+ * always-true-by-construction group, on a stricter reading of `07` §7.3's own words than "the mapping
+ * code is now correct" alone satisfies: "`AdapterCapabilities.structuredOutput` is reported `true`
+ * once this path is proven to round-trip a real schema-validated response, not hard-coded... regardless
+ * of what the session actually did." `parse-event.ts`/`map-message.ts` now genuinely read
+ * `structured_output` into a real `structured` event on both transports, and `session-result.ts`
+ * genuinely carries it through to `SessionResult.structured` -- a real, previously-disclosed gap
+ * (`SPEC-QUESTIONS.md` Q116) that is now closed in the code -- but C8 (`07` §7.6, the conformance
+ * test that actually drives a real schema-validated round trip) has never run against a real
+ * `ClaudeCodeAdapter`: it is gated on this exact flag already being `true` to run at all, and every
+ * proof in this package's own test suite is against fixture data, never a live call. Reporting `true`
+ * unconditionally, before any session has even started, would be exactly the "false capability claim
+ * is worse than an honest gap" mistake `SPEC-QUESTIONS.md` Q116 already once corrected -- gating it the
+ * identical way `partialText`/`sessionResume` already are is the smallest change that stops short of
+ * that, reusing an existing, already-spec-compliant mechanism rather than inventing a new one. This is
+ * still not the same strength of proof `07` §7.3 literally asks for (observing *a* session start is not
+ * observing *a schema-validated one succeed*), and does not by itself make C8 pass for real -- recorded
+ * as a residual, disclosed gap for the live run to actually close. Every other field is unchanged here,
+ * since nothing about observing one real session changes what this adapter's own code does or does not
+ * implement for them.
  */
 export function confirmedCapabilities(
   permissionModes: readonly string[],
@@ -106,5 +113,6 @@ export function confirmedCapabilities(
     ...staticCapabilities(permissionModes, transport),
     partialText: true,
     sessionResume: true,
+    structuredOutput: true,
   };
 }

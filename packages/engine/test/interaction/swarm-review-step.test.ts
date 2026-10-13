@@ -759,6 +759,46 @@ describe('failures around the report are typed, never a step that succeeded with
     ]);
   });
 
+  // M17 P11 (the milestone's own defect #11): `UsageRecorded.payload.cacheReadTokens` for a perspective
+  // session was hardcoded `0` regardless of what the session reported, identically to `runAgentWork`'s
+  // own now-fixed sibling bug. A gauntlet critic round found this specific call site had never had a
+  // real, non-zero value proven through it: reverting the fix leaves this file's own full suite green.
+  // This is that missing regression test.
+  it("records a perspective session's real, non-zero cacheReadTokens/cacheCreationTokens in the ledger event, not a hardcoded 0 (specs/22 M17 P11)", async () => {
+    const projectRoot = await createTempRepo('usage-cache-tokens');
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId === 'wf:review:review:design', {
+      text: ['done'],
+      structured: CLEAN,
+      cacheReadTokens: 37,
+      cacheCreationTokens: 11,
+    });
+    scriptPerspectives(adapter, 'wf:review', cleanPerspectives());
+    const ctx = createTestContext({
+      projectRoot,
+      adapter,
+      assembly: reviewerAssembly(projectRoot),
+    });
+    expect((await executeStep(reviewNode(), ctx)).status).toBe('succeeded');
+    const usage = (await eventsOf(projectRoot, 'run-test')).filter(
+      (event) => event.type === 'UsageRecorded',
+    );
+    expect(
+      usage.map(
+        (event) =>
+          (event.payload as { cacheReadTokens: number; cacheCreationTokens: number })
+            .cacheReadTokens,
+      ),
+    ).toEqual([37, 0, 0]);
+    expect(
+      usage.map(
+        (event) =>
+          (event.payload as { cacheReadTokens: number; cacheCreationTokens: number })
+            .cacheCreationTokens,
+      ),
+    ).toEqual([11, 0, 0]);
+  });
+
   it('a symlinked docs directory in the project root cannot make numbering read outside the tree', async () => {
     const projectRoot = await createTempRepo('symlink');
     const outside = await mkdtemp(path.join(tmpdir(), 'forge-swarm-outside-'));

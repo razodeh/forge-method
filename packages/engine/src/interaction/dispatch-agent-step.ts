@@ -207,9 +207,10 @@ const MAX_PROSE_CONTRACT_CHARS = 200_000;
 const FENCE_LINE = /^ {0,3}(`{3,}|~{3,})([^`]*)$/;
 
 /**
- * The prose form of the review output contract, for adapters that cannot deliver `structured` (the Claude Code
- * adapter reports `structuredOutput: false`, and with an `outputSchema` set it discards the whole answer): the
- * ONE fenced block whose info string is `json` in the final text, parsed strictly. Exactly one: the model text
+ * The prose form of the review output contract, for adapters that cannot deliver `structured`, or have not
+ * yet had the chance to prove they can -- the Claude Code adapter reports `structuredOutput: false` until
+ * `confirmedCapabilities` has observed a real session (`specs/22` M17 P11): the ONE fenced block whose info
+ * string is `json` in the final text, parsed strictly. Exactly one: the model text
  * may quote files it read (hostile ones included), and if a second `json` block could replace or follow the
  * reviewer's own, whoever wrote it would choose the findings. Two or more, none, an unterminated one, a
  * `json` line inside another fence, unparseable JSON, or oversized text all read as `undefined`, which the

@@ -54,6 +54,15 @@ export interface FakeSessionScript {
    * (`adapter-kit`'s own real platforms may not report cost at all), and a fake that silently invented a
    * `0` here would make "no cost reported" indistinguishable from "reported, free." */
   readonly costUsd?: number;
+  /** `SessionResult.usage.cacheReadTokens`/`.cacheCreationTokens` (`07` §7.3's own "Honest cache-token
+   * accounting", M17 P11) — the identical "a real, script-supplied figure lets a caller test the real
+   * consumer deterministically" reasoning `costUsd` above already gives, extended to the two fields a
+   * real adapter sums from its own per-model usage breakdown. Omitted (not defaulted to `0`), for the
+   * identical reason `costUsd` is: a real adapter reporting no breakdown at all and a real adapter
+   * reporting a genuine `0` must stay distinguishable. */
+  readonly cacheReadTokens?: number;
+  /** Same source and the same reason as `cacheReadTokens` above. */
+  readonly cacheCreationTokens?: number;
   /** The one thing nothing in `SessionRequest` itself says: that this session needs a granted MCP
    * server to do its job. Refused with a precise message naming the server when the adapter has no way
    * to provision one (`capabilities().mcp === false && capabilities().toolProxy === false`). */

@@ -127,10 +127,10 @@ describe('ClaudeCodeAdapter — capabilities()', () => {
     const before = await adapter.capabilities();
     expect(before.partialText).toBe(false);
     expect(before.sessionResume).toBe(false);
-    // structuredOutput is true even before a session starts (specs/22 M17 P11) -- fixed by this
-    // adapter's own mapping code, not by the remote CLI/SDK version; see capabilities.test.ts for
-    // the dedicated test.
-    expect(before.structuredOutput).toBe(true);
+    // structuredOutput also stays false until confirmed (specs/22 M17 P11 moved it into this gate,
+    // on a stricter reading of 07 §7.3 than "the mapping code is correct" alone satisfies -- see
+    // capabilities.test.ts for the dedicated test).
+    expect(before.structuredOutput).toBe(false);
 
     const handle = await adapter.startSession(baseRequest());
     await drain(handle);
