@@ -10,11 +10,17 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ForgeError } from '@forge/core/errors';
 
-import { withParityDirHidden } from '../../../src/commands/parity/candidate-isolation.ts';
+import {
+  recoverOrphanedParityDir,
+  withParityDirHidden,
+} from '../../../src/commands/parity/candidate-isolation.ts';
+
+const SIGNAL_HARNESS_PATH = path.join(import.meta.dirname, 'fixtures/isolation-signal-harness.ts');
 
 const dirs: string[] = [];
 
@@ -166,6 +172,153 @@ describe(
       expect(caught).toBeInstanceOf(ForgeError);
       expect((caught as ForgeError).code).toBe('RUN-153');
     });
+
+    it(
+      'specs/22 M17 P14: RUN-153 fires even when fn BOTH recreates the directory AND throws its ' +
+        'own error -- a real gap a gauntlet round found: the original catch branch checked for ' +
+        'recreation only on the success path, so a command that tampered and then failed slipped ' +
+        'past undetected, with its own unrelated error masking the real signal',
+      async () => {
+        const root = await freshRoot();
+        await mkdir(path.join(root, '.forge', 'parity'), { recursive: true });
+        await writeFile(
+          path.join(root, '.forge', 'parity', 'sample.parity.yaml'),
+          'original',
+          'utf8',
+        );
+
+        let caught: unknown;
+        try {
+          await withParityDirHidden(root, async () => {
+            await mkdir(path.join(root, '.forge', 'parity'), { recursive: true });
+            await writeFile(path.join(root, '.forge', 'parity', 'new-file.yaml'), 'new', 'utf8');
+            throw new Error('the command’s own unrelated failure, after also recreating the dir');
+          });
+        } catch (error) {
+          caught = error;
+        }
+        // RUN-153 wins over fn's own thrown error -- not the other way around (see
+        // `withParityDirHidden`'s own doc comment for why this one case is a deliberate exception
+        // to "a real failure always wins").
+        expect(caught).toBeInstanceOf(ForgeError);
+        expect((caught as ForgeError).code).toBe('RUN-153');
+        expect(
+          await readFile(
+            path.join(root, '.forge', 'state', 'parity-isolated', 'sample.parity.yaml'),
+            'utf8',
+          ),
+        ).toBe('original');
+      },
+    );
+  },
+);
+
+describe(
+  'withParityDirHidden (specs/22 M17 P14): an ordinary interrupt restores the directory, never ' +
+    'leaving it permanently hidden',
+  () => {
+    it(
+      'a real SIGINT delivered mid-observation (an ordinary Ctrl+C, not an adversarial scenario) ' +
+        'restores .forge/parity/ before the process exits, with the shell’s own conventional 130 ' +
+        'exit code',
+      async () => {
+        const root = await freshRoot();
+        await mkdir(path.join(root, '.forge', 'parity'), { recursive: true });
+        await writeFile(
+          path.join(root, '.forge', 'parity', 'sample.parity.yaml'),
+          'original',
+          'utf8',
+        );
+
+        const child = execa(
+          'node',
+          ['--experimental-strip-types', '--no-warnings', SIGNAL_HARNESS_PATH, root],
+          { reject: false },
+        );
+        // Waits for the child's own real proof that the window is open (never a fixed sleep guessing
+        // at timing): it prints `HIDDEN` the instant `withParityDirHidden`'s callback starts.
+        await new Promise<void>((resolve, reject) => {
+          child.stdout.on('data', (chunk: Buffer) => {
+            if (chunk.toString('utf8').includes('HIDDEN')) resolve();
+          });
+          child.catch(reject);
+        });
+        expect(await pathExists(path.join(root, '.forge', 'parity'))).toBe(false);
+
+        child.kill('SIGINT');
+        const result = await child;
+        expect(result.exitCode).toBe(130);
+        expect(
+          await readFile(path.join(root, '.forge', 'parity', 'sample.parity.yaml'), 'utf8'),
+        ).toBe('original');
+      },
+      15_000,
+    );
+  },
+);
+
+describe(
+  'recoverOrphanedParityDir (specs/22 M17 P14): a leftover from a prior, now-dead (SIGKILL’d) ' +
+    'invocation is detected and restored on the next command’s own startup',
+  () => {
+    it('restores a hidden directory left behind with no corresponding .forge/parity/ present', async () => {
+      const root = await freshRoot();
+      // Simulates exactly what a `SIGKILL`'d predecessor leaves behind: the hidden copy present,
+      // the real path absent -- never produced by calling `withParityDirHidden` itself here (that
+      // function always restores on every path it can take), simulating the one path it cannot:
+      // a signal no handler can ever catch.
+      await mkdir(path.join(root, '.forge', 'state', 'parity-isolated'), { recursive: true });
+      await writeFile(
+        path.join(root, '.forge', 'state', 'parity-isolated', 'sample.parity.yaml'),
+        'orphaned',
+        'utf8',
+      );
+
+      await recoverOrphanedParityDir(root);
+
+      expect(
+        await readFile(path.join(root, '.forge', 'parity', 'sample.parity.yaml'), 'utf8'),
+      ).toBe('orphaned');
+      expect(await pathExists(path.join(root, '.forge', 'state', 'parity-isolated'))).toBe(false);
+    });
+
+    it('is a no-op when there is nothing orphaned to recover', async () => {
+      const root = await freshRoot();
+      await mkdir(path.join(root, '.forge', 'parity'), { recursive: true });
+      await writeFile(path.join(root, '.forge', 'parity', 'sample.parity.yaml'), 'normal', 'utf8');
+      await recoverOrphanedParityDir(root);
+      expect(
+        await readFile(path.join(root, '.forge', 'parity', 'sample.parity.yaml'), 'utf8'),
+      ).toBe('normal');
+    });
+
+    it(
+      'is a no-op (never guesses which is "real") when BOTH the real and the hidden directory ' +
+        'exist at once -- a shape this module’s own invariants do not predict',
+      async () => {
+        const root = await freshRoot();
+        await mkdir(path.join(root, '.forge', 'parity'), { recursive: true });
+        await writeFile(path.join(root, '.forge', 'parity', 'sample.parity.yaml'), 'live', 'utf8');
+        await mkdir(path.join(root, '.forge', 'state', 'parity-isolated'), { recursive: true });
+        await writeFile(
+          path.join(root, '.forge', 'state', 'parity-isolated', 'sample.parity.yaml'),
+          'orphaned',
+          'utf8',
+        );
+
+        await recoverOrphanedParityDir(root);
+
+        expect(
+          await readFile(path.join(root, '.forge', 'parity', 'sample.parity.yaml'), 'utf8'),
+        ).toBe('live');
+        expect(
+          await readFile(
+            path.join(root, '.forge', 'state', 'parity-isolated', 'sample.parity.yaml'),
+            'utf8',
+          ),
+        ).toBe('orphaned');
+      },
+    );
   },
 );
 

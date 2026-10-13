@@ -3506,6 +3506,46 @@ export const ERROR_CODES = {
       'Fix the case\'s command so it never writes to ".forge/parity/" -- isolation makes the ' +
       "directory absent for the command's own duration precisely so it cannot.",
   },
+  // `specs/22` M17 P14 (post-v1.0 M17 addition, found by a gauntlet round): a declaration whose
+  // every surface is excused by its own "unobservable" entries compares nothing at all -- the
+  // identical `nothing-compared` fact `check-command.ts`'s own `processDeclaration` already refuses
+  // (its `nonExemptSurfaces.length === 0` branch, reported as the declaration-level `invalid`
+  // verdict `13` F-TEST-9 names). `capture-command.ts`'s own otherwise-faithful mirror of that same
+  // exempt-surface bookkeeping had no equivalent guard before this fix, so it silently produced and
+  // wrote a trivial, empty capture file with zero diagnostic for the identical declaration shape.
+  // Grouped with `CFG-510`/`CFG-514`/`CFG-515`'s own "this declaration cannot be trusted/used as
+  // written" bucket, the identical reason those three codes share it: `captureOneDeclaration` is
+  // this code's one throw site.
+  'CFG-517': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string }) =>
+      `Parity file ${show(d.file)} has no surface that is not exempt ("unobservable") -- nothing-compared.`,
+    remedy:
+      'Remove the "unobservable" entry for at least one surface (or add a real surface to compare), ' +
+      'then re-run the capture -- a declaration that excuses every surface has nothing left to oracle.',
+  },
+  // `specs/22` M17 P14 (post-v1.0 M17 addition, found by two independent gauntlet rounds): the
+  // normalize worker thread (`normalize-budget.ts`/`normalize-worker.ts`) either crashed before it
+  // could report a result (an `EMFILE`/`ENOMEM`-class failure spawning a new OS thread under load is
+  // a realistic trigger, not only an adversarial one) or reported an internal failure through its own
+  // normal result path that `applyNormalizeRulesToText`'s own "never throws" contract says should be
+  // unreachable. Grouped under one code: both are "the worker thread itself failed, not the rules it
+  // was asked to apply" and share the identical remedy (nothing a declaration author can fix; this is
+  // FORGE's own bug to investigate) -- `detail` distinguishes which of the two actually happened.
+  // Distinguished from `RUN-152` (a genuine wall-clock timeout) deliberately: "ran too long" and "the
+  // thread running it died" are different, useful diagnoses for whoever reads the resulting error.
+  // `compare.ts`'s own `normalizeTextOrThrow` and `normalize-budget.ts`'s own
+  // `applyNormalizeRulesToTextBounded` are this code's two throw sites.
+  'RUN-154': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { detail: string }) => `The normalize worker thread failed: ${show(d.detail)}.`,
+    remedy:
+      'Retry the same check/capture -- this may succeed if the cause was transient resource ' +
+      'pressure (too many open files or threads); report it with the full detail above if it is ' +
+      'not, since this is an internal FORGE failure, never a declaration problem.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

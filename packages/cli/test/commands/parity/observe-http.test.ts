@@ -10,7 +10,7 @@
  * @see process/plans/PLAN-M16.md P8
  * @see process/SPEC-QUESTIONS.md Q294 Decision 7
  */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -701,3 +701,66 @@ setInterval(() => {}, 1000);
     }
   }, 20_000);
 });
+
+describe(
+  'observeHttpSurfaceCases (specs/22 M17 P14): candidate-side isolation genuinely brackets the ' +
+    "server's WHOLE lifetime, not merely proven by reading the code",
+  () => {
+    it(
+      '.forge/parity/ is absent from before the server starts, through a real mid-request check, ' +
+        'and is restored again once the server stops',
+      async () => {
+        const dir = await freshProject();
+        await mkdir(path.join(dir, '.forge', 'parity'), { recursive: true });
+        await writeFile(
+          path.join(dir, '.forge', 'parity', 'sample.parity.yaml'),
+          'original: true\n',
+          'utf8',
+        );
+        const port = await pickFreePort();
+        const scriptPath = path.join(dir, 'server.cjs');
+        // A real server that checks its OWN cwd's filesystem live, on every request, rather than a
+        // fixed `httpServerScript` route table -- the one way to observe "was .forge/parity/ really
+        // absent AT THE MOMENT a request arrived", not merely before the server started.
+        await writeFile(
+          scriptPath,
+          [
+            "const http = require('node:http');",
+            "const fs = require('node:fs');",
+            'const port = Number(process.argv[2]);',
+            'const server = http.createServer((req, res) => {',
+            "  const exists = fs.existsSync('.forge/parity');",
+            '  res.writeHead(200, {}); res.end(String(exists));',
+            '});',
+            "server.listen(port, '127.0.0.1');",
+          ].join('\n'),
+          'utf8',
+        );
+        const declaration = minimalDeclaration({
+          surfaces: {
+            http: {
+              run: `node ${JSON.stringify(scriptPath)} ${String(port)}`,
+              network: 'loopback',
+              port,
+              readiness: { path: '/', timeoutMs: 5_000 },
+              stability: { runs: 1 },
+              cases: [{ request: { method: 'GET', path: '/' } }],
+            },
+          },
+        });
+
+        const observation = await observeOneHttp(dir, declaration);
+        // The server's own LIVE check, made from inside its own request handler while the window
+        // was open, reports `.forge/parity/` absent.
+        expect(observation.body.text).toBe('false');
+
+        // Restored once `observeHttpSurfaceCases` returns -- the server has been stopped, the
+        // window closed, and the directory renamed back, exactly as the ordinary (non-http) path
+        // already proves in `candidate-isolation.test.ts`.
+        expect(
+          await readFile(path.join(dir, '.forge', 'parity', 'sample.parity.yaml'), 'utf8'),
+        ).toBe('original: true\n');
+      },
+    );
+  },
+);

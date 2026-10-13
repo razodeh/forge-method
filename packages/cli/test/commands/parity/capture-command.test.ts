@@ -367,6 +367,43 @@ unobservable:
         ]);
       },
     );
+
+    it(
+      'refuses CFG-517 ("nothing-compared") when EVERY surface is excused, mirroring ' +
+        "check-command.ts's own identical refusal for the same declaration shape -- a real gap a " +
+        'gauntlet round found: without this, capture silently wrote a trivial, empty capture file ' +
+        'with zero diagnostic instead',
+      async () => {
+        const dir = await freshProject();
+        const ref = await commitSha(dir);
+        const yaml = `name: sample
+reference:
+  ref: ${ref}
+review:
+  by: tester
+  basis: read the diff by hand
+  at: 2026-01-01
+expires: 2999-01-01
+surfaces:
+  process:
+    run: ${JSON.stringify(STABLE_RUN)}
+    stability:
+      runs: 2
+    cases:
+      - {}
+unobservable:
+  - surface: process
+    reason: fixture -- every surface excused, nothing left to compare
+    owner: t
+    expiry: 2999-01-01
+`;
+        await mkdir(path.join(dir, '.forge/parity'), { recursive: true });
+        await writeFile(path.join(dir, '.forge/parity', 'sample.parity.yaml'), yaml, 'utf8');
+
+        await expect(runParityCapture(baseOptions(dir))).rejects.toMatchObject({ code: 'CFG-517' });
+        expect(await capturedFiles(dir)).toEqual([]);
+      },
+    );
   },
 );
 

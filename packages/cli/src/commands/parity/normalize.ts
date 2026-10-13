@@ -525,12 +525,24 @@ export const ROOT_PATH_TOKEN = '<PARITY-ROOT>';
  * `)`, `+`), and escaping every one of them to build a safe pattern is exactly the class of bug a
  * literal string operation has no occasion to introduce.
  *
- * **KNOWN GAP, DISCLOSED, NOT FIXED HERE, and more severe than either of this piece's other two
- * disclosed gaps (the replace-lint's uncaught ReDoS shapes, `replace-lint.ts`'s own header comment;
- * the POSIX-only arg-composing scheme, `compose-args.ts`'s own header comment) because neither of
- * those needs an adversarial declaration shape to trigger — this one fires on an ordinary
- * length-anchored `replace` rule with no malice or unusual shape involved at all.** This function
- * runs unconditionally, before any declared rule, and the two sides' root strings are essentially
+ * **CLOSED by `specs/22` M17 P14 — NOT in this function, in `replace-lint.ts`, read this before
+ * touching either file.** This function's OWN behaviour, described below, is UNCHANGED and remains
+ * genuinely unsafe to compose with a length-anchored `replace` rule — the fix is not here because
+ * nothing short of full provenance tracking (see the "Deliberately NOT fixed" paragraph below, which
+ * is now a description of why THIS function was never the right place, not a disclosed gap) could
+ * make this function itself safe to compose with `replace` in general. The actual fix is structural:
+ * `replace-lint.ts`'s own `CFG-516` (`assertNoReplaceRuleOnRootRewrittenSurface`, wired into both
+ * `forge parity capture` and `forge parity check` via `declaration.ts`'s load path) refuses, at
+ * declaration-load time, any `replace` rule declared on a `process`/`file`/`http` surface — every
+ * surface this function's own rewrite ever runs against (`library`'s structured value is never
+ * passed through this function at all, confirmed by reading `compare.ts`'s own
+ * `normalizeObservationOrThrow`). So no declaration can ever reach the combination described below
+ * in the first place, in production. **Do not remove `CFG-516` thinking it is redundant with
+ * anything in this file — this function's own safety depends entirely on it, not the other way
+ * around.** `replace-lint.ts`'s own doc comment, and `SPEC-QUESTIONS.md`'s M17 P14 entry, have the
+ * full account of why this fix is a structural refusal rather than a cleverer detector, and why the
+ * other six normalise rules did not need the identical restriction. This function runs
+ * unconditionally, before any declared rule, and the two sides' root strings are essentially
  * never the same length (different checkout paths, a symlinked candidate root, different tmp-dir
  * naming). Substituting them for the fixed-length {@link ROOT_PATH_TOKEN} therefore shifts the
  * reference text and the candidate text by two DIFFERENT amounts. A later declared `replace` rule
@@ -554,15 +566,16 @@ export const ROOT_PATH_TOKEN = '<PARITY-ROOT>';
  * rule, the kind a declaration author would write for an unrelated reason (dropping a trailing
  * timestamp or PID), is sufficient.
  *
- * Deliberately NOT fixed in this round, or chased further this piece: a real fix needs either (a)
- * full provenance tracking through every subsequent rule so a later rule's cut point could be
- * reported in pre-rewrite coordinates (a materially bigger design than a token substitution), or (b)
- * a root-token strategy that is guaranteed length-invariant across both sides AND immune to
- * interacting with every other length-sensitive rule in the seven (not just `replace`) — neither of
- * which this piece's brief asks for, and either risks reopening the five already-closed rounds on
- * this exact file. Left as an open problem for whichever future piece owns this module's next
- * revision; nothing in this file's or this piece's own wording claims the root-path rewrite is safe
- * to compose with a length-anchored rule, and no test here asserts that combination behaves safely.
+ * Deliberately NOT fixed IN THIS FUNCTION: a real fix inside this file needs either (a) full
+ * provenance tracking through every subsequent rule so a later rule's cut point could be reported in
+ * pre-rewrite coordinates (a materially bigger design than a token substitution), or (b) a root-token
+ * strategy that is guaranteed length-invariant across both sides AND immune to interacting with every
+ * other length-sensitive rule in the seven (not just `replace`) — either risks reopening the five
+ * already-closed M16 P4 rounds on this exact file for no real gain, once `CFG-516` (above) already
+ * makes the unsafe combination unreachable from outside. Nothing in this file's own wording claims
+ * `rewriteRootPaths` itself is safe to compose with a length-anchored rule — it still is not, in
+ * isolation — only that no declaration can reach that combination through the real command path
+ * anymore, which is a fact about `replace-lint.ts`/`declaration.ts`, not about this function.
  */
 export function rewriteRootPaths(text: string, root: ObservedRoot): string {
   const candidates = [root.asGiven, root.real]

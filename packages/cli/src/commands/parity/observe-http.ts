@@ -28,7 +28,12 @@ import type { ParityCase, SurfaceDeclaration } from './declaration-types.ts';
 import { sendHttpRequest } from './http-client.ts';
 import { LOOPBACK_HOST, startHttpServer, type HttpServerHandle } from './http-server.ts';
 import type { ParityCaseObservationOutcome } from './observe-types.ts';
-import { cleanDeclaredOutputs, readOverlaySourceBytes, writeOverlayFile } from './overlay.ts';
+import {
+  cleanDeclaredOutputs,
+  probeSourcePaths,
+  readOverlaySourceBytes,
+  writeOverlayFile,
+} from './overlay.ts';
 import { lossyUtf8Refusal, secretRefusal } from './refusals.ts';
 import { isCleanExcluding, takeTreeSnapshot } from './tree-snapshot.ts';
 
@@ -197,5 +202,15 @@ export async function observeHttpSurfaceCases(
       await handle.stop();
     }
   };
-  return side === 'candidate' ? withParityDirHidden(root, runSurface) : runSurface();
+  // `specs/22` M17 P14: exempted from isolation when THIS surface's own `run` (the server start
+  // command, the one line this surface ever executes directly) itself names a path under
+  // `.forge/parity/probes/` -- never special-cased on surface kind (a real regression a second
+  // critic round found and reproduced live against this exact file: nothing about `http` is
+  // structurally different from `process`/`file` here, and `13` F-TEST-9's own library-probe
+  // wording already implies the pattern is not library-specific). See `observe.ts`'s own identical
+  // check, immediately above its own `withParityDirHidden` call, for the full account.
+  const referencesProbePath = probeSourcePaths(surface.run).length > 0;
+  return side === 'candidate' && !referencesProbePath
+    ? withParityDirHidden(root, runSurface)
+    : runSurface();
 }

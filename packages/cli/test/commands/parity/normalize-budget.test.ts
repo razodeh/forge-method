@@ -5,12 +5,20 @@
  * @see specs/13-frameworks-testing-and-debugging.md F-TEST-9
  * @see process/plans/PLAN-M17.md P14
  */
+import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
   applyNormalizeRulesToTextBounded,
   DEFAULT_NORMALIZE_BUDGET_MS,
 } from '../../../src/commands/parity/normalize-budget.ts';
+
+const CRASHING_WORKER_URL = new URL('./fixtures/crashing-normalize-worker.ts', import.meta.url);
+const CRASHING_NO_HANDLER_WORKER_URL = new URL(
+  './fixtures/crashing-no-handler-worker.ts',
+  import.meta.url,
+);
 
 describe('applyNormalizeRulesToTextBounded: the fast path (specs/22 M17 P14)', () => {
   it('returns the identical outcome applyNormalizeRulesToText itself would, for an ordinary rule list', () => {
@@ -20,7 +28,7 @@ describe('applyNormalizeRulesToTextBounded: the fast path (specs/22 M17 P14)', (
       {},
       1000,
     );
-    expect(outcome).toEqual({ timedOut: false, ok: true, text: 'Line1\nLine2\n' });
+    expect(outcome).toEqual({ status: 'ok', ok: true, text: 'Line1\nLine2\n' });
   });
 
   it('propagates an ordinary rule-application failure unchanged (RUN-130’s own "rule-failed" shape)', () => {
@@ -31,7 +39,7 @@ describe('applyNormalizeRulesToTextBounded: the fast path (specs/22 M17 P14)', (
       1000,
     );
     expect(outcome).toEqual({
-      timedOut: false,
+      status: 'ok',
       ok: false,
       kind: 'rule-failed',
       failure: { rule: 'json-canonical', detail: 'does not parse as JSON' },
@@ -45,7 +53,7 @@ describe('applyNormalizeRulesToTextBounded: the fast path (specs/22 M17 P14)', (
       {},
       1000,
     );
-    expect(outcome).toEqual({ timedOut: false, ok: false, kind: 'erased', rule: 'replace' });
+    expect(outcome).toEqual({ status: 'ok', ok: false, kind: 'erased', rule: 'replace' });
   });
 
   it('the exported default really is specs/13 F-TEST-9’s own stated 5000ms, not a smaller test value', () => {
@@ -80,7 +88,7 @@ describe(
         );
         const elapsedMs = Date.now() - started;
 
-        expect(outcome).toEqual({ timedOut: true });
+        expect(outcome).toEqual({ status: 'timed-out' });
         // Bounded close to the stated budget, not merely "eventually returned" -- a generous upper
         // bound (worker start/teardown overhead included) that still proves this did not wait for
         // the real catastrophic backtrack to finish on its own (which this module's own manual,
@@ -113,8 +121,74 @@ describe(
         budgetMs,
       );
       const elapsedMs = Date.now() - started;
-      expect(outcome).toEqual({ timedOut: true });
+      expect(outcome).toEqual({ status: 'timed-out' });
       expect(elapsedMs).toBeLessThan(budgetMs + 3000);
+    });
+  },
+);
+
+describe(
+  'applyNormalizeRulesToTextBounded (specs/22 M17 P14): a worker crash is a typed refusal, ' +
+    'never a process crash',
+  () => {
+    it(
+      'a worker that crashes WITH the real uncaughtException-signalling contract reports ' +
+        '{status: "crashed"} promptly -- not a hang out to the full budget, and not a process crash',
+      () => {
+        const budgetMs = 5000;
+        const started = Date.now();
+        const outcome = applyNormalizeRulesToTextBounded(
+          'anything',
+          [{ rule: 'line-endings' }],
+          {},
+          budgetMs,
+          CRASHING_WORKER_URL,
+        );
+        const elapsedMs = Date.now() - started;
+        expect(outcome).toEqual({
+          status: 'crashed',
+          detail: 'the normalize worker thread terminated before it could report a result',
+        });
+        // The whole point: detected via the worker's own `process.on('uncaughtException', ...)`
+        // signal, not by exhausting the budget -- bounded far below `budgetMs` itself.
+        expect(elapsedMs).toBeLessThan(1000);
+      },
+    );
+
+    it(
+      'a worker that crashes with NO handler of any kind still cannot crash the calling process ' +
+        '(the original gauntlet-round repro shape) -- it is reported as a bounded timeout instead, ' +
+        'since nothing signals the crash promptly without the real worker’s own handler',
+      () => {
+        const budgetMs = 300;
+        const started = Date.now();
+        const outcome = applyNormalizeRulesToTextBounded(
+          'anything',
+          [{ rule: 'line-endings' }],
+          {},
+          budgetMs,
+          CRASHING_NO_HANDLER_WORKER_URL,
+        );
+        const elapsedMs = Date.now() - started;
+        // The real, pre-fix failure mode this pins: before `worker.on('error', ...)` was attached,
+        // THIS test's own process would have crashed outright at this point -- reaching the
+        // assertion below at all is already the proof. The budget elapsing (never a hang) is the
+        // honest, disclosed cost of a crash this particular fixture deliberately gives no early
+        // signal for.
+        expect(outcome).toEqual({ status: 'timed-out' });
+        expect(elapsedMs).toBeGreaterThanOrEqual(budgetMs);
+        expect(elapsedMs).toBeLessThan(budgetMs + 3000);
+      },
+    );
+
+    it('the two fixture files really exist on disk at the paths used above (the premise, not assumed)', async () => {
+      const { access } = await import('node:fs/promises');
+      await expect(
+        access(path.join(import.meta.dirname, 'fixtures/crashing-normalize-worker.ts')),
+      ).resolves.toBeUndefined();
+      await expect(
+        access(path.join(import.meta.dirname, 'fixtures/crashing-no-handler-worker.ts')),
+      ).resolves.toBeUndefined();
     });
   },
 );

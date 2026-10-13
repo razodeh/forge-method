@@ -59,6 +59,7 @@ import {
 import { loadParityDeclarationText, type VetCommand } from './declaration.ts';
 import type { ParityDeclaration, SurfaceKind } from './declaration-types.ts';
 import { SURFACE_KINDS } from './declaration-types.ts';
+import { recoverOrphanedParityDir } from './candidate-isolation.ts';
 import { firstNormalizeRuleSafetyProblem } from './replace-lint.ts';
 import { computeParityDeclarationDigest, type DigestFile } from './digest.ts';
 import { isExpired } from './expiry.ts';
@@ -821,6 +822,10 @@ function tallyParityVerdicts(
 export async function runParityCheck(
   options: RunParityCheckOptions,
 ): Promise<RunParityCheckResult> {
+  // `specs/22` M17 P14: recovers a `.forge/parity/` a prior, now-dead invocation left renamed away --
+  // see `capture-command.ts`'s own identical call site, and `candidate-isolation.ts`'s own
+  // `recoverOrphanedParityDir` doc comment, for the full account.
+  await recoverOrphanedParityDir(options.projectRoot);
   const paths = new ProjectPaths(options.projectRoot);
   const clock = options.clock ?? SYSTEM_CLOCK;
 

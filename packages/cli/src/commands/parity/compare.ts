@@ -110,12 +110,19 @@ function normalizeTextOrThrow(
   // catastrophic, never-yielding `replace` match would simply outlast — `replace-lint.ts`'s own file
   // header has the full account of why).
   const outcome = applyNormalizeRulesToTextBounded(rewriteRootPaths(text, root), rules, scope);
-  if (outcome.timedOut) {
+  if (outcome.status === 'timed-out') {
     throw new ForgeError('RUN-152', {
       surface: context.surface,
       index: context.index,
       timeoutMs: DEFAULT_NORMALIZE_BUDGET_MS,
     });
+  }
+  if (outcome.status === 'crashed') {
+    // `specs/22` M17 P14: distinguished from RUN-152 (`normalize-budget.ts`'s own doc comment has
+    // the full account of why "ran too long" and "the thread running it died" are different, useful
+    // diagnoses) -- a realistic trigger under load (a new OS thread per `normalize` call can fail to
+    // start under `EMFILE`/`ENOMEM`), not only an adversarial one.
+    throw new ForgeError('RUN-154', { detail: outcome.detail });
   }
   if (outcome.ok) return outcome.text;
   const { rule, detail } =
@@ -152,6 +159,29 @@ function normalizeTextOrThrow(
  * whether this needs a load-time refusal in P2's `declaration.ts` (refusing a `replace`/`line-endings`
  * /etc. rule declared on a `library` case outright, rather than silently accepting and then ignoring
  * it) is the orchestrator's own call when writing this piece's `Q` entry, not a code fix made here.
+ *
+ * **`specs/22` M17 P14, MAJOR disclosed gap, NOT fixed here (tracked for a dedicated follow-up
+ * piece, same as the `node_modules` regression M17 P8 found): `library` has no mechanism at all to
+ * redact an embedded root/absolute path.** `CFG-516` (`replace-lint.ts`) correctly excludes
+ * `library` from the root-token-masking fix, because this function confirms (directly above, not
+ * merely assumed) that the automatic root-rewrite genuinely never reaches a `library` result — but
+ * that exclusion closes a DIFFERENT problem (a length-anchored `replace` interacting with a rewrite
+ * that never applies here) than the one this paragraph names. A real, adversarially-constructed case
+ * a gauntlet round built: two `library` observations differing ONLY in which of two real, physical
+ * root paths the probe ran under (an error message, a `stack`, a `__dirname`-derived value embedded
+ * in the returned structure) read `mismatch` with zero declared rules, and **still** read `mismatch`
+ * after adding an explicit, reviewed `replace` rule written specifically to redact the path — because
+ * (as this function's own doc comment above already states) `replace` is a complete no-op on
+ * `library`, and the one rule that IS live here, `ignore-json-pointers`, can only delete a whole
+ * field by its structural path, never partially redact a path embedded inside a larger string value.
+ * The practical consequence: any `library` probe whose result legitimately touches the filesystem
+ * (an error whose message or stack names a real path, say) is either permanently `mismatch` between
+ * two differently-rooted checkouts, or a reviewer's own redaction rule silently does nothing, with no
+ * typed refusal either way to say so. Closing this needs a real mechanism — likely a structural,
+ * `ignore-json-pointers`-style rule that redacts a MATCHED SUBSTRING within a string value at a named
+ * pointer, not merely removes the whole field — which is real, substantial engineering scope this
+ * piece's own time did not allow; recorded as a new `SPEC-QUESTIONS.md` entry alongside this piece's
+ * own report rather than attempted here half-built.
  */
 function normalizeLibraryOrThrow(
   observation: LibraryObservation,

@@ -45,6 +45,7 @@ import {
   type ProcessObservation,
   type SurfaceObservation,
 } from './capture.ts';
+import { recoverOrphanedParityDir } from './candidate-isolation.ts';
 import { normalizeAndCheckStability, type ObservedRoot } from './compare.ts';
 import {
   assertParityDeclarationValid,
@@ -477,6 +478,14 @@ async function captureOneDeclaration(
     if (surface !== undefined) observableSurfaces[kind] = surface;
   }
   const observableDeclaration: ParityDeclaration = { ...declaration, surfaces: observableSurfaces };
+  // `specs/22` M17 P14: mirrors `check-command.ts`'s own `nonExemptSurfaces.length === 0` guard
+  // ("nothing-compared") -- a real gap a gauntlet round found: without this, a declaration whose
+  // every surface is excused silently produced and wrote an empty, trivial capture file with zero
+  // diagnostic, while `check` on the identical declaration already loudly refuses it. Checked here,
+  // after the identical exempt-surface bookkeeping `check-command.ts` itself computes first.
+  if (nonExemptSurfaces.length === 0) {
+    throw new ForgeError('CFG-517', { file });
+  }
 
   const { overlays, probes } = await gatherDigestFiles(projectRoot, declaration);
   const digest = computeParityDeclarationDigest(declaration, overlays, probes);
@@ -654,6 +663,12 @@ function withPartialProgress(cause: unknown, partial: RunParityCaptureResult): u
 export async function runParityCapture(
   options: RunParityCaptureOptions,
 ): Promise<RunParityCaptureResult> {
+  // `specs/22` M17 P14: recovers a `.forge/parity/` a prior, now-dead invocation left renamed away
+  // (a `SIGKILL`, a host power loss) -- `candidate-isolation.ts`'s own `recoverOrphanedParityDir` doc
+  // comment has the full account of why this is decidable with no process-liveness check. Runs first,
+  // unconditionally, before even the `FORGE_RUN_ID` refusal below: recovery is cheap, idempotent and
+  // safe regardless of what this invocation goes on to do.
+  await recoverOrphanedParityDir(options.projectRoot);
   if (options.marker !== undefined) {
     throw new ForgeError('RUN-136', { runId: options.marker.runId });
   }

@@ -1257,3 +1257,53 @@ await observeParityDeclaration({ declaration: ${declarationLiteral}, side: 'refe
     expect(outcome.failure.error.code).toBe('RUN-127');
   });
 });
+
+describe(
+  'observeParityDeclaration (specs/22 M17 P14): the candidate-isolation exemption is keyed to ' +
+    "whether THIS CASE'S OWN command references a .forge/parity/probes/ path, never to the " +
+    'surface kind',
+  () => {
+    it(
+      'a "process" surface (not "library") whose own run invokes a real, committed script at ' +
+        '.forge/parity/probes/ is correctly exempted too -- a real regression a gauntlet round ' +
+        "found and reproduced live: the ORIGINAL fix special-cased surfaceKind === 'library', " +
+        'which broke this exact, spec-sanctioned pattern (13 F-TEST-9 defines library as "a ' +
+        'process surface whose command is a reviewed probe script under .forge/parity/probes/", ' +
+        'implying any process-shaped surface may use it) for every OTHER surface kind',
+      async () => {
+        const dir = await freshProject();
+        await mkdir(path.join(dir, '.forge', 'parity', 'probes'), { recursive: true });
+        await writeFile(
+          path.join(dir, '.forge', 'parity', 'probes', 'process-helper.mjs'),
+          "process.stdout.write('ok');\n",
+          'utf8',
+        );
+        await execa('git', ['add', '-A'], { cwd: dir });
+        await execa('git', ['commit', '--quiet', '-m', 'add probe script'], { cwd: dir });
+
+        const declaration = minimalDeclaration({
+          surfaces: {
+            process: {
+              run: `node .forge/parity/probes/process-helper.mjs`,
+              stability: { runs: 1 },
+              cases: [{}],
+            },
+          },
+        });
+        const results = await observeParityDeclaration({
+          declaration,
+          side: 'candidate',
+          projectRoot: dir,
+          parentEnv: process.env,
+        });
+        const outcome = findCase(results, 'process');
+        // Before this fix: `ERR_MODULE_NOT_FOUND` (the exact failure class the original,
+        // library-only exclusion existed to prevent, now hitting a surface it did not cover).
+        if (outcome.outcome !== 'observed')
+          throw new Error(`expected observed, got ${outcome.outcome}: ${JSON.stringify(outcome)}`);
+        if (outcome.observation.surface !== 'process') throw new Error('expected process surface');
+        expect(outcome.observation.stdout?.text).toBe('ok');
+      },
+    );
+  },
+);

@@ -158,16 +158,22 @@ async function observeOneCase(args: ObserveOneCaseArgs): Promise<ParityCaseObser
     // command's own run (never wider -- this piece's own `candidate-isolation.ts` doc comment has the
     // full account of why precisely here, between the overlay writes above and the snapshot below).
     //
-    // EXCEPT for `library`: that surface's own `run` is itself a script UNDER `.forge/parity/probes/`
-    // (`13` F-TEST-9: "a reviewed probe script under `.forge/parity/probes/`") -- hiding the directory
-    // would make the very command being observed unrunnable, confirmed directly (not assumed) against
-    // a real `library` case before this exclusion was added: the probe's own `node <path>` invocation
-    // failed outright with `ENOENT` on its own script. DISCLOSED GAP: a `library` probe's own command
-    // therefore keeps the self-reverting-tamper exposure this piece closes for `process`/`file`/`http`
-    // -- closing it too needs the isolation to stage ONLY the probe path(s) a case's `run`/`setup`
-    // actually names back into an otherwise-still-hidden directory (so the probe can run while nothing
-    // else under `.forge/parity/` is reachable), a materially bigger mechanism than this piece's own
-    // scope; see this piece's own report.
+    // EXCEPT when THIS CASE'S OWN composed command line itself names a path under
+    // `.forge/parity/probes/` -- never special-cased on `surfaceKind === 'library'` (a real
+    // regression a second critic round found and reproduced live: `13` F-TEST-9 §"library probe
+    // protocol" defines `library` as "a `process` surface whose command is a reviewed probe script
+    // under `.forge/parity/probes/`" -- the SPEC's own wording already says any `process`-shaped
+    // surface may use the identical pattern, and `SurfaceDeclaration.run` is one plain string field
+    // every surface kind shares; nothing about the TYPE `'library'` is structurally special here).
+    // `probeSourcePaths` (`overlay.ts`) is the same surface-agnostic scan `librarySurfaceProbePaths`
+    // above already uses for the overlay step -- reused here rather than re-deriving "does this
+    // command need a path this isolation would hide" a second, independently-written way. DISCLOSED
+    // GAP: a case whose command needs its own probe script therefore keeps the self-reverting-tamper
+    // exposure this piece closes for every other case -- closing it too needs the isolation to stage
+    // ONLY the named probe path(s) back into an otherwise-still-hidden directory (so the command can
+    // run while nothing else under `.forge/parity/` is reachable), a materially bigger mechanism than
+    // this piece's own scope; see this piece's own report.
+    const referencesProbePath = probeSourcePaths(composed).length > 0;
     const runCase = (): Promise<Awaited<ReturnType<typeof runConfinedCommand>>> =>
       runConfinedCommand(composed, root, {
         limits,
@@ -176,7 +182,7 @@ async function observeOneCase(args: ObserveOneCaseArgs): Promise<ParityCaseObser
         preserveRawOutput: true,
       });
     const result =
-      side === 'candidate' && surfaceKind !== 'library'
+      side === 'candidate' && !referencesProbePath
         ? await withParityDirHidden(root, runCase)
         : await runCase();
 

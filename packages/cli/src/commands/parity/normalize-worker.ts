@@ -21,44 +21,53 @@
  * BEFORE the `sync` flag is stored, so the calling thread never observes "done" before the bytes it
  * is about to read are actually there.
  *
+ * **Why `process.on('uncaughtException', ...)`, not `normalize-budget.ts`'s own `worker.on('error',
+ * ...)`, is what detects a crash promptly.** Confirmed directly, by the identical "reproduce before
+ * trusting" discipline this whole piece follows: a worker that throws BEFORE reaching this file's
+ * own `Atomics.store` leaves `sync` at `0` forever, so `normalize-budget.ts`'s own `Atomics.wait`
+ * blocks for the FULL budget before returning `'timed-out'` — a crash misdiagnosed as a hang, not
+ * merely a slow report of one. The reason: `Worker`'s `'error'` event is delivered to the PARENT
+ * through the event loop, which the parent's own call stack (blocked inside `Atomics.wait`, even
+ * across many short, repeatedly-polled waits — proven directly, not assumed, by instrumenting a
+ * polling loop and observing the handler never fires until the loop itself returns) does not get a
+ * turn to run until `applyNormalizeRulesToTextBounded` itself returns. `process.on('uncaughtException'
+ * ...)`, registered HERE, inside the worker's own realm, runs SYNCHRONOUSLY at the point of the
+ * uncaught throw, before the thread dies — it can therefore still reach the one mechanism that
+ * crosses threads without the event loop, the SAME `Atomics.store`/`notify` pair the success path
+ * uses, which `normalize-budget.ts`'s own `Atomics.wait` observes within a handful of milliseconds
+ * (confirmed directly: ~14ms, against a 5000ms budget, in a standalone repro before this file reached
+ * its current form). Registered as literally the first statement, before anything else in this file
+ * can throw first.
+ *
  * @see specs/13-frameworks-testing-and-debugging.md F-TEST-9
  * @see process/plans/PLAN-M17.md P14
  */
 import { workerData } from 'node:worker_threads';
 
-import { applyNormalizeRulesToText, type NormalizeTargetScope } from './normalize.ts';
-import type { NormalizeRule } from './declaration-types.ts';
-
-/** The exact shape `normalize-budget.ts` posts into `workerData` — kept in one place so the two
- * files cannot silently drift apart on what a worker invocation needs.
- *
- * `resultBuffer` layout (all offsets in bytes, all integers little-endian via `Int32Array`, the
- * platform-native order both threads share since they are the same process): byte 0 is the `sync`
- * flag `Atomics.wait`/`notify` watch (0 pending, 1 done — a DIFFERENT SharedArrayBuffer from the one
- * `sync` itself names, carried alongside it rather than packed into this one, only so this worker's
- * own write-then-store ordering, below, is visually obvious from the two separate names); bytes 4-7
- * hold the UTF-8 payload's own byte length, or `-1` for "the real payload would not fit" (an
- * `applyNormalizeRulesToTextBounded`-decided refusal, never attempted here); bytes 8 onward hold the
- * UTF-8-encoded JSON payload itself, up to `resultBuffer.byteLength - 8` bytes. */
-export interface NormalizeWorkerData {
-  readonly text: string;
-  readonly rules: readonly NormalizeRule[];
-  readonly scope: NormalizeTargetScope;
-  readonly sync: Int32Array;
-  readonly resultBuffer: SharedArrayBuffer;
-}
-
-/** What this worker writes at `resultBuffer`'s own JSON payload — a successful rule application, or
- * the stringified form of whatever `applyNormalizeRulesToText` itself threw (never expected in
- * practice: that function's own contract is "never throws", {@link NormalizeTextOutcome} carries
- * every failure as data — this exists only so a genuine, unexpected bug in this worker is reported
- * as data too, rather than this worker thread dying silently with the caller left relying on the
- * wall-clock budget alone to notice). */
-export type NormalizeWorkerMessage =
-  | { readonly ok: true; readonly outcome: ReturnType<typeof applyNormalizeRulesToText> }
-  | { readonly ok: false; readonly message: string };
+import { applyNormalizeRulesToText } from './normalize.ts';
+import {
+  SYNC_CRASHED,
+  type NormalizeWorkerData,
+  type NormalizeWorkerMessage,
+} from './normalize-worker-protocol.ts';
 
 const data = workerData as NormalizeWorkerData;
+
+// Registered FIRST, before any other statement in this file can throw first (see this file's own
+// header for the full account of why this, not the parent's `worker.on('error', ...)`, is what
+// detects a crash promptly). `try`/`catch` around the signalling itself: if `data.sync` is somehow
+// not the `Int32Array` it is supposed to be, there is truly nothing left this thread can do except
+// exit and let the parent's own wall-clock budget be the backstop that still bounds it.
+process.on('uncaughtException', () => {
+  try {
+    Atomics.store(data.sync, 0, SYNC_CRASHED);
+    Atomics.notify(data.sync, 0);
+  } catch {
+    // See above: the parent's own budget still bounds this case, just without an early signal.
+  } finally {
+    process.exit(1);
+  }
+});
 
 let message: NormalizeWorkerMessage;
 try {

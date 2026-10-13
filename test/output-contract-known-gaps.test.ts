@@ -603,15 +603,16 @@ describe('M17 Phase A: surfaces specs/22 M17 names that are not yet built (specs
     // original title named, closed end to end through the real `forge parity check` entry point:
     // the read the tamper depends on now fails with `ENOENT` before it can do anything).
     //
-    // DISCLOSED, remaining gap (named, not hidden): the `library` surface's own case command is NOT
-    // isolated -- its `run` is itself a script living under `.forge/parity/probes/` (`13` F-TEST-9:
-    // "a reviewed probe script under `.forge/parity/probes/`"), so hiding the directory would make
-    // the very surface being observed unrunnable (confirmed directly: a real probe test failed
-    // `ENOENT` on its own script before this exclusion existed). See `observe.ts`'s own comment at
-    // the `surfaceKind !== 'library'` exclusion for the full account.
+    // DISCLOSED, remaining gap (named, not hidden): a case whose own composed command references a
+    // path under `.forge/parity/probes/` (any surface kind -- NOT only `library`; a second critic
+    // round found the original `library`-only exclusion was itself a real regression, since `13`
+    // F-TEST-9's own wording already lets any surface use this pattern) is NOT isolated, since hiding
+    // the directory would make the very command being observed unrunnable (confirmed directly: a
+    // real probe test failed `ENOENT` on its own script before this exclusion existed). See
+    // `observe.ts`'s own `referencesProbePath` check for the full account.
     const observe = readPkg('packages/cli/src/commands/parity/observe.ts');
     expect(observe).toContain("import { withParityDirHidden } from './candidate-isolation.ts';");
-    expect(observe).toMatch(/side === 'candidate' && surfaceKind !== 'library'/);
+    expect(observe).toMatch(/side === 'candidate' && !referencesProbePath/);
     const candidateIsolation = readPkg('packages/cli/src/commands/parity/candidate-isolation.ts');
     expect(candidateIsolation).toContain('export async function withParityDirHidden');
   });

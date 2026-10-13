@@ -215,6 +215,8 @@ const SAMPLE_DETAILS = {
   // `CFG-516`/`RUN-152`/`RUN-153` (`specs/22` M17 P14): `file`/`key`/`detail`/`more` (`CFG-510`-style),
   // `surface`/`index`/`timeoutMs` (`RUN-118`-style) and `path` (`CFG-053`-style) above already cover
   // every key all three codes need; no new key is added for them.
+  // `CFG-517`/`RUN-154` (`specs/22` M17 P14, a later gauntlet round): `file` and `detail` above
+  // already cover both codes' own keys; no new key is added for them either.
 } satisfies Record<string, unknown> as never;
 
 /**
