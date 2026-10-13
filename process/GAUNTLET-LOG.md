@@ -23421,3 +23421,41 @@ untouched sibling test files — found twice, independently, in different places
 useful signal about how an easy-to-miss a silently-ignored test parameter can be.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q318`.
+
+## M17 P8 — Worktrees outside the project tree
+
+**Rounds: 2. Outcome: DONE.** `@forge/vcs` (2 new files), `forge doctor`'s check+fix, `eslint.config.js`.
+The piece with this milestone's single most severe finding — a confirmed, proven data-loss bug, not
+a theoretical risk.
+
+Round 1's build found and fixed two real drift bugs (two independent places reconstructing the same
+in-tree path, now unified) and a real symlinked-tmpdir/realpath bug via direct reproduction. It also
+surfaced a genuine contradiction in P1's own just-landed spec text (fixed directly on `main`, Q314)
+and a real, disclosed `node_modules`-resolution regression the relocation itself causes (tracked for
+a dedicated follow-up, same Q314) — both already handled before this piece's own critics ran.
+
+**Round 1's two critics found the milestone's worst confirmed bug.** One proved that the new
+`legacy-in-tree-worktrees` doctor check and its `--fix` had zero verification that an entry was ever
+a real git worktree — creating a stray file with real content under the legacy path and running
+`--fix` silently deleted it while reporting success. The critic's own framing is the reason this
+mattered so much: post-migration, nothing will ever again legitimately create a worktree at that
+path, so every future "legacy" finding on an ordinary project is, by construction, not a worktree —
+this was never a rare edge case, it was the inevitable steady state. The same critic separately found
+an unscoped `git worktree prune` fallback that can silently de-register an unrelated, still-real
+worktree — proven with a real git repro, not reasoned about. The other critic independently found a
+real floor failure (a pre-existing test outside this piece's own file list, hardcoded to the old
+path, now deterministically red every run), a resume-after-project-move gap against the plan's own
+explicit test mandate, an incidentally-proven-only-on-macOS symlink fix, and a confirmed real
+cross-piece landmine with M17 P10 (a function P10 adds calls a symbol this piece deletes — resolved
+by the orchestrator at landing time, since P10 landed first).
+
+**Round 2 closed every fixable finding and disclosed the one that genuinely wasn't this piece's to
+fix.** The data-loss bug: a non-worktree entry is now genuinely invisible to the check, confirmed
+against the critic's own exact repro. The unscoped prune: detected rather than prevented (git itself
+offers no scoping primitive), surfaced as a loud, impossible-to-miss warning rather than silently
+absorbed. The symlink fix: now proven by a real, explicitly-constructed symlink. The resume gap: a
+dedicated test now proves today's real behavior rather than leaving it silently unverified against
+the plan's own stated requirement — disclosed as a real, separate contract change to `resumeRun`'s
+own refusal semantics, not something to force into this piece's scope.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q319`.

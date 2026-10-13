@@ -29332,3 +29332,62 @@ that can genuinely distinguish the write-ahead `StepRetried`-before-`sleep` orde
 (the event-log read-back technique, since a naive event-type check can't tell the two orderings apart).
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P10`.
+## Q319 — M17 P8: worktrees outside the project tree — the confirmed data-loss bug, the unscoped-prune collateral risk, and the DECISIONs that closed both
+
+**Context.** P8's mandate: move lane/integration/parity-reference worktrees out of the project tree
+into a per-project cache directory. Two independent critics found real, serious issues — most
+severely, a confirmed, proven data-loss bug in the piece's own new `forge doctor --fix` check.
+
+**DECISION 1 — `listLegacyRegisteredWorktrees` cross-checks every legacy-path entry against
+`git worktree list --porcelain`'s own registration before the check or the fix ever touches it.**
+A critic proved directly that the original check treated "any entry exists under the legacy path" as
+the failure condition, with zero verification against git — creating a stray file (never a worktree)
+under the legacy path and running `--fix` silently deleted it while reporting success. Worse: by
+construction, this is the expected steady state post-migration, not a rare edge case — nothing will
+ever again legitimately create a real worktree at the legacy path, so every future "legacy" entry
+doctor finds on an ordinary project is, by definition, not a worktree. Fixed so a non-worktree entry
+is genuinely invisible to the check, never merely "flagged but handled safely."
+
+**DECISION 2 — the orphan-fix fallback's own unscoped `git worktree prune` call is detected, not
+prevented, since git itself offers no way to scope `prune` to one worktree.** A critic proved that
+this fallback (hit when `git worktree remove -f -f` itself fails) can silently de-register a
+completely unrelated, still-real worktree whose `.git` pointer merely couldn't be read at that moment
+— a real risk specifically because this piece's own new check loops over multiple items per `--fix`
+call, exactly the scenario where an old-location and new-location orphan coexist post-upgrade.
+Since there is no git primitive to scope the prune itself, the fix snapshots the registered worktree
+list immediately before and after the fallback's own prune call and surfaces any OTHER entry that
+disappeared as a loud, impossible-to-miss `collateralLossWarning` — never silently absorbed the way
+an ordinary prune failure already safely is. Proven against a real, non-trivial repro (two real
+worktrees, both with their own `.git` pointer file removed, confirmed empirically to be exactly the
+condition that forces the fallback and triggers git's own silent deregistration).
+
+**DECISION 3 — the symlink-realpath fix (closing a real bug found while building: an unresolved
+`cacheDirRoot` on a symlinked tmpdir broke a later `git branch -D` against git's own canonical
+record) is now proven by a real, explicitly-constructed symlink, not incidentally by whichever OS the
+test happens to run on.** The original test coverage was real but accidental — the sandboxed test
+cache directory happened to sit under a symlinked path only because of where macOS puts its own temp
+dir; Linux CI runners don't symlink `/tmp`, so the exact regression this fix targets could have
+shipped silently broken on 2 of 3 required CI platforms. A new, dedicated `worktree-root.test.ts`
+(no such file existed before this piece) constructs a real symlink via `ln -s` and passes it directly.
+
+**DECISION 4 — a resume-after-project-move gap, against `PLAN-M17.md`'s own explicit "a project moved
+on disk still resumes (or refuses typed)" test mandate, is disclosed and tested, not fixed.** A
+`'ready'` lane (committed, claim-enforced, not yet landed by a merge step) whose project moves on disk
+before resume ever runs is silently folded into the identical branch as "already safely merged" —
+`repopulateLaneRegistry`'s own existence check recomputes the lane's path from the CURRENT project
+root's hash, which differs from the one the lane actually lives under, and nothing distinguishes the
+two cases. A dedicated test now proves today's real behavior rather than leaving it silently
+unverified against the plan's own explicit requirement. Judged out of scope to fix here: every other
+reconciliation in `resumeRun` detects-and-silently-corrects, never refuses — introducing a new, typed
+refusal path is a real contract change with no existing precedent to extend, not a small addition.
+
+**Also closed**: a pre-existing test outside this piece's own file list (`debug-confinement.test.ts`)
+hardcoded the old in-tree path and now failed deterministically every run — updated to the real new
+location; `projectCacheHash`'s documented "64 bits" guarantee, previously asserted only in a doc
+comment with zero direct test, now has a pinned golden-value test (mutation-confirmed: shrinking the
+hash length fails it immediately); an `eslint.config.js` carve-out for `system-cache-dir.ts` claimed a
+narrow scope but disabled a whole rule category wholesale — narrowed to the one selector the file
+actually needs relaxed, confirmed by direct analysis of which rule selectors the file's real code
+could ever trip.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P8`.
