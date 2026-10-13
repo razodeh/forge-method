@@ -4,7 +4,7 @@
  * @see specs/03 §3.7
  */
 import { spawn } from 'node:child_process';
-import { mkdir, realpath } from 'node:fs/promises';
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -87,35 +87,41 @@ describe('checkOrphanedWorktrees', () => {
   });
 });
 
+/** A real git worktree registered directly at `.forge/state/worktrees/<name>` -- the pre-M17 in-tree
+ * location -- standing in for one a pre-M17 FORGE version (or this engine, before `PLAN-M17.md` P8)
+ * created there directly. Never a bare `mkdir`: a gauntlet critic round proved that a bare directory
+ * is not what this check (or its `--fix`) may treat as a worktree at all — see
+ * `checkLegacyInTreeWorktrees`'s own doc comment. */
+async function createLegacyWorktree(projectDir: string, name: string): Promise<string> {
+  const target = path.join(projectDir, '.forge', 'state', 'worktrees', name);
+  await execa('git', ['worktree', 'add', '-b', `forge/run-1/${name}`, target], { cwd: projectDir });
+  return target;
+}
+
 describe('checkLegacyInTreeWorktrees (specs/22 M17 P8)', () => {
   it('passes when no legacy in-tree worktrees directory exists at all', async () => {
     const project = await createTestProject();
-    const result = await checkLegacyInTreeWorktrees(project.paths);
+    const result = await checkLegacyInTreeWorktrees(project.paths, project.dir);
     expect(result.ok).toBe(true);
     expect(result.severity).toBe('warning');
   });
 
-  it('is a real warning for a real leftover entry under the pre-M17 .forge/state/worktrees/', async () => {
+  it('is a real warning for a real, git-registered worktree under the pre-M17 .forge/state/worktrees/', async () => {
     const project = await createTestProject();
-    // A pre-M17 FORGE version (or this engine, before PLAN-M17.md P8) created lanes here directly --
-    // simulated by a plain directory, since the real worktree-creation machinery itself (`@forge/vcs`)
-    // never writes here again post-M17, which is the whole point this check exists to catch.
-    await mkdir(path.join(project.dir, '.forge', 'state', 'worktrees', 'leftover-lane'), {
-      recursive: true,
-    });
-    const result = await checkLegacyInTreeWorktrees(project.paths);
+    await createLegacyWorktree(project.dir, 'leftover-lane');
+    const result = await checkLegacyInTreeWorktrees(project.paths, project.dir);
     expect(result.ok).toBe(false);
     expect(result.severity).toBe('warning');
-    expect(result.message).toContain('1 real entry');
+    expect(result.message).toContain('1 real, git-registered worktree');
   });
 
-  it('counts every real entry, pluralised correctly', async () => {
+  it('counts every real, git-registered worktree, pluralised correctly', async () => {
     const project = await createTestProject();
-    await mkdir(path.join(project.dir, '.forge', 'state', 'worktrees', 'a'), { recursive: true });
-    await mkdir(path.join(project.dir, '.forge', 'state', 'worktrees', 'b'), { recursive: true });
-    const result = await checkLegacyInTreeWorktrees(project.paths);
+    await createLegacyWorktree(project.dir, 'a');
+    await createLegacyWorktree(project.dir, 'b');
+    const result = await checkLegacyInTreeWorktrees(project.paths, project.dir);
     expect(result.ok).toBe(false);
-    expect(result.message).toContain('2 real entries');
+    expect(result.message).toContain('2 real, git-registered worktree');
   });
 
   it('the real worktree-creation path (createLaneWorktree, via the real engine facade) never creates anything here at all', async () => {
@@ -131,8 +137,38 @@ describe('checkLegacyInTreeWorktrees (specs/22 M17 P8)', () => {
       ],
       { cwd: project.dir },
     );
-    const result = await checkLegacyInTreeWorktrees(project.paths);
+    const result = await checkLegacyInTreeWorktrees(project.paths, project.dir);
     expect(result.ok).toBe(true);
+  });
+
+  it('CRITICAL: a stray file with real, unrelated content at the legacy path is never flagged — it was never a worktree', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge', 'state', 'worktrees'), { recursive: true });
+    const strayFile = path.join(project.dir, '.forge', 'state', 'worktrees', 'my-personal-notes');
+    await writeFile(strayFile, 'these are real notes a human wrote, not a worktree\n');
+
+    const result = await checkLegacyInTreeWorktrees(project.paths, project.dir);
+
+    // The check must not flag this -- it is not a worktree, so `06` §6.4's own "any worktree it
+    // still finds" never names it in the first place.
+    expect(result.ok).toBe(true);
+    // And the file itself is completely untouched, byte for byte.
+    await expect(readFile(strayFile, 'utf8')).resolves.toBe(
+      'these are real notes a human wrote, not a worktree\n',
+    );
+  });
+
+  it('a mix of one real stray file and one real registered worktree: only the real worktree is counted', async () => {
+    const project = await createTestProject();
+    await createLegacyWorktree(project.dir, 'real-lane');
+    const strayFile = path.join(project.dir, '.forge', 'state', 'worktrees', 'stray.txt');
+    await writeFile(strayFile, 'unrelated content\n');
+
+    const result = await checkLegacyInTreeWorktrees(project.paths, project.dir);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain('1 real, git-registered worktree');
+    await expect(readFile(strayFile, 'utf8')).resolves.toBe('unrelated content\n');
   });
 });
 

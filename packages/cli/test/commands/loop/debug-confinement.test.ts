@@ -9,12 +9,22 @@
  * exist if the command had run, and the environment carries synthetic canary secrets that must not be visible to
  * anything FORGE runs for the model. No real API key is used anywhere.
  */
-import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
 import type { SessionRequest } from '@forge/adapter-kit';
+import { worktreesRootFor } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -223,9 +233,12 @@ describe('forge debug: a command the grant allows runs, in the lane, in a scrubb
       expect(dumped, name).not.toContain(name);
       expect(dumped, name).not.toContain(`canary-value-of-${name}`);
     }
-    // It ran in the lane worktree, not the project root.
+    // It ran in the lane worktree, not the project root -- post-`PLAN-M17.md` P8, under the real
+    // per-project cache directory (`@forge/vcs`'s own `worktreesRootFor`), never inside `.forge/state/`
+    // (where it lived pre-M17) or the project tree at all.
     const cwd = dumped.trimEnd().split('\n').at(-1) ?? '';
-    expect(cwd).toContain(path.join('.forge', 'state'));
+    const worktreesRoot = await worktreesRootFor(await realpath(project.dir));
+    expect(cwd.startsWith(`${worktreesRoot}${path.sep}`)).toBe(true);
     expect(cwd).not.toBe(project.dir);
   }, 60_000);
 

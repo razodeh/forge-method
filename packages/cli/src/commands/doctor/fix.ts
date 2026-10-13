@@ -20,12 +20,14 @@
  * @see SPEC-QUESTIONS.md
  */
 import { rm } from 'node:fs/promises';
+import path from 'node:path';
 
 import { execa } from 'execa';
-import { listDirEntriesSorted, pathExists, type ProjectPaths } from '@forge/core/fs';
-import { listOrphanedWorktrees } from '@forge/vcs';
+import type { ProjectPaths } from '@forge/core/fs';
+import { listOrphanedWorktrees, parseWorktreeBlocks } from '@forge/vcs';
 
 import { isProcessAlive, readRunLock, releaseRunLock } from '../run/lock.ts';
+import { listLegacyRegisteredWorktrees } from './locks-and-worktrees.ts';
 import type { DoctorCheck, DoctorFixResult } from './types.ts';
 
 function causeMessage(cause: unknown): string {
@@ -69,6 +71,25 @@ async function fixStaleLock(paths: ProjectPaths): Promise<DoctorFixResult> {
   };
 }
 
+/** The real, registered worktree paths `git worktree list --porcelain` reports right now — used only
+ * to snapshot state immediately around the unscoped `git worktree prune` call below, never as a
+ * general-purpose listing (that is `@forge/vcs`'s own `listOrphanedWorktrees`/`parseWorktreeBlocks`,
+ * reused here directly rather than re-implemented). */
+async function registeredWorktreePaths(cwd: string): Promise<readonly string[]> {
+  const { stdout } = await execa('git', ['worktree', 'list', '--porcelain'], { cwd });
+  return parseWorktreeBlocks(stdout).map((block) => path.resolve(block.path));
+}
+
+/** The result of one `removeOrphanedWorktreeOnly` call: `collateralLoss` names every OTHER real,
+ * registered worktree (never the one this call was actually asked to remove) whose own git
+ * registration vanished as a side effect of this call's own `git worktree prune` fallback step —
+ * DECISION (`PLAN-M17.md` P8's own report): see this function's own doc comment for why this is
+ * detected and surfaced rather than prevented outright. Empty for the overwhelmingly common case
+ * (`git worktree remove -f -f` itself succeeds, so `prune` is never even reached). */
+interface OrphanRemovalResult {
+  readonly collateralLoss: readonly string[];
+}
+
 /** Removes the real, registered worktree at `targetPath` — the worktree only, deliberately never its
  * own lane branch (`checkOrphanedWorktrees`'s own remedy text, `locks-and-worktrees.ts`, names only
  * `git worktree remove <path>`, never a branch delete). `@forge/vcs`'s own `removeLaneWorktree` does
@@ -86,22 +107,54 @@ async function fixStaleLock(paths: ProjectPaths): Promise<DoctorFixResult> {
  * `-f -f` plus the raw-filesystem/`prune` fallback mirrors `removeLaneWorktree`'s own real,
  * empirically-verified worktree-removal half exactly (see its own doc comment for the full reasoning
  * per step); duplicated locally, deliberately, rather than reused, since the shared function is not
- * decomposed into a worktree-only half and this file must never perform the branch-delete half. */
-async function removeOrphanedWorktreeOnly(cwd: string, targetPath: string): Promise<void> {
+ * decomposed into a worktree-only half and this file must never perform the branch-delete half.
+ *
+ * **DECISION — the fallback's own `git worktree prune` is unscoped, and that is now detected, not
+ * merely documented.** A gauntlet critic round proved, directly, that `git worktree prune` treats ANY
+ * worktree whose own `.git` pointer cannot be read as "gone" — not only one whose directory is
+ * actually gone — and that this is repo-wide: a *second*, completely unrelated, still-real worktree
+ * (not the one this call was asked to remove) that merely became transiently unreadable (a permission
+ * hiccup, an unmounted path, nothing adversarial) loses its own git registration too, silently,
+ * permanently (unlike the "directory already gone" case, this one does not self-heal — git's own
+ * trace of it is what is gone, while its real directory and contents are left on disk, now invisible
+ * to `listOrphanedWorktrees`/`checkOrphanedWorktrees`, both of which only ever consult `git worktree
+ * list --porcelain`). Git offers no way to scope `prune` to one worktree, so this snapshots the real,
+ * registered worktree set immediately before and after the fallback's own `prune` call and reports any
+ * OTHER entry that disappeared as `collateralLoss` — surfaced loudly by both real callers below, never
+ * silently absorbed the way a `prune` failure itself still safely is (that case, unlike this one,
+ * genuinely self-heals: `listOrphanedWorktrees`'s own doc comment already covers it). This cannot
+ * un-prune anything already gone — once git's own registration is gone, only a human re-adding it by
+ * hand (after inspecting what is actually there) gets it back — so detection and a loud warning is the
+ * most this function can honestly do, which is exactly why it matters this much that it is never
+ * silent about it. */
+async function removeOrphanedWorktreeOnly(
+  cwd: string,
+  targetPath: string,
+): Promise<OrphanRemovalResult> {
   try {
     await execa('git', ['worktree', 'remove', '-f', '-f', targetPath], { cwd });
-    return;
+    return { collateralLoss: [] };
   } catch {
     // Falls through to the raw-filesystem fallback below — see this function's own doc comment.
   }
+  const before = await registeredWorktreePaths(cwd);
   await rm(targetPath, { recursive: true, force: true });
   try {
     await execa('git', ['worktree', 'unlock', targetPath], { cwd });
   } catch {
     // Was never locked at all — an expected, harmless case, not a real failure.
   }
+  let collateralLoss: readonly string[] = [];
   try {
     await execa('git', ['worktree', 'prune'], { cwd });
+    // Only computed on a successful prune: a failed one changed nothing, so there is nothing new to
+    // detect (and `registeredWorktreePaths` itself would be exactly as likely to fail again).
+    const after = await registeredWorktreePaths(cwd);
+    const resolvedTarget = path.resolve(targetPath);
+    const afterResolved = new Set(after);
+    collateralLoss = before.filter(
+      (candidate) => candidate !== resolvedTarget && !afterResolved.has(candidate),
+    );
   } catch {
     // The real, disk-level removal (`rm` above) already succeeded by the time `prune` runs — a real
     // gauntlet critic round found a `prune` failure here (transient, or a concurrent git operation)
@@ -110,8 +163,26 @@ async function removeOrphanedWorktreeOnly(cwd: string, targetPath: string): Prom
     // administrative bookkeeping for a directory that is provably already gone; a caller re-running
     // `forge doctor` afterward reconciles this the identical way `listOrphanedWorktrees`'s own doc
     // comment already describes for the general case (a leftover git-only registration is still
-    // rediscoverable and re-reclaimable on a later pass), so swallowing this one failure here is safe.
+    // rediscoverable and re-reclaimable on a later pass), so swallowing this one failure here is safe
+    // — unlike a successful prune's own collateral loss above, which is not safe to swallow.
   }
+  return { collateralLoss };
+}
+
+/** A loud, impossible-to-miss suffix for any `collateralLoss` a batch of `removeOrphanedWorktreeOnly`
+ * calls accumulated — never folded quietly into the ordinary success message, and never dropped just
+ * because the fix that caused it otherwise succeeded. Empty string when nothing collateral happened,
+ * which is the overwhelmingly common case. */
+function collateralLossWarning(collateralLoss: readonly string[]): string {
+  if (collateralLoss.length === 0) return '';
+  return (
+    ` WARNING: removing the above also made git lose its OWN registration for ` +
+    `${String(collateralLoss.length)} other real worktree(s), unrelated to the ones just fixed: ` +
+    `${collateralLoss.join(', ')}. Their own directories and content are untouched on disk but no ` +
+    `longer tracked by git at all — inspect each one by hand and re-register it with ` +
+    `\`git worktree add --force <path> <branch>\` (reading what is really there first) before running ` +
+    `\`forge doctor --fix\` again.`
+  );
 }
 
 /** Each real orphan is removed independently, its own real failure isolated from every other's — a
@@ -145,14 +216,17 @@ async function fixOrphanedWorktrees(projectRoot: string): Promise<DoctorFixResul
 
   let removedCount = 0;
   const failures: string[] = [];
+  const collateralLoss: string[] = [];
   for (const handle of orphans) {
     try {
-      await removeOrphanedWorktreeOnly(projectRoot, handle.path);
+      const result = await removeOrphanedWorktreeOnly(projectRoot, handle.path);
+      collateralLoss.push(...result.collateralLoss);
       removedCount += 1;
     } catch (cause) {
       failures.push(`${handle.path}: ${causeMessage(cause)}`);
     }
   }
+  const warning = collateralLossWarning(collateralLoss);
 
   if (failures.length === 0) {
     return {
@@ -161,13 +235,13 @@ async function fixOrphanedWorktrees(projectRoot: string): Promise<DoctorFixResul
       message:
         `Removed ${String(removedCount)} real orphaned lane worktree(s). Each one's own lane ` +
         'branch is deliberately left in place — resolve it by hand (see the dangling-lane-branches ' +
-        'check) once you have confirmed its work already merged.',
+        `check) once you have confirmed its work already merged.${warning}`,
     };
   }
   return {
     id: 'orphaned-worktrees',
     applied: removedCount > 0,
-    message: `Removed ${String(removedCount)} of ${String(orphans.length)} real orphaned lane worktree(s); ${String(failures.length)} failed: ${failures.join('; ')}.`,
+    message: `Removed ${String(removedCount)} of ${String(orphans.length)} real orphaned lane worktree(s); ${String(failures.length)} failed: ${failures.join('; ')}.${warning}`,
   };
 }
 
@@ -182,18 +256,25 @@ async function fixOrphanedWorktrees(projectRoot: string): Promise<DoctorFixResul
  * raw-`rm`-fallback shape handles both that case and a genuinely disconnected leftover (never
  * registered with git at all, or already pruned) identically — never the branch-delete half
  * `removeLaneWorktree` also performs, for the identical "a human decides a branch's fate, not `--fix`"
- * reason `fixOrphanedWorktrees`'s own doc comment already gives. */
+ * reason `fixOrphanedWorktrees`'s own doc comment already gives.
+ *
+ * **Only ever touches entries `listLegacyRegisteredWorktrees` (`locks-and-worktrees.ts`) confirms are
+ * real, git-registered worktrees** — never a bare directory listing. A gauntlet critic round proved
+ * directly that the first version of this function, which treated ANY entry under the legacy path as
+ * a worktree, deleted a stray file with real, unrelated user content outright the moment `git worktree
+ * remove` refused it (correctly: it was never a worktree) and the old code fell through to an
+ * unconditional `rm` regardless. See `checkLegacyInTreeWorktrees`'s own doc comment for the fuller
+ * reasoning — once this migration ships, nothing ever creates a real worktree here again, so this is
+ * the expected steady state of every ordinary file a project happens to have at this path, not a rare
+ * shape worth trading off against. */
 async function fixLegacyInTreeWorktrees(
   paths: ProjectPaths,
   projectRoot: string,
 ): Promise<DoctorFixResult> {
   const legacyRoot = paths.resolveState('worktrees');
-  let entries: readonly { readonly name: string; readonly isDirectory: boolean }[];
+  let realWorktrees: readonly string[];
   try {
-    // `pathExists` first, same reasoning as `checkLegacyInTreeWorktrees`'s own doc comment
-    // (`locks-and-worktrees.ts`): a missing directory is the common, healthy case, read the same way
-    // for both the check and this fix, never itself a failure to fix.
-    entries = (await pathExists(legacyRoot)) ? await listDirEntriesSorted(legacyRoot) : [];
+    realWorktrees = await listLegacyRegisteredWorktrees(projectRoot, legacyRoot);
   } catch (cause) {
     return {
       id: 'legacy-in-tree-worktrees',
@@ -201,37 +282,39 @@ async function fixLegacyInTreeWorktrees(
       message: `Could not list the legacy in-tree worktrees directory to fix it: ${causeMessage(cause)}.`,
     };
   }
-  if (entries.length === 0) {
+  if (realWorktrees.length === 0) {
     return {
       id: 'legacy-in-tree-worktrees',
       applied: false,
-      message: 'No legacy in-tree worktrees remain to fix.',
+      message: 'No real, git-registered legacy in-tree worktrees remain to fix.',
     };
   }
 
   let removedCount = 0;
   const failures: string[] = [];
-  for (const entry of entries) {
-    const entryPath = paths.resolveState(`worktrees/${entry.name}`);
+  const collateralLoss: string[] = [];
+  for (const entryPath of realWorktrees) {
     try {
-      await removeOrphanedWorktreeOnly(projectRoot, entryPath);
+      const result = await removeOrphanedWorktreeOnly(projectRoot, entryPath);
+      collateralLoss.push(...result.collateralLoss);
       removedCount += 1;
     } catch (cause) {
       failures.push(`${entryPath}: ${causeMessage(cause)}`);
     }
   }
+  const warning = collateralLossWarning(collateralLoss);
 
   if (failures.length === 0) {
     return {
       id: 'legacy-in-tree-worktrees',
       applied: true,
-      message: `Removed ${String(removedCount)} real legacy in-tree worktree entr${removedCount === 1 ? 'y' : 'ies'}.`,
+      message: `Removed ${String(removedCount)} real legacy in-tree worktree entr${removedCount === 1 ? 'y' : 'ies'}.${warning}`,
     };
   }
   return {
     id: 'legacy-in-tree-worktrees',
     applied: removedCount > 0,
-    message: `Removed ${String(removedCount)} of ${String(entries.length)} real legacy in-tree worktree entries; ${String(failures.length)} failed: ${failures.join('; ')}.`,
+    message: `Removed ${String(removedCount)} of ${String(realWorktrees.length)} real legacy in-tree worktree entries; ${String(failures.length)} failed: ${failures.join('; ')}.${warning}`,
   };
 }
 

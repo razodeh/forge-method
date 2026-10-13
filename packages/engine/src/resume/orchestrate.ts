@@ -400,7 +400,22 @@ async function removeStaleLaneIfAny(
  * against real git/filesystem state, never trust the log alone for something a crash could have
  * outpaced" discipline `reclaimOrphanedWorktrees` (above) already applies for the analogous orphaned-
  * worktree case. Returns every laneId found stale this way, so `resumeRun` can correct its own returned
- * `laneStatuses` to `'removed'` for them too — the log said `'ready'`, but reality already disagreed. */
+ * `laneStatuses` to `'removed'` for them too — the log said `'ready'`, but reality already disagreed.
+ *
+ * DISCLOSED GAP (`PLAN-M17.md` P8, a gauntlet critic round): the `existsSync(lane.path)` check below
+ * recomputes `lane.path` from `ctx.projectRoot` as it is right now, via `worktreesRootFor`'s own
+ * project-path hash (Decision 1, `worktree-root.ts`). If the project moved on disk between the crash
+ * and this resume, that hash differs from the one the lane's worktree actually lives under — so this
+ * check is false, and a lane that is genuinely `'ready'` (real, committed, never-merged work) is folded
+ * into exactly the same `staleLaneIds`/`'removed'` branch as a lane that really was already merged, with
+ * no typed error and no distinction between the two in `resumeRun`'s own return value. The plan's own
+ * "Tests first" line for this piece ("a project moved on disk still resumes (or refuses typed)") is
+ * unmet for this specific sub-case — proven directly by `orchestrate.test.ts`'s own "DISCLOSED GAP"
+ * test, immediately after this function's sibling "already gone" test. Not fixed here: `resumeRun` has
+ * no existing precedent anywhere in its own body for *refusing* (every other reconciliation in this
+ * file detects and silently corrects, never refuses), so adding one is a real, separate contract change
+ * to this function, on a surface `specs/22` M17 P10 concurrently owns. See this piece's own final report
+ * for the full writeup and the fix-or-disclose judgment call. */
 async function repopulateLaneRegistry(
   ctx: ResumeContext,
   runId: string,

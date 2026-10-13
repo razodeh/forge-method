@@ -56,11 +56,14 @@ export function projectCacheHash(realProjectRoot: string): string {
  * "the leaf may not exist yet, but the comparison still needs to be symlink-correct" problem;
  * duplicated locally (this package has no `core` edge, `specs/02` §2.2) rather than reused, the same
  * "a tiny, already-proven wrapper duplicated locally over a whole new package dependency" choice this
- * file's own sibling `lanes.ts` already makes for `listDirEntriesSorted`. `candidate` itself — the
- * full worktrees root, ending in a FORGE-specific `forge/<hash>/worktrees` suffix no OS or user ever
- * creates on its own — will not exist the very first time any project ever uses this cache slot; the
- * platform cache directory above it (`~/.cache`, `~/Library/Caches`, ...) almost always already does,
- * which is the ancestor this actually needs to resolve.
+ * file's own sibling `lanes.ts` already makes for `listDirEntriesSorted`. `worktreesRootFor` below
+ * calls this with `cacheDirRoot` alone as `candidate` — never the full, FORGE-specific
+ * `forge/<hash>/worktrees` suffix, which is joined on afterward, outside this function entirely, since
+ * nothing this codebase itself ever creates under that suffix is a symlink, so there is nothing further
+ * down worth resolving. `cacheDirRoot` itself (`~/.cache`, `~/Library/Caches`, ...) is the one real case
+ * genuinely worth guarding: it almost always already exists, but a sufficiently fresh machine or
+ * container (nothing has ever created it yet) is the realistic case where it does not, and this walks
+ * up to whichever real ancestor of it does.
  */
 async function pathExistsRaw(candidate: string): Promise<boolean> {
   try {

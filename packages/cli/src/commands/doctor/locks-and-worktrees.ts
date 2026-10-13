@@ -4,9 +4,17 @@
  *
  * @see specs/03 §3.7
  */
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
+
 import { execa } from 'execa';
-import { listDirEntriesSorted, pathExists, type ProjectPaths } from '@forge/core/fs';
-import { listOrphanedWorktrees } from '@forge/vcs';
+import {
+  listDirEntriesSorted,
+  pathExists,
+  type AbsolutePath,
+  type ProjectPaths,
+} from '@forge/core/fs';
+import { listOrphanedWorktrees, parseWorktreeBlocks } from '@forge/vcs';
 
 import { isProcessAlive, readRunLock } from '../run/lock.ts';
 import type { CheckSeverity, DoctorCheck } from './types.ts';
@@ -66,9 +74,49 @@ export async function checkOrphanedWorktrees(projectRoot: string): Promise<Docto
   );
 }
 
+/** Real, git-registered worktrees whose own path sits directly under `legacyRoot`
+ * (`paths.resolveState('worktrees')`) — cross-checked against `git worktree list --porcelain`, the
+ * same real source of truth `@forge/vcs`'s own `listOrphanedWorktrees`/`isRegisteredWorktree` already
+ * read, never a bare directory listing alone.
+ *
+ * A gauntlet critic round proved, directly, that a bare listing treats ANY entry here — a stray file,
+ * a user's own notes, a `.DS_Store`, anything that is not a worktree at all — as a "legacy worktree"
+ * finding, and that `forge doctor --fix` then deleted it outright: `removeOrphanedWorktreeOnly`'s own
+ * `git worktree remove` fails on a non-worktree path (it is not one), and falls straight through to an
+ * *unconditional* `rm`. This is not a corner case this check can afford to get wrong: once this
+ * migration ships, nothing ever creates a REAL worktree at this legacy location again, so "any entry
+ * exists" is not a rare, adversarial shape — it is the expected steady state of every ordinary stray
+ * file a project happens to have there, forever. Non-worktree entries are therefore never reported by
+ * this check at all (never flagged, never touched) — `06` §6.4's own normative text is "any
+ * **worktree** it still finds," and an entry that fails this cross-check was simply never one. */
+export async function listLegacyRegisteredWorktrees(
+  projectRoot: string,
+  legacyRoot: AbsolutePath,
+): Promise<readonly string[]> {
+  if (!(await pathExists(legacyRoot))) return [];
+  const entries = await listDirEntriesSorted(legacyRoot);
+  if (entries.length === 0) return [];
+  // `git worktree list --porcelain` reports every worktree's own path already canonicalised (symlinks
+  // resolved) -- confirmed repeatedly elsewhere in this same piece (`lanes.ts`'s own `resolveCwd` doc
+  // comment: `os.tmpdir()` itself is a symlink on macOS). `legacyRoot` comes from `paths.resolveState`,
+  // which never realpaths its result, so each real candidate here is realpath'd before comparing --
+  // skipping this reproduced the exact "two real worktree fixtures, correctly created, silently never
+  // recognised as registered" failure this piece's own report records, the identical class of bug
+  // already fixed once in `worktree-root.ts`'s own `worktreesRootFor`, one level up.
+  const { stdout } = await execa('git', ['worktree', 'list', '--porcelain'], { cwd: projectRoot });
+  const registered = new Set(parseWorktreeBlocks(stdout).map((block) => path.resolve(block.path)));
+  const realWorktrees: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(legacyRoot, entry.name);
+    const realEntryPath = await realpath(entryPath).catch(() => entryPath);
+    if (registered.has(path.resolve(realEntryPath))) realWorktrees.push(entryPath);
+  }
+  return realWorktrees;
+}
+
 /** `.forge/state/worktrees/` itself — where a lane or integration worktree lived before `PLAN-M17.md`
- * P8 (`06` §6.4's own pre-M17 rule) — still having any real entry in it at all, left by a pre-M17 run,
- * or by a project upgraded mid-run (`06` §6.4's own "Worktree location" paragraph: "`forge doctor`
+ * P8 (`06` §6.4's own pre-M17 rule) — still holding a real, git-registered worktree, left by a pre-M17
+ * run, or by a project upgraded mid-run (`06` §6.4's own "Worktree location" paragraph: "`forge doctor`
  * reports any worktree it still finds under the old, in-tree location — left by a pre-M17 run, or by a
  * project upgraded mid-run — and offers to remove it; a project is not blocked from running while one
  * exists, since the engine itself never creates a lane there again"). `warning`, never `hard`, for the
@@ -78,28 +126,27 @@ export async function checkOrphanedWorktrees(projectRoot: string): Promise<Docto
  * `paths.resolveState('worktrees')` (not `@forge/vcs`'s own `legacyInTreeWorktreesRoot`, which this
  * check's own report corroborates against the identical literal, `.forge/state/worktrees` — `18`
  * §18.3): the one route that reaches `.forge/state/` with a real, branded `AbsolutePath` back, rather
- * than an unexplained cast. `pathExists` first, same as `checkStaleLock`'s own "no lock file is
- * present" reads a missing lock file: a missing directory is the common, healthy case (nothing
- * pre-M17 ever ran against this project), never itself treated as a failure to list it; `pathExists`
- * already draws that exact "not found vs. a genuine failure" line (`@forge/core/fs`'s own doc
- * comment), so a real permission error past this point still surfaces honestly rather than being
- * silently read as "nothing here." */
-export async function checkLegacyInTreeWorktrees(paths: ProjectPaths): Promise<DoctorCheck> {
+ * than an unexplained cast. */
+export async function checkLegacyInTreeWorktrees(
+  paths: ProjectPaths,
+  projectRoot: string,
+): Promise<DoctorCheck> {
   const legacyRoot = paths.resolveState('worktrees');
-  const entries = (await pathExists(legacyRoot)) ? await listDirEntriesSorted(legacyRoot) : [];
-  const ok = entries.length === 0;
+  const realWorktrees = await listLegacyRegisteredWorktrees(projectRoot, legacyRoot);
+  const ok = realWorktrees.length === 0;
   return check(
     'legacy-in-tree-worktrees',
     ok,
     'warning',
     ok
       ? 'No legacy in-tree worktrees (pre-M17 `.forge/state/worktrees/`).'
-      : `${String(entries.length)} real entr${entries.length === 1 ? 'y' : 'ies'} under the legacy, ` +
-          `pre-M17 ".forge/state/worktrees/" — the engine itself never reads or writes there any more.`,
+      : `${String(realWorktrees.length)} real, git-registered worktree(s) under the legacy, pre-M17 ` +
+          `".forge/state/worktrees/" — the engine itself never reads or writes there any more.`,
     ok
       ? undefined
       : 'Confirm nothing references it (no run is mid-flight from before this project upgraded), ' +
-          'then remove ".forge/state/worktrees/" by hand, or run `forge doctor --fix`.',
+          'then run `git worktree remove <path>` for each named worktree by hand, or run ' +
+          '`forge doctor --fix`.',
   );
 }
 

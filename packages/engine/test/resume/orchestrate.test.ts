@@ -9,7 +9,7 @@
  * @see PLAN-M5.md P19
  * @see PLAN-M14.md P3
  */
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rename, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -769,6 +769,102 @@ describe('resumeRun', () => {
 
     const runState = await resumeRun(runId, ctx);
 
+    expect(ctx.laneRegistry.has(stepId)).toBe(false);
+    expect(runState.laneStatuses.get(laneId)).toBe('removed');
+    expect(runState.stepStatuses.get(stepId)).toBe('succeeded');
+  });
+
+  it('DISCLOSED GAP (gauntlet critic round, M17 P8): a "ready" lane whose PROJECT moved on disk between the crash and resume is silently folded into the identical "already merged" branch as the sibling test above, dropping real, never-merged work with no typed error', async () => {
+    // `PLAN-M17.md` P8's own "Tests first" line reads "a project moved on disk still resumes (or
+    // refuses typed)". `worktree-root.ts`'s own Decision 1 already documents, and `lanes.test.ts`
+    // already tests, ONE half of that: hashing the real path (not a persisted project id) means a
+    // moved project gets a fresh cache slot and starts fresh lanes, with `forge doctor` as the
+    // reclaim path for the old slot's now-unreachable worktrees -- an accepted, documented cost for a
+    // lane that was never anything but `'scheduled'`/`'running'` at the moment of the crash, since
+    // nothing of real value is orphaned in that case.
+    //
+    // This test proves that same trade-off is NOT equally safe one layer up, at `repopulateLaneRegistry`
+    // itself, for the one lane status where it actually matters: `'ready'`. A `'ready'` lane is real,
+    // already-committed work a `merge` step has not yet consumed (the sibling test immediately above
+    // this one proves the OTHER way a `'ready'` lane can go stale: the worktree really is gone, and
+    // folding it into `'removed'` is correct because the work really was already merged). Here, the
+    // worktree is NOT gone -- it is sitting exactly where it always was, real content and all -- but
+    // `repopulateLaneRegistry`'s own `existsSync(lane.path)` check recomputes `lane.path` from
+    // `ctx.projectRoot` AS IT IS RIGHT NOW, which hashes to a DIFFERENT cache slot than the one the lane
+    // actually lives under, so the path it probes was never created and `existsSync` is false --
+    // indistinguishable, from inside this function, from "already safely merged". There is no typed
+    // error anywhere in `resumeRun`'s own contract for this -- every other reconciliation case in this
+    // file (orphaned worktrees, dangling branches, stale lane registry entries) is "detect and silently
+    // correct", never "refuse" -- so introducing one is a real, separate design decision for this
+    // function's own contract, not a small fix, and the identical `engine/src/resume/*` surface is
+    // concurrently owned by M17 P10's own builder (this piece's own report already flags that
+    // collision risk). Disclosed and proven here, deliberately, rather than silently left untested
+    // against an explicit plan requirement -- see this piece's own final report for the full writeup.
+    const runId = 'run-project-moved-ready-lane';
+    const stepId = 'wf:moved-before-merge';
+    const projectRootBefore = await createTempRepo('moved-ready-lane');
+    const laneId = `${runId}-${slugifyStepId(stepId)}`;
+    const lane = await createLaneWorktree(projectRootBefore, {
+      runId,
+      stepId,
+      integrationBase: 'main',
+    });
+    const { stdout: baseSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: lane.path });
+
+    // Real, committed work inside the lane -- never merged to integration. The crash lands strictly
+    // between this commit (LaneReady/StepSucceeded already durably logged) and the `merge` step that
+    // would have consumed it.
+    const realWorkPath = path.join(lane.path, 'real-work.txt');
+    await writeFile(realWorkPath, 'unmerged work, never integrated\n');
+    await execa('git', ['add', 'real-work.txt'], { cwd: lane.path });
+    await execa('git', ['commit', '--quiet', '-m', 'real work'], { cwd: lane.path });
+
+    await appendEvent(projectRootBefore, runId, {
+      ts: nextTs(),
+      runId,
+      type: 'LaneCreated',
+      stepId,
+      laneId,
+      payload: { baseSha: baseSha.trim() },
+    });
+    await appendEvent(projectRootBefore, runId, {
+      ts: nextTs(),
+      runId,
+      type: 'LaneReady',
+      stepId,
+      laneId,
+      payload: undefined,
+    });
+    await appendEvent(projectRootBefore, runId, {
+      ts: nextTs(),
+      runId,
+      type: 'StepSucceeded',
+      stepId,
+      payload: undefined,
+    });
+
+    // The project itself moves on disk -- a user renames/relocates the whole directory, the event log
+    // (inside `.forge/state/`) included -- before anything ever resumes it. The lane worktree lives
+    // OUTSIDE the project tree (this piece's own Decision 6) so it does NOT move: it stays exactly
+    // where `createLaneWorktree` put it, under the OLD project root's own cache hash.
+    const projectRootAfter = `${projectRootBefore}-moved`;
+    await rename(projectRootBefore, projectRootAfter);
+
+    const ctx: ResumeContext = {
+      ...createTestContext({ projectRoot: projectRootAfter, runId, now: createTestClock() }),
+      steps: new Map(),
+    };
+
+    const runState = await resumeRun(runId, ctx);
+
+    // The real work is still there, completely untouched -- this was never a "worktree already gone"
+    // case.
+    expect(existsSync(lane.path)).toBe(true);
+    await expect(readFile(realWorkPath, 'utf8')).resolves.toBe('unmerged work, never integrated\n');
+    // Yet `resumeRun` reports exactly what it would report for a lane that really was already merged:
+    // no typed error, no warning, the step "succeeded", the lane "removed", and nothing repopulated
+    // into `ctx.laneRegistry` for a later merge attempt to find. The real content above is now
+    // unreachable from this run's own resumed state, silently.
     expect(ctx.laneRegistry.has(stepId)).toBe(false);
     expect(runState.laneStatuses.get(laneId)).toBe('removed');
     expect(runState.stepStatuses.get(stepId)).toBe('succeeded');

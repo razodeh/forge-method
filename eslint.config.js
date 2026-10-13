@@ -208,6 +208,28 @@ const BENCH_MJS_DETERMINISM_SYNTAX_RULES = DETERMINISM_SYNTAX_RULES.filter(
 );
 
 /**
+ * `@forge/vcs`'s own `system-cache-dir.ts` (`PLAN-M17.md` P8), the identical "filter by message text
+ * so every other real selector — including any added later — still applies" shape
+ * `BIN_TS_DETERMINISM_SYNTAX_RULES` above already establishes. Only `process.env` is filtered out here
+ * — unlike `bin.ts`, this file's own real host-fact read (`homedir()`) is already a bare call reached
+ * through a named import (`import { homedir } from 'node:os'`), never a member expression on a
+ * namespace object, so it never matches the host-facts selector (property-name-only, but still a
+ * `MemberExpression`) in the first place; `no-restricted-imports` below is what actually re-permits
+ * importing it, not this. `process.platform` (the other real host fact this file reads) is not in
+ * `HOST_FACT_NAMES` at all and was never banned by any selector here.
+ *
+ * A gauntlet critic round found the first version of this file's own override set the *whole*
+ * `no-restricted-syntax` rule to `'off'` instead — silently also lifting the `Math.random()`/
+ * crypto-randomness/alias/computed-key/listing/locale bans this file has no real reason to need
+ * lifted, the identical over-broad-exemption mistake `BIN_TS_DETERMINISM_SYNTAX_RULES`'s own doc
+ * comment already names and rejects, and that this exact file's own `no-restricted-imports` block
+ * (narrowed correctly, by the override's own prior doc comment) did not repeat.
+ */
+const SYSTEM_CACHE_DIR_TS_DETERMINISM_SYNTAX_RULES = DETERMINISM_SYNTAX_RULES.filter(
+  (rule) => !rule.message.includes('process.env directly'),
+);
+
+/**
  * QUALITY-BAR.md R11: cross-platform correctness — disk paths are composed with `node:path`, never
  * by concatenating a literal `/` separator, which is wrong on Windows. Not folded into
  * `DETERMINISM_SYNTAX_RULES` above: that array applies everywhere, and a global ban on `'/'` in a
@@ -460,9 +482,16 @@ export default tseslint.config(
     // the global array minus only the one entry (`node:os`'s host-fact names) this file actually needs
     // lifted, the same "narrowed to just the entries this file needs off" discipline `system-temp.ts`'s
     // own override already follows, so a future addition to the shared array is still inherited here.
+    //
+    // `no-restricted-syntax` is narrowed the identical way, not switched off wholesale: a gauntlet
+    // critic round found the first draft of this override turned the *whole* rule off, silently also
+    // lifting every other real R10 ban (`Math.random()`, crypto randomness, the alias ban, the
+    // computed-key ban, unsorted listings, every locale rule) this file has no reason to need lifted —
+    // `SYSTEM_CACHE_DIR_TS_DETERMINISM_SYNTAX_RULES`'s own doc comment above has the full reasoning for
+    // why `process.env` is the one, and only, selector this file's real code actually trips.
     files: ['**/src/system-cache-dir.ts'],
     rules: {
-      'no-restricted-syntax': 'off',
+      'no-restricted-syntax': ['error', ...SYSTEM_CACHE_DIR_TS_DETERMINISM_SYNTAX_RULES],
       'no-restricted-imports': [
         'error',
         {

@@ -7,7 +7,7 @@
  * @see PLAN-M11.md P14
  */
 import { spawn } from 'node:child_process';
-import { chmod, mkdir, realpath, rm } from 'node:fs/promises';
+import { chmod, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -209,10 +209,11 @@ describe('applyDoctorFix — orphaned-worktrees', () => {
 });
 
 describe('applyDoctorFix — legacy-in-tree-worktrees (specs/22 M17 P8)', () => {
-  it('removes real leftover entries under the pre-M17 .forge/state/worktrees/, reporting applied:true', async () => {
+  it('removes a real, git-registered leftover worktree under the pre-M17 .forge/state/worktrees/, reporting applied:true', async () => {
     const project = await createTestProject();
-    await mkdir(path.join(project.dir, '.forge', 'state', 'worktrees', 'leftover'), {
-      recursive: true,
+    const legacyTarget = path.join(project.dir, '.forge', 'state', 'worktrees', 'leftover');
+    await execa('git', ['worktree', 'add', '-b', 'forge/run-1/leftover', legacyTarget], {
+      cwd: project.dir,
     });
 
     const outcome = await applyDoctorFix(
@@ -231,7 +232,9 @@ describe('applyDoctorFix — legacy-in-tree-worktrees (specs/22 M17 P8)', () => 
     // Re-checking a clean project reports the honest "nothing to fix" outcome, not a fabricated
     // repeat success.
     expect(checked.applied).toBe(false);
-    expect(checked.message).toContain('No legacy in-tree worktrees remain to fix');
+    expect(checked.message).toContain(
+      'No real, git-registered legacy in-tree worktrees remain to fix',
+    );
   });
 
   it('reports applied:false honestly when nothing is there to fix', async () => {
@@ -242,7 +245,9 @@ describe('applyDoctorFix — legacy-in-tree-worktrees (specs/22 M17 P8)', () => 
       project.dir,
     );
     expect(outcome.applied).toBe(false);
-    expect(outcome.message).toContain('No legacy in-tree worktrees remain to fix');
+    expect(outcome.message).toContain(
+      'No real, git-registered legacy in-tree worktrees remain to fix',
+    );
   });
 
   it('uses git-mediated removal first (not a bare rm) for an entry that is STILL a real, git-registered worktree — the "project upgraded mid-run" case', async () => {
@@ -267,6 +272,116 @@ describe('applyDoctorFix — legacy-in-tree-worktrees (specs/22 M17 P8)', () => 
       cwd: project.dir,
     });
     expect(worktrees).not.toContain('still-registered');
+  });
+
+  it('CRITICAL (gauntlet critic round, M17 P8): a stray file with real content at the legacy path survives --fix completely untouched', async () => {
+    const project = await createTestProject();
+    // The exact repro a gauntlet critic round proved directly: a real, unrelated file with real
+    // content, never a worktree, sitting at the legacy path for any ordinary reason (nothing
+    // adversarial -- once this migration ships, this is the expected steady state of every stray file
+    // a project happens to have there, since nothing ever creates a REAL worktree here again).
+    const strayDir = path.join(project.dir, '.forge', 'state', 'worktrees', 'my-personal-notes');
+    await mkdir(strayDir, { recursive: true });
+    const strayFile = path.join(strayDir, 'notes.txt');
+    const realContent = 'these are my real, important notes -- not a worktree\n';
+    await writeFile(strayFile, realContent);
+
+    const outcome = await applyDoctorFix(
+      { id: 'legacy-in-tree-worktrees', ok: false, severity: 'warning', message: 'maybe 1 entry' },
+      project.paths,
+      project.dir,
+    );
+
+    // The old, buggy behaviour was `{applied:true, message:"Removed 1 real legacy in-tree worktree
+    // entry."}` and the file was gone. The fix must never touch something that was never a worktree.
+    expect(outcome.applied).toBe(false);
+    await expect(readFile(strayFile, 'utf8')).resolves.toBe(realContent);
+  });
+
+  it('a mix of one real stray file and one real registered worktree: only the real worktree is removed, the stray file survives untouched', async () => {
+    const project = await createTestProject();
+    const legacyTarget = path.join(project.dir, '.forge', 'state', 'worktrees', 'real-lane');
+    await execa('git', ['worktree', 'add', '-b', 'forge/run-1/real-lane', legacyTarget], {
+      cwd: project.dir,
+    });
+    const strayFile = path.join(project.dir, '.forge', 'state', 'worktrees', 'stray.txt');
+    await writeFile(strayFile, 'unrelated real content\n');
+
+    const outcome = await applyDoctorFix(
+      { id: 'legacy-in-tree-worktrees', ok: false, severity: 'warning', message: '1 entry' },
+      project.paths,
+      project.dir,
+    );
+
+    expect(outcome.applied).toBe(true);
+    expect(outcome.message).toContain('Removed 1 real legacy in-tree worktree entry');
+    const { stdout: worktrees } = await execa('git', ['worktree', 'list', '--porcelain'], {
+      cwd: project.dir,
+    });
+    expect(worktrees).not.toContain('real-lane');
+    await expect(readFile(strayFile, 'utf8')).resolves.toBe('unrelated real content\n');
+  });
+});
+
+describe("applyDoctorFix — the orphan-removal fallback's own unscoped `git worktree prune` can collaterally de-register an unrelated, still-real worktree, a gauntlet critic round (specs/22 M17 P8)", () => {
+  it('detects and loudly reports the real collateral loss, without ever touching the collateral worktree’s own real directory or content', async () => {
+    const project = await createTestProject();
+
+    // Worktree A: the real target of this fix -- under the legacy path, with its OWN `.git` pointer
+    // file already gone, a stand-in for "a permission hiccup, an unmounted path, nothing adversarial"
+    // (confirmed directly, outside this suite: `git worktree remove -f -f` refuses to touch a worktree
+    // in exactly this state -- "fatal: validation failed, cannot remove working tree: ... .git does
+    // not exist" -- which is exactly what forces `removeOrphanedWorktreeOnly` down into its own
+    // raw-filesystem-plus-`prune` fallback in the first place).
+    const legacyTarget = path.join(project.dir, '.forge', 'state', 'worktrees', 'orphan-a');
+    await execa('git', ['worktree', 'add', '-b', 'forge/run-1/orphan-a', legacyTarget], {
+      cwd: project.dir,
+    });
+    await rm(path.join(legacyTarget, '.git'));
+
+    // Worktree B: a completely unrelated, still-real worktree -- never at the legacy path, never a
+    // target of this fix at all (`fixLegacyInTreeWorktrees` only ever looks under the legacy root; see
+    // its own doc comment). Standing in for any other real, in-progress lane worktree elsewhere in the
+    // same repository. Its own `.git` pointer is ALSO gone, for the identical "transiently unreadable"
+    // reason -- this is what the fallback's own unscoped `git worktree prune` call finds and silently
+    // de-registers, purely as a side effect of fixing A, never because B was ever a target itself.
+    const collateralTarget = path.join(await expectedWorktreesRoot(project.dir), 'real-lane-b');
+    await execa('git', ['worktree', 'add', '-b', 'forge/run-1/real-lane-b', collateralTarget], {
+      cwd: project.dir,
+    });
+    const collateralFile = path.join(collateralTarget, 'real-work.txt');
+    await writeFile(collateralFile, 'real, in-progress work -- not safe to touch\n');
+    await rm(path.join(collateralTarget, '.git'));
+
+    const outcome = await applyDoctorFix(
+      { id: 'legacy-in-tree-worktrees', ok: false, severity: 'warning', message: '1 entry' },
+      project.paths,
+      project.dir,
+    );
+
+    // A itself is still genuinely fixed -- the collateral damage to a different worktree is not a
+    // reason to report the fix that actually happened as a failure.
+    expect(outcome.applied).toBe(true);
+
+    // The collateral loss is real -- confirmed independently below -- but it is DETECTED and loudly
+    // reported, never silently absorbed into an ordinary success message.
+    expect(outcome.message).toContain('WARNING');
+    expect(outcome.message).toContain(collateralTarget);
+
+    // B's own real directory and content are completely untouched on disk -- only git's OWN
+    // registration for it is gone, never the real file a human (or another lane) actually wrote; this
+    // is the whole reason detection, not prevention, is the most this fallback can honestly do (see
+    // `removeOrphanedWorktreeOnly`'s own doc comment).
+    await expect(readFile(collateralFile, 'utf8')).resolves.toBe(
+      'real, in-progress work -- not safe to touch\n',
+    );
+
+    // Confirmed independently: git itself really did lose its own registration for B -- otherwise this
+    // test would not actually be exercising the collateral-loss path it claims to.
+    const { stdout: worktreesAfter } = await execa('git', ['worktree', 'list', '--porcelain'], {
+      cwd: project.dir,
+    });
+    expect(worktreesAfter).not.toContain(collateralTarget);
   });
 });
 
