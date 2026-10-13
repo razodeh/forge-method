@@ -891,7 +891,22 @@ export async function runAgentWork(
         platform: ctx.adapter.id,
         inputTokens: sanitizeUsageNumber(leg.usage.inputTokens),
         outputTokens: sanitizeUsageNumber(leg.usage.outputTokens),
-        cacheReadTokens: 0,
+        // M17 P11 (the milestone's own defect #11): this was hardcoded `0` regardless of what the
+        // adapter actually reported, so every real run's own recorded token count silently excluded
+        // cache spend entirely. `leg.usage.cacheReadTokens` is now real -- `@forge/adapter-claude-code`'s
+        // own `extractUsageFields` (both transports) sums it from the real per-model `modelUsage`
+        // breakdown (`07` §7.3's own "Honest cache-token accounting") -- `?? 0` only for an adapter
+        // that genuinely never reports it (e.g. `@forge/testkit`'s own `FakePlatformAdapter`, which has
+        // no script field for it), the identical "unknown, not fabricated as free" stance `costUsd`
+        // just below already takes for ITS own missing case.
+        cacheReadTokens: sanitizeUsageNumber(leg.usage.cacheReadTokens ?? 0),
+        // `cacheCreationTokens` has no column of its own in `@forge/telemetry`'s own `LedgerEntry`/
+        // `UsageRecordedPayload` yet (`18` §18.5's fixed, spec-given ledger schema) -- emitted anyway,
+        // additively, the identical "a real fact beyond this type's own closed shape, for a later
+        // piece to project" precedent `UsageRecordedPayload`'s own `role`/`storyId` fields already
+        // establish (see that interface's own doc comment). Disclosed, not silently dropped: a future
+        // piece that wants it in the ledger itself still has to extend `@forge/telemetry` to read it.
+        cacheCreationTokens: sanitizeUsageNumber(leg.usage.cacheCreationTokens ?? 0),
         costUsd: leg.usage.costUsd === undefined ? 0 : sanitizeUsageNumber(leg.usage.costUsd),
         estimated: true,
         durationMs: sanitizeUsageNumber(leg.durationMs),

@@ -7,9 +7,11 @@
  * `tool.result.summary` for a leak — missing `SessionResult.error.message`, `session.started.meta`,
  * `retry.reason`, and the `unknown`-typed `tool.call.input`/`control.payload`/`result.structured`
  * fields, plus never checking the real filesystem at all (unlike every other cwd-touching check here).
- * All of those are now covered.
+ * All of those are now covered. `AdapterEvent{type:'structured'}` (M17 P11) is the live-event twin of
+ * `result.structured` — covered here too, by the identical `safeStringify` treatment.
  *
  * @see specs/07 §7.6
+ * @see PLAN-M17.md P11
  * @see PLAN-M4.md P4
  */
 import { readFile } from 'node:fs/promises';
@@ -55,6 +57,8 @@ function textFromEvent(event: AdapterEvent): string {
       return safeStringify(event.meta);
     case 'error':
       return event.message;
+    case 'structured':
+      return safeStringify(event.data);
     case 'file.changed':
     case 'usage':
     case 'session.ended':

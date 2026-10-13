@@ -52,9 +52,12 @@ async function* readEventsFromFile(filePath: string): AsyncGenerator<AdapterEven
 
 /** Best-effort, derived from the replayed events themselves — not a second, parallel schema this file
  * would otherwise have to invent: `finalText` from concatenated non-partial `text` events, `usage`
- * summed across every `usage` event (one `turns` increment per such event), `changedFiles` from
- * `file.changed` events (deduplicated), `ok`/`error` from whether an `error` event or a
- * non-`'complete'` `session.ended` appears. `controlTokens` is always empty: a raw `control` event's
+ * summed across every `usage` event (one `turns` increment per such event; `cacheReadTokens`/
+ * `cacheCreationTokens`, M17 P11, overwritten rather than summed, matching
+ * `@forge/adapter-claude-code`'s own treatment of them as a running per-model total), `changedFiles`
+ * from `file.changed` events (deduplicated), `ok`/`error` from whether an `error` event or a
+ * non-`'complete'` `session.ended` appears, `structured` (M17 P11) from the last `structured` event
+ * seen (there is normally at most one). `controlTokens` is always empty: a raw `control` event's
  * own `{token, payload}` shape cannot be reconstructed into a real, fully-typed `ParsedControlToken`
  * without re-deriving the exact text `parseControlTokens` (P3) would have parsed it from, which a
  * recorded event stream does not carry. */
@@ -63,10 +66,14 @@ function deriveResult(sessionId: string, events: readonly AdapterEvent[]): Sessi
   let inputTokens = 0;
   let outputTokens = 0;
   let costUsd: number | undefined;
+  let cacheReadTokens: number | undefined;
+  let cacheCreationTokens: number | undefined;
   let turns = 0;
   const changedFiles: string[] = [];
   let ok = true;
   let error: { readonly code: string; readonly message: string } | undefined;
+  let sawStructured = false;
+  let structured: unknown;
 
   for (const event of events) {
     switch (event.type) {
@@ -77,6 +84,12 @@ function deriveResult(sessionId: string, events: readonly AdapterEvent[]): Sessi
         inputTokens += event.inputTokens;
         outputTokens += event.outputTokens;
         if (event.costUsd !== undefined) costUsd = (costUsd ?? 0) + event.costUsd;
+        // Overwritten, not summed, mirroring `@forge/adapter-claude-code`'s own
+        // `accumulateSessionResult`: a real per-model breakdown is a running total already, not a
+        // per-event delta these two fields would otherwise double-count by adding together.
+        if (event.cacheReadTokens !== undefined) cacheReadTokens = event.cacheReadTokens;
+        if (event.cacheCreationTokens !== undefined)
+          cacheCreationTokens = event.cacheCreationTokens;
         turns += 1;
         break;
       case 'file.changed':
@@ -85,6 +98,12 @@ function deriveResult(sessionId: string, events: readonly AdapterEvent[]): Sessi
       case 'error':
         ok = false;
         error = { code: event.code, message: event.message };
+        break;
+      // M17 P11: a real `result` message's own `structured_output` field, carried as its own event
+      // alongside the `'usage'`/`'error'` event the same message also yields.
+      case 'structured':
+        sawStructured = true;
+        structured = event.data;
         break;
       case 'session.ended':
         if (event.reason !== 'complete') ok = false;
@@ -106,7 +125,15 @@ function deriveResult(sessionId: string, events: readonly AdapterEvent[]): Sessi
     sessionId,
     ok,
     finalText,
-    usage: { inputTokens, outputTokens, turns, ...(costUsd !== undefined ? { costUsd } : {}) },
+    ...(sawStructured ? { structured } : {}),
+    usage: {
+      inputTokens,
+      outputTokens,
+      turns,
+      ...(costUsd !== undefined ? { costUsd } : {}),
+      ...(cacheReadTokens !== undefined ? { cacheReadTokens } : {}),
+      ...(cacheCreationTokens !== undefined ? { cacheCreationTokens } : {}),
+    },
     durationMs: 0,
     changedFiles,
     controlTokens: [],

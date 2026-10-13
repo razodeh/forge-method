@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
-import type { SessionRequest } from '@forge/adapter-kit';
+import type { AdapterCapabilities, PlatformAdapter, SessionRequest } from '@forge/adapter-kit';
 import { ForgeError } from '@forge/core/errors';
 import { slugifyStepId } from '@forge/vcs';
 import { FakePlatformAdapter } from '@forge/testkit';
@@ -653,6 +653,125 @@ describe('runAgentStep', () => {
       cwd: path.join(worktreesDir, laneDir ?? ''),
     });
     expect(stdout).toContain('wf:implement');
+  });
+});
+
+/**
+ * `18` §18.5/`20` §20.10 S9, M17 P11's own part of the milestone's defect #11: `UsageRecorded.payload.
+ * cacheReadTokens` was hardcoded `0` regardless of what the real session reported (`steps.ts`'s own
+ * `runAgentWork`), so recorded token counts silently excluded all real cache spend. `@forge/testkit`'s
+ * own `FakePlatformAdapter` has no script field for `SessionResult.usage.cacheReadTokens`/
+ * `.cacheCreationTokens` (a real gap this piece's own Surface does not include closing), so this uses a
+ * minimal, hand-written `PlatformAdapter` stub instead -- the same, already-established pattern
+ * `@forge/adapter-kit/test/conformance/secrets.test.ts` uses for an identical reason, never importing
+ * `@forge/testkit` at all.
+ *
+ * @see specs/07 §7.3
+ * @see PLAN-M17.md P11
+ */
+describe('runAgentStep — UsageRecorded carries the real cacheReadTokens/cacheCreationTokens the adapter reported (specs/22 M17 P11)', () => {
+  const STUB_CAPABILITIES: AdapterCapabilities = {
+    streaming: false,
+    partialText: false,
+    sessionResume: false,
+    interject: false,
+    structuredOutput: false,
+    toolAllowlist: false,
+    permissionModes: [],
+    subagents: false,
+    mcp: false,
+    costReporting: 'per-session',
+    tokenReporting: true,
+    maxConcurrentSessions: 0,
+    cwdIsolation: true,
+    // `assemble.ts`'s own real pre-dispatch check (RUN-080) refuses an adapter that cannot carry a
+    // system prompt at all -- `'none'` genuinely means that (confirmed empirically: it fails the step
+    // before `startSession` is ever called), not a safe "doesn't matter for this stub" default.
+    systemPromptControl: 'append',
+    fileEditing: false,
+    bash: false,
+    network: 'none',
+    bareMode: false,
+    skills: 'none',
+    toolProxy: false,
+    turnLimitEnforcement: false,
+  };
+
+  function cacheTokenStubAdapter(
+    cacheReadTokens: number,
+    cacheCreationTokens: number,
+  ): PlatformAdapter {
+    return {
+      // Matches `createTestContext`'s own default `models.tiers` key (`helpers.ts`'s own `tier`
+      // constant) -- a different id resolves to no model at all for every tier (RUN-078), confirmed
+      // empirically; this stub has no reason to exercise model-tier resolution itself.
+      id: 'forge-fake-adapter',
+      displayName: 'Cache Token Stub',
+      capabilities: () => Promise.resolve(STUB_CAPABILITIES),
+      preflight: () => Promise.resolve({ ok: true, issues: [] }),
+      listModels: () => Promise.resolve([]),
+      startSession: () =>
+        Promise.resolve({
+          sessionId: 'stub-session-1',
+          // Never drained by `runAgentWork` (it reads only `handle.sessionId`/`handle.result()`) --
+          // still a real, well-formed empty `AsyncIterable<AdapterEvent>` rather than a shortcut, so
+          // this stub satisfies `SessionHandle`'s own real contract, not just the one call path this
+          // test happens to exercise today. A plain object, not an `async function*` generator with no
+          // real `yield` (this project's own `require-yield` lint rule forbids one).
+          events: {
+            [Symbol.asyncIterator]: () => ({
+              next: () => Promise.resolve({ done: true as const, value: undefined }),
+            }),
+          },
+          stop: () => Promise.resolve(),
+          result: () =>
+            Promise.resolve({
+              sessionId: 'stub-session-1',
+              ok: true,
+              finalText: 'done',
+              usage: {
+                inputTokens: 10,
+                outputTokens: 5,
+                turns: 1,
+                cacheReadTokens,
+                cacheCreationTokens,
+              },
+              durationMs: 0,
+              changedFiles: [],
+              controlTokens: [],
+            }),
+        }),
+      resumeSession: () => Promise.reject(new Error('not implemented for this stub')),
+    };
+  }
+
+  it('a real, non-zero cacheReadTokens/cacheCreationTokens from the adapter reaches the ledger event, not a hardcoded 0', async () => {
+    const projectRoot = await createTempRepo('agent-cache-tokens');
+    const adapter = cacheTokenStubAdapter(37, 11);
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-cache-tokens' });
+    const stepNode = node({ id: 'wf:implement', kind: 'agent', agent: toAgentId('engineer') });
+
+    await executeStep(stepNode, ctx);
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-cache-tokens')) events.push(event);
+    const usage = events.find((event) => event.type === 'UsageRecorded');
+    expect(usage?.payload).toMatchObject({ cacheReadTokens: 37, cacheCreationTokens: 11 });
+  });
+
+  it('an adapter that reports no cache tokens at all (e.g. FakePlatformAdapter) still records 0, never undefined or a crash', async () => {
+    const projectRoot = await createTempRepo('agent-no-cache-tokens');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { text: ['done'] });
+    const ctx = createTestContext({ projectRoot, adapter, runId: 'run-no-cache-tokens' });
+    const stepNode = node({ id: 'wf:implement', kind: 'agent', agent: toAgentId('engineer') });
+
+    await executeStep(stepNode, ctx);
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-no-cache-tokens')) events.push(event);
+    const usage = events.find((event) => event.type === 'UsageRecorded');
+    expect(usage?.payload).toMatchObject({ cacheReadTokens: 0, cacheCreationTokens: 0 });
   });
 });
 

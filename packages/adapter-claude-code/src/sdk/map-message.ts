@@ -9,6 +9,7 @@
  * @see specs/07 §7.3
  * @see SPEC-QUESTIONS.md Q115
  * @see PLAN-M7.md P3
+ * @see PLAN-M17.md P11
  */
 import { normalizeAdapterEvent } from '@forge/adapter-kit/events';
 import type { AdapterEvent } from '@forge/adapter-kit';
@@ -107,13 +108,35 @@ function mapApiRetry(message: SDKMessage & { readonly type: 'system' }): Adapter
   };
 }
 
-/** `usage.input_tokens`/`.output_tokens`/`.cache_read_input_tokens` plus top-level `total_cost_usd` --
- * the same four optional fields on both the `'usage'` and `'error'` `AdapterEvent` variants, read the
- * same way regardless of which `result` subtype carries them (mirrors `../cli/parse-event.ts`'s own
- * `extractUsageFields`). Returns `undefined` when `usage` itself is missing or malformed, rather than
- * `{}`: a `Record<string, never>`-shaped empty return collides with an object-literal spread that also
- * sets a sibling literal key (`{ type: 'usage', ...fields }`), confirmed directly -- `tsc` rejected it
- * (`type: never` inferred from the index signature). */
+/** Mirrors `../cli/parse-event.ts`'s own identically-named helper exactly -- see that file's own doc
+ * comment. `modelUsage` here is `SDKResultSuccess.modelUsage: Record<string, ModelUsage>`, still read
+ * as `unknown` (via `isRecord`) rather than trusted at its declared type: this function receives
+ * `message: Record<string, unknown>` (an already-narrowed `SDKMessage`, but never re-asserted back to
+ * one here), the same defensive stance this file's own sibling functions already take throughout. */
+function sumModelUsageField(modelUsage: unknown, field: string): number | undefined {
+  if (!isRecord(modelUsage)) return undefined;
+  let sum = 0;
+  let sawAny = false;
+  for (const entry of Object.values(modelUsage)) {
+    if (!isRecord(entry)) continue;
+    const value = numberOf(entry[field]);
+    if (value === undefined) continue;
+    sum += value;
+    sawAny = true;
+  }
+  return sawAny ? sum : undefined;
+}
+
+/** `usage.input_tokens`/`.output_tokens` plus top-level `total_cost_usd` -- the same fields on both the
+ * `'usage'` and `'error'` `AdapterEvent` variants, read the same way regardless of which `result`
+ * subtype carries them (mirrors `../cli/parse-event.ts`'s own `extractUsageFields`). Returns
+ * `undefined` when `usage` itself is missing or malformed, rather than `{}`: a `Record<string,
+ * never>`-shaped empty return collides with an object-literal spread that also sets a sibling literal
+ * key (`{ type: 'usage', ...fields }`), confirmed directly -- `tsc` rejected it (`type: never` inferred
+ * from the index signature). `cacheReadTokens`/`cacheCreationTokens` (M17 P11) are
+ * `sumModelUsageField`'s own real per-model sum over `message.modelUsage` when present and usable,
+ * falling back to the pre-M17 `usage.cache_read_input_tokens`/`.cache_creation_input_tokens` fields
+ * otherwise. */
 function extractUsageFields(
   message: Record<string, unknown>,
 ): Omit<Extract<AdapterEvent, { type: 'usage' }>, 'type'> | undefined {
@@ -122,12 +145,19 @@ function extractUsageFields(
   const inputTokens = numberOf(usage['input_tokens']);
   const outputTokens = numberOf(usage['output_tokens']);
   if (inputTokens === undefined || outputTokens === undefined) return undefined;
-  const cacheReadTokens = numberOf(usage['cache_read_input_tokens']);
+  const modelUsage = message['modelUsage'];
+  const cacheReadTokens =
+    sumModelUsageField(modelUsage, 'cacheReadInputTokens') ??
+    numberOf(usage['cache_read_input_tokens']);
+  const cacheCreationTokens =
+    sumModelUsageField(modelUsage, 'cacheCreationInputTokens') ??
+    numberOf(usage['cache_creation_input_tokens']);
   const costUsd = numberOf(message['total_cost_usd']);
   return {
     inputTokens,
     outputTokens,
     ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
     ...(costUsd === undefined ? {} : { costUsd }),
   };
 }
@@ -181,21 +211,34 @@ function mapResultError(message: unknown): AdapterEvent | undefined {
  * this shape is genuinely `SDKResultSuccess`-shaped, which requires `usage`/`total_cost_usd` exactly
  * like a clean success does -- a mid-turn API error after real spend must report it the same way
  * `mapResultError` now does, not fall back to the pre-fix zeroed default via a second, missed path.
+ *
+ * Returns an array (M17 P11): mirrors `../cli/parse-event.ts`'s own identically-restructured
+ * `mapResult` exactly -- a single real `result` message can carry both a usage/error signal and a
+ * real `structured_output` payload, and both become their own event here, in that order.
  */
-function mapResult(message: unknown): AdapterEvent | undefined {
-  if (!isRecord(message)) return undefined;
-  if (message['subtype'] !== 'success') return mapResultError(message);
-  if (message['is_error'] === true) {
+function mapResult(message: unknown): readonly AdapterEvent[] {
+  if (!isRecord(message)) return [];
+  const events: AdapterEvent[] = [];
+  if (message['subtype'] !== 'success') {
+    const errorEvent = mapResultError(message);
+    if (errorEvent !== undefined) events.push(errorEvent);
+  } else if (message['is_error'] === true) {
     const resultText = textOf(message['result']);
-    return {
+    events.push({
       type: 'error',
       code: 'api_error',
       message: resultText ?? 'API error',
       retryable: false,
       ...extractUsageFields(message),
-    };
+    });
+  } else {
+    const successEvent = mapResultSuccess(message);
+    if (successEvent !== undefined) events.push(successEvent);
   }
-  return mapResultSuccess(message);
+  if (message['structured_output'] !== undefined) {
+    events.push({ type: 'structured', data: message['structured_output'] });
+  }
+  return events;
 }
 
 /** Mirrors `parse-event.ts`'s own `mapStreamEvent` exactly -- `SDKPartialAssistantMessage`'s own real
@@ -212,20 +255,38 @@ function mapStreamEvent(message: unknown): AdapterEvent | undefined {
   return { type: 'text', text, partial: true };
 }
 
+/** `AdapterEvent | undefined` -> a zero-or-one-element array -- mirrors `../cli/parse-event.ts`'s own
+ * identically-named helper; see that file's own doc comment. */
+function toList(candidate: AdapterEvent | undefined): readonly AdapterEvent[] {
+  return candidate === undefined ? [] : [candidate];
+}
+
+/** One real `SDKMessage` mapped to zero, one, or (a `result` message carrying both a usage/error
+ * signal and a real `structured_output` payload, M17 P11) several real `AdapterEvent`s -- this
+ * function's own return type was already `readonly AdapterEvent[]` before this piece (P3), but every
+ * branch still only ever produced at most one candidate until `mapResult` above was restructured to
+ * return its own array; that array is now threaded all the way through here too, rather than
+ * collapsed back down to one. Each candidate is normalised and filtered independently, mirroring
+ * `parseCliEventLine`'s own identical per-item tolerance. */
 export function mapSdkMessage(message: SDKMessage): readonly AdapterEvent[] {
-  let candidate: AdapterEvent | undefined;
-  if (message.type === 'system' && message.subtype === 'init') candidate = mapSystemInit(message);
+  let candidates: readonly AdapterEvent[];
+  if (message.type === 'system' && message.subtype === 'init')
+    candidates = toList(mapSystemInit(message));
   else if (message.type === 'system' && message.subtype === 'api_retry')
-    candidate = mapApiRetry(message);
-  else if (message.type === 'assistant') candidate = mapAssistant(message);
-  else if (message.type === 'user') candidate = mapUserToolResult(message);
-  else if (message.type === 'result') candidate = mapResult(message);
-  else if (message.type === 'stream_event') candidate = mapStreamEvent(message);
+    candidates = toList(mapApiRetry(message));
+  else if (message.type === 'assistant') candidates = toList(mapAssistant(message));
+  else if (message.type === 'user') candidates = toList(mapUserToolResult(message));
+  else if (message.type === 'result') candidates = mapResult(message);
+  else if (message.type === 'stream_event') candidates = toList(mapStreamEvent(message));
+  else candidates = [];
   // Every other real `SDKMessage` variant (`rate_limit_event`, and the many task/hook/plugin/auth
   // notification kinds this milestone's own scope does not need) has no `AdapterEvent` variant to
   // become -- skipped, mirroring `parse-event.ts`'s own identical stance.
 
-  if (candidate === undefined) return [];
-  const normalized = normalizeAdapterEvent(candidate);
-  return normalized.ok ? [normalized.event] : [];
+  const normalized: AdapterEvent[] = [];
+  for (const candidate of candidates) {
+    const result = normalizeAdapterEvent(candidate);
+    if (result.ok) normalized.push(result.event);
+  }
+  return normalized;
 }

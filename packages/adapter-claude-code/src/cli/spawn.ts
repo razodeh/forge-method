@@ -129,8 +129,10 @@ export function spawnClaudeCli(
   async function* events(): AsyncGenerator<AdapterEvent> {
     for await (const line of subprocess) {
       const text = typeof line === 'string' ? line : String(line);
-      const event = parseCliEventLine(text);
-      if (event !== undefined) yield event;
+      // `parseCliEventLine` returns an array (M17 P11): a single `result` line can carry both a
+      // usage/error signal and a `structured_output` payload, which must both reach the caller --
+      // mirrors `run-query.ts`'s own identical `for (const event of mapSdkMessage(...))` loop.
+      for (const event of parseCliEventLine(text)) yield event;
     }
     const code = await exitCode;
     const reason = stopped ? 'aborted' : code === 0 ? 'complete' : 'error';

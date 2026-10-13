@@ -26,12 +26,23 @@
  * coarser boundaries (a whole assistant turn, a tool call) -- but it is recorded here rather than
  * silently assumed impossible.
  *
+ * **M17 P11 adds two more real fields this function assembles from the stream, the identical
+ * "accumulate across the whole session, not just the last event" shape `inputTokens`/`outputTokens`
+ * already have**: `SessionResult.structured` (from a real `structured` event -- the real
+ * `structured_output` payload a `result` message carries when the session ran with `outputSchema`
+ * set) and `SessionResult.usage.cacheReadTokens`/`.cacheCreationTokens` (from the same `'usage'`/
+ * `'error'` events already read for `inputTokens`/`outputTokens`, which both transports' own
+ * `extractUsageFields` now also populate from the real per-model usage breakdown, `07` §7.3's own
+ * "Honest cache-token accounting").
+ *
  * @see specs/07 §7.2
+ * @see specs/07 §7.3
  * @see specs/07 §7.6
  * @see SPEC-QUESTIONS.md Q116
  * @see SPEC-QUESTIONS.md Q121
  * @see PLAN-M7.md P4
  * @see PLAN-M7.md P9
+ * @see PLAN-M17.md P11
  */
 import { parseControlTokens } from '@forge/adapter-kit/control-tokens';
 import type { AdapterEvent, ParsedControlToken, SessionResult } from '@forge/adapter-kit';
@@ -67,10 +78,18 @@ export async function* accumulateSessionResult(
   let inputTokens = 0;
   let outputTokens = 0;
   let costUsd: number | undefined;
+  let cacheReadTokens: number | undefined;
+  let cacheCreationTokens: number | undefined;
   let toolCallCount = 0;
   let ok = true;
   let endedByLimit = false;
   let error: { readonly code: string; readonly message: string } | undefined;
+  // M17 P11: `sawStructured` (not just `structured !== undefined`) distinguishes "no `structured`
+  // event ever arrived" from "one arrived whose own `data` happens to be `undefined`/`null`" -- the
+  // identical reason `error`'s own optional-spread below already needs a presence check, not a
+  // truthiness one.
+  let sawStructured = false;
+  let structured: unknown;
 
   for await (const event of transportEvents) {
     yield event;
@@ -93,6 +112,11 @@ export async function* accumulateSessionResult(
         inputTokens = event.inputTokens;
         outputTokens = event.outputTokens;
         costUsd = event.costUsd;
+        // M17 P11: overwritten, not summed -- `extractUsageFields` (both transports) already reports
+        // a running per-model total on every `'usage'` event, exactly like `inputTokens`/`outputTokens`
+        // above; there is normally only one such event per session in any case.
+        cacheReadTokens = event.cacheReadTokens;
+        cacheCreationTokens = event.cacheCreationTokens;
         break;
       case 'error':
         ok = false;
@@ -104,6 +128,18 @@ export async function* accumulateSessionResult(
         if (event.inputTokens !== undefined) inputTokens = event.inputTokens;
         if (event.outputTokens !== undefined) outputTokens = event.outputTokens;
         if (event.costUsd !== undefined) costUsd = event.costUsd;
+        // M17 P11: the identical real-spend-after-failure case, extended to the two cache fields.
+        if (event.cacheReadTokens !== undefined) cacheReadTokens = event.cacheReadTokens;
+        if (event.cacheCreationTokens !== undefined)
+          cacheCreationTokens = event.cacheCreationTokens;
+        break;
+      // M17 P11: the real `structured_output` payload the same `result` message's own `'usage'`/
+      // `'error'` event also carries usage for -- captured as its own field, never folded into
+      // `finalText` (a session run with `outputSchema` set emits no streaming `text` at all, `07`
+      // §7.3's own mapping table; `structured` is this mode's own, separate final answer).
+      case 'structured':
+        sawStructured = true;
+        structured = event.data;
         break;
       // A fresh critic round found the original draft never inspected `session.ended.reason` at
       // all -- an aborted (or transport-internal-error) session that never happened to also emit an
@@ -148,13 +184,22 @@ export async function* accumulateSessionResult(
     sessionId: options.sessionId,
     ok,
     finalText,
+    // M17 P11: present only when a real `structured` event actually arrived (an `outputSchema`-less
+    // session never emits one) -- `sawStructured` guards this the same way `error` below is guarded by
+    // its own presence check, not a truthiness one (a real `structured_output: null` is still "a real
+    // event arrived").
+    ...(sawStructured ? { structured } : {}),
     usage: {
       inputTokens,
       outputTokens,
-      // `SessionResult.usage` (`@forge/adapter-kit`, M4, already committed) has no field for a real
-      // per-model token/cost breakdown or the SDK's own `modelUsage` -- carried nowhere by this
-      // function; a future piece needing it would need to extend that already-committed type.
       ...(costUsd === undefined ? {} : { costUsd }),
+      // M17 P11, `07` §7.3's own "Honest cache-token accounting": both transports' own
+      // `extractUsageFields` already sum these from the real per-model `modelUsage` breakdown (falling
+      // back to the main-loop-only field when that is absent) -- this function's own job is only to
+      // pass the already-computed numbers through, the identical "carried, not recomputed" treatment
+      // `costUsd` above already gets.
+      ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+      ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
       // Real, but empirically-grounded on a small number of live data points (`SPEC-QUESTIONS.md` Q116,
       // Q132): every real `tool.call` this session made implies one real conversational round trip
       // beyond the final response itself -- `toolCallCount + 1` matched the real, live-captured

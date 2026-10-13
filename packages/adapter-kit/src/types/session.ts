@@ -58,6 +58,15 @@ export interface SessionUsage {
   readonly outputTokens: number;
   readonly costUsd?: number;
   readonly turns: number;
+  /** `07` §7.3's own "Honest cache-token accounting" (post-v1.0, M17 P11): summed from the adapter's
+   * real per-model usage breakdown (every model call made through the query pipeline — the main loop,
+   * Task subagents, sidechains and internal calls), never from the main-loop-only `inputTokens`/
+   * `outputTokens` fields above alone — those exclude exactly the subagent/sidechain spend a real
+   * multi-agent FORGE step routinely makes, so a ledger reading only them under-reports real cache
+   * spend. Omitted, not zeroed, when the adapter reports no real per-model breakdown at all. */
+  readonly cacheReadTokens?: number;
+  /** Same source and the same reason as `cacheReadTokens` above. */
+  readonly cacheCreationTokens?: number;
 }
 
 export interface SessionResult {

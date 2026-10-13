@@ -139,7 +139,33 @@ describe('checkC13NoSecretLeak — every AdapterEvent variant is inspected', () 
     await expect(checkC13NoSecretLeak(context)).rejects.toThrow(/not to contain/);
   });
 
-  it('exercises tool.call.input, control.payload, retry.reason, session.started.meta, and result.structured without finding a leak', async () => {
+  it('fails when the secret is leaked only through a live structured AdapterEvent (M17 P11), never surfacing in result.structured itself', async () => {
+    const adapter: PlatformAdapter = {
+      id: 'minimal',
+      displayName: 'Minimal',
+      capabilities: () => Promise.resolve(CAPABILITIES),
+      preflight: () => Promise.resolve({ ok: true, issues: [] }),
+      listModels: () => Promise.resolve([]),
+      startSession: () =>
+        Promise.resolve({
+          sessionId: 's1',
+          events: (async function* () {
+            await Promise.resolve();
+            yield { type: 'structured' as const, data: { leaked: SECRET } };
+          })(),
+          stop: () => Promise.resolve(),
+          // `result.structured` stays benign on purpose: a non-compliant adapter that drops the live
+          // event's own payload before building its final result must still be caught by the live
+          // stream inspection alone, not only by the end-of-session check.
+          result: () => Promise.resolve(emptyResult({ structured: { note: 'benign' } })),
+        }),
+      resumeSession: () => Promise.reject(new Error('not implemented for this test')),
+    };
+    const context = await buildContext(adapter);
+    await expect(checkC13NoSecretLeak(context)).rejects.toThrow(/not to contain/);
+  });
+
+  it('exercises tool.call.input, control.payload, retry.reason, session.started.meta, a live structured event, and result.structured without finding a leak', async () => {
     const adapter: PlatformAdapter = {
       id: 'minimal',
       displayName: 'Minimal',
@@ -175,6 +201,7 @@ describe('checkC13NoSecretLeak — every AdapterEvent variant is inspected', () 
             yield { type: 'error' as const, code: 'E', message: 'benign', retryable: false };
             yield { type: 'file.changed' as const, path: 'x', change: 'created' as const };
             yield { type: 'usage' as const, inputTokens: 1, outputTokens: 1 };
+            yield { type: 'structured' as const, data: { note: 'benign' } };
             yield { type: 'session.ended' as const, reason: 'complete' as const };
           })(),
           stop: () => Promise.resolve(),

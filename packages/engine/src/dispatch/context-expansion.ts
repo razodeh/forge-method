@@ -317,17 +317,20 @@ function remainingLimits(
 }
 
 /** Every real, distinct leg's own usage, summed into one `SessionUsage` (`inputTokens`/`outputTokens`/
- * `turns` always summed; `costUsd` summed across the legs that reported one, omitted entirely when NONE
- * did -- a real adapter's own "cost reporting is optional" shape, `session-result.ts`'s identical
- * `costUsd === undefined ? {} : {...}` convention). Every leg's own reported number is sanitized first
- * (`sanitizeUsageNumber`'s own doc comment) -- this is what `detail.session.usage` on the step's own
- * outcome reports, so an unsanitized figure here would reach the same downstream readers
- * `sanitizeUsageNumber`'s own precedent in `steps.ts` was written to protect. */
+ * `turns` always summed; `costUsd`/`cacheReadTokens`/`cacheCreationTokens` (M17 P11 added the latter
+ * two) summed across the legs that reported one, omitted entirely when NONE did -- a real adapter's
+ * own "cost/cache reporting is optional" shape, `session-result.ts`'s identical `costUsd === undefined
+ * ? {} : {...}` convention). Every leg's own reported number is sanitized first (`sanitizeUsageNumber`'s
+ * own doc comment) -- this is what `detail.session.usage` on the step's own outcome reports, so an
+ * unsanitized figure here would reach the same downstream readers `sanitizeUsageNumber`'s own
+ * precedent in `steps.ts` was written to protect. */
 function summedUsage(legs: readonly SessionResult[]): SessionResult['usage'] {
   let inputTokens = 0;
   let outputTokens = 0;
   let turns = 0;
   let costUsd: number | undefined;
+  let cacheReadTokens: number | undefined;
+  let cacheCreationTokens: number | undefined;
   for (const leg of legs) {
     inputTokens += sanitizeUsageNumber(leg.usage.inputTokens);
     outputTokens += sanitizeUsageNumber(leg.usage.outputTokens);
@@ -335,8 +338,22 @@ function summedUsage(legs: readonly SessionResult[]): SessionResult['usage'] {
     if (leg.usage.costUsd !== undefined) {
       costUsd = (costUsd ?? 0) + sanitizeUsageNumber(leg.usage.costUsd);
     }
+    if (leg.usage.cacheReadTokens !== undefined) {
+      cacheReadTokens = (cacheReadTokens ?? 0) + sanitizeUsageNumber(leg.usage.cacheReadTokens);
+    }
+    if (leg.usage.cacheCreationTokens !== undefined) {
+      cacheCreationTokens =
+        (cacheCreationTokens ?? 0) + sanitizeUsageNumber(leg.usage.cacheCreationTokens);
+    }
   }
-  return { inputTokens, outputTokens, turns, ...(costUsd === undefined ? {} : { costUsd }) };
+  return {
+    inputTokens,
+    outputTokens,
+    turns,
+    ...(costUsd === undefined ? {} : { costUsd }),
+    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
+  };
 }
 
 /** The step's own outcome once every leg has run: the LAST leg's own `ok`/`finalText`/`sessionId`/

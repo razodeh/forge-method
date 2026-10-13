@@ -4,8 +4,17 @@
  * `@forge/adapter-kit/events`, not here — this file is the type only, since `SessionHandle`/
  * `SessionResult` (this same piece) both need it too.
  *
+ * `'structured'` and `'usage'`/`'error'`'s own `cacheCreationTokens` are additions (`specs/22` M17 P11,
+ * `07` §7.2): a single raw `result` message can carry both a usage/error signal and a real
+ * `structured_output` payload, and a transport's own mapper must yield both as separate events, in
+ * emission order, rather than collapsing the message into at most one `AdapterEvent` — `data` is
+ * `unknown` until `SessionResult.structured`'s own caller validates it against the schema it asked
+ * for, the identical boundary-input discipline `tool.call.input`/`control.payload` already use.
+ *
  * @see specs/07 §7.2
+ * @see specs/07 §7.3
  * @see PLAN-M4.md P1
+ * @see PLAN-M17.md P11
  */
 import type { ForgeControlToken } from './control-tokens.ts';
 
@@ -67,6 +76,10 @@ export type AdapterEvent =
       readonly inputTokens: number;
       readonly outputTokens: number;
       readonly cacheReadTokens?: number | undefined;
+      // `07` §7.3's own "Honest cache-token accounting" (M17 P11): summed from the real per-model
+      // `modelUsage` breakdown, the same source `cacheReadTokens` above is now also summed from — see
+      // `extractUsageFields` in either transport's own mapper for where this is computed.
+      readonly cacheCreationTokens?: number | undefined;
       readonly costUsd?: number | undefined;
     }
   | {
@@ -83,6 +96,15 @@ export type AdapterEvent =
       readonly inputTokens?: number | undefined;
       readonly outputTokens?: number | undefined;
       readonly cacheReadTokens?: number | undefined;
+      readonly cacheCreationTokens?: number | undefined;
       readonly costUsd?: number | undefined;
     }
-  | { readonly type: 'session.ended'; readonly reason: 'complete' | 'aborted' | 'error' | 'limit' };
+  | { readonly type: 'session.ended'; readonly reason: 'complete' | 'aborted' | 'error' | 'limit' }
+  // `structured_output`'s own real carrier (M17 P11): a session run with `outputSchema` set produces
+  // this alongside (never instead of) the `'usage'`/`'error'` event the same `result` message also
+  // yields, once a real payload is present -- see `session-result.ts`'s own `accumulateSessionResult`
+  // for how the two combine into one final `SessionResult`. `data?:`, not a required field -- the
+  // identical "Zod infers any `z.unknown()`-typed object field as optional-key" reason `tool.call.
+  // input`/`control.payload` above already follow, so `adapterEventSchema`'s own parsed output is
+  // directly assignable here too, without a cast.
+  | { readonly type: 'structured'; readonly data?: unknown };

@@ -205,3 +205,162 @@ describe('mapSdkMessage', () => {
     expect(mapSdkMessage(message)).toEqual([]);
   });
 });
+
+/**
+ * M17 P11's own two new behaviours, mirroring `../cli/parse-event.test.ts`'s own identically-named
+ * describe block exactly: a `result` message that yields several events, and real per-model
+ * `modelUsage` cache-token summing (`07` §7.3's own "Honest cache-token accounting").
+ *
+ * @see specs/07 §7.3
+ * @see PLAN-M17.md P11
+ */
+describe('mapSdkMessage — multi-event result mapping and real per-model cache-token summing (specs/22 M17 P11)', () => {
+  it('a result message carrying both a usage signal and structured_output yields [usage, structured], in that order', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      total_cost_usd: 0.01,
+      usage: { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 0 },
+      structured_output: { answer: 'ok' },
+    } as unknown as SDKMessage;
+    expect(mapSdkMessage(message)).toEqual([
+      { type: 'usage', inputTokens: 100, outputTokens: 20, cacheReadTokens: 0, costUsd: 0.01 },
+      { type: 'structured', data: { answer: 'ok' } },
+    ]);
+  });
+
+  it('a result message carrying ONLY structured_output (no usage field at all) yields [structured] alone', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      total_cost_usd: 0,
+      structured_output: { answer: 'ok' },
+    } as unknown as SDKMessage;
+    expect(mapSdkMessage(message)).toEqual([{ type: 'structured', data: { answer: 'ok' } }]);
+  });
+
+  it('real per-model modelUsage is summed into cacheReadTokens/cacheCreationTokens, overriding what the main-loop-only usage field alone would report', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      total_cost_usd: 0.05,
+      usage: { input_tokens: 500, output_tokens: 50, cache_read_input_tokens: 0 },
+      modelUsage: {
+        'claude-sonnet-5': {
+          inputTokens: 500,
+          outputTokens: 50,
+          cacheReadInputTokens: 300,
+          cacheCreationInputTokens: 40,
+          costUSD: 0.05,
+        },
+      },
+    } as unknown as SDKMessage;
+    expect(mapSdkMessage(message)).toEqual([
+      {
+        type: 'usage',
+        inputTokens: 500,
+        outputTokens: 50,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 40,
+        costUsd: 0.05,
+      },
+    ]);
+  });
+
+  it('modelUsage with several real model entries (main loop + a Task subagent) sums cache tokens across all of them', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      total_cost_usd: 0.09,
+      usage: { input_tokens: 900, output_tokens: 90, cache_read_input_tokens: 0 },
+      modelUsage: {
+        'claude-sonnet-5': {
+          inputTokens: 700,
+          outputTokens: 70,
+          cacheReadInputTokens: 200,
+          cacheCreationInputTokens: 10,
+          costUSD: 0.07,
+        },
+        'claude-haiku-4-5': {
+          inputTokens: 200,
+          outputTokens: 20,
+          cacheReadInputTokens: 50,
+          cacheCreationInputTokens: 5,
+          costUSD: 0.02,
+        },
+      },
+    } as unknown as SDKMessage;
+    expect(mapSdkMessage(message)).toEqual([
+      {
+        type: 'usage',
+        inputTokens: 900,
+        outputTokens: 90,
+        cacheReadTokens: 250,
+        cacheCreationTokens: 15,
+        costUsd: 0.09,
+      },
+    ]);
+  });
+
+  it('modelUsage absent entirely degrades to the pre-M17 main-loop-only cache_read_input_tokens/cache_creation_input_tokens fields', () => {
+    const message = {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      total_cost_usd: 0.01,
+      usage: {
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_read_input_tokens: 7,
+        cache_creation_input_tokens: 3,
+      },
+    } as unknown as SDKMessage;
+    expect(mapSdkMessage(message)).toEqual([
+      {
+        type: 'usage',
+        inputTokens: 100,
+        outputTokens: 20,
+        cacheReadTokens: 7,
+        cacheCreationTokens: 3,
+        costUsd: 0.01,
+      },
+    ]);
+  });
+
+  it('an error result with real modelUsage also sums cache tokens onto the error event, mirroring the success path exactly', () => {
+    const message = {
+      type: 'result',
+      subtype: 'error_max_turns',
+      is_error: true,
+      errors: ['exceeded the maximum number of turns'],
+      total_cost_usd: 0.3766544,
+      usage: { input_tokens: 40, output_tokens: 9874, cache_read_input_tokens: 0 },
+      modelUsage: {
+        'claude-sonnet-5': {
+          inputTokens: 40,
+          outputTokens: 9874,
+          cacheReadInputTokens: 12,
+          cacheCreationInputTokens: 6,
+          costUSD: 0.3766544,
+        },
+      },
+    } as unknown as SDKMessage;
+    expect(mapSdkMessage(message)).toEqual([
+      {
+        type: 'error',
+        code: 'error_max_turns',
+        message: 'exceeded the maximum number of turns',
+        retryable: false,
+        inputTokens: 40,
+        outputTokens: 9874,
+        cacheReadTokens: 12,
+        cacheCreationTokens: 6,
+        costUsd: 0.3766544,
+      },
+    ]);
+  });
+});

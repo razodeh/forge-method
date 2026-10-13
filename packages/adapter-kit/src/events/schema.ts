@@ -97,6 +97,9 @@ const usageSchema = z
     inputTokens: z.number().int().nonnegative(),
     outputTokens: z.number().int().nonnegative(),
     cacheReadTokens: z.number().int().nonnegative().optional(),
+    // `07` §7.3's own "Honest cache-token accounting" (M17 P11) — same constraint as `cacheReadTokens`
+    // above, the sibling field it is always summed alongside.
+    cacheCreationTokens: z.number().int().nonnegative().optional(),
     // Not `.int()` — a dollar cost is genuinely fractional — but `.finite()` still excludes `Infinity`
     // explicitly, since nothing else here does for a non-integer field.
     costUsd: z.number().nonnegative().finite().optional(),
@@ -114,6 +117,7 @@ const errorSchema = z
     inputTokens: z.number().int().nonnegative().optional(),
     outputTokens: z.number().int().nonnegative().optional(),
     cacheReadTokens: z.number().int().nonnegative().optional(),
+    cacheCreationTokens: z.number().int().nonnegative().optional(),
     costUsd: z.number().nonnegative().finite().optional(),
   })
   .strict();
@@ -122,6 +126,18 @@ const sessionEndedSchema = z
   .object({
     type: z.literal('session.ended'),
     reason: z.enum(['complete', 'aborted', 'error', 'limit']),
+  })
+  .strict();
+
+// `structured_output`'s own real carrier (M17 P11) — `data` mirrors `tool.call.input`/`control.payload`
+// above: `z.unknown()`, never validated against the caller's own schema here (that happens once,
+// against `SessionResult.structured`, by whichever consumer asked for `outputSchema` in the first
+// place; this layer's job is only "is this a well-formed AdapterEvent," not "is this valid JSON for the
+// requested schema").
+const structuredSchema = z
+  .object({
+    type: z.literal('structured'),
+    data: z.unknown(),
   })
   .strict();
 
@@ -138,4 +154,5 @@ export const adapterEventSchema = z.discriminatedUnion('type', [
   usageSchema,
   errorSchema,
   sessionEndedSchema,
+  structuredSchema,
 ]);

@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { AdapterEvent, SessionResult } from '@forge/adapter-kit';
 
 import { accumulateSessionResult } from '../src/session-result.ts';
+import { parseCliEventLine } from '../src/cli/parse-event.ts';
 
 async function* eventsOf(events: readonly AdapterEvent[]): AsyncGenerator<AdapterEvent> {
   for (const event of events) {
@@ -355,5 +356,180 @@ describe('accumulateSessionResult', () => {
       token: 'FORGE_REQUEST_CHANGE',
       payload: { target: 'specs/07', reason: 'the table is stale' },
     });
+  });
+});
+
+/**
+ * M17 P11: `SessionResult.structured` from a real `structured` event, and `SessionResult.usage.
+ * cacheReadTokens`/`.cacheCreationTokens` from the same `'usage'`/`'error'` events `inputTokens`/
+ * `outputTokens` are already read from (`07` §7.3's own "Honest cache-token accounting").
+ *
+ * @see specs/07 §7.2
+ * @see specs/07 §7.3
+ * @see PLAN-M17.md P11
+ */
+describe('accumulateSessionResult — structured output and cache-token accounting (specs/22 M17 P11)', () => {
+  // Mirrors `describe('accumulateSessionResult', ...)` above exactly -- that block's own `plainCwd`/
+  // `scratchDirs` are scoped to its own callback, not visible here.
+  let scratchDirs: string[] = [];
+  afterEach(async () => {
+    for (const dir of scratchDirs) await rm(dir, { recursive: true, force: true });
+    scratchDirs = [];
+  });
+
+  async function plainCwd(): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-adapter-claude-code-session-result-m17-'));
+    scratchDirs.push(dir);
+    return dir;
+  }
+
+  it('a structured event populates SessionResult.structured with its own real data, unchanged', async () => {
+    const cwd = await plainCwd();
+    const input: AdapterEvent[] = [{ type: 'structured', data: { answer: 'ok' } }];
+    const { result } = await drain(
+      accumulateSessionResult(eventsOf(input), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    expect((result as SessionResult).structured).toEqual({ answer: 'ok' });
+  });
+
+  it('structured is omitted entirely (not undefined-valued, not null) when no structured event ever arrives -- a session run without outputSchema', async () => {
+    const cwd = await plainCwd();
+    const { result } = await drain(
+      accumulateSessionResult(eventsOf([]), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    expect('structured' in (result as SessionResult)).toBe(false);
+  });
+
+  it('a structured event whose own data is explicitly null is still a real event that arrived -- "structured" stays present, as {structured: null}, not omitted', async () => {
+    const cwd = await plainCwd();
+    const input: AdapterEvent[] = [{ type: 'structured', data: null }];
+    const { result } = await drain(
+      accumulateSessionResult(eventsOf(input), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    const typed = result as SessionResult;
+    expect('structured' in typed).toBe(true);
+    expect(typed.structured).toBeNull();
+  });
+
+  it('a structured event is re-yielded live, alongside (never instead of) the usage event the same result message also produced', async () => {
+    const cwd = await plainCwd();
+    const input: AdapterEvent[] = [
+      { type: 'usage', inputTokens: 10, outputTokens: 5, costUsd: 0.01 },
+      { type: 'structured', data: { answer: 'ok' } },
+    ];
+    const { events, result } = await drain(
+      accumulateSessionResult(eventsOf(input), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    expect(events).toEqual(input);
+    expect((result as SessionResult).structured).toEqual({ answer: 'ok' });
+    expect((result as SessionResult).usage.costUsd).toBe(0.01);
+  });
+
+  it('usage event populates usage.cacheReadTokens/cacheCreationTokens; both are omitted entirely when never reported', async () => {
+    const cwd = await plainCwd();
+    const withCache = await drain(
+      accumulateSessionResult(
+        eventsOf([
+          {
+            type: 'usage',
+            inputTokens: 10,
+            outputTokens: 5,
+            cacheReadTokens: 7,
+            cacheCreationTokens: 3,
+          },
+        ]),
+        { sessionId: 's', cwd, now: stepClock(0) },
+      ),
+    );
+    const withCacheUsage = (withCache.result as SessionResult).usage;
+    expect(withCacheUsage.cacheReadTokens).toBe(7);
+    expect(withCacheUsage.cacheCreationTokens).toBe(3);
+
+    const noCacheEvent = await drain(
+      accumulateSessionResult(eventsOf([{ type: 'usage', inputTokens: 10, outputTokens: 5 }]), {
+        sessionId: 's',
+        cwd,
+        now: stepClock(0),
+      }),
+    );
+    const noCacheUsage = (noCacheEvent.result as SessionResult).usage;
+    expect('cacheReadTokens' in noCacheUsage).toBe(false);
+    expect('cacheCreationTokens' in noCacheUsage).toBe(false);
+  });
+
+  it('an error event carrying real cacheReadTokens/cacheCreationTokens (a session that fails after real cache spend) populates result.usage instead of leaving it at the zeroed default', async () => {
+    const cwd = await plainCwd();
+    const input: AdapterEvent[] = [
+      {
+        type: 'error',
+        code: 'error_max_turns',
+        message: 'Reached maximum number of turns (20)',
+        retryable: false,
+        inputTokens: 40,
+        outputTokens: 9874,
+        cacheReadTokens: 12,
+        cacheCreationTokens: 6,
+        costUsd: 0.3766544,
+      },
+    ];
+    const { result } = await drain(
+      accumulateSessionResult(eventsOf(input), { sessionId: 's', cwd, now: stepClock(0) }),
+    );
+    const usage = (result as SessionResult).usage;
+    expect(usage.cacheReadTokens).toBe(12);
+    expect(usage.cacheCreationTokens).toBe(6);
+  });
+
+  it('the full real pipeline — a raw NDJSON result line, through parseCliEventLine, through accumulateSessionResult — delivers both honest cache-token accounting and a real forge adopt inference claims payload as SessionResult.structured', async () => {
+    const cwd = await plainCwd();
+    const claimsPayload = {
+      claims: [
+        {
+          kind: 'convention',
+          statement: 'Every exported error is a ForgeError.',
+          confidence: 'medium',
+          evidence: [{ kind: 'path', path: 'packages/core/src/errors/base.ts', line: 12 }],
+        },
+      ],
+    };
+    const line = JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      total_cost_usd: 0.05,
+      usage: { input_tokens: 500, output_tokens: 50, cache_read_input_tokens: 0 },
+      modelUsage: {
+        'claude-sonnet-5': {
+          inputTokens: 500,
+          outputTokens: 50,
+          cacheReadInputTokens: 300,
+          cacheCreationInputTokens: 40,
+          costUSD: 0.05,
+        },
+      },
+      structured_output: claimsPayload,
+    });
+
+    const { result } = await drain(
+      accumulateSessionResult(eventsOf(parseCliEventLine(line)), {
+        sessionId: 's',
+        cwd,
+        now: stepClock(0),
+      }),
+    );
+    const typed = result as SessionResult;
+
+    expect(typed.usage.cacheReadTokens).toBe(300);
+    expect(typed.usage.cacheCreationTokens).toBe(40);
+
+    // The identical minimal check `@forge/engine/adopt`'s own `claimsFromSession` applies to
+    // `SessionResult.structured` (a cross-package import here would cross this package's own
+    // `specs/02` §2.2 boundary edge, which stops at `adapter-kit`/`schemas`/`telemetry` -- this
+    // proves the same real contract without needing one).
+    const structured = typed.structured;
+    expect(typeof structured).toBe('object');
+    const claims = (structured as { claims?: unknown }).claims;
+    expect(Array.isArray(claims)).toBe(true);
+    expect(claims).toEqual(claimsPayload.claims);
   });
 });

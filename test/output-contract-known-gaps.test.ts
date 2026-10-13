@@ -634,24 +634,12 @@ describe('M17 Phase A: surfaces specs/22 M17 names that are not yet built (specs
     // running the adversarial case under its own hard guard.
   });
 
-  it('11. structured_output is still discarded: AdapterCapabilities.structuredOutput is hard-coded false', () => {
-    const capabilities = readPkg('packages/adapter-claude-code/src/capabilities.ts');
-    expect(capabilities).toContain('structuredOutput: false');
-    const sessionResult = readPkg('packages/adapter-claude-code/src/session-result.ts');
-    expect(sessionResult).not.toContain('structured');
-    const parseEvent = readPkg('packages/adapter-claude-code/src/cli/parse-event.ts');
-    expect(parseEvent).toContain(
-      'export function parseCliEventLine(line: string): AdapterEvent | undefined {',
-    );
-    const mapMessage = readPkg('packages/adapter-claude-code/src/sdk/map-message.ts');
-    expect(mapMessage).toContain(
-      'export function mapSdkMessage(message: SDKMessage): readonly AdapterEvent[] {',
-    );
-  });
-
-  it('12. SessionUsage has no cacheReadTokens/cacheCreationTokens fields yet', () => {
-    const session = readPkg('packages/adapter-kit/src/types/session.ts');
-    expect(session).not.toContain('cacheReadTokens');
-    expect(session).not.toContain('cacheCreationTokens');
-  });
+  // Items 11 ("structured_output is still discarded") and 12 ("SessionUsage has no
+  // cacheReadTokens/cacheCreationTokens fields yet") were removed here, deliberately, by M17 P11: both
+  // are closed (`parseCliEventLine`/`mapSdkMessage` now return `readonly AdapterEvent[]` and read the
+  // real `structured_output`/`modelUsage` fields; `SessionUsage` now has both fields; `07` §7.3). The
+  // closed-gap behaviour itself is proven by `packages/adapter-claude-code`'s own test suite
+  // (`cli/parse-event.test.ts`, `sdk/map-message.test.ts`, `session-result.test.ts`,
+  // `capabilities.test.ts`) and `packages/adapter-kit`'s own `events/normalize.test.ts`, not repeated
+  // here — this describe's own job is only to surface what is NOT yet built, per its own title.
 });

@@ -1,26 +1,38 @@
 /**
- * `parseCliEventLine` — one raw `claude -p --output-format stream-json` NDJSON line mapped to zero or
- * one real `AdapterEvent`. Every shape below was confirmed against real, live output this milestone
- * captured directly across three real calls (non-bare/subscription auth, and bare/API-key auth once
- * the coordinator supplied one — both real auth modes exercised, per the coordinator's own explicit
- * request): `system/init`, `assistant` (text and `tool_use` content blocks — confirmed one block per
- * line when streaming, matching the SDK's own doc comment: "While a response streams the CLI emits one
- * assistant message per completed content block"), `user` (`tool_result`), `result` (success), and
- * `stream_event` (the real incremental-delta mechanism, confirmed on the third, bare-mode capture —
- * the first two calls' own responses were too short to ever trigger one, which is why an earlier draft
- * of this file shipped without handling them at all; see `mapStreamEvent`'s own doc comment). Only
- * `result` (error) and `system/api_retry` remain unconfirmed live (neither call ever failed or
- * retried) — grounded instead in the real, published `@anthropic-ai/claude-agent-sdk`'s own `.d.ts`
- * field names, not guessed. See `SPEC-QUESTIONS.md` Q114 for the full record, including a real,
+ * `parseCliEventLine` — one raw `claude -p --output-format stream-json` NDJSON line mapped to zero,
+ * one, or (a `result` line carrying both a usage/error signal and a `structured_output` payload)
+ * several real `AdapterEvent`s. Every shape below was confirmed against real, live output this
+ * milestone captured directly across three real calls (non-bare/subscription auth, and bare/API-key
+ * auth once the coordinator supplied one — both real auth modes exercised, per the coordinator's own
+ * explicit request): `system/init`, `assistant` (text and `tool_use` content blocks — confirmed one
+ * block per line when streaming, matching the SDK's own doc comment: "While a response streams the CLI
+ * emits one assistant message per completed content block"), `user` (`tool_result`), `result`
+ * (success), and `stream_event` (the real incremental-delta mechanism, confirmed on the third,
+ * bare-mode capture — the first two calls' own responses were too short to ever trigger one, which is
+ * why an earlier draft of this file shipped without handling them at all; see `mapStreamEvent`'s own
+ * doc comment). Only `result` (error) and `system/api_retry` remain unconfirmed live (neither call ever
+ * failed or retried) — grounded instead in the real, published `@anthropic-ai/claude-agent-sdk`'s own
+ * `.d.ts` field names, not guessed. See `SPEC-QUESTIONS.md` Q114 for the full record, including a real,
  * confirmed surprise: `--bare` mode still loads the invoking user's own globally-installed agents/
  * skills/slash-commands (its own `--help` text only promises to skip hooks/LSP/plugin-sync/CLAUDE.md/
  * keychain-reads/auto-memory, not those) — real, machine-dependent bleed bare mode's own "reproducible
  * across machines" framing does not fully cover, confirmed by directly comparing a non-bare and a
  * bare capture's own `tools`/`skills`/`slash_commands` fields side by side.
  *
+ * `modelUsage`/`structured_output` (M17 P11, `07` §7.3) are grounded the identical way `system/
+ * api_retry` already is above: never observed live (no live call this milestone made ever used
+ * `outputSchema`, and every real capture's own `result` line happened to predate/omit a `modelUsage`
+ * field), so both are read against the real, published SDK's own `.d.ts` field names
+ * (`SDKResultSuccess.modelUsage: Record<string, ModelUsage>`, `.structured_output?: unknown`) rather
+ * than a live-confirmed shape. `modelUsage` absent entirely degrades to the pre-M17 main-loop-only
+ * `usage.cache_read_input_tokens`/`.cache_creation_input_tokens` source rather than silently omitting
+ * the field — the identical "unknown/older producer degrades, never crashes or goes silent" stance `07`
+ * §7.3 itself states for version skew elsewhere in this adapter.
+ *
  * @see specs/07 §7.3
  * @see SPEC-QUESTIONS.md Q114
  * @see PLAN-M7.md P2
+ * @see PLAN-M17.md P11
  */
 import { normalizeAdapterEvent } from '@forge/adapter-kit/events';
 import type { AdapterEvent } from '@forge/adapter-kit';
@@ -134,12 +146,41 @@ function mapUserToolResult(message: Record<string, unknown>): AdapterEvent | und
   return { type: 'tool.result', id, ok: isError !== true, summary };
 }
 
-/** `usage.input_tokens`/`.output_tokens`/`.cache_read_input_tokens` plus top-level `total_cost_usd` --
- * the same four optional fields on both the `'usage'` and `'error'` `AdapterEvent` variants, read the
- * same way regardless of which `result` subtype carries them. Returns `undefined` when `usage` itself
- * is missing or malformed, rather than `{}`: a `Record<string, never>`-shaped empty return collides
- * with an object-literal spread that also sets a sibling literal key (`{ type: 'usage', ...fields }`),
- * confirmed directly -- `tsc` rejected it (`type: never` inferred from the index signature). */
+/** Sums one real per-model `ModelUsage` field (`cacheReadInputTokens`/`cacheCreationInputTokens`)
+ * across every entry of the real `modelUsage` record a `result` message carries -- `07` §7.3's own
+ * "Honest cache-token accounting": every model call made through the query pipeline (the main loop,
+ * Task subagents, sidechains and internal calls), not only the main-loop-only top-level `usage` field
+ * `extractUsageFields` otherwise reads. `undefined`, not `0`, when `modelUsage` itself is absent,
+ * not a record, empty, or no entry carries a real number for this field -- the caller falls back to
+ * the main-loop-only field in that case, the identical "nothing safe to report" stance
+ * `extractUsageFields` already takes for a wholly missing `usage` object; a defensive per-entry read
+ * (an entry that is not itself a record, or whose own field is missing/non-numeric, contributes
+ * nothing rather than throwing) since `modelUsage` is raw, external JSON, never schema-validated
+ * before this function sees it. */
+function sumModelUsageField(modelUsage: unknown, field: string): number | undefined {
+  if (!isRecord(modelUsage)) return undefined;
+  let sum = 0;
+  let sawAny = false;
+  for (const entry of Object.values(modelUsage)) {
+    if (!isRecord(entry)) continue;
+    const value = numberOf(entry[field]);
+    if (value === undefined) continue;
+    sum += value;
+    sawAny = true;
+  }
+  return sawAny ? sum : undefined;
+}
+
+/** `usage.input_tokens`/`.output_tokens` plus top-level `total_cost_usd` -- the same fields on both the
+ * `'usage'` and `'error'` `AdapterEvent` variants, read the same way regardless of which `result`
+ * subtype carries them. Returns `undefined` when `usage` itself is missing or malformed, rather than
+ * `{}`: a `Record<string, never>`-shaped empty return collides with an object-literal spread that also
+ * sets a sibling literal key (`{ type: 'usage', ...fields }`), confirmed directly -- `tsc` rejected it
+ * (`type: never` inferred from the index signature). `cacheReadTokens`/`cacheCreationTokens` (M17 P11)
+ * are `sumModelUsageField`'s own real per-model sum when `message.modelUsage` is present and usable,
+ * falling back to the pre-M17 `usage.cache_read_input_tokens`/`.cache_creation_input_tokens` fields
+ * otherwise -- never a third, zeroed value: "nothing safe to report" and "nothing to report" both stay
+ * `undefined`, never silently become `0`. */
 function extractUsageFields(
   message: Record<string, unknown>,
 ): Omit<Extract<AdapterEvent, { type: 'usage' }>, 'type'> | undefined {
@@ -148,22 +189,28 @@ function extractUsageFields(
   const inputTokens = numberOf(usage['input_tokens']);
   const outputTokens = numberOf(usage['output_tokens']);
   if (inputTokens === undefined || outputTokens === undefined) return undefined;
-  const cacheReadTokens = numberOf(usage['cache_read_input_tokens']);
+  const modelUsage = message['modelUsage'];
+  const cacheReadTokens =
+    sumModelUsageField(modelUsage, 'cacheReadInputTokens') ??
+    numberOf(usage['cache_read_input_tokens']);
+  const cacheCreationTokens =
+    sumModelUsageField(modelUsage, 'cacheCreationInputTokens') ??
+    numberOf(usage['cache_creation_input_tokens']);
   const costUsd = numberOf(message['total_cost_usd']);
   return {
     inputTokens,
     outputTokens,
     ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(cacheCreationTokens === undefined ? {} : { cacheCreationTokens }),
     ...(costUsd === undefined ? {} : { costUsd }),
   };
 }
 
 /** `result` (`subtype: 'success'`) -> `usage`. Confirmed live: `total_cost_usd`, `usage.input_tokens`/
  * `.output_tokens`/`.cache_read_input_tokens` all present exactly as `07` §7.3's own mapping table
- * names them ("result message `total_cost_usd`, per-model breakdown, token counts"). Per-model
- * (`modelUsage`) breakdown is real but has no field of its own in `AdapterEvent`'s closed `usage`
- * variant -- carried nowhere by this function; a future piece needing it reads `session.started`'s own
- * `meta`-adjacent init data or a richer event this milestone's scope does not add. */
+ * names them ("result message `total_cost_usd`, per-model breakdown, token counts"). The per-model
+ * (`modelUsage`) breakdown itself is read by `extractUsageFields`/`sumModelUsageField` above (M17 P11)
+ * -- this function's own job stays just the one `AdapterEvent` its name promises. */
 function mapResultSuccess(message: Record<string, unknown>): AdapterEvent | undefined {
   const fields = extractUsageFields(message);
   if (fields === undefined) return undefined;
@@ -213,20 +260,41 @@ function mapResultError(message: Record<string, unknown>): AdapterEvent | undefi
  * this shape is genuinely `SDKResultSuccess`-shaped, which requires `usage`/`total_cost_usd` exactly
  * like a clean success does -- a mid-turn API error after real spend must report it the same way
  * `mapResultError` now does, not fall back to the pre-fix zeroed default via a second, missed path.
- */
-function mapResult(message: Record<string, unknown>): AdapterEvent | undefined {
-  if (message['subtype'] !== 'success') return mapResultError(message);
-  if (message['is_error'] === true) {
+ *
+ * Returns an array (M17 P11, `07` §7.2's own "one raw adapter message may map to several
+ * `AdapterEvent`s"): a single raw `result` line can carry both a usage/error signal AND a real
+ * `structured_output` payload (when the session ran with `outputSchema` set); both become their own
+ * event here, in that order, never only the first one this function happens to construct. The
+ * `structured_output` check runs once, after the usage/error branch above has already decided which of
+ * the two it produced -- genuinely reachable on every branch, not only the clean-success one: nothing
+ * in the real SDK's own types rules out a crash/error result also carrying a (possibly partial)
+ * `structured_output`, and this function does not assume it away. */
+function mapResult(message: Record<string, unknown>): readonly AdapterEvent[] {
+  const events: AdapterEvent[] = [];
+  if (message['subtype'] !== 'success') {
+    const errorEvent = mapResultError(message);
+    if (errorEvent !== undefined) events.push(errorEvent);
+  } else if (message['is_error'] === true) {
     const resultText = textOf(message['result']);
-    return {
+    events.push({
       type: 'error',
       code: 'api_error',
       message: resultText ?? 'API error',
       retryable: false,
       ...extractUsageFields(message),
-    };
+    });
+  } else {
+    const successEvent = mapResultSuccess(message);
+    if (successEvent !== undefined) events.push(successEvent);
   }
-  return mapResultSuccess(message);
+  // `message['structured_output']` is `unknown`, bracket-read directly off the raw, parsed JSON --
+  // JSON has no `undefined` of its own, so `!== undefined` here means exactly "the key was present
+  // with some real (possibly `null`) value," identical to how a missing key reads back `undefined`
+  // through a plain bracket access.
+  if (message['structured_output'] !== undefined) {
+    events.push({ type: 'structured', data: message['structured_output'] });
+  }
+  return events;
 }
 
 /** `stream_event` -> `text` (`partial: true`), the real incremental-delta mechanism
@@ -249,34 +317,56 @@ function mapStreamEvent(message: Record<string, unknown>): AdapterEvent | undefi
   return { type: 'text', text, partial: true };
 }
 
-export function parseCliEventLine(line: string): AdapterEvent | undefined {
+/** `AdapterEvent | undefined` -> a zero-or-one-element array, the uniform shape every non-`result`
+ * line's own single-candidate mapper produces -- `mapResult` above is the one mapper this file has
+ * that can genuinely return more than one real event for a single raw line. */
+function toList(candidate: AdapterEvent | undefined): readonly AdapterEvent[] {
+  return candidate === undefined ? [] : [candidate];
+}
+
+/**
+ * Returns an array (M17 P11, `07` §7.2's own "one raw adapter message may map to several
+ * `AdapterEvent`s... a transport's own message mapper therefore returns zero, one or several events
+ * for one raw message, in emission order, never a single optional event"): every non-`result` line
+ * still ever produces at most one real event (unchanged from before this piece), but `mapResult`'s own
+ * array is now threaded all the way through rather than collapsed back down to one. Each candidate is
+ * normalised and filtered independently -- a malformed second candidate (e.g. a `structured` event
+ * `normalizeAdapterEvent` happens to reject) degrades to dropping only that one event, never the whole
+ * line, the identical per-item tolerance `mapAssistantContentBlock`'s own doc comment already
+ * establishes for a different kind of partial failure.
+ */
+export function parseCliEventLine(line: string): readonly AdapterEvent[] {
   const trimmed = line.trim();
-  if (trimmed.length === 0) return undefined;
+  if (trimmed.length === 0) return [];
 
   let raw: unknown;
   try {
     raw = JSON.parse(trimmed);
   } catch {
-    return undefined;
+    return [];
   }
-  if (!isRecord(raw)) return undefined;
+  if (!isRecord(raw)) return [];
 
   const type = raw['type'];
   const subtype = raw['subtype'];
-  let candidate: AdapterEvent | undefined;
-  if (type === 'system' && subtype === 'init') candidate = mapSystemInit(raw);
-  else if (type === 'system' && subtype === 'api_retry') candidate = mapApiRetry(raw);
-  else if (type === 'assistant') candidate = mapAssistant(raw);
-  else if (type === 'user') candidate = mapUserToolResult(raw);
-  else if (type === 'result') candidate = mapResult(raw);
-  else if (type === 'stream_event') candidate = mapStreamEvent(raw);
+  let candidates: readonly AdapterEvent[];
+  if (type === 'system' && subtype === 'init') candidates = toList(mapSystemInit(raw));
+  else if (type === 'system' && subtype === 'api_retry') candidates = toList(mapApiRetry(raw));
+  else if (type === 'assistant') candidates = toList(mapAssistant(raw));
+  else if (type === 'user') candidates = toList(mapUserToolResult(raw));
+  else if (type === 'result') candidates = mapResult(raw);
+  else if (type === 'stream_event') candidates = toList(mapStreamEvent(raw));
+  else candidates = [];
   // Every other real, observed line type (`rate_limit_event`, `system/status`, `system/thinking_tokens`,
   // and any future one Claude Code adds) has
   // no `AdapterEvent` variant to become -- skipped, per `05` §5.5 point 9's own "unknown tokens are
   // logged and ignored" spirit, extended here to unknown *message* shapes generally, not only control
   // tokens specifically.
 
-  if (candidate === undefined) return undefined;
-  const normalized = normalizeAdapterEvent(candidate);
-  return normalized.ok ? normalized.event : undefined;
+  const normalized: AdapterEvent[] = [];
+  for (const candidate of candidates) {
+    const result = normalizeAdapterEvent(candidate);
+    if (result.ok) normalized.push(result.event);
+  }
+  return normalized;
 }

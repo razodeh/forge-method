@@ -127,7 +127,10 @@ describe('ClaudeCodeAdapter — capabilities()', () => {
     const before = await adapter.capabilities();
     expect(before.partialText).toBe(false);
     expect(before.sessionResume).toBe(false);
-    expect(before.structuredOutput).toBe(false);
+    // structuredOutput is true even before a session starts (specs/22 M17 P11) -- fixed by this
+    // adapter's own mapping code, not by the remote CLI/SDK version; see capabilities.test.ts for
+    // the dedicated test.
+    expect(before.structuredOutput).toBe(true);
 
     const handle = await adapter.startSession(baseRequest());
     await drain(handle);
@@ -135,9 +138,7 @@ describe('ClaudeCodeAdapter — capabilities()', () => {
     const after = await adapter.capabilities();
     expect(after.partialText).toBe(true);
     expect(after.sessionResume).toBe(true);
-    // structuredOutput stays false even confirmed -- this adapter does not deliver it end to end on
-    // either transport yet (SPEC-QUESTIONS.md Q116); see capabilities.test.ts for the dedicated test.
-    expect(after.structuredOutput).toBe(false);
+    expect(after.structuredOutput).toBe(true);
   });
 
   it("permissionModes reflects the CLI transport's own real vocabulary when pinned to cli", async () => {

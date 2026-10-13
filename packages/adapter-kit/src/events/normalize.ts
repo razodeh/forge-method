@@ -63,6 +63,9 @@ export type NormalizeAdapterEventResult =
 const REQUIRED_UNKNOWN_KEY_BY_TYPE: ReadonlyMap<string, string> = new Map([
   ['tool.call', 'input'],
   ['control', 'payload'],
+  // `'structured'` (M17 P11): `data` is `z.unknown()`, required, the identical "key actually present"
+  // ambiguity `tool.call.input`/`control.payload` already have this map for.
+  ['structured', 'data'],
 ]);
 
 function missingRequiredUnknownKey(raw: unknown): NormalizeAdapterEventIssue | undefined {

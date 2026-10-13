@@ -5,17 +5,22 @@
  * @see specs/07 §7.2
  * @see SPEC-QUESTIONS.md Q116
  * @see PLAN-M7.md P4
+ * @see PLAN-M17.md P11
  */
 import { describe, expect, it } from 'vitest';
 
 import { confirmedCapabilities, staticCapabilities } from '../src/capabilities.ts';
 
 describe('staticCapabilities', () => {
-  it('conservatively defaults partialText/sessionResume/structuredOutput to false', () => {
+  it('conservatively defaults partialText/sessionResume to false', () => {
     const caps = staticCapabilities(['manual'], 'cli');
     expect(caps.partialText).toBe(false);
     expect(caps.sessionResume).toBe(false);
-    expect(caps.structuredOutput).toBe(false);
+  });
+
+  it('structuredOutput is true, even before any session has started (specs/22 M17 P11) -- fixed by this adapter\'s own mapping code, not by which real CLI/SDK version is installed, the identical "fixed by construction" category every other non-version-dependent field below is in', () => {
+    expect(staticCapabilities(['manual'], 'cli').structuredOutput).toBe(true);
+    expect(staticCapabilities(['manual'], 'sdk').structuredOutput).toBe(true);
   });
 
   it('passes permissionModes through verbatim, as a real (not shared-reference) copy', () => {
@@ -28,6 +33,7 @@ describe('staticCapabilities', () => {
   it('every other field is a fixed, non-degraded value regardless of permissionModes', () => {
     const caps = staticCapabilities([], 'sdk');
     expect(caps.streaming).toBe(true);
+    expect(caps.structuredOutput).toBe(true);
     expect(caps.toolAllowlist).toBe(true);
     expect(caps.subagents).toBe(true);
     expect(caps.mcp).toBe(true);
@@ -57,9 +63,9 @@ describe('confirmedCapabilities', () => {
     expect({ ...after, partialText: false, sessionResume: false }).toEqual(before);
   });
 
-  it('structuredOutput stays false even once confirmed -- this adapter does not deliver it end to end on either transport yet, so confirming a session started must not misreport it as working', () => {
+  it('structuredOutput stays true once confirmed too (specs/22 M17 P11) -- it was never version-dependent in the first place, so observing a real session changes nothing about it', () => {
     const caps = confirmedCapabilities(['manual'], 'sdk');
-    expect(caps.structuredOutput).toBe(false);
+    expect(caps.structuredOutput).toBe(true);
   });
 
   it('still passes permissionModes through verbatim', () => {

@@ -25,6 +25,19 @@ const WORKED_EXAMPLES: readonly AdapterEvent[] = [
   { type: 'retry', attempt: 1, maxRetries: 3, reason: 'rate limit', delayMs: 500 },
   { type: 'usage', inputTokens: 10, outputTokens: 5 },
   { type: 'usage', inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, costUsd: 0.01 },
+  // M17 P11: `cacheCreationTokens`, summed from the real per-model usage breakdown alongside
+  // `cacheReadTokens` (specs/07 §7.3's own "Honest cache-token accounting").
+  {
+    type: 'usage',
+    inputTokens: 10,
+    outputTokens: 5,
+    cacheReadTokens: 2,
+    cacheCreationTokens: 7,
+    costUsd: 0.01,
+  },
+  // M17 P11: a single `result` message's own `structured_output` field, carried as its own event
+  // alongside (never instead of) the `'usage'`/`'error'` event the same message also yields.
+  { type: 'structured', data: { answer: 'ok' } },
   { type: 'error', code: 'ADP-001', message: 'boom', retryable: false },
   // M16 P17: an error-terminated session can still carry real usage/cost (specs/07 §7.3's own Claude
   // Code note — `SDKResultError` carries `usage`/`total_cost_usd` exactly like `SDKResultSuccess`).
@@ -122,6 +135,16 @@ describe('normalizeAdapterEvent — required unknown-typed keys (input, payload)
     expect(result).toEqual({ ok: false, issue: { path: 'payload', message: 'Required' } });
   });
 
+  it('rejects a structured event with no data key at all (M17 P11)', () => {
+    const result = normalizeAdapterEvent({ type: 'structured' });
+    expect(result).toEqual({ ok: false, issue: { path: 'data', message: 'Required' } });
+  });
+
+  it('accepts a structured event whose data key is present with value undefined (the key existed)', () => {
+    const result = normalizeAdapterEvent({ type: 'structured', data: undefined });
+    expect(result.ok).toBe(true);
+  });
+
   it('skips the required-unknown-key check (deferring to the ordinary schema failure) for a plain object with no string type at all', () => {
     // A plain object missing `type` entirely — the required-key pre-check reads `raw.type`, finds it
     // is not a string, and defers to `adapterEventSchema` itself to report the real problem, rather
@@ -150,7 +173,7 @@ describe('normalizeAdapterEvent — required unknown-typed keys (input, payload)
   );
 
   it('does not apply the required-key check to a type this rule does not name', () => {
-    // Sanity: the check is scoped to exactly 'tool.call'/'control', not every event kind.
+    // Sanity: the check is scoped to exactly 'tool.call'/'control'/'structured', not every event kind.
     const result = normalizeAdapterEvent({ type: 'thinking', text: 'x' });
     expect(result.ok).toBe(true);
   });
@@ -270,6 +293,15 @@ describe('normalizeAdapterEvent — numeric constraints reject Infinity, not jus
     [
       'usage.costUsd',
       { type: 'usage' as const, inputTokens: 1, outputTokens: 1, costUsd: Infinity },
+    ],
+    [
+      'usage.cacheCreationTokens',
+      {
+        type: 'usage' as const,
+        inputTokens: 1,
+        outputTokens: 1,
+        cacheCreationTokens: Infinity,
+      },
     ],
     [
       'tool.result.bytes',

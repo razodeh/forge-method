@@ -541,7 +541,10 @@ async function runResolverSession(
       platform: ctx.adapter.id,
       inputTokens: sanitizeUsageNumber(session.usage.inputTokens),
       outputTokens: sanitizeUsageNumber(session.usage.outputTokens),
-      cacheReadTokens: 0,
+      // M17 P11 (the milestone's own defect #11): mirrors `steps.ts`'s own identical fix -- see that
+      // module's own `UsageRecorded` emission for the full reasoning.
+      cacheReadTokens: sanitizeUsageNumber(session.usage.cacheReadTokens ?? 0),
+      cacheCreationTokens: sanitizeUsageNumber(session.usage.cacheCreationTokens ?? 0),
       costUsd: session.usage.costUsd === undefined ? 0 : sanitizeUsageNumber(session.usage.costUsd),
       estimated: true,
       durationMs: sanitizeUsageNumber(session.durationMs),

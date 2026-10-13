@@ -397,6 +397,12 @@ async function* runSpawnedSession(
         sawExplicitEnded = true;
         if (event.reason === 'aborted' || event.reason === 'error') ok = false;
         break;
+      // M17 P11 added `AdapterEvent{type:'structured'}` to the shared union; this declarative adapter
+      // has no `emit:` mapping that ever constructs one (`07` §7.5's own config schema names no such
+      // literal), and `config.ts`'s own `structuredOutput` capability field is `false` unless a config
+      // author claims otherwise — out of this chain's own scope (P3-P7), listed here only so a future
+      // `AdapterEvent` variant still fails this switch's own exhaustiveness check.
+      case 'structured':
       case 'session.started':
       case 'thinking':
       case 'tool.result':
