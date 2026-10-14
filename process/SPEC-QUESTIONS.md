@@ -29616,6 +29616,22 @@ dedicated test; mutation-confirmed both ways.
 a doc-comment misattribution of `RUN-048`; `RUN-156`'s remedy now names the integration worktree's
 own resolved path via a shared, non-duplicated formula, matching `RUN-107`'s established convention.
 
+**Cross-piece discovery at landing time, resolved by the orchestrator (same treatment as the P8/P10
+landmine).** Rebasing this piece onto main after M17 P15 landed surfaced a real, pre-existing test
+failure with zero overlap in files touched by either piece:
+`packages/cli/test/commands/run/parity-gate.test.ts`'s own M16-era "Decision 11 Required (3)" test
+built its scenario directly around Q294 Decision 2's own disclosed, explicitly-not-fixed gap (a
+self-committing session's rewrite of `.forge/parity/` bypassed claim enforcement) — Decision 2's own
+text even anticipated this: "Running `enforceClaim` whenever the lane differs from its base would
+close the hole... it is recommended... M16 does not rely on it." P15 is exactly that recommended
+fix, landing for the first time here. The rewrite is now correctly caught and reverted before
+`verify-parity` ever sees it, so the test's own "verify-parity fails" expectation no longer holds —
+not a regression in either piece, but a real consequence of P15's fix finally reaching a path this
+test's own premise depended on staying broken. Split into two tests (see the commit for detail): one
+proving P15's fix reaches this exact `NEVER_WRITABLE_GLOBS` path for a self-committing session, a
+second preserving Decision 3/11(3)'s own persistence-until-resolved claim via a legitimate out-of-
+band edit to the integration worktree instead of the now-correctly-blocked self-commit bypass.
+
 **Disclosed, tracked separately, not this piece's to fix**: a critic root-caused
 `test/authoring-roles-run.test.ts`'s 16 unrelated failures to a stale comment in
 `packages/engine/src/failures/classify.ts` — M17 P10's own real retry wiring (already landed) made
