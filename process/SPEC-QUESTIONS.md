@@ -29496,3 +29496,58 @@ indented `<div>` tag, or a same-line comment/div collision should be aware `scan
 misclassify it, until a dedicated test/fix closes this.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P19`.
+
+## Q322 — M17 P4: every consumer routes a structured test command for real — three gauntlet rounds, each finding something real one layer deeper, and the DECISIONs that closed each
+
+**Context.** P3 built `runStructuredTestLayer`; every real consumer still routed around a structured
+`testCommands` entry via a `typeof command !== 'string'` guard. This piece wires real routing
+everywhere. Three independent gauntlet rounds each found a real, verified defect — not process
+overhead, each one genuinely deeper than the last.
+
+**DECISION 1 — binding/hunk-mutation's whole-suite-fallback budget is zero; run.ts's is not.**
+`18` §18.3 says a structured command with no `scope`/`filter` template degrades to running the whole
+layer, bounded by a typed refusal budget. For `run.ts` (no population to protect — every outcome is
+in scope regardless of file) this piece implements that literally. For `binding.ts`/`hunk-mutation.ts`
+it does not: their mutation-credit algorithm needs a closed, correctly-scoped test population, and a
+whole-suite run's outcomes can't be safely narrowed back to that population after the fact — confirmed
+directly against this codebase's own built-in parsers (vitest-json/jest-json report an absolute,
+realpath-resolved file; tap/go-test-json report no file at all). The budget chosen is zero: refuse via
+a new `'structured-layer-needs-scope'` outcome, checked before any lane is created.
+
+**DECISION 2 — `renderTestCommandTemplate` uses a replacer FUNCTION for all 3 placeholders, never a
+replacement string.** Round 1's gauntlet found `{name:regex}`'s substitution corrupted on EVERY
+input: `replaceAll(search, replacementSTRING)` applies `GetSubstitution` to the replacement argument
+regardless of whether `search` is a string, and the computed replacement always ended in the magic
+token `$'` ("insert everything after the match"). The one existing test only passed by Node
+`--test`'s own forgiving auto-discovery, not correct rendering. The identical cause also corrupted
+`{files}`/`{name}` for any value containing `$&`/`` $` ``/`$'`/`$$`. A function's return value is
+never run through `GetSubstitution`, closing the whole class at once.
+
+**DECISION 3 — `--timeout-ms` reaches a structured command's run via `withTimeoutOverride` at the
+caller, not by widening P3's own already-landed `runStructuredTestLayer` signature.** Round 1's own
+first disclosure (calling this unfixable within Surface) was itself wrong: `runStructuredTestLayer`
+reads `command.timeoutMs` off whatever object the caller passes, so a 1-line spread-override at each
+of 3 call sites closes it without touching P3's file.
+
+**DECISION 4 — when a structured command's format gives no usable file attribution for an unmatched
+mutated outcome, the credit algorithm credits every known test not already confirmed passing
+elsewhere in the run, rather than silently dropping the signal.** Round 2's gauntlet found this
+reachable by completely ordinary use: 4 of 5 real JUnit dialects (pytest, Jest+jest-junit, Vitest,
+Node's own `--test-reporter=junit`) never populate `TestOutcome.file`, so a whole-file crash on
+revert was silently read as "non-binding"/"uncovered" — the exact inverse of what mutation testing
+exists to prove. Reproduced directly end-to-end against the real, unmocked `runBindingCheck`.
+
+**DECISION 5 — the fallback's own blast radius is evidence-scoped, not project-wide-unconditionally
+and not file-scoped.** Round 3's gauntlet found Decision 4's fallback, as first implemented, could
+sweep up a genuinely non-binding test in its own unrelated, unaffected file purely because some
+OTHER file crashed elsewhere in the same run — confirmed by direct construction (a "pure tautology"
+test credited as bound alongside the real crashed test). Closed by computing, once per run before
+the fallback applies, every name with its own real, directly-matched, non-failing outcome anywhere
+in the run, and excluding those names from the fallback's credit. This is more precise than file-
+scoping (which would require reconstructing which file an unattributed failure came from — the whole
+problem is that nothing in the run says) and strictly narrower than Decision 4's own fix: the
+residual, accepted, disclosed cost is now one-directional only (a name with no other outcome at all
+in the run, whose own file also never ran for an unrelated reason, is still credited by the
+project-wide fallback) and never again a silent drop of a real regression.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P4`.

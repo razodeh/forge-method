@@ -23570,3 +23570,61 @@ extensions. And a cosmetic nit (an unexplained double-throw assertion, inconsist
 own convention of commenting non-obvious assertions).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q321`.
+
+## M17 P4
+
+P3 built `runStructuredTestLayer` but every consumer (`run.ts`'s default rule/retry, `binding.ts`'s
+baseline/mutated/restore, `hunk-mutation.ts`'s mutants, `story.ts`'s `runLayer`/`checkBinding`,
+`bin.ts`'s binding/exempt commands) still routed around a structured `testCommands` entry via a
+`typeof command !== 'string'` guard that read it as "not configured." This piece wires real routing
+everywhere, applying `18` §18.3's degradation table: `binding.ts`/`hunk-mutation.ts`'s whole-suite-
+fallback budget is zero (refuse via a new `'structured-layer-needs-scope'` outcome, never degrade,
+since their mutation-credit algorithm needs a closed, correctly-scoped test population a whole-suite
+run can't safely be narrowed back into — confirmed against this codebase's own built-in parsers);
+`run.ts` has no such population to protect and degrades to the whole layer instead, per spec text.
+New `renderTestCommandTemplate`/`runTestLayerCommand`/`runTestLayerRetry`/`withTimeoutOverride` in
+`reporter.ts`.
+
+**Round 1's gauntlet found a BLOCKING bug reaching every real use of `{name:regex}`, not just
+adversarial ones.** `renderTestCommandTemplate`'s `{name:regex}` substitution used
+`replaceAll(search, replacementSTRING)` where the computed replacement string always ended in `$'`
+— a `GetSubstitution` magic token meaning "insert everything after the match," not a literal
+character, since the replacement argument is special-cased regardless of whether `search` is a
+string. This corrupted every use, not merely ones with adversarial input; the one existing test only
+"passed" by Node `--test`'s own forgiving auto-discovery tolerating the garbled positional args, not
+correct rendering. The identical root cause also corrupted plain `{files}`/`{name}` for any value
+containing `$&`/`` $` ``/`$'`/`$$` — ordinary, legal characters. Fixed by using a replacer FUNCTION
+for all three placeholders (a function's return value is never run through `GetSubstitution`).
+Round 1 also found `--timeout-ms` silently never reached a structured command's run at 3 call sites,
+and the piece's own original disclosure calling this unfixable-within-Surface was itself incorrect —
+a 1-line spread-override fix at each site closed it without touching P3's file; plus a literal test-
+plan gap (the 3 runner-config shapes named in this piece's own "Tests first" section weren't all
+exercised) that round 2 closed by actually building both missing configs (JUnit via `node --test`,
+a custom translator-based runner), not merely disclosing them.
+
+**Round 2's gauntlet found a second, more severe defect one layer deeper, surfaced by investigating
+whether the first fix's own JUnit-dialect limitation could mask something real: it did.** When a
+structured JUnit-dialect command gives no file attribution for a whole-file crash — true for 4 of 5
+real JUnit dialects (pytest, Jest+jest-junit, Vitest, Node's own `--test-reporter=junit`), confirmed
+directly against each — `binding.ts`/`hunk-mutation.ts`'s credit algorithm's unmatched-outcome
+fallback silently dropped the signal entirely, reading a revert that genuinely broke everything as
+"non-binding"/"uncovered" — the exact inverse of what mutation testing exists to prove, reachable by
+completely ordinary use (a broken import after a revert), not an adversarial construction. Reproduced
+directly end-to-end against the real, unmocked `runBindingCheck`. Fixed by crediting every known test
+not already matched by file, rather than silently dropping — the widest possible fallback, chosen
+deliberately since nothing in the run says which file crashed.
+
+**Round 3's gauntlet found the fix for round 2 had its own narrower, real side effect: the fallback
+was project-wide rather than scoped, so a genuinely non-binding test in its own, unrelated,
+unaffected file could be swept up and wrongly credited purely because some OTHER file crashed
+elsewhere in the same run** — confirmed by direct construction (a "pure tautology" test, unrelated to
+the implementation, credited as bound alongside the real crashed test). Closed with an evidence-
+scoped exclusion — computed once per run, before the fallback applies: any name with its own real,
+directly-matched, non-failing outcome anywhere in the same run is excluded from the fallback's
+credit, regardless of how many unrelated whole-file crashes also trigger it. More precise than
+file-scoping (which would require reconstructing which file an unattributed failure came from — the
+whole problem is that nothing in the run says) and strictly narrower than the original bug: the
+residual, accepted cost is now one-directional only (a name with NO other outcome at all in the run,
+whose own file also never ran for an unrelated reason, is still credited) and never a silent drop.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q322`.
