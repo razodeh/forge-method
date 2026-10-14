@@ -29723,3 +29723,71 @@ practice, and genuinely losing it needs deliberately balancing both fields' own 
 budget, not an ordinary envelope shape.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P12`.
+
+## Q325 — M17 P13: CLI clarity, 3 disclosed register defects — a human-output visibility gap the internal-function-only test suite couldn't have caught, and the DECISIONs that closed it
+
+**Context.** Defects #16 (`RUN-110` detail), #10 (binding `--json` notes/hunk reason), #21a
+(`forge upgrade` gitignore merge). All 3 fixes held up cleanly under both critics' adversarial
+review of the underlying logic; one critic's decision to test through the real CLI dispatcher
+(`bin.ts`, real subprocess) rather than only the internal function (`runUpgrade()` called directly)
+surfaced a real, severe gap neither the builder's own original tests nor the other critic's review
+reached.
+
+**DECISION 1 — `RUN-110`'s detail reuses the codebase's own dominant Zod-issue-formatting
+convention, not a new one.** `issue.path.join('.') || '(root)'`: `message`, joined `'; '` —
+confirmed byte-identical, by direct comparison, to `CFG-008`, `RUN-065`, and
+`extensions/src/module/parse.ts`'s `formatZodIssues`, the same convention ~16 pre-existing call
+sites across the codebase already use. A latent, pre-existing weakness of that shared convention
+(mediocre message quality for a `z.union` schema, confirmed via a live probe against the real
+installed zod version) is disclosed, not fixed here: no schema that feeds this convention's ~17
+call sites (including `storySchema`) actually uses `z.union`/`z.discriminatedUnion` today, so it is
+currently unreachable, not a regression this piece introduces.
+
+**DECISION 2 — `uncovered`'s hunk-level reason is one honest, non-discriminating constant, never a
+classifier that claims to distinguish causes nothing at that point in the pipeline can distinguish.**
+Verified directly against the real code (`toHunkVerdict` reaches the `uncovered` branch purely on
+`names.length === 0`, with no timing/partial-failure/coverage signal available to tell a real gap
+from hunk interdependence from a semantically inert change) — no counterexample found by either
+critic despite genuine adversarial effort. Consistent with `PLAN-M17.md`'s own "no capability is
+ever faked" decision.
+
+**DECISION 3 — the gitignore-merge mechanism is exported and reused, never duplicated, and this is
+the one choice that doesn't reintroduce the defect it fixes.** Defect #21a's own root cause
+(disclosed in the new doc comment, citing the real M15 P14 live-run finding where `.forge/backups/`
+was added to the init-side list with nothing to retrofit it elsewhere) is exactly "a second,
+independent copy of this list silently falls out of sync." A critic traced this concretely: a
+duplicated list into `commands/upgrade/*` would recreate that identical failure mode one layer down.
+
+**DECISION 4 — the shipped human-output visibility gap is fixed with a dedicated preview line, not
+folded into the existing shared helper.** A critic testing through the real CLI dispatcher (not just
+the internal `runUpgrade()` function the builder's own original tests called directly) found `forge
+upgrade`'s default, non-`--json` output never mentioned the `.gitignore` merge at all — `report.
+gitignoreEntriesAdded` reached the `--json` envelope via a spread, but the plain-text branch, which
+already prints a dedicated line for `staleFiles`/`editedFiles`/`missingFiles`, had nothing
+equivalent, with zero test coverage at the CLI level to have caught it. On a piece literally named
+"CLI clarity," fixing defect #21a's own original "FORGE silently fails to touch `.gitignore`" bug by
+shipping "FORGE silently succeeds at touching it" instead was a real, severe miss. Fixed with its
+own `dryRun`-aware line (`"would merge N..."` / `"merged..."`) rather than routing through the
+existing `printUpgradePlanPreview` helper, whose "file(s)" trailer would misdescribe ignore-pattern
+entries as files. A new CLI-level (real subprocess) test closes the exact coverage gap that let this
+ship undetected.
+
+**DECISION 5 — the "true no-op" guarantee is now proven by a real mtime check, matching this
+codebase's own existing precedent rather than inventing a new pattern.** A critic's mutation (always
+calling the merge function regardless of whether anything was missing) passed every existing test,
+because the merge writes byte-identical content either way when nothing's missing — a real disk
+write (and mtime bump) still happens, just with no content change; the critic independently verified
+the SHIPPED behavior was already correct via a direct mtime check, so this was a provability gap,
+not a live bug. Closed with a `stat().mtimeMs` before/after assertion, mirroring `packages/kb/test/
+db/read.test.ts`'s own existing precedent for this exact kind of claim.
+
+**DECISION 6 — the newly-reachable duplicate-header cosmetic bug is fixed by checking for an
+existing `# FORGE` marker before writing a new one, leaving the pre-existing single-caller path
+byte-for-byte unchanged.** Before this piece, the merge mechanism had exactly one caller (`forge
+init`, always against a file with no existing header). `forge upgrade` is a second caller that, in
+the ordinary case, runs against a file that already has one — producing two separate header blocks,
+harmless (valid `.gitignore` syntax) but a real, newly-reachable rough edge. Fixed by detecting an
+existing header and merging into it; `forge init`'s own from-scratch path is untouched, confirmed by
+its own full, unmodified test suite still passing.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P13`.

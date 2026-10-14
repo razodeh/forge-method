@@ -23726,3 +23726,47 @@ the same category of honest, disclosed limit this milestone's other pieces have 
 (the net-zero multi-commit gap in M17 P15, for instance), not a silent gap.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q324`.
+
+## M17 P13
+
+Fixes 3 disclosed register defects. **Defect #16**: `RUN-110` ("does not validate as a Story")
+carried no detail about why. `resolveStoryById` now formats the real Zod issues (path, message) and
+passes them through to a new optional field, reusing the dominant convention ~16 other call sites
+already use (`CFG-008`, `RUN-065`, `formatZodIssues`). **Defect #10**: `forge test binding --json`
+gave no hint that `nonBinding` is expected for a behaviour-preserving refactor; a hunk's own
+`uncovered` verdict gave no reason at all. New additive `notes` field (never changes
+`incomplete`/`passed`) explains an all-nonBinding result; `uncovered` hunks now carry one honest,
+non-discriminating reason constant — deliberately not a classifier claiming to distinguish a real
+coverage gap from hunk interdependence from a semantically inert change, since nothing at that point
+in the pipeline CAN distinguish them, and fabricating one would be dishonest. **Defect #21a**:
+`forge upgrade` never merged missing MANAGED `.gitignore` entries back in. Fixed by exporting the
+existing `forge init` merge mechanism rather than duplicating the entry list into a second copy —
+duplicating it would reproduce the exact single-source-of-truth drift this defect is itself about.
+
+**Both independent critics found no blocking/major defects in the original 3 fixes** (RUN-110's
+format matches the established convention exactly, confirmed against 3 real sibling call sites; the
+`notes` field is genuinely orthogonal to exemption bookkeeping, proved with a live, hand-built
+repro; the Surface deviation — exporting from `init/write-tree.ts` rather than duplicating — is the
+correct reading, confirmed against the real M15 P14 history this defect's own disclosure cites).
+
+**One critic found a real, severe finding in the SHIPPED fix for #21a, surfaced only by testing
+through the real CLI dispatcher rather than calling the internal function directly**: `forge
+upgrade`'s human-readable (non-`--json`) output never mentioned the `.gitignore` merge at all — pure
+JSON-only visibility, zero test coverage at the CLI level, on a piece literally named "CLI clarity,"
+inverting the original defect from silent failure to silent success in the most common invocation. A
+second finding, confirmed by mutation to be a real gap but NOT a live bug (the shipped behavior was
+independently verified correct via a real mtime check): the "true no-op" guarantee for an
+already-complete `.gitignore` was asserted in a doc comment but unproven by any test. A third, minor
+and cosmetic finding, newly reachable only because this piece's own new caller (unlike the pre-
+existing, single, `forge init`-only caller) now runs the merge against a file that already has a
+`# FORGE` header: a duplicate header block, harmless but user-visible.
+
+**All 3 closed**, test-first and mutation-verified against each one's own red-first repro: a
+dedicated, dry-run-aware human-readable preview line for the gitignore merge, with a new CLI-level
+(real subprocess dispatch) test closing the exact coverage gap the critic named; a real `stat()`
+mtime-before/after regression test proving the no-op guarantee, matching this codebase's one
+existing mtime-check precedent rather than inventing a new pattern; and a header-presence check that
+merges into an existing `# FORGE` block instead of duplicating it, with the pre-existing single-
+caller path (`forge init` against a from-scratch file) left byte-for-byte unchanged.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q325`.
