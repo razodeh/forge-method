@@ -23531,3 +23531,42 @@ own initiative, and reported the gap rather than fabricating a verification; fix
 changed files directly into each critic's worktree before resuming.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q320`.
+
+## M17 P19
+
+The mandate: close the disclosed sentence-level pinning gaps in `test/spec-cli-examples.test.ts` by
+elevating already-individually-pinned sentences to block-level pins, and extend `scanLines` to
+recognize 3 previously-invisible markdown region types (tilde-fenced code, 4-space-indented code,
+raw `<div>` HTML blocks) plus a bare `|` as a block terminator (closing a gap that left every
+markdown table row in specs/03 unpinnable at block granularity). The builder self-caught a real
+directional error in the orchestrator's own dispatch brief (which said "pin each sentence
+individually," backwards from the plan's own real text) and correctly followed the higher-precedence
+Mandate instead. It also built a custom instrumented harness to confirm the real disclosed-gap count
+(78) rather than trust a cached figure, and caught its own process mistake mid-session (one mutation
+left unrestored, causing an unrelated red; traced, fixed, and redid every mutation from a freshly
+hashed clean baseline).
+
+**Both independent critics found no blocking defects, and independently corroborated the same latent
+gap from different angles.** Critic 1 found `previousKept`'s blank-line detection is inconsistent with
+the blank check itself (a whitespace-only, non-empty "blank" line breaks a subsequent indented-code
+open) and that indented-code detection takes unconditional precedence over `<div>` recognition on the
+same line, with an undocumented asymmetric-closing-tag failure mode. Critic 2 independently found the
+adjacent same-line `<!--`/`<div>` tie-break has zero test coverage, confirmed by mutation (flipping
+the tie-break left all tests green), and a second, different instance of the same `previousKept`-
+staleness family (across a closed fence, rather than across a whitespace-only blank line). Both
+critics confirmed, via direct `grep`/script-replay against every real `specs/*.md` file, that none of
+the three newly-recognized region types, nor any same-line comment/div collision, appear anywhere in
+real spec content today — purely theoretical, zero live risk, by direct verification rather than
+assumption. **Disclosed here, not forced into a third fix round**, consistent with `QUALITY-BAR.md`
+§4.1's carve-out for a confirmed-theoretical, adversarial-only gap in a piece whose purpose is pin
+coverage, not adversarial resistance: future spec authoring that introduces a whitespace-only blank
+line before an indented block, a same-line comment/div collision, or an indented `<div>` tag should
+be aware `scanLines` may misclassify it, until a dedicated test/fix closes this.
+
+Also found: a worthwhile precision clarification from critic 1 — the new region detectors are
+prophylactic; the real pin-count gain came from the block-granularity mandate itself plus the
+`|`-terminator fix (which directly unlocked every real markdown table block), not from the scanLines
+extensions. And a cosmetic nit (an unexplained double-throw assertion, inconsistent with the file's
+own convention of commenting non-obvious assertions).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q321`.

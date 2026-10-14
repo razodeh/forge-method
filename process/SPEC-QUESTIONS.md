@@ -29457,3 +29457,42 @@ this exercises, and a collapsed rename would still surface the new path via at l
 neither.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P15`.
+
+## Q321 — M17 P19: block-level pins for 3 previously-invisible region types — two latent, confirmed-theoretical gaps, disclosed rather than forced into a fix round
+
+**Context.** `test/spec-cli-examples.test.ts`'s pinning harness had disclosed gaps: tilde-fenced code,
+4-space-indented code, and raw `<div>` HTML blocks were all invisible to `scanLines`, and
+`expectBlock` couldn't terminate a block on a bare markdown table-row `|`. This piece closes 77 of 78
+disclosed sentence-level gaps as new block-level pins (the 78th already covered by a pre-existing
+block pin) and extends `scanLines`/`expectBlock` to recognize all four previously-missed shapes. Two
+independent critics each found real, latent logic gaps in the new detection logic — both converging,
+from different angles, on the same underlying family of edge cases.
+
+**DECISION — both confirmed-theoretical, zero-live-risk findings are disclosed here rather than
+driving a third fix round**, since neither is exploitable against any spec content that exists today
+(both critics independently verified this via direct `grep`/script-replay of every real `specs/*.md`
+file) and this piece's own purpose is pin coverage, not adversarial resistance (unlike, e.g., M17
+P15's write-claim enforcement, where the identical "theoretical-only" framing would NOT have been
+sufficient under `QUALITY-BAR.md` §4.1's own carve-out).
+
+1. **`previousKept`'s blank-line tracking is inconsistent with the blank check itself, in two
+   distinct ways.** A whitespace-only, non-empty "blank" line (e.g. trailing spaces) is treated as
+   blank by one check (`raw.trim() === ''`) but not by the indented-code-open guard (which requires
+   `previousKept === ''` exactly) — so a genuine 4-space-indented block immediately following such a
+   line is not recognized as code, confirmed empirically. Separately, `previousKept` is never updated
+   while inside a fence, including on the fence's own closing line — so a 4-space-indented line
+   immediately after a closing fence, with no intervening blank line, also fails to open indented
+   code, even though real CommonMark permits this. Both are unnamed simplifications beyond the one
+   `scanLines`' own doc comment already discloses (not tracking list-item indentation).
+2. **Indented-code detection takes unconditional precedence over `<div>` recognition on the same
+   line, with an undisclosed asymmetric-closing-tag failure mode, and the same-line `<!--`/`<div>`
+   tie-break itself has zero test coverage** (mutation-confirmed: flipping the tie-break left all
+   tests green). A `<div>` tag that is itself indented right after a blank line is swallowed as
+   indented code; if its matching `</div>` isn't also indented, the literal string `</div>` leaks
+   into visible prose uncaught.
+
+Future spec authoring that introduces a whitespace-only blank line before an indented block, an
+indented `<div>` tag, or a same-line comment/div collision should be aware `scanLines` may
+misclassify it, until a dedicated test/fix closes this.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P19`.
