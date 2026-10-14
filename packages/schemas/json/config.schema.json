@@ -908,6 +908,11 @@
         },
         "trailers": {
           "type": "boolean"
+        },
+        "trunk": {
+          "default": "main",
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [
