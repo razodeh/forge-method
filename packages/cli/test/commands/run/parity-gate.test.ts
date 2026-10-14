@@ -800,36 +800,108 @@ unobservable:
   );
 
   it(
-    'end to end: a lane that rewrites .forge/parity/, including a session that commits its own work, ' +
-      'makes verify-parity fail IN THAT RUN, and a second run keeps failing until trunk and the tree ' +
-      'agree (Decision 11 Required (3))',
+    "a self-committing session's rewrite of .forge/parity/ is reverted by write-claim enforcement " +
+      "(M17 P15 closed Q294 Decision 2's own disclosed gap), so verify-parity never sees it and the " +
+      'run completes clean (specs/22 M17 P9, formerly "Decision 11 Required (3)")',
+    async () => {
+      const project = await createRefactorProject();
+      await declareAndCapture(project);
+
+      // refactor-code's own session rewrites and commits .forge/parity/ directly inside its own
+      // lane, bypassing the declarative writeFiles/claim path -- the exact shape Q294 Decision 2
+      // once disclosed as unfixed (".forge/** is in NEVER_WRITABLE_GLOBS, but claim enforcement ran
+      // only when the adapter reported changed files... so a session that commits its own work was
+      // never reverted"). M17 P15 (SPEC-QUESTIONS.md Q320) closed that gap: `ctx.vcs.hasChanges` now
+      // diffs the lane's real git history against baseSha regardless of what the adapter
+      // self-reports, so this out-of-claim write is caught and reverted here, every time.
+      const run1 = await runRefactor(project, selfCommittingRewriteAdapter(), 'run-1-self-commit');
+      if (run1.kind !== 'run') throw new Error('unreachable');
+      // Reverting an out-of-claim write never fails the step directly (policy: 'warn') -- the step's
+      // own session otherwise completed its real work.
+      expect(run1.runState.stepStatuses.get('refactor:refactor-code')).toBe('succeeded');
+      // With the rewrite reverted before it ever reaches the integration branch, verify-parity's own
+      // real `forge parity check` compares the ORIGINAL declaration against the ORIGINAL reference --
+      // a real match, not a false one.
+      expect(run1.runState.stepStatuses.get('refactor:verify-parity')).toBe('succeeded');
+      expect(run1.runState.runStatus).toBe('completed');
+
+      const policyEvents: ForgeEvent[] = [];
+      for await (const event of readEvents(project.dir, 'run-1-self-commit')) {
+        if (event.type === 'PolicyViolation') policyEvents.push(event);
+      }
+      const violation = policyEvents.find((e) => e.stepId === 'refactor:refactor-code');
+      expect(violation).toBeDefined();
+      expect(violation?.payload).toMatchObject({
+        kind: 'out-of-claim-write',
+        stepFailed: false,
+        paths: ['.forge/parity/behavior.parity.yaml'],
+        totalOutOfClaim: 1,
+        totalReverted: 1,
+      });
+
+      // The revert is real, not merely reported: the integration worktree's own declaration file is
+      // byte-for-byte the ORIGINAL content, never the session's own rewrite.
+      const integrationPath = path.join(
+        await worktreesRootFor(await realpath(project.dir)),
+        'integration-forge-integration-current',
+      );
+      const declarationAfterRun1 = await readFile(
+        path.join(integrationPath, '.forge/parity/behavior.parity.yaml'),
+        'utf8',
+      );
+      expect(declarationAfterRun1).not.toContain('rewritten by a self-committing session');
+
+      const events1 = await gateEvaluatedEvents(project, 'run-1-self-commit');
+      const verifyParity1 = events1.find((e) => e.stepId === 'refactor:verify-parity');
+      expect(verifyParity1?.passed).toBe(true);
+    },
+  );
+
+  it(
+    'a .forge/parity/ inconsistency that reaches the integration branch OUTSIDE any dispatch step ' +
+      '(never through a lane -- that path is now reverted, see the test above) persists as the next ' +
+      "run's own starting tip until trunk and the tree agree (Decision 3's own persistence claim, " +
+      'Decision 11 Required (3))',
     async () => {
       const project = await createRefactorProject();
       await declareAndCapture(project);
       const trunkBefore = (await git(project.dir, 'rev-parse', 'main')).trim();
 
-      // Run 1: refactor-code's own session rewrites and commits .forge/parity/ directly inside its
-      // own lane, bypassing the declarative writeFiles/claim path (Decision 2's own disclosed gap:
-      // ".forge/** is in NEVER_WRITABLE_GLOBS, but claim enforcement runs only when the adapter
-      // reports changed files... so a session that commits its own work is never reverted").
-      const run1 = await runRefactor(project, selfCommittingRewriteAdapter(), 'run-1-rewrite');
+      // Run 1: an ordinary, successful preserving refactor -- lands cleanly on the integration
+      // branch (no merge step in this workflow; the lane's own commit is what lands).
+      const run1 = await runRefactor(project, await refactorAdapter('preserving'), 'run-1-clean');
       if (run1.kind !== 'run') throw new Error('unreachable');
-      expect(run1.runState.stepStatuses.get('refactor:refactor-code')).toBe('succeeded');
-      expect(run1.runState.stepStatuses.get('refactor:verify-parity')).toBe('failed');
-      expect(run1.runState.runStatus).toBe('failed');
+      expect(run1.runState.runStatus).toBe('completed');
 
-      const events1 = await gateEvaluatedEvents(project, 'run-1-rewrite');
-      const verifyParity1 = events1.find((e) => e.stepId === 'refactor:verify-parity');
-      expect(verifyParity1?.passed).toBe(false);
-
-      // Trunk itself was never touched by the rewrite (only the integration branch, which a lane with
-      // no merge step still lands on): main's own tip is unchanged.
-      expect((await git(project.dir, 'rev-parse', 'main')).trim()).toBe(trunkBefore);
+      // Between runs, something OTHER than a dispatch step touches the integration branch directly --
+      // an operator running a raw `git commit` against that worktree, the one avenue write-claim
+      // enforcement was never meant to guard (it polices a LANE's own session, not the integration
+      // branch itself). This is deliberately NOT a self-committing session or a writeFiles entry --
+      // both of those are now reverted, per the test above and the floor's own NEVER_WRITABLE_GLOBS
+      // check -- so this is the one remaining, legitimate way to exercise Decision 3's own claim that
+      // the integration branch is never silently reset to trunk between runs.
+      const integrationPath = path.join(
+        await worktreesRootFor(await realpath(project.dir)),
+        'integration-forge-integration-current',
+      );
+      const originalDeclaration = await readFile(
+        path.join(integrationPath, '.forge/parity/behavior.parity.yaml'),
+        'utf8',
+      );
+      await writeFile(
+        path.join(integrationPath, '.forge/parity/behavior.parity.yaml'),
+        `${originalDeclaration}# rewritten directly on the integration branch\n`,
+        'utf8',
+      );
+      await commitAll(
+        integrationPath,
+        'an out-of-band edit lands directly on the integration branch',
+      );
 
       // Run 2: a real, FRESH run. The integration branch is never reset to trunk when it is ahead of
-      // it (Decision 3: "a rewrite that lands in run N is run N+1's starting tip"), so the SAME
-      // rewrite is still there before any agent step of Run 2 even starts -- preflight-parity itself
-      // now fails, before refactor-code runs a second time.
+      // it (Decision 3: "a rewrite that lands in run N is run N+1's starting tip"), so the rewrite
+      // from between runs is still there before any agent step of Run 2 even starts -- preflight-
+      // parity itself fails, before refactor-code ever runs.
       const run2 = await runRefactor(
         project,
         await refactorAdapter('preserving'),
@@ -840,14 +912,14 @@ unobservable:
       expect(run2.runState.stepStatuses.has('refactor:refactor-code')).toBe(false);
       expect(run2.runState.runStatus).toBe('failed');
 
+      // Trunk itself was never touched by either run (only the integration branch): main's own tip
+      // is unchanged.
+      expect((await git(project.dir, 'rev-parse', 'main')).trim()).toBe(trunkBefore);
+
       // The resolution half of Decision 11's own claim: once trunk and the (rewritten) tree agree --
       // here, by landing the identical rewrite on trunk itself, exactly what a human review would do
       // -- a real forge parity check against the same integration worktree stops reading
       // oracle-changed.
-      const integrationPath = path.join(
-        await worktreesRootFor(await realpath(project.dir)),
-        'integration-forge-integration-current',
-      );
       const rewrittenDeclaration = await readFile(
         path.join(integrationPath, '.forge/parity/behavior.parity.yaml'),
         'utf8',
