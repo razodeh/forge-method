@@ -23459,3 +23459,75 @@ the plan's own stated requirement — disclosed as a real, separate contract cha
 own refusal semantics, not something to force into this piece's scope.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q319`.
+
+## M17 P15
+
+The builder's own mandate (Q294 D2's threat model): an agent session that commits its own work inside
+its own lane leaves the working tree clean afterward, so `runAgentWork`'s `work.changed` — read from
+the adapter's own self-reported `changedFiles`, computed from `git status --porcelain` after the
+session ends — came back empty, silently skipping the entire commit+`enforceClaim` block, including
+the out-of-claim revert check. Fix: all three `runAgentWork` return points switched from the self-report
+to `ctx.vcs.hasChanges`, a real git-diff check two other call sites (the adapter-crash path, every
+command-kind step) already used for the identical reason — reusing a proven mechanism, not inventing
+one. A new test harness wraps one `FakePlatformAdapter` instance to write real files, commit them for
+real in the real lane, then report `changedFiles: []` — the exact self-report/reality mismatch the bug
+depends on, something `@forge/testkit` cannot script directly.
+
+**Both independent critics, round 1, converged on the identical deeper defect, each with its own real
+empirical repro: the fix's own detection primitive, `diffLaneChanges`, was worktree-relative rather
+than history-relative.** It diffed `baseSha` against whatever bytes currently sat on disk, never
+against `HEAD`. A self-commit of an out-of-claim file followed by a second commit (or a plain edit)
+that reverted the worktree back to byte-identical-with-base nets to an empty diff — `hasChanges` AND
+the pre-existing `enforceClaim` (built on the same primitive, left unchanged by the builder's first
+pass) both see nothing, while the malicious blob stays reachable at `HEAD` and rides a rebase-based
+land straight into real project history. One critic additionally demonstrated a pure-plumbing variant
+(`hash-object`/`mktree`/`commit-tree`/`update-ref`) that achieves the identical result with zero
+worktree writes at all. This is the exact Q294 D2 threat model one layer deeper than what the first
+pass patched, not a lesser residual concern — `QUALITY-BAR.md` §4.1's "adversarial-only -> disclose,
+don't fix" carve-out explicitly excludes a piece whose own purpose is adversarial resistance. A second
+critic finding, mutation-confirmed live: only 1 of the 3 fixed `runAgentWork` return points had test
+coverage — reverting the other 2 left every existing test green.
+
+**Round 2 fixed both.** `diffLaneChanges` now unions a two-ref history-relative diff
+(`git diff baseSha HEAD`) with the original worktree-relative check and the untracked-files listing,
+all three run concurrently. While building this, the builder found and fixed a third sub-case neither
+critic had named explicitly: in the pure-plumbing scenario, once detected, `enforceClaim`'s own
+`git rm -f` threw `VCS-CLAIM-REVERT-FAILED` rather than cleanly reverting, because the file was never
+materialized in the worktree or index for git to resolve the pathspec against — not a silent bypass,
+but not a clean revert either. `--ignore-unmatch` fixes it; verified empirically against the existing
+`chmod 0o555` permission tests that the flag only widens "nothing to remove" into success, never masks
+a genuine removal failure. A pre-existing `enforceClaim` idempotency test broke as a direct, intended
+consequence of the fix (its old "safe to call twice with nothing committed in between" assumption no
+longer holds once history-relative detection exists) — the builder verified `enforceClaim` has exactly
+one production call site, which always commits any revert before returning, so no real caller depended
+on the old assumption, and split the test into the original (now matching the real caller's sequence)
+plus a new one proving the correct, intentional new behavior. The 2 untested return points gained
+dedicated tests, mutation-confirmed via the critics' own method (reverting each line in isolation
+caught exactly and only the matching new test). The builder also self-caught, via an A/B isolation
+rather than dismissing it as session-wide load, that its own fix measurably slowed a load-sensitive
+test (`crash-resume.test.ts`, one more sequential git subprocess spawn per lane operation) — fixed by
+parallelizing the three independent reads via `Promise.all`, re-verified the restructuring didn't
+weaken the fix.
+
+**Verification round 2: both critics independently re-confirmed the fix closes their own original
+repro, re-verified the "exactly one call site" claim against the real call graph rather than taking it
+on faith, stress-tested the `Promise.all` for races (construction argument plus a 100-iteration
+concurrent-execution empirical test, zero issues), and ran fresh mutations against the new code.** One
+critic found a narrow, non-blocking gap in its own re-review: the new two-ref diff leg's own
+`--no-renames` flag isn't independently test-pinned (a mutation removing it left all 36 tests green,
+because the one existing rename test commits its rename and so is independently covered by the
+unaffected one-ref leg) — low severity, disclosed, not blocking. Both critics agree the structurally
+unclosable residual (a commit that introduces bad content and a later commit in the same range that
+fully reverts it, netting to zero at both `baseSha` and `HEAD` — invisible to any two-endpoint diff,
+closable only by walking every commit in the range individually) is correctly scoped as adversarial-
+only and no weaker a guarantee than this codebase's existing revert mechanism already gives for the
+ordinary case.
+
+Also caught mid-session: a round-2 critic-verification process gap, not a finding against the piece
+itself — resuming a critic worktree with a prose description of an updated diff does not make that
+diff exist there, since git worktrees don't share uncommitted state. Both critics caught this
+themselves immediately, correctly declined to read or mutate the builder's own live worktree on their
+own initiative, and reported the gap rather than fabricating a verification; fixed by copying the
+changed files directly into each critic's worktree before resuming.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q320`.

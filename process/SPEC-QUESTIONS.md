@@ -29391,3 +29391,69 @@ actually needs relaxed, confirmed by direct analysis of which rule selectors the
 could ever trip.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P8`.
+
+## Q320 — M17 P15: in-lane self-commits honor the write claim — the deeper history-relative detection gap both critics found, and the DECISIONs that closed it
+
+**Context.** P15's mandate (Q294 D2's threat model): an agent session that commits its own work
+inside its own lane leaves the working tree clean, so `work.changed`'s old self-report-based signal
+silently skipped the entire commit+claim-enforcement block. Two independent critics, working
+separately, converged on the identical deeper defect in the fix's own detection primitive.
+
+**DECISION 1 — `diffLaneChanges` unions a two-ref history-relative diff with the original worktree-
+relative check, rather than replacing it.** Both critics proved empirically (real git, scratch
+repos) that the pre-fix primitive — and the pre-existing, unchanged `enforceClaim` built on the same
+primitive — diffed `baseSha` against whatever bytes currently sat on disk, never against `HEAD`. A
+self-commit of an out-of-claim file followed by a worktree revert (a second commit, or a plain edit
+with no recommit) nets to an empty diff while the malicious content stays reachable at `HEAD`, riding
+a rebase-based land straight into real project history. One critic additionally demonstrated a pure-
+plumbing variant (`hash-object`/`mktree`/`commit-tree`/`update-ref`) achieving the identical result
+with zero worktree writes. Fixed by adding `git diff baseSha HEAD` (history-relative, immune to
+worktree state by construction) alongside the existing worktree-relative check and the untracked-
+files listing — the union is necessary because the two-ref form alone would miss genuinely
+uncommitted writes the worktree check still catches. All three reads run concurrently via
+`Promise.all` after confirming they share no mutable state and have no ordering dependency; this
+also fixed a measured performance regression (`crash-resume.test.ts`) the sequential version
+introduced.
+
+**DECISION 2 — `enforceClaim`'s revert gained `--ignore-unmatch`, for a third sub-case discovered
+while fixing Decision 1, not named by either critic.** Once the pure-plumbing scenario is detected, a
+brand-new out-of-claim file that was never materialized in the worktree or index has no pathspec for
+`git rm -f` to resolve against — it threw `VCS-CLAIM-REVERT-FAILED` rather than cleanly reverting.
+Not a silent bypass, but not a clean revert either. `--ignore-unmatch` fixes it; verified against the
+existing `chmod 0o555` permission tests that the flag only widens "pathspec matched nothing" into
+success, never masks a genuine removal failure once a pathspec does match a tracked file.
+
+**DECISION 3 — a pre-existing `enforceClaim` idempotency test's own assumption was retired by design,
+not patched around.** The old test called `enforceClaim` twice with nothing committed between calls
+and asserted the second call saw nothing clean to revert — an assumption Decision 1 deliberately
+breaks, since the two scenarios are mechanically identical from `diffLaneChanges`'s point of view.
+Verified `enforceClaim` has exactly one production call site (`steps.ts`, inside `runLaneLifecycle`),
+which always commits any revert before returning, and that no resume/retry path can reach it a second
+time against an uncommitted first-call leftover (`rollbackLaneToBase` resets the worktree before any
+crash-resume reroll; an ordinary retry never reuses the lane at all) — so no real caller depended on
+the old assumption. Split into the original test (now committing between calls, matching the real
+caller's sequence) plus a new one proving the correct, intentional new behavior.
+
+**DECISION 4 — the structurally unclosable residual is disclosed, not forced.** A commit that
+introduces bad content and a later commit in the same range that fully reverts it nets to zero at
+both `baseSha` and `HEAD`, invisible to any two-endpoint diff — closing it needs walking every commit
+in the range individually, a different and more expensive mechanism. Both critics, independently,
+judged this adversarial-only (a deliberate multi-commit round-trip-to-nothing) and no weaker a
+guarantee than this codebase's existing revert mechanism already gives for the ordinary case (the
+violating commit always survives in lane history either way, by `enforceClaim`'s own original
+design). Named in a `claims.ts` doc comment and here, not silently left to look closed.
+
+**Also closed**: the other two `runAgentWork` return points (adapter failure, result-record write
+failure) had no test coverage combining them with a self-commit — both critics mutation-confirmed
+this live (reverting each line in isolation left every existing test green); 2 new dedicated tests
+close it, re-confirmed via the identical mutation method. A stale `hasChanges` doc comment that still
+framed the agent self-report as trustworthy is corrected.
+
+**Disclosed, not fixed, minor**: the new two-ref diff leg's own `--no-renames` flag isn't
+independently test-pinned — a mutation removing it left all tests green, because the one existing
+rename test is independently covered by the unaffected one-ref leg (it commits its own rename, so the
+worktree ends up clean). Low severity: the one-ref leg already covers the committed-and-clean case
+this exercises, and a collapsed rename would still surface the new path via at least one leg, never
+neither.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P15`.
