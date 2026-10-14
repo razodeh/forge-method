@@ -102,6 +102,7 @@ security:
     - (?i)api[_-]?key
     - (?i)authorization
 vcs:
+  trunk: main
   allowCommits: true
   commitConvention: conventional
   signCommits: false

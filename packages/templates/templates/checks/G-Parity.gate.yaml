@@ -4,7 +4,7 @@ autonomyOverride: null
 checks:
   deterministic:
     - id: behavior:parity
-      run: 'forge parity check --json --no-record --trusted refs/heads/main'
+      run: 'forge parity check --json --no-record --trusted @trunk'
       parser: forge-json
       failOn: 'failing > 0'
   advisory: []

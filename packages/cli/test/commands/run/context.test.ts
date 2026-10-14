@@ -16,13 +16,17 @@ import { worktreesRootFor } from '@forge/vcs';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { PlatformAdapter } from '@forge/adapter-kit/types';
 
+import { appendEvent } from '@forge/telemetry/events';
+
 import {
   buildRunEngineContext,
+  describeExtraLandedWork,
   ensureIntegrationWorktree,
   integrationBranchFor,
   integrationBranchOfRun,
   isAncestor,
   isTargetRegisteredWorktree,
+  landRunOnTrunk,
   stageIdOfContext,
   syncIntegrationBranchToTrunk,
 } from '../../../src/commands/run/context.ts';
@@ -1001,6 +1005,360 @@ describe('syncIntegrationBranchToTrunk (M14 P9, SPEC-QUESTIONS.md Q221 disclosed
     await expect(
       syncIntegrationBranchToTrunk(integrationPath, 'no-such-trunk-branch'),
     ).rejects.toMatchObject({ name: 'VcsError' });
+  });
+});
+
+describe('landRunOnTrunk (specs/22 M17 P9) (06 §6.5 "Landing a finished run on trunk")', () => {
+  it("fast-forwards trunk (checked out in the project's own working tree) to the integration branch's tip, never a merge commit", async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnIntegration(integrationPath, 'landed.txt', 'work\n');
+    const integrationTip = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    const integrationCommitCount = (
+      await execa('git', ['rev-list', '--count', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+
+    const result = await landRunOnTrunk(
+      project.dir,
+      'main',
+      'forge/integration/current',
+      'run-land-1',
+    );
+
+    expect(result).toEqual({ mergesDirectly: false, trunkTip: integrationTip, landed: true });
+    const trunkHead = (
+      await execa('git', ['rev-parse', 'main'], { cwd: project.dir })
+    ).stdout.trim();
+    expect(trunkHead).toBe(integrationTip);
+    // A real fast-forward, never a merge commit: the commit count matches exactly.
+    expect(
+      (await execa('git', ['rev-list', '--count', 'main'], { cwd: project.dir })).stdout.trim(),
+    ).toBe(integrationCommitCount);
+    expect(existsSync(path.join(project.dir, 'landed.txt'))).toBe(true);
+  });
+
+  it('is a real no-op (landed: false) the second time, once trunk already has everything the integration branch does', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnIntegration(integrationPath, 'landed.txt', 'work\n');
+    await landRunOnTrunk(project.dir, 'main', 'forge/integration/current', 'run-land-2');
+    const trunkTipAfterFirstLand = (
+      await execa('git', ['rev-parse', 'main'], { cwd: project.dir })
+    ).stdout.trim();
+
+    const result = await landRunOnTrunk(
+      project.dir,
+      'main',
+      'forge/integration/current',
+      'run-land-2',
+    );
+
+    expect(result).toEqual({
+      mergesDirectly: false,
+      trunkTip: trunkTipAfterFirstLand,
+      landed: false,
+    });
+  });
+
+  it('is a real no-op when the integration branch is already an ancestor of a trunk that has since moved further ahead on its own', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnIntegration(integrationPath, 'landed.txt', 'work\n');
+    await landRunOnTrunk(project.dir, 'main', 'forge/integration/current', 'run-land-3a');
+    await commitOnMain(project.dir, 'later.txt', 'later\n');
+    const trunkTip = (
+      await execa('git', ['rev-parse', 'main'], { cwd: project.dir })
+    ).stdout.trim();
+
+    const result = await landRunOnTrunk(
+      project.dir,
+      'main',
+      'forge/integration/current',
+      'run-land-3b',
+    );
+
+    expect(result).toEqual({ mergesDirectly: false, trunkTip, landed: false });
+  });
+
+  it('merges directly to trunk: when the run\'s own integration branch IS trunk, nothing is checked or done at all (06 §6.5: "needs nothing further")', async () => {
+    const project = await createTestProject();
+    // Deliberately not on 'main' and dirty -- proves this short-circuit runs no check whatsoever.
+    await execa('git', ['checkout', '-b', 'unrelated-branch'], { cwd: project.dir });
+    await writeFile(path.join(project.dir, 'scratch.txt'), 'wip\n');
+    const trunkTip = (
+      await execa('git', ['rev-parse', 'main'], { cwd: project.dir })
+    ).stdout.trim();
+
+    const result = await landRunOnTrunk(project.dir, 'main', 'main', 'run-direct');
+
+    expect(result).toEqual({ mergesDirectly: true, trunkTip, landed: false });
+  });
+
+  it("refuses typed (RUN-155) when the project's own working tree is not on trunk, naming the branch it IS on", async () => {
+    const project = await createTestProject();
+    await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await execa('git', ['checkout', '-b', 'feature'], { cwd: project.dir });
+
+    await expect(
+      landRunOnTrunk(project.dir, 'main', 'forge/integration/current', 'run-land-4'),
+    ).rejects.toMatchObject({ code: 'RUN-155', details: { trunk: 'main', branch: 'feature' } });
+  });
+
+  it("refuses the project's own real VCS-DIRTY-TREE when its working tree has uncommitted changes, never attempting a merge", async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnIntegration(integrationPath, 'landed.txt', 'work\n');
+    await writeFile(path.join(project.dir, 'scratch.txt'), 'wip\n');
+
+    await expect(
+      landRunOnTrunk(project.dir, 'main', 'forge/integration/current', 'run-land-5'),
+    ).rejects.toMatchObject({ name: 'VcsError', code: 'VCS-DIRTY-TREE' });
+    expect(
+      (await execa('git', ['rev-parse', 'main'], { cwd: project.dir })).stdout.trim(),
+    ).not.toBe((await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim());
+  });
+
+  it('refuses typed (RUN-156) when trunk has diverged from the integration branch, naming both tips and the run id, never attempting an unattended merge', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnMain(project.dir, 'main-only.txt', 'm\n');
+    await commitOnIntegration(integrationPath, 'integration-only.txt', 'i\n');
+    const trunkTip = (
+      await execa('git', ['rev-parse', 'main'], { cwd: project.dir })
+    ).stdout.trim();
+    const integrationTip = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+
+    await expect(
+      landRunOnTrunk(project.dir, 'main', 'forge/integration/current', 'run-land-6'),
+    ).rejects.toMatchObject({
+      code: 'RUN-156',
+      details: {
+        trunk: 'main',
+        branch: 'forge/integration/current',
+        runId: 'run-land-6',
+        trunkTip: trunkTip.slice(0, 12),
+        integrationTip: integrationTip.slice(0, 12),
+        // critic round 1: names the real integration worktree path too, exactly the one
+        // `ensureIntegrationWorktree` itself already returned above -- never a second, independently
+        // recomputed path that could drift from it.
+        integrationPath,
+      },
+    });
+
+    // Never merges unattended: no MERGE_HEAD, HEAD unchanged, clean status.
+    await expect(
+      execa('git', ['rev-parse', '--verify', 'MERGE_HEAD'], { cwd: project.dir }),
+    ).rejects.toThrow();
+    expect((await execa('git', ['status', '--porcelain'], { cwd: project.dir })).stdout).toBe('');
+    expect((await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir })).stdout.trim()).toBe(
+      trunkTip,
+    );
+  });
+});
+
+describe('describeExtraLandedWork (specs/22 M17 P9) (critic round 1: forge land --run does not scope to that run)', () => {
+  it("no warning when the run's own last recorded merge IS the tip that landed (nothing extra)", async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnIntegration(integrationPath, 'a.txt', 'a\n');
+    const tip = (await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })).stdout.trim();
+    await appendEvent(project.dir, 'run-a', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-a',
+      type: 'MergeCompleted',
+      payload: { mergeCommitSha: tip },
+    });
+
+    const warning = await describeExtraLandedWork(project.dir, 'run-a', tip);
+
+    expect(warning).toBeUndefined();
+  });
+
+  it("warns, naming both shas, when the landed tip is a real descendant of this run's own last recorded merge (another run/lane added more)", async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnIntegration(integrationPath, 'a.txt', 'a\n');
+    const runATip = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    await appendEvent(project.dir, 'run-a', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-a',
+      type: 'MergeCompleted',
+      payload: { mergeCommitSha: runATip },
+    });
+    // Run B lands onto the SAME shared branch after run A -- the exact repro the critic constructed.
+    await commitOnIntegration(integrationPath, 'b.txt', 'b\n');
+    const runBTip = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+
+    const warning = await describeExtraLandedWork(project.dir, 'run-a', runBTip);
+
+    expect(warning).toBeDefined();
+    expect(warning).toContain(runATip.slice(0, 12));
+    expect(warning).toContain(runBTip.slice(0, 12));
+    expect(warning).toContain('run-a');
+  });
+
+  it("no warning when this run's own event log recorded no MergeCompleted at all (never run, or run by something other than this engine) -- never guesses", async () => {
+    const warning = await describeExtraLandedWork(
+      '/does/not/matter/for/this/case',
+      'run-with-no-event-log',
+      'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+    );
+
+    expect(warning).toBeUndefined();
+  });
+
+  it('never blames "another run or lane" by name — a round-2 critic finding: a real descendant can be this SAME run reverting its own lane, not someone else\'s work', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnIntegration(integrationPath, 'a.txt', 'a\n');
+    const mergeSha = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    await appendEvent(project.dir, 'run-a', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-a',
+      type: 'MergeCompleted',
+      payload: { mergeCommitSha: mergeSha },
+    });
+    // The real failure path (`merge-queue.ts`'s `post-check-failed-reverted`): this SAME run's own
+    // merge-queue failure handling reverts the lane it just landed -- a real `git revert`, and a real,
+    // provable descendant of `mergeSha`, exactly as "a later run/lane added more" would look.
+    await execa('git', ['revert', '--no-edit', mergeSha], { cwd: integrationPath });
+    const revertSha = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+
+    const warning = await describeExtraLandedWork(project.dir, 'run-a', revertSha);
+
+    // Still reports the real, provable divergence (nothing here is suppressed or hidden) --
+    // but never asserts a specific, disprovable cause it cannot actually establish.
+    expect(warning).toBeDefined();
+    expect(warning).toContain(mergeSha.slice(0, 12));
+    expect(warning).toContain(revertSha.slice(0, 12));
+    expect(warning).toContain('run-a');
+    expect(warning?.toLowerCase()).not.toContain('another run');
+    expect(warning?.toLowerCase()).not.toContain('lane');
+  });
+
+  it('no warning when the two shas share no provable ancestry at all (a genuine divergence this function cannot characterise, so it says nothing rather than guess)', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    // Two commits diverging from the SAME base, on two different branches -- neither is an ancestor
+    // of the other (the identical construction the RUN-156 "diverged" test above already uses).
+    await commitOnMain(project.dir, 'main-only.txt', 'm\n');
+    const mainTip = (await execa('git', ['rev-parse', 'HEAD'], { cwd: project.dir })).stdout.trim();
+    await commitOnIntegration(integrationPath, 'integration-only.txt', 'i\n');
+    const integrationTip = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    await appendEvent(project.dir, 'run-a', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-a',
+      type: 'MergeCompleted',
+      payload: { mergeCommitSha: mainTip },
+    });
+
+    // Exercises the final `!isAncestor(...)` branch directly: before this test, removing that guard
+    // entirely still left every other test green (a round-2 critic finding).
+    const warning = await describeExtraLandedWork(project.dir, 'run-a', integrationTip);
+
+    expect(warning).toBeUndefined();
+  });
+
+  it('takes the LAST MergeCompleted recorded for the run, not the first, when it logged more than one', async () => {
+    const project = await createTestProject();
+    const integrationPath = await ensureIntegrationWorktree(
+      project.paths,
+      project.dir,
+      'forge/integration/current',
+      'main',
+    );
+    await commitOnIntegration(integrationPath, 'a.txt', 'a\n');
+    const firstMergeSha = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    await appendEvent(project.dir, 'run-a', {
+      ts: '2026-01-01T00:00:00.000Z',
+      runId: 'run-a',
+      type: 'MergeCompleted',
+      payload: { mergeCommitSha: firstMergeSha },
+    });
+    await commitOnIntegration(integrationPath, 'b.txt', 'b\n');
+    const secondMergeSha = (
+      await execa('git', ['rev-parse', 'HEAD'], { cwd: integrationPath })
+    ).stdout.trim();
+    // The SAME run (run-a) lands a second step's own lane too -- a real run logs one MergeCompleted
+    // per landed lane, not one per run.
+    await appendEvent(project.dir, 'run-a', {
+      ts: '2026-01-01T00:01:00.000Z',
+      runId: 'run-a',
+      type: 'MergeCompleted',
+      payload: { mergeCommitSha: secondMergeSha },
+    });
+
+    // The branch's real tip IS run-a's own second (and last) merge: nothing extra, despite the
+    // earlier, now-superseded merge event sitting in the same log.
+    const warning = await describeExtraLandedWork(project.dir, 'run-a', secondMergeSha);
+
+    expect(warning).toBeUndefined();
   });
 });
 

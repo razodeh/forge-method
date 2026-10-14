@@ -58,7 +58,14 @@ beforeAll(async () => {
     { candidateAdapters: [adapter], env: {}, modulesDir: MODULES_DIR },
   );
   expect(result.kind).toBe('initialized');
-  await execa('git', ['checkout', '-q', '-B', 'main'], { cwd: projectDir });
+  const written = configSchema.parse(
+    YAML.parse(await readFile(path.join(projectDir, '.forge/config.yaml'), 'utf8')),
+  );
+  // `specs/22` M17 P9: `runInit` writes `vcs.trunk` as the real branch its own `git init` just
+  // created, never a hardcoded `'main'` literal any more -- checked out dynamically here, by that
+  // same real value, so this fixture's own git state never disagrees with what `config.yaml` itself
+  // says (a round-1 critic finding, reproduced directly against a sibling fixture).
+  await execa('git', ['checkout', '-q', '-B', written.vcs.trunk], { cwd: projectDir });
   await execa('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=T', 'add', '-A'], {
     cwd: projectDir,
   });
@@ -66,9 +73,6 @@ beforeAll(async () => {
     'git',
     ['-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'init'],
     { cwd: projectDir },
-  );
-  const written = configSchema.parse(
-    YAML.parse(await readFile(path.join(projectDir, '.forge/config.yaml'), 'utf8')),
   );
   const tiers = { ...written.models.tiers };
   for (const tier of ['frugal', 'balanced', 'max'] as const) {

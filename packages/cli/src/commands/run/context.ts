@@ -30,6 +30,7 @@ import type { RunEngineContext } from '@forge/engine/run';
 import type { ConcurrencyLimits } from '@forge/engine/scheduler';
 import {
   VcsError,
+  assertCleanWorkingTree,
   getDirtyFiles,
   parseWorktreeBlocks,
   resolveRevision,
@@ -38,6 +39,7 @@ import {
 import { legacyStringTestCommands, type ForgeConfig } from '@forge/schemas/config';
 import type { ToolGrant } from '@forge/adapter-kit/types';
 import { resolveClaimPolicy } from '@forge/kb/adopt';
+import { readEvents } from '@forge/telemetry/events';
 
 import { resolvePackageRoot } from '../../init/package-root.ts';
 import { loadGateRegistry } from './gates.ts';
@@ -82,12 +84,6 @@ export interface BuildRunContextInput {
    * `panel`), which never compile a plan at all. */
   readonly externalKbIds?: ReadonlySet<string> | undefined;
 }
-
-/** The trunk the integration branch is first created from (never an integration branch itself), and the
- * one branch `syncIntegrationBranchToTrunk` ever fast-forwards an integration branch towards. Exported so
- * `run.ts` (the only real caller of that sync, `SPEC-QUESTIONS.md` Q232 decision 18) shares this exact
- * literal rather than a second copy that could drift. */
-export const TRUNK = 'main';
 
 /** A branch name that is safe to hand to git as a ref: letters, digits, `_`, `-`, `.` and `/` between such
  * components, no `..`, no leading or trailing dot or slash, no `.lock`, at most 200 characters. */
@@ -330,6 +326,25 @@ export async function isTargetRegisteredWorktree(
  * rather than removed, so every one of this function's three real call sites (`bin.ts`, `run.ts`, this
  * file's own `buildRunEngineContext` below) needs no change for an internal relocation.
  */
+/** Where `integrationBranch`'s own worktree lives, for `projectRoot` (already realpath'd, since this
+ * is also the invariant {@link pathExists}/{@link recoverFromWorktreeAddFailure} below actually need)
+ * — `@forge/vcs`'s own `worktreesRootFor`, a per-project directory under the user's cache directory,
+ * outside the project entirely (`18` §18.3's "Worktree location" paragraph). The ONE real formula for
+ * this (never a second, independently-spelled copy that could drift): {@link ensureIntegrationWorktree}
+ * computes it to create or find the worktree; {@link landRunOnTrunk}'s own `RUN-156` refusal computes
+ * the identical path purely for display, since — unlike that function — it never needs to open the
+ * worktree at all to do its own git work (it reads the integration branch's tip from `projectRoot`
+ * directly, any worktree of a repository being able to resolve any of that repository's own refs). */
+async function integrationWorktreePath(
+  realProjectRoot: string,
+  integrationBranch: string,
+): Promise<AbsolutePath> {
+  return path.join(
+    await worktreesRootFor(realProjectRoot),
+    `integration-${integrationBranch.replace(/\//g, '-')}`,
+  ) as AbsolutePath;
+}
+
 export async function ensureIntegrationWorktree(
   paths: ProjectPaths,
   projectRoot: string,
@@ -343,10 +358,7 @@ export async function ensureIntegrationWorktree(
   // `recoverFromWorktreeAddFailure`). It never passed (and, living outside the project entirely, never
   // could pass) `ProjectPaths.resolveWithin`'s own containment check -- a DIFFERENT invariant this
   // path is no longer asking to hold at all, by this piece's own design (`PLAN-M17.md` P8).
-  const target = path.join(
-    await worktreesRootFor(realProjectRoot),
-    `integration-${integrationBranch.replace(/\//g, '-')}`,
-  ) as AbsolutePath;
+  const target = await integrationWorktreePath(realProjectRoot, integrationBranch);
   if (await pathExists(target)) {
     // A `git worktree add` a killed process started keeps running (killing the parent does not kill git) and
     // finishes a moment later; a healthy tree is what a resume finds if it looks again. Only a tree that stays
@@ -589,13 +601,13 @@ export async function isAncestor(
 const SHORT_SHA_LENGTH = 12;
 
 /**
- * Fast-forwards the integration worktree's own checked-out branch to `trunk` (always `TRUNK`, `'main'`,
- * in production) — never any other direction, and never anything but a real `--ff-only` merge.
- * `SPEC-QUESTIONS.md` Q221's own disclosed gap (d): the integration branch used to accumulate across
- * runs with no path back to `main`'s own newer commits, so a lane branched from it stopped seeing what a
- * human (or a later `deliver` step) committed there directly — `Q232` decision 18 closes it: "The
- * integration branch is fast-forwarded to `main` at run start and the run refuses if they have
- * diverged."
+ * Fast-forwards the integration worktree's own checked-out branch to `trunk` (always the project's own
+ * configured `vcs.trunk`, `'main'` by default — `specs/22` M17 P9, `18` §18.3) — never any other
+ * direction, and never anything but a real `--ff-only` merge. `SPEC-QUESTIONS.md` Q221's own disclosed
+ * gap (d): the integration branch used to accumulate across runs with no path back to trunk's own newer
+ * commits, so a lane branched from it stopped seeing what a human (or a later `deliver` step) committed
+ * there directly — `Q232` decision 18 closes it: "The integration branch is fast-forwarded to [trunk] at
+ * run start and the run refuses if they have diverged."
  *
  * Four outcomes, decided from `git merge-base --is-ancestor` alone — never from attempting a merge and
  * inspecting its own exit code or message text, which is exactly the locale-fragile message-matching
@@ -607,15 +619,15 @@ const SHORT_SHA_LENGTH = 12;
  *   trace of *why* the branch moved and, unlike a real merge, has no built-in refusal for a case that
  *   is not actually safe.
  * - **Integration ahead** of trunk (the trunk tip is an ancestor of the integration tip — a later
- *   `deliver` step has not folded it back into `main` yet): no-op. There is nothing in this direction to
+ *   `deliver` step has not folded it back into trunk yet): no-op. There is nothing in this direction to
  *   fast-forward, and the integration branch's own extra commits are never touched.
  * - **Diverged** (neither tip is an ancestor of the other): refused, `ForgeError('RUN-107', ...)`,
- *   naming the branch, `trunk` itself (never a hardcoded `'main'` literal in the details, even though
- *   every real caller passes `TRUNK`), and both tips. A run never merges `main` into a diverged
- *   integration branch on its own — that would create a real merge commit, unattended, with its own
- *   conflict risk — so this function never calls plain `git merge` at all; the only merge command it
- *   ever runs is the `--ff-only` one above, and only once the ancestor check has already proven it
- *   cannot fail, so `MERGE_HEAD` is never created by this function under any outcome.
+ *   naming the branch, `trunk` itself (always the caller's own real, configured `vcs.trunk`, never a
+ *   hardcoded `'main'` literal), and both tips. A run never merges trunk into a diverged integration
+ *   branch on its own — that would create a real merge commit, unattended, with its own conflict risk —
+ *   so this function never calls plain `git merge` at all; the only merge command it ever runs is the
+ *   `--ff-only` one above, and only once the ancestor check has already proven it cannot fail, so
+ *   `MERGE_HEAD` is never created by this function under any outcome.
  *
  * A dirty integration worktree — not the project's own working tree (`runWorkflow`'s own
  * `assertCleanWorkingTree` already checked that, before this is ever reached): the SEPARATE worktree
@@ -691,6 +703,185 @@ export async function syncIntegrationBranchToTrunk(
   });
 }
 
+/** {@link landRunOnTrunk}'s own result: what landing found and did, never a refusal (a genuine problem
+ * -- not on trunk, a dirty tree, a diverged trunk -- is always a thrown `ForgeError`/`VcsError`, the
+ * identical "success is a value, a refusal is a throw" split {@link IntegrationSyncResult} already
+ * establishes for the opposite-direction sync). */
+export interface LandRunResult {
+  /** `true` when the run's own `execution.integrationBranch` already names `trunk` itself (`06` §6.5's
+   * "configurable to merge directly to a trunk" form): every lane merge already landed on trunk as the
+   * run proceeded, so there is nothing further to check or do, and no git command runs at all. `false`
+   * for the ordinary, separate-integration-branch case this function otherwise handles. */
+  readonly mergesDirectly: boolean;
+  /** Trunk's own tip once this call returns: unchanged from its start when there was nothing to land
+   * (`mergesDirectly`, or the integration branch's tip was already an ancestor of trunk's own), the
+   * integration branch's own tip once this call fast-forwarded trunk to it, otherwise. */
+  readonly trunkTip: string;
+  /** Whether this call actually moved trunk (a real fast-forward) versus found nothing to land. */
+  readonly landed: boolean;
+}
+
+/**
+ * Lands a finished run on trunk (`specs/22` M17 P9, `06` §6.5's "Landing a finished run on trunk"
+ * paragraph; defect F of `PLAN-M17.md`'s register — "a completed run leaves trunk untouched; no command
+ * ... says how to land it; a manual trunk commit then blocks the next run"). The explicit command this
+ * closes the gap with (`bin.ts`'s `forge land`).
+ *
+ * Fast-forwards `trunk` — in the PROJECT's own working tree, at `projectRoot`, never the integration
+ * worktree, and never a bare ref update (`git update-ref`/a local `git push` both leave a checked-out
+ * worktree's own index and files silently stale relative to its ref, confirmed empirically before this
+ * was written at all: the identical inconsistency `git`'s own `receive.denyCurrentBranch` default
+ * refuses a push for) — to `integrationBranch`'s own tip, the reverse direction of
+ * {@link syncIntegrationBranchToTrunk} and, deliberately, under the identical safety rule: a real
+ * `--ff-only` merge when safe, a typed refusal on genuine divergence, and never an unattended `git merge`
+ * that could create its own conflict.
+ *
+ * Three real preconditions, checked in this order, each a typed refusal naming its own remedy — never a
+ * silent guess or an automatic `git switch`/`git stash` on the caller's behalf:
+ *
+ * 1. `integrationBranch === trunk` (the "merge directly to trunk" configuration, `06` §6.5): returns
+ *    immediately, `{ mergesDirectly: true, trunkTip: <trunk's current tip>, landed: false }`. Neither of
+ *    the checks below runs at all — there is nothing to compare, because landing already happens on
+ *    every lane merge.
+ * 2. The project's own working tree, at `projectRoot`, must already have `trunk` checked out — never
+ *    `main`/`HEAD` assumed, and never switched on the caller's behalf (`ForgeError('RUN-155', ...)`,
+ *    naming the branch it is actually on).
+ * 3. That same working tree must be clean (`assertCleanWorkingTree`, the project's own real
+ *    `VCS-DIRTY-TREE` — never a bespoke code: this IS the user-facing tree that remedy's "stash, commit,
+ *    or abort" wording already addresses, unlike {@link syncIntegrationBranchToTrunk}'s own internal
+ *    integration worktree, which needed a distinct `VCS-INTEGRATION-DIRTY` for the opposite reason).
+ *
+ * Then, from `git merge-base --is-ancestor` alone (never from attempting a merge and inspecting its exit
+ * code, `syncIntegrationBranchToTrunk`'s own identical reasoning):
+ *
+ * - **Equal** tips, or **trunk already an ancestor of** (contains) the integration tip: nothing to land,
+ *   `{ landed: false }` — the second case covers a run already landed once (trunk now equals the old
+ *   integration tip) and one landed by some other means since.
+ * - **Trunk behind** the integration tip (trunk is a strict ancestor of it): `git merge --ff-only
+ *   <integrationTip>` in `projectRoot` — the only merge command this function ever runs, and only once
+ *   the ancestor check has already proven it cannot fail. `{ landed: true, trunkTip: integrationTip }`.
+ * - **Diverged** (neither is an ancestor of the other — trunk moved by a commit of its own, direct or
+ *   from another run, since this run started): refused, `ForgeError('RUN-156', ...)`, naming `trunk`,
+ *   the integration branch, `runId`, both tips, AND the integration branch's own real worktree path
+ *   (`integrationWorktreePath` — critic round 1: a human resolving this by hand needs to find that
+ *   history; P8 moved it out of any path they could otherwise guess) — the remedy points back at the
+ *   ref and the path the message names (merge trunk's own current tip into the integration branch
+ *   there) and at re-running `forge land` for the same run id once that is done, rather than leaving
+ *   the project blocked with no path forward.
+ *
+ * @see specs/06 §6.5
+ * @see PLAN-M17.md P9
+ */
+export async function landRunOnTrunk(
+  projectRoot: string,
+  trunk: string,
+  integrationBranch: string,
+  runId: string,
+): Promise<LandRunResult> {
+  if (integrationBranch === trunk) {
+    const trunkTip = await resolveRevision(projectRoot, trunk);
+    return { mergesDirectly: true, trunkTip, landed: false };
+  }
+
+  const branch = await currentBranchOrDetached(projectRoot);
+  if (branch !== trunk) {
+    throw new ForgeError('RUN-155', { trunk, branch });
+  }
+  await assertCleanWorkingTree(projectRoot);
+
+  const trunkTip = await resolveRevision(projectRoot, 'HEAD');
+  const integrationTip = await resolveRevision(projectRoot, integrationBranch);
+
+  if (trunkTip === integrationTip) {
+    return { mergesDirectly: false, trunkTip, landed: false };
+  }
+  if (await isAncestor(projectRoot, integrationTip, trunkTip)) {
+    // Trunk already contains the integration branch's own tip: already landed (by this function, or
+    // by some other means) -- nothing to bring in.
+    return { mergesDirectly: false, trunkTip, landed: false };
+  }
+  if (await isAncestor(projectRoot, trunkTip, integrationTip)) {
+    // Trunk is a strict ancestor of the integration tip: a real fast-forward, the only `git merge` call
+    // this function ever makes, and only once the check above has already proven it must succeed.
+    await runGitOrThrow(['merge', '--ff-only', integrationTip], projectRoot);
+    return { mergesDirectly: false, trunkTip: integrationTip, landed: true };
+  }
+
+  // Named in the message purely for display (critic round 1 finding: unlike `RUN-107`'s own
+  // `integrationPath`, this one was never computed by this function at all before, since landing
+  // itself never needs to open this worktree) -- never opened, never written to, computed only so the
+  // refusal can point the human at where the integration branch's own history can actually be
+  // inspected, since P8 moved it out of any path they would otherwise guess.
+  const integrationPath = await integrationWorktreePath(
+    await realpath(projectRoot),
+    integrationBranch,
+  );
+  throw new ForgeError('RUN-156', {
+    trunk,
+    branch: integrationBranch,
+    runId,
+    trunkTip: trunkTip.slice(0, SHORT_SHA_LENGTH),
+    integrationTip: integrationTip.slice(0, SHORT_SHA_LENGTH),
+    integrationPath,
+  });
+}
+
+/**
+ * Whether `landedTip` (what {@link landRunOnTrunk} just landed on trunk, or found already there)
+ * carries more than `runId`'s own event log shows that run itself landing — a critic-round finding
+ * (`specs/22` M17 P9 round 1): the default, separate integration branch is shared and accumulating
+ * across every run that targets the same stage (`06` §6.4), so `forge land --run <id>` genuinely
+ * lands whatever is CURRENTLY on that branch, never only the named run's own commits — there is no
+ * reliable way to carve "this run's own slice" out of a branch two runs both landed onto in sequence
+ * (confirmed by direct construction: landing run A's own single commit, after a later run B already
+ * added a second one to the identical shared branch, lands both). Rather than silently claim a
+ * precision `forge land` cannot deliver, this detects the mismatch, when it is detectable, so the
+ * command can say so.
+ *
+ * Detectable only from what `runId`'s OWN event log recorded: the LAST `MergeCompleted` event it
+ * logged (a real run logs one per landed lane, so the last one is this run's own final known
+ * contribution to the branch) is compared against `landedTip` via `git merge-base --is-ancestor` —
+ * never a bare sha comparison alone, which cannot tell "exactly this" from "an unrelated history". No
+ * event logged at all (a run that never actually ran through this engine, or one whose log predates
+ * `MergeCompleted` carrying a sha) returns `undefined` — absence of evidence is never read as evidence
+ * of a mismatch here, only a genuine, provable divergence is ever reported.
+ *
+ * **Never names a culprit (round-2 critic finding).** A real, provable descendant of this run's own
+ * last recorded merge is not always SOMEONE ELSE'S work: the identical shape results when this exact
+ * run's own merge-queue failure handling later reverts that same lane (`merge-queue.ts`'s real
+ * `post-check-failed-reverted` path, a real `git revert` — confirmed by direct construction: log a
+ * `MergeCompleted`, revert it, call this function with the revert's own sha, and the old wording
+ * blamed "another run or lane" for a commit this run made itself). This function can prove THAT the
+ * branch moved past what it logged; it cannot prove WHO or WHY. The returned text says only that —
+ * naming both shas and the run id, never asserting a specific cause.
+ *
+ * @returns `undefined` when nothing can be said (no evidence, the landed tip IS the run's own last
+ * known contribution byte for byte, or the two shas share no provable ancestry at all — a divergence
+ * this function has no way to characterise, so it says nothing rather than guess); otherwise a
+ * human-readable line naming both shas and the run id, for `forge land` to print or fold into its own
+ * `--json` envelope as `warning`.
+ */
+export async function describeExtraLandedWork(
+  projectRoot: string,
+  runId: string,
+  landedTip: string,
+): Promise<string | undefined> {
+  let lastKnownMergeSha: string | undefined;
+  for await (const event of readEvents(projectRoot, runId)) {
+    if (event.type !== 'MergeCompleted') continue;
+    const sha = (event.payload as { readonly mergeCommitSha?: unknown }).mergeCommitSha;
+    if (typeof sha === 'string') lastKnownMergeSha = sha;
+  }
+  if (lastKnownMergeSha === undefined || lastKnownMergeSha === landedTip) return undefined;
+  if (!(await isAncestor(projectRoot, lastKnownMergeSha, landedTip))) return undefined;
+  return (
+    `the integration branch has moved past run ${runId}'s own last recorded merge ` +
+    `(${lastKnownMergeSha.slice(0, SHORT_SHA_LENGTH)}) — ${landedTip.slice(0, SHORT_SHA_LENGTH)} ` +
+    "includes at least one more commit that this run's own event log does not account for, landed " +
+    'along with it.'
+  );
+}
+
 export async function buildRunEngineContext(
   input: BuildRunContextInput,
 ): Promise<RunEngineContext> {
@@ -704,7 +895,7 @@ export async function buildRunEngineContext(
     input.paths,
     input.projectRoot,
     integrationBranch,
-    TRUNK,
+    input.config.vcs.trunk,
   );
   const gateRegistry = await loadGateRegistry(input.paths, input.checksRoot);
   const model = await resolveModel(input.adapter);
@@ -729,7 +920,8 @@ export async function buildRunEngineContext(
     ...(input.ask === undefined ? {} : { ask: input.ask }),
     runId: input.runId,
     projectRoot: input.projectRoot,
-    integrationBase: input.lanesFromIntegration === true ? integrationBranch : TRUNK,
+    integrationBase:
+      input.lanesFromIntegration === true ? integrationBranch : input.config.vcs.trunk,
     integrationPath,
     conflictPolicy: input.config.execution.conflictPolicy,
     // A merge check that names a set (`preChecks: fast`, `10` §10.1) runs the commands of its test layers, and a

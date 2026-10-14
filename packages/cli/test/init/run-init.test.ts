@@ -126,6 +126,43 @@ describe('runInit', () => {
     expect(existsSync(marker)).toBe(true);
   });
 
+  describe('vcs.trunk reflects the real git branch, never a blind "main" guess (specs/22 M17 P9) (18 §18.3)', () => {
+    function writtenTrunk(dir: string): string {
+      const raw = readFileSync(path.join(dir, '.forge/config.yaml'), 'utf8');
+      return configSchema.parse(YAML.parse(raw)).vcs.trunk;
+    }
+
+    it('a fresh git init: config.yaml names whatever branch this real git actually just created, not a hardcoded "main"', async () => {
+      const dir = await tempDir();
+      await runInit(dir, BASE, deps());
+
+      const { stdout: realBranch } = await execa('git', ['symbolic-ref', '--short', 'HEAD'], {
+        cwd: dir,
+      });
+      expect(writtenTrunk(dir)).toBe(realBranch.trim());
+    });
+
+    it('an existing repo already on a non-default branch (e.g. a clone checked out on "develop"): config.yaml names that real branch', async () => {
+      const dir = await tempDir();
+      await execa('git', ['init', '--quiet', '-b', 'develop'], { cwd: dir });
+      await execa('git', ['config', 'user.email', 't@example.com'], { cwd: dir });
+      await execa('git', ['config', 'user.name', 't'], { cwd: dir });
+      await execa('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: dir });
+
+      await runInit(dir, BASE, deps());
+
+      expect(writtenTrunk(dir)).toBe('develop');
+    });
+
+    it('--no-git (gitInit: false): no real git repository exists to ask, so vcs.trunk stays the schema default "main"', async () => {
+      const dir = await tempDir();
+      await runInit(dir, { ...BASE, gitInit: false }, deps());
+
+      expect(existsSync(path.join(dir, '.git'))).toBe(false);
+      expect(writtenTrunk(dir)).toBe('main');
+    });
+  });
+
   it('applies the real preset (default startup-lean) into .forge/overrides/', async () => {
     const dir = await tempDir();
     const result = await runInit(dir, BASE, deps());

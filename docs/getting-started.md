@@ -182,8 +182,9 @@ walking through a live run for that reason — once you're ready, `forge run <wo
 command, and `forge status`, `forge lanes`, `forge logs`, `forge gate`, and `forge merge` are how
 you watch, inspect and progress it while it's active (see their own `--help`-free but
 self-describing error messages, or `03-cli-and-installer.md` §3.2.4 for the full flag reference).
-Note that `forge status` itself only succeeds once a run has actually started — on a fresh project
-with no run yet, it exits non-zero with
+Once it finishes, `forge land` is how its work actually reaches your trunk branch — section 10
+below. Note that `forge status` itself only succeeds once a run has actually started — on a fresh
+project with no run yet, it exits non-zero with
 `No FORGE run is currently active in this project. Run \`forge run <workflow>\` to start one.`,
 which is the correct, by-design behaviour, not an error in this guide.
 
@@ -536,26 +537,38 @@ Now try a behaviour-preserving refactor: the implementation changes, the observa
 
 ```bash
 cp "$FORGE_REPO/fixtures/parity-refactor/preserving/sum.mjs" ./sum.mjs
-forge parity check --trusted refs/heads/main --no-record
+forge parity check --trusted @trunk --no-record
 ```
 
 ```
 forge parity check: 2 passing, 0 failing (behavior: match).
 ```
 
-Exit code 0. `--trusted refs/heads/main --no-record` isn't an arbitrary choice of flags here — it is
-the same trust anchor and recording behaviour that `G-Parity`'s own check runs inside a real
-`refactor`, just without that check's own `--json` (shown further below instead, once this
-walkthrough needs a machine-readable field rather than a human-readable line): the trust anchor is
-always trunk, and a gate check never records evidence of its own, because it runs inside the
-integration worktree, where a file the check wrote would leave that worktree dirty for the next run.
+Exit code 0. `--trusted @trunk --no-record` isn't an arbitrary choice of flags here — it is the same
+trust anchor and recording behaviour that `G-Parity`'s own check runs inside a real `refactor`, just
+without that check's own `--json` (shown further below instead, once this walkthrough needs a
+machine-readable field rather than a human-readable line): the trust anchor is always trunk, and a
+gate check never records evidence of its own, because it runs inside the integration worktree, where
+a file the check wrote would leave that worktree dirty for the next run.
+
+`@trunk` is a symbol, not a literal ref: `forge parity check` resolves it itself, to
+`refs/heads/<vcs.trunk>` — `vcs.trunk` (default `"main"`, which is what it is in the project this
+walkthrough built in section 2) is a real `.forge/config.yaml` key, proposed by `forge init` from
+the real git branch it finds checked out right after it runs — a fresh project's own just-created
+branch, or whatever an already-existing repository was already on — falling back to the literal
+default only when there is no real git repository to ask at all (`--no-git`). So a project whose
+trunk is called `master` (or anything else) never needs `G-Parity.gate.yaml` edited or templated to
+match — the shipped gate file itself says `--trusted @trunk` verbatim. An explicit ref still works
+exactly as before (`--trusted refs/heads/main`, or any other full sha/`refs/`-qualified name `13`
+F-TEST-9 accepts) when you want to pin the comparison to something other than the project's own
+trunk.
 
 Now try a behaviour-changing refactor: a deliberate off-by-one
 (`function sum(x, y) { return x + y + 1; }`).
 
 ```bash
 cp "$FORGE_REPO/fixtures/parity-refactor/changing/sum.mjs" ./sum.mjs
-forge parity check --trusted refs/heads/main --no-record --json
+forge parity check --trusted @trunk --no-record --json
 ```
 
 ```
@@ -575,7 +588,7 @@ gate, mid-run) normally would:
 
 ```bash
 cp "$FORGE_REPO/fixtures/parity-refactor/preserving/sum.mjs" ./sum.mjs
-forge parity check --trusted refs/heads/main --json
+forge parity check --trusted @trunk --json
 ```
 
 ```
@@ -736,6 +749,68 @@ for the identical reason `forge parity capture` does above.
 This whole section ran against a small, deliberately trivial fixture — six lines of reference code
 and two tiny variants of it — never a real production refactor. A real one is `specs/22` M16 P17's
 own job, authorized separately, if and when the project's owner actually spends real money on one.
+
+## 10. Landing a finished run on trunk
+
+A real `forge run`/`forge refactor` (never run in this walkthrough — see section 9's own note on
+why) integrates its lanes onto an **integration branch** (`forge/integration/{stage}` by default,
+`18` §18.3's `execution.integrationBranch`), never onto your trunk branch directly. Before this
+milestone, nothing told you how — or whether — that work was supposed to reach trunk at all: the
+integration branch just sat there, and a person who committed it onto trunk by hand then blocked the
+_next_ run (its lanes branch from the integration branch's own tip, which a manual trunk commit
+never updates).
+
+Two ways to land a run, and a project picks one by its own `execution.integrationBranch` config:
+
+- **Configure `execution.integrationBranch` to BE your trunk branch itself** — set it to the exact
+  same value as `vcs.trunk` (`forge config set execution.integrationBranch main`, for a project
+  whose trunk is `main`). Every lane merge then lands directly on trunk as the run proceeds; there
+  is nothing further to do, and `forge land` (below) is a confirmed no-op for a project configured
+  this way. This is also why `G-Parity`'s own trust anchor (`@trunk`, section 9 above) is meaningful
+  for such a project at all: F-TEST-9 says a project configured this way "gets no protection" from a
+  rewritten oracle — the integration branch and trunk are the same ref, so there is no separate copy
+  an in-flight run's own lane could tamper with.
+- **Keep the default, separate integration branch**, and land a finished run explicitly:
+
+  ```bash
+  forge land --run <runId>
+  ```
+
+  This fast-forwards (or recognises there is nothing to do) your trunk branch to the run's own
+  integration branch tip, **in your own working tree** — it needs your working tree to already have
+  trunk checked out, with no uncommitted changes, exactly as a person doing this merge by hand
+  would. `--run` defaults to the project's own last run when omitted.
+
+  `--run` names which BRANCH to land, not which COMMITS: the default integration branch is shared
+  and accumulates across every run that targets the same stage, so if a second run already landed
+  more lanes onto that same branch after the one you named, `forge land --run <earlier-run>` lands
+  that later work too — there is no partial-landing mechanism, and no reliable way to carve "only
+  this run's own commits" out of one branch's shared history. When this is actually detectable (the
+  named run's own recorded event log shows less than what is currently on the branch), the command
+  says so rather than landing it silently: a non-fatal `warning` in the `--json` envelope, or an
+  extra printed line without it. It names what moved past the run's own last recorded merge, never a
+  specific cause — the identical shape also shows up if this exact run's own failure handling later
+  reverted that same lane, which is not "another run" at all, so the wording never guesses which one
+  it is. Landing still proceeds either way — the warning is honesty, not a refusal.
+
+  Three outcomes, each printed plainly (and under `--json` as
+  `{v:1, mergesDirectly, trunkTip, landed, warning?}`):
+
+  - Nothing to land (already landed, or trunk already has it some other way): `landed: false`,
+    exit 0.
+  - A real fast-forward: `landed: true`, trunk now points at the integration branch's own tip,
+    exit 0.
+  - **Diverged** — trunk picked up a commit of its own (a manual commit, or another run's own
+    landing) since this run started, so it cannot be fast-forwarded without an unattended merge
+    FORGE never creates on its own: refused (`RUN-156`), naming both tips and exactly how to recover
+    — merge trunk's own current tip into the integration branch, resolve anything that conflicts,
+    commit the result, then run `forge land --run <runId>` again. This is the actionable version of
+    the problem this section opened with: a manual trunk commit no longer silently blocks the next
+    run with no way forward, it names one.
+
+  Not on trunk, or a dirty working tree, when you run it? Refused typed too (`RUN-155`, or the
+  project's own familiar `VCS-DIRTY-TREE`) — `forge land` never switches branches or discards
+  uncommitted work on your behalf.
 
 ## Where to go next
 

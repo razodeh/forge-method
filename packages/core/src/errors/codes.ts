@@ -3561,6 +3561,47 @@ export const ERROR_CODES = {
       'pressure (too many open files or threads); report it with the full detail above if it is ' +
       'not, since this is an internal FORGE failure, never a declaration problem.',
   },
+  // `specs/22` M17 P9, `06` §6.5 "Landing a finished run on trunk": `forge land` fast-forwards trunk IN
+  // PLACE, in the project's own working tree -- never a bare ref update, which would leave that tree's
+  // own index and files silently stale relative to its ref (confirmed empirically before this was
+  // written: the identical inconsistency `receive.denyCurrentBranch`'s own default refuses a push for).
+  // So landing needs the project's own tree already on trunk, exactly as `syncIntegrationBranchToTrunk`
+  // (`RUN-107`) needs the SEPARATE integration worktree already on the integration branch.
+  'RUN-155': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { trunk: string; branch: string }) =>
+      `"forge land" fast-forwards ${show(d.trunk)} in place and must run with ${show(d.trunk)} ` +
+      `checked out in the project's own working tree; it is currently on ${show(d.branch)}.`,
+    remedy:
+      "Check out the trunk branch named in the message above, in the project's own working tree " +
+      '(with no uncommitted changes), then run `forge land` again.',
+  },
+  // The landing direction's own counterpart to `RUN-107`'s diverged refusal (trunk moved, by a commit
+  // of its own or another run's landing, since this run started): `landRunOnTrunk` (`context.ts`) never
+  // merges trunk's own new commit into the integration branch on its own -- that would create a real,
+  // unattended merge commit -- so it refuses instead, naming which ref to resolve against and which
+  // command re-attempts the land, per `06` §6.5's own "rather than leaving the project blocked with no
+  // path forward" requirement.
+  'RUN-156': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: {
+      trunk: string;
+      branch: string;
+      runId: string;
+      trunkTip: string;
+      integrationTip: string;
+      integrationPath: string;
+    }) =>
+      `${show(d.trunk)} (at ${show(d.trunkTip)}) has diverged from the integration branch ` +
+      `${show(d.branch)} (at ${show(d.integrationTip)}) of run ${show(d.runId)}, so "forge land" ` +
+      `cannot fast-forward it. The integration worktree is at ${show(d.integrationPath)}.`,
+    remedy:
+      'Merge the current trunk tip into the integration branch, at the path the message above ' +
+      'names, resolve any conflicts there, commit the result, then run `forge land` again for the ' +
+      'same run id to re-attempt the landing.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

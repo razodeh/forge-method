@@ -401,10 +401,14 @@ beforeAll(async () => {
     { candidateAdapters: [adapter], env: {}, modulesDir },
   );
   expect(result.kind).toBe('initialized');
-  await execa('git', ['checkout', '-q', '-B', 'main'], { cwd: projectDir });
   const written = configSchema.parse(
     YAML.parse(await readFile(path.join(projectDir, '.forge/config.yaml'), 'utf8')),
   );
+  // `specs/22` M17 P9: `runInit` writes `vcs.trunk` as the real branch its own `git init` just
+  // created, never a hardcoded `'main'` literal any more -- checked out dynamically here, by that
+  // same real value, so this fixture's own git state never disagrees with what `config.yaml` itself
+  // says (a round-1 critic finding, reproduced directly against a sibling fixture).
+  await execa('git', ['checkout', '-q', '-B', written.vcs.trunk], { cwd: projectDir });
   config = withFakeTiers(written, adapter.id);
   await writeFile(path.join(projectDir, '.forge/config.yaml'), YAML.stringify(config));
   await writeMiniWorkflows();
@@ -474,7 +478,10 @@ async function freshProject(
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-p15-clone-'));
   cleanups.push(dir);
   await execa('git', ['clone', '-q', projectDir, dir]);
-  await execa('git', ['checkout', '-q', '-B', 'main'], { cwd: dir });
+  // `specs/22` M17 P9: `config.vcs.trunk` (the real branch `runInit` detected above, never a
+  // hardcoded `'main'` literal any more) -- the same real value the clone's own git history is
+  // already on, so this is a true no-op reset, not a forced switch to some OTHER branch name.
+  await execa('git', ['checkout', '-q', '-B', config.vcs.trunk], { cwd: dir });
   if (setup !== undefined) {
     await setup(dir);
     await execa('git', ['add', '-A'], { cwd: dir });

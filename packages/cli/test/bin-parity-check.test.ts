@@ -208,6 +208,135 @@ describe('forge parity check (real subprocess dispatch) (specs/22 M16 P7)', () =
     expect(envelope.error.code).toBe('RUN-141');
   });
 
+  it('--trusted @trunk resolves through the real config\'s own vcs.trunk ("main" by default), through the real CLI (specs/22 M17 P9)', async () => {
+    const dir = await freshCapturedProject();
+
+    const result = forge(['parity', 'check', '--json', '--trusted', '@trunk', '-C', dir], dir);
+
+    expect(result.status).toBe(0);
+    const envelope = lastJsonLine(result.stdout) as {
+      readonly v: number;
+      readonly verdict: string;
+      readonly failing: number;
+      readonly passing: number;
+      readonly evidenceId: string | null;
+    };
+    expect(envelope).toMatchObject({ v: 1, verdict: 'match', failing: 0, passing: 1 });
+    expect(envelope.evidenceId).toMatch(/^PAR-\d{3}$/);
+  });
+
+  it('--trusted @trunk resolves to the schema\'s own default "main" even with no .forge/config.yaml at all, never CFG-020 (specs/22 M17 P9)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-p9-bin-check-noconfig-'));
+    dirs.push(dir);
+    await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+    await execa('git', ['config', 'user.email', 't@example.com'], { cwd: dir });
+    await execa('git', ['config', 'user.name', 't'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: dir });
+
+    const result = forge(
+      ['parity', 'check', '--json', '--trusted', '@trunk', '--no-record', '-C', dir],
+      dir,
+    );
+
+    // Zero declarations is a real, counted failing outcome (`no-declarations`), never CFG-020: a
+    // project with no `.forge/config.yaml` at all must keep working for `--no-record`
+    // (`check-command.ts`'s own `reportsRoot` doc comment), and `--trusted @trunk` must not narrow
+    // that guarantee now that it, too, may need to read config.
+    expect(result.status).toBe(1);
+    const envelope = lastJsonLine(result.stdout) as {
+      readonly ok: boolean;
+      readonly reason?: string;
+      readonly failing: number;
+      readonly passing: number;
+    };
+    expect(envelope.ok).toBe(true);
+    expect(envelope.reason).toBe('no-declarations');
+    expect(envelope.failing).toBe(1);
+    expect(envelope.passing).toBe(0);
+  });
+
+  it('--trusted @trunk resolves through a real, non-default vcs.trunk ("master"), through the real CLI (specs/22 M17 P9)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-p9-bin-check-master-'));
+    dirs.push(dir);
+    await mkdir(path.join(dir, '.forge'), { recursive: true });
+    await writeFile(
+      path.join(dir, '.forge/config.yaml'),
+      YAML.stringify({ ...DEFAULT_CONFIG, vcs: { ...DEFAULT_CONFIG.vcs, trunk: 'master' } }),
+      'utf8',
+    );
+    await execa('git', ['init', '--quiet', '-b', 'master'], { cwd: dir });
+    await execa('git', ['config', 'user.email', 't@example.com'], { cwd: dir });
+    await execa('git', ['config', 'user.name', 't'], { cwd: dir });
+    await writeFile(path.join(dir, '.gitignore'), '.forge/state/\n', 'utf8');
+    await writeFile(path.join(dir, 'behavior.cjs'), "process.stdout.write('ok');\n", 'utf8');
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'add behavior script'], { cwd: dir });
+    const { stdout: sha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
+    const yaml = `name: sample
+reference:
+  ref: ${sha.trim()}
+review:
+  by: tester
+  basis: read the diff by hand
+  at: 2026-01-01
+expires: 2999-01-01
+surfaces:
+  process:
+    run: "node behavior.cjs"
+    stability:
+      runs: 2
+    cases:
+      - {}
+`;
+    await mkdir(path.join(dir, '.forge/parity'), { recursive: true });
+    await writeFile(path.join(dir, '.forge/parity/sample.parity.yaml'), yaml, 'utf8');
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'declare'], { cwd: dir });
+    const capture = forge(['parity', 'capture', '--json', '-C', dir], dir);
+    expect(capture.status).toBe(0);
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'capture'], { cwd: dir });
+
+    const result = forge(['parity', 'check', '--json', '--trusted', '@trunk', '-C', dir], dir);
+
+    expect(result.status).toBe(0);
+    const envelope = lastJsonLine(result.stdout) as {
+      readonly verdict: string;
+      readonly failing: number;
+      readonly passing: number;
+    };
+    expect(envelope).toMatchObject({ verdict: 'match', failing: 0, passing: 1 });
+  });
+
+  it('refuses a --trusted @trunk whose configured trunk does not name a real branch here, the same RUN-141 way an explicit bad ref does (specs/22 M17 P9)', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'forge-p9-bin-check-badtrunk-'));
+    dirs.push(dir);
+    await mkdir(path.join(dir, '.forge'), { recursive: true });
+    await writeFile(
+      path.join(dir, '.forge/config.yaml'),
+      YAML.stringify({
+        ...DEFAULT_CONFIG,
+        vcs: { ...DEFAULT_CONFIG.vcs, trunk: 'no-such-branch' },
+      }),
+      'utf8',
+    );
+    await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+    await execa('git', ['config', 'user.email', 't@example.com'], { cwd: dir });
+    await execa('git', ['config', 'user.name', 't'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '--allow-empty', '-m', 'init'], { cwd: dir });
+
+    const result = forge(['parity', 'check', '--trusted', '@trunk', '--json', '-C', dir], dir);
+
+    expect(result.status).toBe(1);
+    const envelope = lastJsonLine(result.stdout) as {
+      readonly ok: boolean;
+      readonly error: { readonly code: string; readonly message: string };
+    };
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe('RUN-141');
+    expect(envelope.error.message).toContain('refs/heads/no-such-branch');
+  });
+
   it("--story <id> names the written record's own story, through the real CLI", async () => {
     const dir = await freshCapturedProject();
 

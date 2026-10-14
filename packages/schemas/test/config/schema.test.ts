@@ -120,6 +120,10 @@ function goldenConfig(): Record<string, unknown> {
       redactPatterns: ['(?i)api[_-]?key', '(?i)authorization'],
     },
     vcs: {
+      // `18` §18.3's own example YAML carries `trunk: main` too (`specs/22` M17 P9) — added to this
+      // transcription for the same reason `project.adopted` was (see that field's own comment above):
+      // this piece added the field after the original transcription was written.
+      trunk: 'main',
       allowCommits: true,
       commitConvention: 'conventional',
       signCommits: false,
@@ -560,5 +564,40 @@ describe('configSchema — redactPatterns compile as regular expressions (PLAN-M
     expect(result.success).toBe(false);
     if (!result.success)
       expect(result.error.issues[0]?.path).toEqual(['security', 'redactPatterns', 0]);
+  });
+});
+
+describe('configSchema — vcs.trunk defaults to "main" for a config written before this key existed (specs/22 M17 P9)', () => {
+  /** A real pre-M17 `.forge/config.yaml`, as every project's committed file actually reads today:
+   * `18` §18.3's own golden fixture with the `vcs.trunk` key this piece added removed again — never
+   * hand-built from scratch, so this stays byte-for-byte what every OTHER field in a real file looks
+   * like, with only the one key under test actually missing. */
+  function preM17Config(): Record<string, unknown> {
+    const config = goldenConfig() as { vcs: Record<string, unknown> };
+    const vcsWithoutTrunk = { ...config.vcs };
+    delete vcsWithoutTrunk['trunk'];
+    return { ...config, vcs: vcsWithoutTrunk };
+  }
+
+  it('parses successfully with no "vcs.trunk" key at all, filling the documented default "main" (never CFG-001 on every pre-existing project)', () => {
+    const result = configSchema.safeParse(preM17Config());
+
+    expect(result.success, !result.success ? JSON.stringify(result.error.issues) : '').toBe(true);
+    if (result.success) expect(result.data.vcs.trunk).toBe('main');
+  });
+
+  it('still refuses a real type error on vcs.trunk when the key IS present, rather than silently defaulting past a genuine mistake', () => {
+    const config = goldenConfig() as { vcs: Record<string, unknown> };
+    const result = configSchema.safeParse({ ...config, vcs: { ...config.vcs, trunk: 123 } });
+
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues[0]?.path).toEqual(['vcs', 'trunk']);
+  });
+
+  it('still refuses an empty string, exactly as execution.integrationBranch (the identical .min(1) rule) does', () => {
+    const config = goldenConfig() as { vcs: Record<string, unknown> };
+    const result = configSchema.safeParse({ ...config, vcs: { ...config.vcs, trunk: '' } });
+
+    expect(result.success).toBe(false);
   });
 });

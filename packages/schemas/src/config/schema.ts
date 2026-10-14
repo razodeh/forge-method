@@ -457,6 +457,21 @@ const securitySchema = z
 
 const vcsSchema = z
   .object({
+    // `specs/22` M17 P9, `18` §18.3's "`vcs.trunk`" paragraph: every place that used to assume the
+    // literal string `"main"` (the integration branch's own base, `--trusted @trunk`'s resolution,
+    // `forge land`) reads this instead. `.min(1)`, matching `execution.integrationBranch` immediately
+    // above: a real git ref name, never validated further here (an unsafe value is refused downstream,
+    // where it is actually used as one). `.default('main')` is NOT merely this field's own proposed
+    // starting value for a brand-new project (`run-init.ts`'s own `detectRealTrunkBranch` already
+    // writes the project's real branch there, never this default, whenever a real git repository
+    // exists to ask) — it is load-bearing for every config.yaml committed before this field existed at
+    // all: `readConfig` (`cli/src/commands/config.ts`) parses a raw file straight through this schema,
+    // with no separate defaults-merge step anywhere, so a `.strict()` object with a bare, default-less
+    // `z.string()` here would make `trunk: Required` fail EVERY pre-existing project's config on EVERY
+    // command, until a human hand-edited the file — confirmed directly: deleting this field from a
+    // real, otherwise-valid config object (`schema.test.ts`'s own "config written before this key
+    // existed" test) reproduces exactly that `invalid_type`/`Required` failure without it.
+    trunk: z.string().min(1).default('main'),
     allowCommits: z.boolean(),
     // No exhaustive convention list is given — left open.
     commitConvention: z.string().min(1),

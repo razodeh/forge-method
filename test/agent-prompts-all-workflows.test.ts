@@ -246,9 +246,17 @@ beforeAll(async () => {
     { candidateAdapters: [adapter], env: {}, modulesDir },
   );
   expect(result.kind).toBe('initialized');
-  // `integrationBase` is `main` (`buildRunEngineContext`); a lane branches from a real commit on it.
-  await execa('git', ['checkout', '-q', '-B', 'main'], { cwd: projectDir });
-  // An empty commit: lanes branch from `main`, and prompt assembly reads the project root, not a lane, so
+  const written = configSchema.parse(
+    YAML.parse(await readFile(path.join(projectDir, '.forge/config.yaml'), 'utf8')),
+  );
+  // `integrationBase` is `written.vcs.trunk` (`buildRunEngineContext`); a lane branches from a real
+  // commit on it. `specs/22` M17 P9: `runInit` writes this as the real branch its own `git init` just
+  // created, never a hardcoded `'main'` literal any more -- checked out dynamically here, by that same
+  // real value, rather than this test forcing its own git state back onto a literal `'main'` that could
+  // now disagree with what `config.yaml` itself says (this exact mismatch is what a round-1 critic
+  // reproduced directly against this suite before this fix).
+  await execa('git', ['checkout', '-q', '-B', written.vcs.trunk], { cwd: projectDir });
+  // An empty commit: lanes branch from trunk, and prompt assembly reads the project root, not a lane, so
   // tracking the hundreds of init files would only slow seventy worktree creations.
   await execa(
     'git',
@@ -266,9 +274,6 @@ beforeAll(async () => {
     { cwd: projectDir },
   );
 
-  const written = configSchema.parse(
-    YAML.parse(await readFile(path.join(projectDir, '.forge/config.yaml'), 'utf8')),
-  );
   config = withFakeTiers(written, adapter.id);
   // The same constructor `forge run` uses for its context, so the assembly under test is production's.
   ctx = {

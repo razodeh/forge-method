@@ -186,7 +186,11 @@ async function buildTemplateProject(): Promise<string> {
     path.join(dir, '.forge/config.yaml'),
     YAML.stringify({ ...written, models: { ...written.models, tiers } }),
   );
-  await execa('git', ['checkout', '-q', '-B', 'main'], { cwd: dir });
+  // `specs/22` M17 P9: `written.vcs.trunk` is the real branch `runInit`'s own `git init` just
+  // created, never a hardcoded `'main'` literal any more -- checked out dynamically here, by that
+  // same real value, so this fixture's own git state never disagrees with what `config.yaml` itself
+  // says (a round-1 critic finding, reproduced directly against a sibling fixture).
+  await execa('git', ['checkout', '-q', '-B', written.vcs.trunk], { cwd: dir });
   await execa('git', ['add', '-A'], { cwd: dir });
   await execa(
     'git',

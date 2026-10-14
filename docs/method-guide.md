@@ -253,18 +253,19 @@ evidence says so plainly rather than implying a wider guarantee.
 - **The trust anchor, and its real boundary.** `forge parity check --trusted <ref>` compares
   everything under `.forge/parity/` against the tree at `<ref>` by reading git objects directly —
   never `git status` or `git diff`, both of which an agent with a shell can blind. `G-Parity`'s own
-  check always passes `--trusted refs/heads/main`, so inside a run the anchor is trunk. This is the
-  real boundary: **a rewritten oracle is detected, not prevented, and a reviewed change has to reach
-  trunk before a `forge refactor` run can rely on it.** That trunk is itself a hardcoded literal —
-  FORGE's engine always treats `main` as trunk, never a value read from project configuration — so a
-  project whose own default branch is genuinely named anything else cannot pass a real `refactor`'s
-  `G-Parity` gate at all, for a reason that has nothing to do with parity itself, until either its
-  branch is renamed to match or FORGE itself grows configuration for this. The declaration is not
-  unwritable by an agent: `.forge/**` sits in the engine's never-writable floor, but that floor is
-  enforced only after the fact, when the adapter reports changed files — a session that commits its
-  own work bypasses it entirely. So the anchor, not the floor, is what actually protects the oracle,
-  and it protects it by failing the run that sees the rewrite, never by stopping the rewrite from
-  happening or landing.
+  check always passes `--trusted @trunk`, so inside a run the anchor is trunk. This is the real
+  boundary: **a rewritten oracle is detected, not prevented, and a reviewed change has to reach
+  trunk before a `forge refactor` run can rely on it.** (Post-v1.0, `specs/22` M17 P9: `@trunk` is a
+  symbol `forge parity check` resolves itself, through `vcs.trunk` — a real `.forge/config.yaml`
+  key, default `"main"` — never a hardcoded `"main"` literal; before this, FORGE's engine always
+  treated `main` as trunk regardless of what a project's own default branch was actually called, so
+  a project whose branch was genuinely named anything else could not pass a real `refactor`'s
+  `G-Parity` gate at all, for a reason that had nothing to do with parity itself.) The declaration
+  is not unwritable by an agent: `.forge/**` sits in the engine's never-writable floor, but that
+  floor is enforced only after the fact, when the adapter reports changed files — a session that
+  commits its own work bypasses it entirely. So the anchor, not the floor, is what actually protects
+  the oracle, and it protects it by failing the run that sees the rewrite, never by stopping the
+  rewrite from happening or landing.
 - **Per-hunk results: what they do and don't tell you.**
   `forge test binding --story <id> --hunks --base <ref> [--max-hunks <n>]` is the finer-grained
   sibling of the ordinary behavioural binding described above: instead of reverting a story's whole

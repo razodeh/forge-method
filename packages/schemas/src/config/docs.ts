@@ -93,6 +93,7 @@ export type ConfigKeyPath =
   | 'security.toolCeilingEscalations'
   | 'security.destructiveOps'
   | 'security.redactPatterns'
+  | 'vcs.trunk'
   | 'vcs.allowCommits'
   | 'vcs.commitConvention'
   | 'vcs.signCommits'
@@ -209,6 +210,13 @@ export const CONFIG_KEY_DOCS: Readonly<Record<ConfigKeyPath, string>> = {
   'security.destructiveOps': 'How a potentially destructive operation is handled.',
   'security.redactPatterns':
     'Regular expressions matching content to redact from logs and reports.',
+  'vcs.trunk':
+    'The project\'s trunk branch (e.g. "main" or "master") — `forge init` proposes it from the ' +
+    "real git branch it finds checked out after it runs (a fresh init's own just-created branch, " +
+    'or whatever branch a pre-existing repository already has), defaulting to "main" only when ' +
+    'there is no real git repository to ask at all (`--no-git`). Every place that used to assume ' +
+    'the literal branch name "main" (the integration branch\'s own starting point, `--trusted ' +
+    '@trunk`, `forge land`) reads this instead.',
   'vcs.allowCommits': 'Whether FORGE is allowed to create commits.',
   'vcs.commitConvention': 'Commit message convention FORGE-authored commits follow.',
   'vcs.signCommits': 'Whether FORGE-authored commits are signed.',

@@ -53,6 +53,39 @@ async function ensureGit(dir: string, options: InitOptions): Promise<void> {
   }
 }
 
+/**
+ * The real branch `dir`'s own git repository has checked out right now, or `undefined` when there is
+ * none to ask (`ensureGit` was asked not to run, or — unreachably in practice, since `symbolic-ref`
+ * only inspects the `HEAD` -> `refs/heads/<name>` symlink-of-refs chain, never whether that branch has
+ * any commits — detached `HEAD`). Called AFTER `ensureGit`, so for a freshly created repository this
+ * is exactly the branch `git init` itself just picked (governed entirely by the user's own real git
+ * `init.defaultBranch` config, or that git version's own unconfigured default — `"master"` for plain
+ * upstream git, confirmed directly against this very environment, never assumed); for a pre-existing
+ * repository (the brownfield/adopt path, or a project `forge init` is re-run against) it is whatever
+ * branch a prior clone or checkout already left it on, which for anything cloned from a remote already
+ * reflects that remote's own default branch, with no separate network call of this function's own.
+ *
+ * `specs/18` §18.3 / Decision 7 describe this as `vcs.trunk` being "proposed... from `origin/HEAD`...
+ * or `init.defaultBranch`". This function delivers that guarantee's PRACTICAL substance — FORGE's own
+ * assumption always matches the branch that genuinely exists — without separately re-implementing
+ * either source as its own standalone check: a `git symbolic-ref` read-back, after the fact, is simpler
+ * and sufficient for both named cases, and is NOT what `specs/18`'s own prose literally describes (see
+ * this function's own caller for the one residual gap that reading leaves: a fresh `git init` run
+ * against a directory that already has a remote configured but has never been fetched, where
+ * `origin/HEAD` would differ from whatever branch `git init` itself just created — not handled, and not
+ * expected to come up for a `forge init` invocation, which runs before any such remote is normally
+ * added).
+ */
+async function detectRealTrunkBranch(dir: string): Promise<string | undefined> {
+  const result = await execa('git', ['symbolic-ref', '--short', 'HEAD'], {
+    cwd: dir,
+    reject: false,
+  });
+  if (result.exitCode !== 0) return undefined;
+  const branch = result.stdout.trim();
+  return branch === '' ? undefined : branch;
+}
+
 export async function runInit(
   dir: string,
   options: InitOptions,
@@ -122,7 +155,7 @@ export async function runInit(
     modelTiers.push(reportFresh(adapter.id, derivation));
   }
 
-  const config = buildForgeConfig({
+  const builtConfig = buildForgeConfig({
     options,
     level,
     platformId: primary.id,
@@ -131,6 +164,15 @@ export async function runInit(
   });
 
   await ensureGit(resolvedDir, options);
+  // `specs/22` M17 P9, `18` §18.3's own "`vcs.trunk`" paragraph: proposed from the real branch this
+  // repository is actually on, not left at `buildForgeConfig`'s own schema-default guess, whenever
+  // there is a real git repository to ask at all (`detectRealTrunkBranch`'s own doc comment has the
+  // full account of what this does and does not cover).
+  const realTrunk = await detectRealTrunkBranch(resolvedDir);
+  const config =
+    realTrunk === undefined
+      ? builtConfig
+      : { ...builtConfig, vcs: { ...builtConfig.vcs, trunk: realTrunk } };
 
   const files = await writeInitTree({
     target,

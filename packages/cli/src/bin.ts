@@ -65,6 +65,11 @@
  * own usage message and returns (`forge story verify <unknown>`, `forge test run --rule <bad>`) does not (see
  * `SPEC-QUESTIONS.md` Q218).
  *
+ * `land [--run <id>]` — lands a finished run's own integration branch on `vcs.trunk` — and `parity check`'s
+ * `--trusted @trunk` (resolved here to `refs/heads/<vcs.trunk>` before `runParityCheck` ever sees it, never
+ * inside that function, Decision 7) are wired by `specs/22` M17 P9 (`06` §6.5, `18` §18.3; `03` names neither
+ * row yet, see `SPEC-QUESTIONS.md`).
+ *
  * @see specs/22 M6
  * @see specs/22 M8
  * @see specs/22 M12
@@ -270,7 +275,9 @@ import {
   gateList,
   gateReject,
   gateWaive,
+  describeExtraLandedWork,
   integrationBranchOfRun,
+  landRunOnTrunk,
   mergeAbort,
   mergeAllReady,
   mergeLane,
@@ -1255,6 +1262,31 @@ async function runGateSubcommand(
   return report.passed ? EXIT_CODES.success : EXIT_CODES.gateFailed;
 }
 
+/** `--trusted @trunk` (`specs/22` M17 P9, Decision 7): resolved HERE, by `forge parity check` itself, to
+ * `refs/heads/<vcs.trunk>` — the one real caller of {@link resolveTrustedRef} (`check-command.ts`'s own
+ * `runParityCheck`) and its tests keep accepting only a full sha or a `refs/`-qualified name, so a gate
+ * YAML (or a human) can write the symbol and never the project's own branch name. `alreadyRead` is the
+ * config `runParityCommand` already read for `reportsRoot`, reused rather than read twice; when it is
+ * `undefined` (a `--no-record` call, which never requires a config file at all — this function's own
+ * caller's doc comment has the full reasoning) this falls back to a SEPARATE, TOLERANT read: a project
+ * with no `.forge/config.yaml` yet resolves `@trunk` to the schema's own documented default (`"main"`)
+ * rather than a hard `CFG-020` failure — the identical tolerance `--no-record` already has for every
+ * other config-reading step of this command. A config file that EXISTS but fails to validate is not
+ * tolerated the same way: that is a real, different problem a project with a config file at all should
+ * not have silently guessed past. */
+async function resolveTrunkForTrustedFlag(
+  paths: ProjectPaths,
+  alreadyRead: ForgeConfig | undefined,
+): Promise<string> {
+  if (alreadyRead !== undefined) return alreadyRead.vcs.trunk;
+  try {
+    return (await readConfig(paths)).vcs.trunk;
+  } catch (error) {
+    if (error instanceof ForgeError && error.code === 'CFG-020') return DEFAULT_CONFIG.vcs.trunk;
+    throw error;
+  }
+}
+
 /** `forge parity <sub>` (`PLAN-M16.md` P6/P7, `13` F-TEST-9, Q294 Amendments A8/A9). `capture` and
  * `check` are the two real sub-verbs. Both `runParityCapture` and `runParityCheck` return plain data
  * (no `v`): this dispatcher adds the envelope's `v: 1` on `--json`, the identical "the command
@@ -1294,8 +1326,18 @@ async function runParityCommand(
     // Read only when a record will actually be written: `G-Parity`'s own gate check always passes
     // `--no-record` (`10` §10.3 rule 8), and a human `--no-record` run is common too, so neither
     // needs this project to have a valid `.forge/config.yaml` at all (`check-command.ts`'s own
-    // `RunParityCheckOptions.reportsRoot` doc comment has the full reasoning).
-    const reportsRoot = noRecord ? undefined : (await readConfig(paths)).paths.reports;
+    // `RunParityCheckOptions.reportsRoot` doc comment has the full reasoning). Captured so
+    // `resolveTrunkForTrustedFlag` below can reuse this same read rather than reading the file twice.
+    const config = noRecord ? undefined : await readConfig(paths);
+    const reportsRoot = config?.paths.reports;
+    // `specs/22` M17 P9, Decision 7: the symbolic `@trunk` is the only value this dispatcher ever
+    // rewrites before handing `--trusted` to `runParityCheck` — every other value (a full sha, an
+    // explicit `refs/...` name) reaches `resolveTrustedRef` exactly as given, unchanged from before
+    // this piece.
+    const resolvedTrusted =
+      trusted === '@trunk'
+        ? `refs/heads/${await resolveTrunkForTrustedFlag(paths, config)}`
+        : trusted;
     // `specs/22` M16 P15: one ambient environment read, reused for both `parentEnv` (the vet seam
     // below already had) and the real `FORGE_RUN_ID` (telemetry only, `check-command.ts`'s own
     // `RunParityCheckOptions.runId` doc comment has the full reasoning).
@@ -1306,7 +1348,7 @@ async function runParityCommand(
       runId: env[FORGE_RUN_ID],
       ...(reportsRoot === undefined ? {} : { reportsRoot }),
       ...(name === undefined ? {} : { name }),
-      ...(trusted === undefined ? {} : { trusted }),
+      ...(resolvedTrusted === undefined ? {} : { trusted: resolvedTrusted }),
       ...(story === undefined ? {} : { story }),
       ...(noRecord ? { noRecord: true } : {}),
     });
@@ -1436,7 +1478,9 @@ async function runMergeCommand(
     paths,
     projectRoot,
     integrationBranch,
-    'main',
+    // `specs/22` M17 P9: the project's own configured `vcs.trunk`, not a hardcoded `'main'` literal --
+    // the integration branch, when it does not exist yet, is created from this.
+    config.vcs.trunk,
   );
   // `PLAN-M14.md` P40: the checks a landed lane's own merge-check commands spawn carry the identical FORGE
   // run marker (`PLAN-M14.md` P4) a live run's own merge step would give them — the same shim pattern
@@ -1474,6 +1518,83 @@ async function runMergeCommand(
   } finally {
     await shim?.cleanup();
   }
+}
+
+const LAND_FLAGS = {
+  '--run': true,
+} as const;
+
+/**
+ * `forge land [--run <id>]` — lands a run's own integration branch on `vcs.trunk` (`specs/22` M17 P9,
+ * `06` §6.5's "Landing a finished run on trunk" paragraph; defect F of `PLAN-M17.md`'s own register: "a
+ * completed run leaves trunk untouched; no command ... says how to land it"). `--run` resolves exactly
+ * as `forge merge`'s own does, above (`resolveDispatchRunId`: the given run, or the project's own last
+ * run) to find WHICH BRANCH to land — never to scope WHAT lands to that run's own commits alone.
+ *
+ * **`--run` names a branch, not a commit range (critic round 1 finding).** The default integration
+ * branch (`forge/integration/{stage}`, `18` §18.3) is shared and accumulates across every run that
+ * targets the same stage, exactly as `forge merge`'s own identical "lands whatever is ready" design
+ * already does for lanes — so this command genuinely lands whatever is CURRENTLY on that branch, which
+ * can include another run's own later work too, confirmed by direct construction (landing an earlier
+ * run after a later one already added a second commit to the same branch lands both). There is no
+ * reliable way to carve out "only this run's own slice" of one branch's linear history, so this does
+ * not attempt to; {@link describeExtraLandedWork} instead detects the mismatch when `runId`'s own event
+ * log makes it detectable, and this command surfaces it as a non-fatal `warning` — landing still
+ * proceeds (nothing here ever silently loses work), the caller is just told honestly when `--run`
+ * did not scope what happened.
+ *
+ * The real work — the fast-forward itself, and every refusal — is {@link landRunOnTrunk} (`context.ts`);
+ * this is only its CLI wiring: flag parsing, output, exit code. Every refusal is a thrown
+ * `ForgeError`/`VcsError`, printed by this file's own top-level `--json` envelope exactly as every
+ * other command's refusal is — never a bespoke shape here. Two real, distinct "the run isn't real"
+ * shapes (confirmed directly, not assumed): omitting `--run` with no prior run at all is `RUN-048`
+ * (`resolveDispatchRunId`, no `last-run.json` to default to); naming a `--run <id>` that was never a
+ * real run (or whose manifest cannot be found) falls back to the project's own DEFAULT integration
+ * branch template (`integrationBranchOfRun`'s own tolerant fallback) — if THAT branch has never been
+ * created either, resolving its tip fails as a real git error, `VCS-GIT-OPERATION-FAILED`, not `RUN-048`.
+ */
+async function runLandCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  args: readonly string[],
+  json: boolean,
+): Promise<number> {
+  const { values, positionals } = parseCommandFlags(args, LAND_FLAGS);
+  if (positionals.length > 0) {
+    throw new ForgeError('USR-002', { flag: '[extra positional]', value: positionals[0] ?? '' });
+  }
+  const config = await readConfig(paths);
+  const runId = await resolveDispatchRunId(paths, values.get('--run'));
+  // The integration branch the run used (a `--stage` run has its own) -- the identical resolution
+  // `forge merge` above uses to find which branch a lane lands into.
+  const integrationBranch = await integrationBranchOfRun(paths, config, runId);
+
+  const result = await landRunOnTrunk(projectRoot, config.vcs.trunk, integrationBranch, runId);
+  // `critic round 1`: never computed for `mergesDirectly` (nothing was separately "landed" to compare
+  // against at all -- every lane already merges straight onto trunk as the run proceeds).
+  const warning = result.mergesDirectly
+    ? undefined
+    : await describeExtraLandedWork(projectRoot, runId, result.trunkTip);
+
+  if (json) {
+    // `03` §3.5: exactly one line under `--json` -- the warning (when there is one) is folded into
+    // this SAME envelope, never a second line, which would break that contract.
+    console.log(JSON.stringify({ v: 1, ...result, ...(warning === undefined ? {} : { warning }) }));
+    return EXIT_CODES.success;
+  }
+  if (result.mergesDirectly) {
+    console.log(
+      `forge land: execution.integrationBranch already is ${config.vcs.trunk} -- nothing further to land.`,
+    );
+  } else if (result.landed) {
+    console.log(`forge land: fast-forwarded ${config.vcs.trunk} to ${result.trunkTip}.`);
+  } else {
+    console.log(
+      `forge land: ${config.vcs.trunk} already has run ${runId}'s own work -- nothing to land.`,
+    );
+  }
+  if (warning !== undefined) console.log(`forge land: warning: ${warning}`);
+  return EXIT_CODES.success;
 }
 
 function isValidateRuleId(value: string | undefined): value is ValidateRuleId {
@@ -5549,6 +5670,9 @@ async function main(): Promise<number> {
   }
   if (command === 'merge') {
     return runMergeCommand(paths, projectRoot, afterCommand, flags.json);
+  }
+  if (command === 'land') {
+    return runLandCommand(paths, projectRoot, afterCommand, flags.json);
   }
   if (command === 'module') {
     const [moduleSub, ...moduleRest] = afterCommand;

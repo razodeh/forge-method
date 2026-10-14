@@ -5,16 +5,18 @@
  * @see specs/03 §3.2.4
  */
 export {
-  TRUNK,
   buildRunEngineContext,
+  describeExtraLandedWork,
   ensureIntegrationWorktree,
   integrationBranchFor,
   integrationBranchOfRun,
   isAncestor,
   isTargetRegisteredWorktree,
+  landRunOnTrunk,
   syncIntegrationBranchToTrunk,
   type BuildRunContextInput,
   type IntegrationSyncResult,
+  type LandRunResult,
 } from './context.ts';
 export { abortRun, assertStopped, pauseRun, type StopResult } from './control.ts';
 export {

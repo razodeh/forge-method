@@ -132,11 +132,17 @@ async function commitAll(dir: string, message: string): Promise<string> {
  * to `fixtures/parity-refactor/reference/sum.mjs`, committed as the project's first real commit, so a
  * declaration can later name that exact commit as its own `reference.ref`. No `.forge/parity/`
  * declaration is written here — callers that need one call `declareAndCapture` next.
+ *
+ * `trunk` (`specs/22` M17 P9) defaults to `"main"`, matching every pre-M17 caller of this helper
+ * unchanged; a caller proving `vcs.trunk`/`--trusted @trunk` actually read the PROJECT's own configured
+ * value — not a hardcoded `"main"` literal anywhere in `context.ts`/`bin.ts` — passes a different real
+ * branch name (`"master"`), which becomes both the real git repository's own initial branch AND the
+ * written `.forge/config.yaml`'s own `vcs.trunk`.
  */
-async function createRefactorProject(): Promise<ParityProject> {
+async function createRefactorProject(trunk = 'main'): Promise<ParityProject> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-p9-parity-'));
   registerCleanup(dir);
-  await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+  await execa('git', ['init', '--quiet', '-b', trunk], { cwd: dir });
   await execa('git', ['config', 'user.email', 'fixture@example.com'], { cwd: dir });
   await execa('git', ['config', 'user.name', 'Fixture'], { cwd: dir });
 
@@ -160,6 +166,7 @@ async function createRefactorProject(): Promise<ParityProject> {
       testCommands: { ...DEFAULT_CONFIG.execution.testCommands, unit: REAL_VITEST_CMD },
       retainLaneWorktrees: 'always',
     },
+    vcs: { ...DEFAULT_CONFIG.vcs, trunk },
     models: FIXTURE_MODELS,
   };
   await mkdir(path.join(dir, '.forge'), { recursive: true });
@@ -705,6 +712,37 @@ unobservable:
         expect(event.gateId).toBe('G-Parity');
         expect(event.passed).toBe(true);
       }
+    },
+  );
+
+  it(
+    'a project whose vcs.trunk is "master" (never literally "main") still reaches commit: ' +
+      '--trusted @trunk resolves through the real config, and the run-start sync reads vcs.trunk too, ' +
+      'never a hardcoded "main" literal anywhere in this path (specs/22 M17 P9, defect #1)',
+    async () => {
+      const project = await createRefactorProject('master');
+      await declareAndCapture(project);
+      const adapter = await refactorAdapter('preserving');
+
+      const result = await runRefactor(project, adapter, 'run-master-trunk');
+
+      expect(result.kind).toBe('run');
+      if (result.kind !== 'run') throw new Error('unreachable');
+      expect(result.runState.stepStatuses.get('refactor:preflight-parity')).toBe('succeeded');
+      expect(result.runState.stepStatuses.get('refactor:refactor-code')).toBe('succeeded');
+      expect(result.runState.stepStatuses.get('refactor:verify-parity')).toBe('succeeded');
+      expect(result.runState.stepStatuses.get('refactor:commit')).toBe('succeeded');
+      expect(result.runState.runStatus).toBe('completed');
+
+      const events = await gateEvaluatedEvents(project, 'run-master-trunk');
+      expect(events).toHaveLength(2);
+      for (const event of events) {
+        expect(event).toMatchObject({ gateId: 'G-Parity', passed: true });
+      }
+      // The project's own working tree really is on a branch called "master" -- never silently "main"
+      // underneath, which does not even exist in this repository.
+      expect((await git(project.dir, 'symbolic-ref', '--short', 'HEAD')).trim()).toBe('master');
+      await expect(git(project.dir, 'rev-parse', '--verify', 'main')).rejects.toThrow();
     },
   );
 

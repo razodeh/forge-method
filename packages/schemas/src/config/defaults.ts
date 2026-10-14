@@ -118,6 +118,13 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     redactPatterns: ['(?i)api[_-]?key', '(?i)authorization'],
   },
   vcs: {
+    // `18` §18.3's own "`vcs.trunk`" paragraph (`specs/22` M17 P9): `"main"` is the one value this
+    // built-in-defaults layer (`02` §2.8's lowest-precedence layer) can state without a real git
+    // repository to ask — `forge init` (`run-init.ts`'s own `detectRealTrunkBranch`) overrides it with
+    // the real branch it finds whenever one exists, falling back to this literal default only for
+    // `--no-git`. Also load-bearing for `configSchema`'s matching `.default('main')`: every config.yaml
+    // committed before this field existed parses with this exact value filled in, never a hard failure.
+    trunk: 'main',
     allowCommits: true,
     commitConvention: 'conventional',
     signCommits: false,

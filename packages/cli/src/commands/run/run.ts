@@ -18,7 +18,6 @@ import type { ForgeConfig } from '@forge/schemas/config';
 import { assertCleanWorkingTree } from '@forge/vcs';
 
 import {
-  TRUNK,
   buildRunEngineContext,
   ensureIntegrationWorktree,
   integrationBranchFor,
@@ -212,9 +211,9 @@ export async function runWorkflow(
       deps.paths,
       deps.projectRoot,
       integrationBranch,
-      TRUNK,
+      deps.config.vcs.trunk,
     );
-    const sync = await syncIntegrationBranchToTrunk(integrationPath, TRUNK);
+    const sync = await syncIntegrationBranchToTrunk(integrationPath, deps.config.vcs.trunk);
 
     // Persisted so a later `forge resume` can re-compile the identical plan (`runEngine`'s own
     // `resumeFrom` path needs the same `workflowSource`/`expressionContext` this invocation used —
