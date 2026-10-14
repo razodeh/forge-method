@@ -10,7 +10,7 @@
  */
 import type { ProjectPaths } from '@forge/core/fs';
 import { runShellCommand } from '@forge/engine/dispatch';
-import type { ForgeConfig } from '@forge/schemas/config';
+import type { ForgeConfig, TestCommandEntry } from '@forge/schemas/config';
 
 import { detectEcosystem } from './ecosystem.ts';
 import {
@@ -23,7 +23,12 @@ import {
   type FlakyTestRecord,
 } from './flaky.ts';
 import { runOracleLint } from './oracle-lint.ts';
-import { runAndNormalize, writeNormalizedReport, type TestOutcome } from './reporter.ts';
+import {
+  runTestLayerCommand,
+  runTestLayerRetry,
+  writeNormalizedReport,
+  type TestOutcome,
+} from './reporter.ts';
 import { containsShellChaining } from './shell-safety.ts';
 
 function describeCause(cause: unknown): string {
@@ -41,6 +46,17 @@ function describeCause(cause: unknown): string {
  * same coarse identity this whole subsystem already inherited from `09` §9.5's AC-binding convention. */
 function flakyKey(outcome: TestOutcome): string {
   return outcome.file === undefined ? outcome.name : `${outcome.file}::${outcome.name}`;
+}
+
+/** A human-readable label for one `testCommands.<layer>` entry, legacy or structured alike
+ * (`specs/22` M17 P4) — every `problems` message below interpolates this instead of the bare
+ * `command` string the pre-structured code used to, since a structured entry has no single string
+ * of its own. A legacy string reads EXACTLY as before (`"${command}"`), so every pre-existing
+ * `problems` message this file produces for a legacy-string project stays byte-identical. Exported
+ * for `story.ts`'s own `runLayer`, which interpolates a layer's command into its own check message
+ * and would otherwise print a structured entry as `[object Object]`. */
+export function commandLabel(command: TestCommandEntry): string {
+  return typeof command === 'string' ? `"${command}"` : `"${command.run}" (structured)`;
 }
 
 /** A hard ceiling on how many isolated retries one `forge test run` invocation will attempt — F-TEST-6
@@ -160,28 +176,29 @@ async function runDefaultRule(
 
   for (const layer of DEFAULT_RUN_LAYERS) {
     const command = ctx.testCommands[layer];
-    // A structured entry (post-v1.0, `specs/22` M17 P3) is not yet routed through here: doing so --
-    // `runStructuredTestLayer`'s own output-reading/translating/parsing, plus `scope`/`filter`
-    // template rendering for the retry-in-isolation call below -- is `PLAN-M17.md` P4's own mandate
-    // ("Route forge test run... through P3, applying Decision 3's degradation table"), not a change
-    // this piece's own surface (`loop/test/{reporter,ecosystem}.ts`) extends to. Treated the same as
-    // "this layer has no command yet" in the meantime: no real project can have written a structured
-    // entry before P6/P7 exist to propose one, so this is inert for every real project today, and
-    // zero-change for every legacy-string one (`18` §18.3's own migration guarantee).
-    if (command === undefined || typeof command !== 'string') continue;
+    if (command === undefined) continue;
     declaredAny = true;
-    const result = await runAndNormalize(
+    const label = commandLabel(command);
+    // `specs/22` M17 P4: a legacy string runs exactly as before; a structured entry with a declared
+    // `scope` runs scoped to `files` (when given); one with none degrades to its whole, unscoped
+    // `run` instead (`18` §18.3's degradation table) -- safe for THIS caller, see `runTestLayerCommand`'s
+    // own doc comment (`reporter.ts`) for why.
+    const { run: result, degraded } = await runTestLayerCommand(
       command,
       ctx.projectRoot,
+      ctx.paths,
       ecosystem,
       createTempPath,
-      undefined,
-      undefined,
       files,
       options.timeoutMs,
     );
+    if (degraded) {
+      problems.push(
+        `testCommands.${layer} (${label}) has no "scope" template declared for its structured form -- ran the whole layer instead of the requested file(s) (18 §18.3's degradation table).`,
+      );
+    }
     if (result.outcome === 'tool-error') {
-      problems.push(`testCommands.${layer} ("${command}") failed to run: ${result.message}`);
+      problems.push(`testCommands.${layer} (${label}) failed to run: ${result.message}`);
       continue;
     }
     // A fresh critic round reproduced this directly: a real command that *runs* but matches zero
@@ -189,9 +206,7 @@ async function runDefaultRule(
     // `outcomes` array — indistinguishable, before this check, from "ran and everything passed."
     // Nothing was actually verified, so this is a real problem, not a silent pass.
     if (result.report.outcomes.length === 0) {
-      problems.push(
-        `testCommands.${layer} ("${command}") ran but matched or collected zero tests.`,
-      );
+      problems.push(`testCommands.${layer} (${label}) ran but matched or collected zero tests.`);
       continue;
     }
     // `specs/22` M16 P10: a whole-run timeout still reports as one real, named `TestOutcome` (`kind:
@@ -200,7 +215,7 @@ async function runDefaultRule(
     // layer's own report sees the real reason rather than an unexplained failing "test."
     const timedOutOutcome = result.report.outcomes.find((outcome) => outcome.kind === 'timeout');
     if (timedOutOutcome !== undefined) {
-      problems.push(`testCommands.${layer} ("${command}"): ${timedOutOutcome.name}.`);
+      problems.push(`testCommands.${layer} (${label}): ${timedOutOutcome.name}.`);
     }
     outcomes.push(...result.report.outcomes);
 
@@ -216,24 +231,35 @@ async function runDefaultRule(
         continue;
       }
       retriesUsed += 1;
-      const retry = await runAndNormalize(
+      const retry = await runTestLayerRetry(
         command,
         ctx.projectRoot,
+        ctx.paths,
         ecosystem,
         createTempPath,
         outcome.name,
         outcome.file,
-        undefined,
         options.timeoutMs,
       );
-      if (retry.outcome === 'tool-error') {
+      // `specs/22` M17 P4, `18` §18.3's degradation table: a structured layer with no `filter`
+      // template cannot be retried in isolation at all -- no run was even attempted, so this test is
+      // left `unclassified` this run (`flakeOccurrence` never gets a key for it, the identical "not
+      // retried" treatment the retry-cap branch above already gets) rather than guessed at either way.
+      if (retry.kind === 'not-retryable') {
         problems.push(
-          `could not retry "${outcome.name}" in isolation to classify it: ${retry.message}`,
+          `testCommands.${layer} (${label}) has no "filter" template declared for its structured form -- "${outcome.name}" could not be retried in isolation; left unclassified.`,
+        );
+        continue;
+      }
+      const { run: retryResult } = retry;
+      if (retryResult.outcome === 'tool-error') {
+        problems.push(
+          `could not retry "${outcome.name}" in isolation to classify it: ${retryResult.message}`,
         );
       }
       const retryPassed =
-        retry.outcome === 'ran' &&
-        retry.report.outcomes.some(
+        retryResult.outcome === 'ran' &&
+        retryResult.report.outcomes.some(
           (candidate) =>
             candidate.name === outcome.name &&
             candidate.status === 'pass' &&

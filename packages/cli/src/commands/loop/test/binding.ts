@@ -55,7 +55,9 @@
  * @see PLAN-M15.md P3
  */
 import type { Clock } from '@forge/core';
+import { ProjectPaths } from '@forge/core/fs';
 import { isTestPath } from '@forge/engine/dispatch';
+import type { StructuredTestCommand } from '@forge/schemas/config';
 import {
   createLaneWorktree,
   removeLaneWorktree,
@@ -65,11 +67,34 @@ import {
   type LaneHandle,
 } from '@forge/vcs';
 
-import { runAndNormalize, type TestOutcome } from './reporter.ts';
+import {
+  renderTestCommandTemplate,
+  runAndNormalize,
+  runStructuredTestLayer,
+  withTimeoutOverride,
+  type RunAndNormalizeResult,
+  type TestOutcome,
+} from './reporter.ts';
 
 const BINDING_LANE_STEP_ID = 'test-binding';
 
-export interface BindingCheckInput {
+/**
+ * Which real test-layer command this check runs, and how (`specs/22` M17 P4): the ORIGINAL M15 legacy
+ * pair (a bare shell string plus the `detectEcosystem`-chosen ecosystem that picks vitest-JSON-or-
+ * pytest-JUnit reading), or a structured `testCommands.<layer>` entry (`18` §18.3). A discriminated
+ * union, not two independently-optional fields, so a caller can never construct the nonsensical "both"
+ * or "neither" shape, and `canScopeTestLayer`/`runScopedLayer` below narrow on it with no extra guard.
+ *
+ * @see specs/18 §18.3
+ * @see specs/22 M17 P4
+ */
+export type TestLayerIdentity =
+  | { readonly testCommand: string; readonly ecosystem: 'js' | 'python' }
+  | { readonly structuredCommand: StructuredTestCommand };
+
+export type BindingCheckInput = BindingCheckInputCommon & TestLayerIdentity;
+
+interface BindingCheckInputCommon {
   /** Absolute path to the real project repository — never itself mutated; every real file operation
    * this function performs happens inside its own scratch lane worktree. */
   readonly projectRoot: string;
@@ -79,8 +104,6 @@ export interface BindingCheckInput {
   /** A story's own `files_expected` (`09` §9.3) — split internally into implementation and test paths
    * via `isTestPath`, the identical heuristic `run-plan.ts` already uses for the same split. */
   readonly filesExpected: readonly string[];
-  readonly testCommand: string;
-  readonly ecosystem: 'js' | 'python';
   /** Where the lane worktree is created from — ordinarily `'HEAD'`: the current state, implementation
    * included. Resolved once, at lane-creation time, into `revertedRange.toSha`. */
   readonly integrationBase: string;
@@ -98,6 +121,84 @@ export interface BindingCheckInput {
    * runs this same check N+3 times per story is the other real reason this exists — a tight override
    * is what keeps that loop fast rather than waiting out the full default on every one of those runs. */
   readonly timeoutMs?: number;
+}
+
+/** `true` iff `input`'s own test-layer command can be run scoped to a closed set of real test paths
+ * at all: a legacy string (`runAndNormalize`'s own native file-positional support, always) or a
+ * structured entry that declares a `scope` template (`18` §18.3). `false` only for a structured entry
+ * with none — see `runScopedLayer`'s own doc comment for why this is a refusal rather than a
+ * degradation for THIS consumer, unlike `reporter.ts`'s own `runTestLayerCommand`. Checked once, by
+ * both real callers (`runBindingCheck` below, `hunk-mutation.ts`'s own `runHunkMutationCheck`),
+ * BEFORE any lane is ever created — a refusal this cheap costs nothing. */
+export function canScopeTestLayer(input: TestLayerIdentity): boolean {
+  return 'testCommand' in input || input.structuredCommand.scope !== undefined;
+}
+
+/**
+ * Runs `input`'s own test-layer command, scoped to exactly `testPaths` — the one dispatcher every
+ * baseline/mutated/restore run in this module, and every hunk/file mutant run in `hunk-mutation.ts`,
+ * goes through, legacy or structured alike.
+ *
+ * Never called when `canScopeTestLayer(input)` is `false`: both real callers check that first and
+ * return `BindingCheckOutcome`'s own `'structured-layer-needs-scope'` refusal instead of ever reaching
+ * here (enforced by the `throw` below, which only a test calling this function directly, bypassing
+ * both real entry points, could ever reach — R5: not a real branch to keep silent about).
+ *
+ * **DECISION** (`PLAN-M17.md` P4's own report has the full reasoning): a structured layer with NO
+ * `scope` is a typed refusal here, never `reporter.ts`'s own `runTestLayerCommand`-style whole-suite
+ * degradation. Binding's own mutation-credit algorithm (`runChangeLevelCheck` below) needs `namedTests`
+ * to be a CLOSED, correctly-scoped population — "this story's own tests, and only those" — to mean
+ * anything at all: running the whole project's suite instead and keeping every outcome would silently
+ * fold unrelated tests into that population (an unrelated pre-existing failure anywhere in the project
+ * would misreport `baseline-not-green` for a story that has nothing to do with it); trying to recover
+ * the scoped subset afterward by matching `TestOutcome.file` against `testPaths` is not a safe,
+ * format-independent operation either — confirmed directly against this codebase's own built-in
+ * parsers: `vitest-json`/`jest-json` report an ABSOLUTE, realpath-resolved file (`reporter.ts`'s own
+ * `runVitest` doc comment has the fuller reasoning for why that is not directly comparable to
+ * `testPaths`'s project-relative form without guessing), `tap`/`go-test-json` report no file at all,
+ * and `junit-xml` reports one only for the Mocha dialect. A silently wrong match — crediting an
+ * unrelated test's failure as this story's own binding evidence, or the reverse — is worse than a
+ * typed refusal that names exactly what to declare. The budget this piece sets for binding/hunk-
+ * mutation's whole-suite fallback is therefore zero: `scope` must be declared, or the check refuses.
+ *
+ * @see specs/18 §18.3
+ * @see specs/22 M17 P4
+ */
+export async function runScopedLayer(
+  input: BindingCheckInput,
+  cwd: string,
+  testPaths: readonly string[],
+): Promise<Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>> {
+  if ('testCommand' in input) {
+    return runAndNormalize(
+      input.testCommand,
+      cwd,
+      input.ecosystem,
+      input.createTempPath,
+      undefined,
+      undefined,
+      testPaths,
+      input.timeoutMs,
+    );
+  }
+  const { structuredCommand } = input;
+  if (structuredCommand.scope === undefined) {
+    throw new Error(
+      'forge/binding: unreachable: runScopedLayer called with no scope declared -- canScopeTestLayer must be checked first.',
+    );
+  }
+  // `input.timeoutMs` (`bin.ts`'s own `--timeout-ms` flag): `withTimeoutOverride` (`reporter.ts`)
+  // is where this lands -- see its own doc comment for why `runStructuredTestLayer` itself needs no
+  // change. A critic round reproduced directly that the first draft passed `structuredCommand`
+  // straight through unmodified, silently dropping this override for every structured, scoped run.
+  const rendered = renderTestCommandTemplate(structuredCommand.scope, { files: testPaths });
+  return runStructuredTestLayer(
+    withTimeoutOverride(structuredCommand, input.timeoutMs),
+    cwd,
+    new ProjectPaths(cwd),
+    input.createTempPath,
+    rendered,
+  );
 }
 
 export interface BindingCheckCompleted {
@@ -124,6 +225,12 @@ export type BindingCheckOutcome =
    * of `PLAN-M15.md` P3's own "run exactly those named tests." A round-1 gauntlet critic reproduced
    * this directly before this outcome existed. */
   | { readonly outcome: 'no-test-paths' }
+  /** `input`'s own structured test-layer command declares no `scope` template (`specs/22` M17 P4,
+   * `18` §18.3's degradation table) — checked BEFORE any lane is created, the identical "a real,
+   * distinct refusal, cheap to report" treatment `'no-test-paths'` above already gets. See
+   * `runScopedLayer`'s own doc comment (this file) for why this is a refusal rather than a
+   * whole-suite degradation for this consumer specifically. */
+  | { readonly outcome: 'structured-layer-needs-scope' }
   /** A named test was already failing before any mutation — "did the revert cause this" is
    * unanswerable, so no binding verdict is reported for any test. */
   | { readonly outcome: 'baseline-not-green'; readonly failing: readonly string[] }
@@ -169,26 +276,80 @@ export type BindingCheckOutcome =
  * appearing in `failedUnderMutation` instead of the real, binding test's own name.
  *
  * A mutated outcome whose `name` matches a known named test exactly uses its own real `status`. An
- * unmatched outcome (a file-level failure) is attributed to EVERY named test the baseline discovered
- * in that same file (`TestOutcome.file`, populated identically by both runs) — the whole file could not
- * run, so none of its own named tests ran either, which is real binding evidence for each of them, not
- * information to silently drop because the string itself does not match.
+ * unmatched outcome WITH a usable `file` (one `namedTestsByFile` actually has an entry for —
+ * `TestOutcome.file`, populated identically by both runs) is attributed to EVERY named test the
+ * baseline discovered in that same file — the whole file could not run, so none of its own named
+ * tests ran either, which is real binding evidence for each of them, not information to silently
+ * drop because the string itself does not match.
+ *
+ * **An unmatched outcome with NO usable file attribution at all — `file` absent, or set to
+ * something `namedTestsByFile` has no entry for — is attributed to EVERY named test the BASELINE
+ * discovered, project-wide, not silently dropped** (`specs/22` M17 P4, a critic round's own direct
+ * reproduction, the most severe finding against this piece: a structured layer's own chosen
+ * `format` can genuinely have no way to signal which file crashed at all — confirmed directly
+ * against a real `node --test --test-reporter=junit` run where a reverted `require('./impl.js')`
+ * crashes the whole file before any test registers: Node's own JUnit reporter emits one synthetic
+ * `<testcase name="impl.test.js">` — named after the FILE, not any real test, with no file
+ * attribute whatsoever, since `junit-xml.ts`'s own parser, confirmed directly against pytest,
+ * Jest+jest-junit, this monorepo's own Vitest and Node's own `--test-reporter=junit`, never reads
+ * one for any of those four real dialects — every KNOWN test silently read as "kept passing," a
+ * false `non-binding`/`uncovered` verdict for a revert that genuinely broke everything, the exact
+ * inverse of what a mutation check exists to prove). This is DELIBERATELY the widest possible
+ * fallback, not the narrowest: with no file to narrow by, crediting every known test NOT already
+ * confirmed otherwise (rather than guessing at a subset, or dropping the signal) is the one choice
+ * that can never again produce that false negative.
+ *
+ * **"Every known test" excludes any test with its OWN real, directly-matched, NON-failing outcome
+ * elsewhere in this SAME run** (`confirmedPassing`, below — `specs/22` M17 P4, a second critic
+ * round's own direct construction): a story with a genuinely non-binding "pure tautology" test in
+ * its OWN, unaffected file, run alongside the real "adds two numbers" whose own file crashes under
+ * mutation, must not have the tautology swept up by the fallback purely because an UNRELATED file
+ * in the same run happened to crash — that would be exactly the false "this is bound" result
+ * `test:binding` exists to prevent, the mirror image of the false negative above. This exclusion is
+ * evidence-scoped, not file-scoped: it does not try to reconstruct which file the unattributed
+ * failure came from (the whole problem is that nothing in the run says), it only withholds credit
+ * from a name this run can directly, positively vouch for.
+ *
+ * The residual, accepted cost is narrower than the original bug and strictly one-directional: a
+ * name with NO other outcome at all in this run (one whose own file ALSO never ran, for an
+ * unrelated reason, and which the baseline nonetheless discovered) is still credited by the
+ * project-wide fallback — a real, disclosed over-credit risk, never a silent drop, and never
+ * reachable for a test the run can actually show was fine (the identical "a stillborn mutant proves
+ * nothing, but a vacuous pass proves nothing EITHER, so never read ambiguity as success" principle
+ * this whole file already applies everywhere else: the `*-zero-outcomes` outcomes, the
+ * `restoreVerified` zero-length guard).
  *
  * Never reached with a `kind: 'timeout'` outcome (`specs/22` M16 P10): `runBindingCheck`'s own caller
  * returns `'mutated-timeout'` before this function is ever invoked with one, so there is nothing to
  * special-case here — an earlier draft added a redundant `kind === 'timeout'` guard in this loop
  * anyway, found to be dead code unreachable through the public `runBindingCheck` entry point (R5: a
  * branch a test can only reach by calling this un-exported function directly, bypassing the real
- * caller's own guard, is not a real branch to keep) and removed. The structural fact that still holds
- * even if that caller-side guard were ever weakened: `reporter.ts`'s own synthetic timeout outcome
- * carries no `file` and a `name` no real test shares, so the two checks below would already decline
- * to credit it.
+ * caller's own guard, is not a real branch to keep) and removed.
  */
 function namesFailedUnderMutation(
   namedTestsByFile: ReadonlyMap<string, readonly string[]>,
   knownNames: ReadonlySet<string>,
   mutatedOutcomes: readonly TestOutcome[],
 ): readonly string[] {
+  // Names with their OWN real, directly-matched, NON-failing outcome somewhere in THIS SAME run --
+  // confirmed fine, and never overridden by the project-wide fallback below, however many unrelated
+  // whole-file crashes that fallback also fires for (`specs/22` M17 P4, a critic round's own direct
+  // construction: a story with a genuinely non-binding "pure tautology" test living in its OWN,
+  // unaffected file, plus the real "adds two numbers" test whose own file crashes under mutation --
+  // without this exclusion, the project-wide fallback below would credit the tautology too, purely
+  // because SOME OTHER, unrelated file in the same run happened to crash, which is exactly the false
+  // "this test is bound" result `test:binding` exists to prevent). Computed once, over every
+  // outcome, before the main loop below ever applies the fallback -- order-independent, so it does
+  // not matter whether the confirming "pass" outcome or the fallback-triggering one comes first in
+  // `mutatedOutcomes`.
+  const confirmedPassing = new Set<string>();
+  for (const outcome of mutatedOutcomes) {
+    if (outcome.status !== 'fail' && knownNames.has(outcome.name)) {
+      confirmedPassing.add(outcome.name);
+    }
+  }
+  const fallbackNames = [...knownNames].filter((name) => !confirmedPassing.has(name));
+
   const failed = new Set<string>();
   for (const outcome of mutatedOutcomes) {
     if (outcome.status !== 'fail') continue;
@@ -196,8 +357,15 @@ function namesFailedUnderMutation(
       failed.add(outcome.name);
       continue;
     }
-    if (outcome.file === undefined) continue;
-    for (const name of namedTestsByFile.get(outcome.file) ?? []) failed.add(name);
+    const namesInFile = outcome.file === undefined ? undefined : namedTestsByFile.get(outcome.file);
+    if (namesInFile !== undefined) {
+      for (const name of namesInFile) failed.add(name);
+      continue;
+    }
+    // No usable file attribution at all -- see this function's own doc comment for the full
+    // reasoning. Credits every known test NOT already confirmed passing above, never silently
+    // drops the signal, and never overrides a test's own, separately-observed real result.
+    for (const name of fallbackNames) failed.add(name);
   }
   return [...failed];
 }
@@ -302,16 +470,7 @@ export async function runChangeLevelCheck(
   const toSha = await resolveRevision(lane.path, 'HEAD');
   const fromSha = await resolveRevision(lane.path, input.baseRevision);
 
-  const baseline = await runAndNormalize(
-    input.testCommand,
-    lane.path,
-    input.ecosystem,
-    input.createTempPath,
-    undefined,
-    undefined,
-    testPaths,
-    input.timeoutMs,
-  );
+  const baseline = await runScopedLayer(input, lane.path, testPaths);
   if (baseline.outcome === 'tool-error') {
     return { outcome: { outcome: 'baseline-tool-error', message: baseline.message } };
   }
@@ -350,16 +509,7 @@ export async function runChangeLevelCheck(
   }
 
   await revertPathsToRevision(lane, fromSha, implementationPaths);
-  const mutated = await runAndNormalize(
-    input.testCommand,
-    lane.path,
-    input.ecosystem,
-    input.createTempPath,
-    undefined,
-    undefined,
-    testPaths,
-    input.timeoutMs,
-  );
+  const mutated = await runScopedLayer(input, lane.path, testPaths);
   if (mutated.outcome === 'tool-error') {
     return { outcome: { outcome: 'mutated-tool-error', message: mutated.message } };
   }
@@ -386,16 +536,7 @@ export async function runChangeLevelCheck(
   );
 
   await resetLaneWorktree(lane, toSha);
-  const restored = await runAndNormalize(
-    input.testCommand,
-    lane.path,
-    input.ecosystem,
-    input.createTempPath,
-    undefined,
-    undefined,
-    testPaths,
-    input.timeoutMs,
-  );
+  const restored = await runScopedLayer(input, lane.path, testPaths);
   if (restored.outcome === 'tool-error') {
     return { outcome: { outcome: 'restore-verification-tool-error', message: restored.message } };
   }
@@ -439,6 +580,12 @@ export async function runBindingCheck(input: BindingCheckInput): Promise<Binding
   // outright, the same way `createLaneWorktree` is never reached for any other refused input either.
   if (testPaths.length === 0) {
     return { outcome: 'no-test-paths' };
+  }
+  // Checked before any lane exists, the identical "cheap, before any real work" treatment the guard
+  // just above already gets (`specs/22` M17 P4, `canScopeTestLayer`'s own doc comment has the full
+  // reasoning for why this is a refusal rather than a degradation).
+  if (!canScopeTestLayer(input)) {
+    return { outcome: 'structured-layer-needs-scope' };
   }
 
   const lane = await createBindingLane(input);

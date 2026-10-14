@@ -382,28 +382,35 @@ describe('storyVerify: build and test checks', () => {
     expect(report.checks[1]?.message).toContain('3 diagnostics');
   });
 
-  it('a structured testCommands entry (specs/22 M17 P3) is unverifiable, never calls the runner, and build:lint names an honest reason -- never the misleading "not configured" for a command that IS configured', async () => {
+  it('a structured testCommands entry for build:lint (specs/22 M17 P3) is unverifiable, never calls the runner, naming an honest reason -- never the misleading "not configured" for a command that IS configured', async () => {
     const project = await createTestProject();
     await writeStory(project);
-    await writeProfiles(
-      project,
-      profileWithVerify('{ check: build:lint }', '{ check: test:unit --scope story }'),
-    );
+    await writeProfiles(project, profileWithVerify('{ check: build:lint }'));
     const { runner, calls } = recorder(() => CLEAN);
     const report = await verify(
       project,
-      {
-        lint: { run: 'true', output: { source: 'stdout' }, format: 'tap' },
-        unit: { run: 'true', output: { source: 'stdout' }, format: 'tap' },
-      },
+      { lint: { run: 'true', output: { source: 'stdout' }, format: 'tap' } },
       runner,
     );
     expect(calls).toEqual([]);
-    expect(report.checks.map((entry) => entry.status)).toEqual(['unverifiable', 'unverifiable']);
+    expect(report.checks.map((entry) => entry.status)).toEqual(['unverifiable']);
     expect(report.checks[0]?.message).toContain('execution.testCommands.lint');
     expect(report.checks[0]?.message).toContain('structured testCommands form');
     expect(report.checks[0]?.message).not.toContain('is not configured');
-    expect(report.checks[1]?.message).toContain('execution.testCommands.unit');
+  });
+
+  it('a structured testCommands entry for test:unit (specs/22 M17 P4) now flows straight through to the runner, exactly like a legacy string', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(project, profileWithVerify('{ check: test:unit --scope story }'));
+    const { runner, calls } = recorder(() => LAYER_OK);
+    const report = await verify(
+      project,
+      { unit: { run: 'true', output: { source: 'stdout' }, format: 'tap' } },
+      runner,
+    );
+    expect(calls).toEqual([{ rule: undefined, layers: ['unit'] }]);
+    expect(report.checks.map((entry) => entry.status)).toEqual(['pass']);
   });
 
   it('a check whose command is not configured is unverifiable and never calls the runner', async () => {

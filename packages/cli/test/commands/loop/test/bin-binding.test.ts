@@ -118,7 +118,11 @@ async function freshProject(
     readonly skipImpl?: boolean;
     readonly skipPackageJson?: boolean;
     readonly skipTestCommand?: boolean;
-    readonly testCommandOverride?: string;
+    // `specs/22` M17 P4: a plain string (legacy, unchanged) or a structured `testCommands.unit`
+    // entry -- `Record<string, unknown>` rather than the real `StructuredTestCommand` type, since
+    // `YAML.stringify` only needs a plain, serialisable object and importing the real type here
+    // would buy no extra safety this test fixture needs.
+    readonly testCommandOverride?: string | Readonly<Record<string, unknown>>;
     readonly status?: string;
   } = {},
 ): Promise<string> {
@@ -695,6 +699,48 @@ describe('forge test binding — a story already failing before any mutation', (
     // No `MutationEvidence` is written for a check that never completed (`binding-evidence.ts`'s own
     // doc comment): a baseline that never ran under mutation has nothing real to record.
     expect(result.stdout).not.toContain('MUT-');
+  }, 30_000);
+});
+
+describe('forge test binding — a structured execution.testCommands.unit entry (specs/22 M17 P4)', () => {
+  it('with a declared "scope" template: exits 0, bound, through the real CLI -- never routed through detectEcosystem at all', async () => {
+    const dir = await freshProject({
+      testCommandOverride: {
+        run: `${TEST_COMMAND} --reporter=json`,
+        output: { source: 'stdout' },
+        format: 'vitest-json',
+        scope: `${TEST_COMMAND} --reporter=json {files}`,
+      },
+      // No package.json at all: a structured layer never reaches `detectEcosystem` (Decision 4),
+      // so this real CLI invocation must succeed despite the SAME condition that made the sibling
+      // "an undetectable ecosystem" describe above a RUN-111 refusal for a legacy string.
+      skipPackageJson: true,
+    });
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir);
+
+    expect(result.status, result.stderr).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly passed: boolean;
+      readonly bound: readonly string[];
+    };
+    expect(parsed.passed).toBe(true);
+    expect(parsed.bound).toEqual(['adds']);
+  }, 30_000);
+
+  it('with NO "scope" template declared: a RUN-111-free, typed "problem" naming the missing capability -- never a crash', async () => {
+    const dir = await freshProject({
+      testCommandOverride: {
+        run: `${TEST_COMMAND} --reporter=json`,
+        output: { source: 'stdout' },
+        format: 'vitest-json',
+      },
+    });
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir);
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as { readonly ok: boolean; readonly problem: string };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.problem).toContain('"scope"');
   }, 30_000);
 });
 

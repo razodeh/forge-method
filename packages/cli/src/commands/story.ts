@@ -83,7 +83,7 @@ import { getDirtyFiles } from '@forge/vcs';
 import { minimatch } from 'minimatch';
 
 import { listSpecArtifacts } from './shared.ts';
-import { runBindingCheck } from './loop/test/binding.ts';
+import { runBindingCheck, type TestLayerIdentity } from './loop/test/binding.ts';
 import { emitBindingCheckTelemetry } from './loop/test/check-telemetry.ts';
 import { detectEcosystem } from './loop/test/ecosystem.ts';
 import {
@@ -94,6 +94,7 @@ import {
 import type { TestOutcome } from './loop/test/reporter.ts';
 import { createSystemTempPath } from './loop/test/system-temp.ts';
 import {
+  commandLabel,
   testRun,
   type TestCommands,
   type TestRunContext,
@@ -574,10 +575,10 @@ async function runLayer(
   memory: RunMemory,
 ): Promise<Resolution> {
   const command = ctx.testCommands[layer];
-  // The structured form (post-v1.0, `specs/22` M17 P3) is not yet routed through `forge story
-  // verify` -- `PLAN-M17.md` P4's own mandate ("Route forge test run... through P3"), not this
-  // piece's. Treated the same as "not configured" in the meantime.
-  if (command === undefined || typeof command !== 'string') {
+  // A structured entry (post-v1.0, `specs/22` M17 P4) now flows straight through to `testRun` below,
+  // exactly like a legacy string -- `run.ts`'s own `runTestLayerCommand` is what actually knows how
+  // to run it (including the `--scope story` degradation table, when `scoped` is true below).
+  if (command === undefined) {
     return {
       status: 'unverifiable',
       message: `execution.testCommands.${layer} is not configured, so the ${layer} tests cannot run.`,
@@ -614,7 +615,7 @@ async function runLayer(
   memory.ranLayer = true;
   if ((result.problems ?? []).length > 0) memory.incomplete = true;
   memory.outcomes.push(...(result.outcomes ?? []));
-  return outcomeFromRun(result, `${layer} tests (\`${command}\`)`, scopeNote, true);
+  return outcomeFromRun(result, `${layer} tests (${commandLabel(command)})`, scopeNote, true);
 }
 
 function checkAcCoverage(story: Story, memory: RunMemory): Resolution {
@@ -699,23 +700,28 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
     };
   }
   const testCommand = ctx.testCommands.unit;
-  // `runBindingCheck` is not yet taught the structured `testCommands.<layer>` form (post-v1.0,
-  // `specs/22` M17 P3) -- routing it there, with the identical `ecosystem`/degradation handling
-  // every other consumer needs, is `PLAN-M17.md` P4's own mandate, not this piece's. Treated the
-  // same as "not configured" in the meantime (zero-change for every legacy-string project).
-  if (testCommand === undefined || typeof testCommand !== 'string') {
+  if (testCommand === undefined) {
     return {
       status: 'unverifiable',
       message: 'execution.testCommands.unit is not configured, so the binding check cannot run.',
     };
   }
-  const ecosystem = await detectEcosystem(ctx.paths);
-  if (ecosystem === 'unknown') {
-    return {
-      status: 'unverifiable',
-      message:
-        'could not detect a js/python test ecosystem (no package.json/pyproject.toml/pytest.ini/setup.cfg), so the binding check cannot run.',
-    };
+  // `specs/22` M17 P4: a legacy string still needs `detectEcosystem` (Decision 4's own carve-out --
+  // the structured form skips it entirely, `runBindingCheck`'s own `TestLayerIdentity` narrows on
+  // which case this is with no further input from here).
+  let testLayer: TestLayerIdentity;
+  if (typeof testCommand === 'string') {
+    const ecosystem = await detectEcosystem(ctx.paths);
+    if (ecosystem === 'unknown') {
+      return {
+        status: 'unverifiable',
+        message:
+          'could not detect a js/python test ecosystem (no package.json/pyproject.toml/pytest.ini/setup.cfg), so the binding check cannot run.',
+      };
+    }
+    testLayer = { testCommand, ecosystem };
+  } else {
+    testLayer = { structuredCommand: testCommand };
   }
   const runId = `verify-binding-${story.id}-${SYSTEM_CLOCK.now().replace(/[^0-9]/g, '')}`;
   const result = await runBindingCheck({
@@ -723,8 +729,7 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
     runId,
     storyId: story.id,
     filesExpected: story.files_expected,
-    testCommand,
-    ecosystem,
+    ...testLayer,
     integrationBase: 'HEAD',
     baseRevision: 'HEAD~1',
     clock: SYSTEM_CLOCK,
@@ -734,6 +739,16 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
     return {
       status: 'unverifiable',
       message: `${story.id}'s own files_expected names no test-shaped path to check binding against.`,
+    };
+  }
+  // `specs/22` M17 P4: a structured `execution.testCommands.unit` with no `scope` template declared
+  // -- `runScopedLayer`'s own doc comment (`binding.ts`) has the full reasoning for why this is a
+  // typed refusal rather than a whole-suite degradation.
+  if (result.outcome === 'structured-layer-needs-scope') {
+    return {
+      status: 'unverifiable',
+      message:
+        'execution.testCommands.unit is the structured form with no "scope" template declared, so the binding check cannot run scoped to this story\'s own tests; declare one, or use the legacy string form.',
     };
   }
   if (result.outcome === 'baseline-not-green') {

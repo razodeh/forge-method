@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import type { StructuredTestCommand } from '@forge/schemas/config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { listOrphanedWorktrees } from '@forge/vcs';
 
@@ -416,6 +417,97 @@ describe('runHunkMutationCheck — a change-level outcome that never reaches "co
     expect(result).toEqual({ outcome: { outcome: 'no-test-paths' } });
     expect(await listOrphanedWorktrees(dir)).toEqual([]);
   });
+});
+
+describe('runHunkMutationCheck — a structured execution.testCommands.unit entry with no "scope" template (specs/22 M17 P4)', () => {
+  it('refuses typed (structured-layer-needs-scope) before any lane is ever created -- the identical zero-budget refusal runBindingCheck itself applies', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\nimport { add } from './impl.js';\ntest('adds two numbers', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story: add()');
+    const noScope: StructuredTestCommand = {
+      run: `${process.execPath} ${REAL_VITEST_ENTRY} run --root . --reporter=json`,
+      output: { source: 'stdout' },
+      format: 'vitest-json',
+      // No `scope` declared on purpose -- this is exactly the case under test.
+    };
+    runCounter += 1;
+    const input: BindingCheckInput = {
+      projectRoot: dir,
+      runId: `run-hm-structured-${String(runCounter)}`,
+      storyId: 'STORY-HM-NO-SCOPE',
+      filesExpected: ['impl.js', 'impl.test.js'],
+      structuredCommand: noScope,
+      integrationBase: 'HEAD',
+      baseRevision: baseSha,
+      clock: FAKE_CLOCK,
+      createTempPath: UNUSED_TEMP_PATH,
+    };
+
+    const result = await runHunkMutationCheck(input, { maxHunks: DEFAULT_MAX_HUNKS });
+
+    expect(result).toEqual({ outcome: { outcome: 'structured-layer-needs-scope' } });
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
+  });
+});
+
+describe('runHunkMutationCheck — a structured command with no file attribution at all (specs/22 M17 P4)', () => {
+  it('MUTATION EVIDENCE / regression (critic-reproduced): a "node --test via JUnit" whole-file crash on revert reads killed, never uncovered', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'function add(a, b) { return a + b; }\nmodule.exports = { add };\n',
+      // The identical real reproduction `binding.test.ts`'s own sibling regression test uses: a
+      // TOP-LEVEL `require('./impl.js')`, so reverting it (to nonexistent) crashes the whole file
+      // at require-time, before the real test registers -- Node's own `--test-reporter=junit`
+      // reports this as one synthetic `<testcase name="impl.test.js">`, named after the FILE, with
+      // NO file attribute at all. `classifyMutationOutcomes`'s own widened fallback (`specs/22` M17
+      // P4) is what this test pins: before it, this unmatched, unattributed outcome was silently
+      // dropped, reading this FileHunk as `uncovered` even though the revert broke everything.
+      'impl.test.js':
+        "const test = require('node:test');\nconst assert = require('node:assert');\nconst { add } = require('./impl.js');\ntest('adds two numbers', () => { assert.strictEqual(add(1, 2), 3); });\n",
+    });
+    await commit(dir, 'the story: add(), run by node --test via JUnit');
+    const nodeTestJunitCommand: StructuredTestCommand = {
+      run: `${process.execPath} --test --test-reporter=junit`,
+      output: { source: 'stdout' },
+      format: 'junit-xml',
+      scope: `${process.execPath} --test --test-reporter=junit {files}`,
+    };
+    runCounter += 1;
+    const input: BindingCheckInput = {
+      projectRoot: dir,
+      runId: `run-hm-junit-${String(runCounter)}`,
+      storyId: 'STORY-HM-JUNIT-CRASH',
+      filesExpected: ['impl.js', 'impl.test.js'],
+      structuredCommand: nodeTestJunitCommand,
+      integrationBase: 'HEAD',
+      baseRevision: baseSha,
+      clock: FAKE_CLOCK,
+      createTempPath: UNUSED_TEMP_PATH,
+    };
+
+    const result = await runHunkMutationCheck(input, { maxHunks: DEFAULT_MAX_HUNKS });
+
+    if (result.outcome.outcome !== 'completed' || result.hunkMutation === undefined) {
+      throw new Error(`expected 'completed' with a report, got ${result.outcome.outcome}`);
+    }
+    // `impl.js` is a newly-added file (did not exist at `baseSha`) -- one FileHunk, no finer
+    // granularity possible, the identical shape this file's own earlier "is one FileHunk, killed
+    // by its own load failure" test already establishes for the vitest-legacy path.
+    expect(result.hunkMutation.hunks).toHaveLength(1);
+    const entry = result.hunkMutation.hunks[0];
+    if (entry?.verdict.kind !== 'killed') {
+      throw new Error(
+        `expected 'killed' (never 'uncovered' -- the revert broke everything), got ${JSON.stringify(entry)}`,
+      );
+    }
+    expect(entry.verdict.killedBy).toEqual(['adds two numbers']);
+  }, 30_000);
 });
 
 /**

@@ -88,7 +88,7 @@ import type { ExpressionContext } from '@forge/engine/expr';
 import { isWaiverOwnerIdentifier, waiverExceedsCap } from '@forge/engine/gates';
 import type { RunState } from '@forge/engine/resume';
 import { DEFAULT_CONFIG, legacyStringTestCommands } from '@forge/schemas/config';
-import type { ForgeConfig } from '@forge/schemas/config';
+import type { ForgeConfig, TestCommandEntry } from '@forge/schemas/config';
 
 import { agentValidateAll } from './commands/agent.ts';
 import {
@@ -226,7 +226,11 @@ import { runUpgrade } from './commands/upgrade/index.ts';
 import { gateValidateAll, workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
 import { test as runTestRefusal } from './commands/loop/test.ts';
-import { runBindingCheck, type BindingCheckCompleted } from './commands/loop/test/binding.ts';
+import {
+  runBindingCheck,
+  type BindingCheckCompleted,
+  type TestLayerIdentity,
+} from './commands/loop/test/binding.ts';
 import { assembleAndWriteMutationEvidence } from './commands/loop/test/binding-evidence.ts';
 import { resolveHunkModeBase } from './commands/loop/test/hunks.ts';
 import {
@@ -1642,14 +1646,16 @@ async function runTestRunCommand(
 
 /** The real, installed test tool's own version, best-effort — a diagnostic `MutationEvidence` field
  * (`specs/18` §18.7), never load-bearing for a binding verdict: a failure resolving it is swallowed,
- * not surfaced as a refusal. `'js'` resolves `vitest`'s own real `package.json` (`node:module`'s
- * `createRequire`, the identical real-version-lookup pattern `binding.test.ts`'s own
+ * not surfaced as a refusal. A legacy `'js'` ecosystem resolves `vitest`'s own real `package.json`
+ * (`node:module`'s `createRequire`, the identical real-version-lookup pattern `binding.test.ts`'s own
  * `resolveRealVitestEntry` already establishes for the same package, reused here as real production
- * code rather than test-only). `'python'` is left empty: `mutationEvidenceSchema`'s own `toolVersions`
- * has no minimum-size constraint, and a real pytest version lookup needs a subprocess call this
- * diagnostic-only field does not justify the added latency for. */
-function detectToolVersions(ecosystem: 'js' | 'python'): Readonly<Record<string, string>> {
-  if (ecosystem !== 'js') return {};
+ * code rather than test-only). A legacy `'python'` ecosystem is left empty: `mutationEvidenceSchema`'s
+ * own `toolVersions` has no minimum-size constraint, and a real pytest version lookup needs a
+ * subprocess call this diagnostic-only field does not justify the added latency for. A structured
+ * command (`specs/22` M17 P4) is ALSO left empty — there is no single ecosystem concept to resolve a
+ * tool version from at all; the layer's own `run` could be anything. */
+function detectToolVersions(testLayer: TestLayerIdentity): Readonly<Record<string, string>> {
+  if (!('ecosystem' in testLayer) || testLayer.ecosystem !== 'js') return {};
   try {
     const require = createRequire(import.meta.url);
     const packageJson = require('vitest/package.json') as { readonly version?: unknown };
@@ -1679,8 +1685,7 @@ interface TestOutcomeEntry {
 async function runRawBindingCheck(
   projectRoot: string,
   story: Story,
-  testCommand: string,
-  ecosystem: 'js' | 'python',
+  testLayer: TestLayerIdentity,
   clock: Clock,
   // `specs/22` M16 P10: overrides `reporter.ts`'s own `DEFAULT_TEST_RUN_TIMEOUT_MS` for every run this
   // check makes. Optional, and the last parameter, so `runTestExemptCommand`'s own pre-check call
@@ -1715,14 +1720,13 @@ async function runRawBindingCheck(
     runId,
     storyId: story.id,
     filesExpected: story.files_expected,
-    testCommand,
-    ecosystem,
+    ...testLayer,
     integrationBase: 'HEAD',
     baseRevision: baseRevision ?? 'HEAD~1',
     clock,
     createTempPath: () => createSystemTempPath('forge-test-binding'),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
-  } as const;
+  };
   // `hunkOptions === undefined` calls the EXACT SAME `runBindingCheck` this function always called,
   // with the EXACT SAME `input` shape — no new code path for an existing caller (`13` F-TEST-10's own
   // "every M15 field is unchanged" requirement starts here, at the one place both modes fork). Only a
@@ -1740,6 +1744,8 @@ async function runRawBindingCheck(
     // matching `runBindingCheck`'s own doc comment: no evidence for a check that never completed).
     // `baseline-timeout`/`mutated-timeout`/`*-zero-outcomes` (`specs/22` M16 P10): none of these
     // carry a `.message`/`.failing` to read — each gets its own, distinct, plain-text reason.
+    // `structured-layer-needs-scope` (`specs/22` M17 P4): the identical no-`.message` shape, checked
+    // before any lane was even created (`runScopedLayer`'s own doc comment, `binding.ts`).
     const problem =
       result.outcome === 'baseline-not-green'
         ? `${String(result.failing.length)} test(s) already failing before any mutation: ${result.failing.join(', ')}.`
@@ -1751,7 +1757,9 @@ async function runRawBindingCheck(
               ? 'the baseline run matched or collected zero tests; binding cannot be established.'
               : result.outcome === 'mutated-zero-outcomes'
                 ? 'the mutated (reverted) run matched or collected zero tests; no test can be credited as bound from a run that verified nothing.'
-                : result.message;
+                : result.outcome === 'structured-layer-needs-scope'
+                  ? 'execution.testCommands.unit is the structured form with no "scope" template declared; binding cannot run scoped to this story\'s own tests.'
+                  : result.message;
     return { kind: 'problem', problem };
   }
   const rawNonBinding = result.namedTests.filter(
@@ -1791,8 +1799,7 @@ async function runOneStoryBinding(
   projectRoot: string,
   reportsRoot: string,
   story: Story,
-  testCommand: string,
-  ecosystem: 'js' | 'python',
+  testLayer: TestLayerIdentity,
   clock: Clock,
   exemptions: readonly Exemption[],
   // `specs/22` M15 P11: the REAL `FORGE_RUN_ID` (telemetry only) -- deliberately NOT named `runId`,
@@ -1829,8 +1836,7 @@ async function runOneStoryBinding(
   const raw = await runRawBindingCheck(
     projectRoot,
     story,
-    testCommand,
-    ecosystem,
+    testLayer,
     clock,
     timeoutMs,
     baseRevision,
@@ -1879,7 +1885,7 @@ async function runOneStoryBinding(
     reportsRoot,
     storyId: story.id,
     runId,
-    toolVersions: detectToolVersions(ecosystem),
+    toolVersions: detectToolVersions(testLayer),
     result,
     clock,
     // `specs/22` M16 P13: additive. Writing is unconditional on `hunkMutation` being present, the
@@ -1973,8 +1979,7 @@ async function runSingleStoryBindingCommand(
   projectRoot: string,
   reportsRoot: string,
   storyId: string,
-  ecosystem: 'js' | 'python',
-  testCommand: string,
+  testLayer: TestLayerIdentity,
   clock: Clock,
   exemptions: readonly Exemption[],
   json: boolean,
@@ -1994,8 +1999,7 @@ async function runSingleStoryBindingCommand(
     projectRoot,
     reportsRoot,
     story,
-    testCommand,
-    ecosystem,
+    testLayer,
     clock,
     exemptions,
     runId,
@@ -2122,8 +2126,7 @@ async function runDiscoverModeBindingCommand(
   projectRoot: string,
   reportsRoot: string,
   specsRoot: string,
-  ecosystem: 'js' | 'python',
-  testCommand: string,
+  testLayer: TestLayerIdentity,
   clock: Clock,
   exemptions: readonly Exemption[],
   json: boolean,
@@ -2142,8 +2145,7 @@ async function runDiscoverModeBindingCommand(
         projectRoot,
         reportsRoot,
         story,
-        testCommand,
-        ecosystem,
+        testLayer,
         clock,
         exemptions,
         runId,
@@ -2213,6 +2215,28 @@ async function runDiscoverModeBindingCommand(
   return incomplete === 0 ? EXIT_CODES.success : EXIT_CODES.failure;
 }
 
+/** Resolves `rawCommand` (`config.execution.testCommands.unit`) into a real `TestLayerIdentity`
+ * (`specs/22` M17 P4): a legacy string still needs `detectEcosystem` (Decision 4's own carve-out --
+ * `detectEcosystem` leaves the test-time path entirely once a layer is structured). `undefined` is
+ * the real, typed `RUN-111` refusal both real callers (`runTestBindingCommand`, `runTestExemptCommand`)
+ * already threw before this piece, factored out here so this one decision ("legacy or structured, and
+ * does a structured one even need an ecosystem") lives in exactly one place. */
+async function resolveTestLayerIdentity(
+  paths: ProjectPaths,
+  rawCommand: TestCommandEntry | undefined,
+  storyId: string | undefined,
+): Promise<TestLayerIdentity> {
+  if (rawCommand === undefined) {
+    throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
+  }
+  if (typeof rawCommand !== 'string') return { structuredCommand: rawCommand };
+  const detectedEcosystem = await detectEcosystem(paths);
+  if (detectedEcosystem === 'unknown') {
+    throw new ForgeError('RUN-111', { storyId, reason: 'unknown-ecosystem' });
+  }
+  return { testCommand: rawCommand, ecosystem: detectedEcosystem };
+}
+
 /** `forge test binding [--story <id>] [--json]` (`specs/22` M15 P4, extended by M15 P5): refuses a
  * dirty tree before any git work, then dispatches to single-story mode (`--story` given, M15 P4,
  * unchanged) or discover mode (no `--story`, M15 P5 — `G-Verify.gate.yaml`'s own real invocation
@@ -2248,18 +2272,11 @@ async function runTestBindingCommand(
   await assertCleanWorkingTree(projectRoot);
 
   const config = await readConfig(paths);
-  const detectedEcosystem = await detectEcosystem(paths);
-  if (detectedEcosystem === 'unknown') {
-    throw new ForgeError('RUN-111', { storyId, reason: 'unknown-ecosystem' });
-  }
-  const ecosystem = detectedEcosystem;
-  const testCommand = config.execution.testCommands.unit;
-  // The structured form (post-v1.0, `specs/22` M17 P3) is not yet routed through this ecosystem-
-  // detected binding path -- `PLAN-M17.md` P4's own mandate, not this piece's -- so it reads the
-  // same real "no usable command" refusal an unset layer already does.
-  if (testCommand === undefined || typeof testCommand !== 'string') {
-    throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
-  }
+  const testLayer = await resolveTestLayerIdentity(
+    paths,
+    config.execution.testCommands.unit,
+    storyId,
+  );
   const clock = SYSTEM_CLOCK;
   // `corruptCount` is not surfaced here -- `forge kb disclosures`/`forge doctor`'s own disclosures
   // check (`kb-disclosures.ts`) is this project's one real place a corrupt `reports/exemptions.md` row
@@ -2277,8 +2294,7 @@ async function runTestBindingCommand(
       projectRoot,
       config.paths.reports,
       SPECS_ROOT,
-      ecosystem,
-      testCommand,
+      testLayer,
       clock,
       exemptions,
       json,
@@ -2292,8 +2308,7 @@ async function runTestBindingCommand(
     projectRoot,
     config.paths.reports,
     storyId,
-    ecosystem,
-    testCommand,
+    testLayer,
     clock,
     exemptions,
     json,
@@ -2429,22 +2444,16 @@ async function runTestExemptCommand(
     throw new ForgeError('GATE-515', { testId, reason: 'expiry-exceeds-cap', maxDays });
   }
 
-  const detectedEcosystem = await detectEcosystem(paths);
-  if (detectedEcosystem === 'unknown') {
-    throw new ForgeError('RUN-111', { storyId, reason: 'unknown-ecosystem' });
-  }
-  const ecosystem = detectedEcosystem;
-  const testCommand = config.execution.testCommands.unit;
-  // Same reasoning as the discover-mode path above: the structured form is not yet routed through
-  // here (`PLAN-M17.md` P4's own mandate), so it reads the same "no usable command" refusal.
-  if (testCommand === undefined || typeof testCommand !== 'string') {
-    throw new ForgeError('RUN-111', { storyId, reason: 'no-test-command' });
-  }
+  const testLayer = await resolveTestLayerIdentity(
+    paths,
+    config.execution.testCommands.unit,
+    storyId,
+  );
 
   const story = await resolveStoryById(paths, storyId);
   // Never `runOneStoryBinding`: this pre-check must write no `MutationEvidence` -- see
   // `runRawBindingCheck`'s own doc comment for the real bug this avoids.
-  const raw = await runRawBindingCheck(projectRoot, story, testCommand, ecosystem, clock);
+  const raw = await runRawBindingCheck(projectRoot, story, testLayer, clock);
   if (raw.kind === 'skipped') {
     throw new ForgeError('RUN-111', { storyId, reason: 'no-test-paths' });
   }

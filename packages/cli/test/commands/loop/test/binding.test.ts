@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
+import type { StructuredTestCommand } from '@forge/schemas/config';
 import { afterEach, describe, expect, it } from 'vitest';
 import { listOrphanedWorktrees, VcsError } from '@forge/vcs';
 
@@ -41,6 +42,15 @@ const UNUSED_TEMP_PATH = (): string => {
   throw new Error('createTempPath should not be called by the js/vitest branch');
 };
 const FAKE_CLOCK = { now: (): string => '2026-09-30T12:00:00.000Z' };
+
+/** A REAL `createTempPath` (`QUALITY-BAR.md` R10's own injected-source requirement) for the one
+ * structured-command test whose own `translate` needs FORGE to materialise captured stdout into a
+ * real file (`runTranslator`'s own doc comment, `reporter.ts`) -- `UNUSED_TEMP_PATH` above is for
+ * every OTHER test here, which never reaches that code path at all. */
+let translatorTempCounter = 0;
+function makeRealTempPath(dir: string): () => string {
+  return () => path.join(dir, `tmp-translate-output-${String((translatorTempCounter += 1))}.raw`);
+}
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -91,6 +101,43 @@ function baseInput(projectRoot: string, storyId: string, baseRevision: string): 
     baseRevision,
     clock: FAKE_CLOCK,
     createTempPath: UNUSED_TEMP_PATH,
+  };
+}
+
+/** `baseInput`'s own structured-layer sibling (`specs/22` M17 P4) -- identical common fields, a
+ * `structuredCommand` instead of the legacy `testCommand`/`ecosystem` pair. */
+function structuredInput(
+  projectRoot: string,
+  storyId: string,
+  baseRevision: string,
+  structuredCommand: StructuredTestCommand,
+): BindingCheckInput {
+  runCounter += 1;
+  return {
+    projectRoot,
+    runId: `run-${String(runCounter)}`,
+    storyId,
+    filesExpected: [],
+    structuredCommand,
+    integrationBase: 'HEAD',
+    baseRevision,
+    clock: FAKE_CLOCK,
+    createTempPath: UNUSED_TEMP_PATH,
+  };
+}
+
+/** A real, scoped structured `unit` layer (`specs/22` M17 P4): vitest's own native JSON reporter,
+ * read directly (`format: 'vitest-json'`), with a `scope` template rendering `{files}` into a second
+ * vitest invocation positionally scoped to exactly those files -- the identical real binary
+ * `TEST_COMMAND` above already resolves, just through the structured form instead of the legacy
+ * bare string. */
+function structuredVitestCommand(): StructuredTestCommand {
+  const base = `${process.execPath} ${REAL_VITEST_ENTRY} run --root . --reporter=json`;
+  return {
+    run: base,
+    output: { source: 'stdout' },
+    format: 'vitest-json',
+    scope: `${base} {files}`,
   };
 }
 
@@ -305,6 +352,261 @@ describe('runBindingCheck — a story with no declared test paths at all', () =>
 
     expect(await listOrphanedWorktrees(dir)).toEqual([]);
   });
+});
+
+describe('runBindingCheck — a structured execution.testCommands.unit entry (specs/22 M17 P4)', () => {
+  it('with a declared "scope" template: runs for real and reports the identical binding verdict a legacy string would', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\nimport { add } from './impl.js';\ntest('adds two numbers', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story: add()');
+
+    const result = await runBindingCheck({
+      ...structuredInput(dir, 'STORY-STRUCTURED-BIND', baseSha, structuredVitestCommand()),
+      filesExpected: ['impl.js', 'impl.test.js'],
+    });
+
+    if (result.outcome !== 'completed')
+      throw new Error(`expected 'completed', got ${result.outcome}`);
+    expect(result.namedTests).toEqual(['adds two numbers']);
+    expect(result.failedUnderMutation).toEqual(['adds two numbers']);
+    expect(result.restoreVerified).toBe(true);
+  }, 30_000);
+
+  it('with NO "scope" template declared: a typed structured-layer-needs-scope refusal, before any lane is ever created', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\nimport { add } from './impl.js';\ntest('adds two numbers', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story: add()');
+    // The same real command `structuredVitestCommand()` builds, minus its own `scope` field --
+    // written out directly rather than destructured away, so nothing here is declared and unused.
+    const noScope: StructuredTestCommand = {
+      run: `${process.execPath} ${REAL_VITEST_ENTRY} run --root . --reporter=json`,
+      output: { source: 'stdout' },
+      format: 'vitest-json',
+    };
+
+    const result = await runBindingCheck({
+      ...structuredInput(dir, 'STORY-NO-SCOPE', baseSha, noScope),
+      filesExpected: ['impl.js', 'impl.test.js'],
+    });
+
+    expect(result).toEqual({ outcome: 'structured-layer-needs-scope' });
+    // Cheap: checked before any git operation, the identical "no-test-paths" precedent above.
+    expect(await listOrphanedWorktrees(dir)).toEqual([]);
+  });
+
+  it('input.timeoutMs reaches a structured, scoped run too: a genuinely hung baseline is killed near the declared bound', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\nimport { add } from './impl.js';\ntest('adds two numbers', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story: add()');
+    const hungCommand: StructuredTestCommand = {
+      run: `${process.execPath} -e "setTimeout(() => {}, 60000)"`,
+      output: { source: 'stdout' },
+      format: 'vitest-json',
+      scope: `${process.execPath} -e "setTimeout(() => {}, 60000)"`,
+    };
+    const started = Date.now();
+
+    const result = await runBindingCheck({
+      ...structuredInput(dir, 'STORY-STRUCTURED-TIMEOUT', baseSha, hungCommand),
+      filesExpected: ['impl.js', 'impl.test.js'],
+      timeoutMs: 400,
+    });
+
+    // Killed near the declared 400ms bound, not left to run out `runStructuredTestLayer`'s own
+    // default (`DEFAULT_TEST_RUN_TIMEOUT_MS`, 20 minutes) -- proof `input.timeoutMs` genuinely
+    // reached the structured, `scope`-rendered run `runScopedLayer` dispatched to.
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(result.outcome).toBe('baseline-timeout');
+  }, 15_000);
+
+  it('MUTATION EVIDENCE / regression (critic-reproduced): a "node --test via JUnit" whole-file crash on revert is credited as bound, never silently read as non-binding', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'function add(a, b) { return a + b; }\nmodule.exports = { add };\n',
+      // `require`s `impl.js` at the TOP of the file, deliberately -- the exact, ordinary shape a
+      // critic round reproduced directly: reverting `impl.js` (to nonexistent, at `baseSha`)
+      // crashes the WHOLE FILE at `require`-time, before the real test even registers. Node's own
+      // `--test-reporter=junit` reports this as one synthetic `<testcase name="impl.test.js">` --
+      // named after the FILE, not the real test, with NO file attribute at all (confirmed directly;
+      // `junit-xml.ts`'s own parser, P3's file, never reads one for pytest/Jest+jest-junit/this
+      // monorepo's own Vitest/Node's own junit reporter either). Before `namesFailedUnderMutation`'s
+      // own widened fallback (`specs/22` M17 P4), this unmatched, unattributed outcome was silently
+      // DROPPED, reporting "adds two numbers" as non-binding even though the revert broke
+      // everything -- the single most severe finding against this piece. This fixture is that exact
+      // reproduction, kept deliberately crash-prone rather than defensively wrapped.
+      'impl.test.js':
+        "const test = require('node:test');\nconst assert = require('node:assert');\nconst { add } = require('./impl.js');\ntest('adds two numbers', () => { assert.strictEqual(add(1, 2), 3); });\n",
+    });
+    await commit(dir, 'the story: add(), run by node --test via JUnit');
+    const nodeTestJunitCommand: StructuredTestCommand = {
+      run: `${process.execPath} --test --test-reporter=junit`,
+      output: { source: 'stdout' },
+      format: 'junit-xml',
+      scope: `${process.execPath} --test --test-reporter=junit {files}`,
+    };
+
+    const result = await runBindingCheck({
+      ...structuredInput(dir, 'STORY-NODE-TEST-JUNIT', baseSha, nodeTestJunitCommand),
+      filesExpected: ['impl.js', 'impl.test.js'],
+    });
+
+    if (result.outcome !== 'completed')
+      throw new Error(`expected 'completed', got ${result.outcome}`);
+    expect(result.namedTests).toEqual(['adds two numbers']);
+    expect(result.failedUnderMutation).toEqual(['adds two numbers']);
+    expect(result.restoreVerified).toBe(true);
+  }, 30_000);
+
+  it('MUTATION EVIDENCE / regression (second critic round, real reproduction): the project-wide fallback never over-credits a genuinely non-binding test that has its own, separately-observed passing outcome in the same run', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'function add(a, b) { return a + b; }\nmodule.exports = { add };\n',
+      // Identical crash-on-revert shape as the sibling test above: this file's own whole-file
+      // crash is what triggers `namesFailedUnderMutation`'s project-wide fallback.
+      'impl.test.js':
+        "const test = require('node:test');\nconst assert = require('node:assert');\nconst { add } = require('./impl.js');\ntest('adds two numbers', () => { assert.strictEqual(add(1, 2), 3); });\n",
+      // A genuinely non-binding test, in its OWN, completely unaffected file -- never imports
+      // impl.js, never crashes, reports its own real "pass" outcome in the identical mutated run
+      // that ALSO contains the impl.test.js crash marker above. Before the fallback's own
+      // `confirmedPassing` exclusion (`specs/22` M17 P4, a second critic round's own direct
+      // construction), this test was swept up as "bound" purely because an UNRELATED file in the
+      // same run happened to crash -- the exact false "this is bound" result `test:binding` exists
+      // to prevent, the mirror image of the original silent-drop bug.
+      'tautology.test.js':
+        "const test = require('node:test');\nconst assert = require('node:assert');\ntest('a pure tautology', () => { assert.strictEqual(true, true); });\n",
+    });
+    await commit(dir, 'the story: add(), plus an unrelated, genuinely non-binding tautology');
+    const nodeTestJunitCommand: StructuredTestCommand = {
+      run: `${process.execPath} --test --test-reporter=junit`,
+      output: { source: 'stdout' },
+      format: 'junit-xml',
+      scope: `${process.execPath} --test --test-reporter=junit {files}`,
+    };
+
+    const result = await runBindingCheck({
+      ...structuredInput(dir, 'STORY-TAUTOLOGY-UNRELATED-CRASH', baseSha, nodeTestJunitCommand),
+      filesExpected: ['impl.js', 'impl.test.js', 'tautology.test.js'],
+    });
+
+    if (result.outcome !== 'completed')
+      throw new Error(`expected 'completed', got ${result.outcome}`);
+    expect([...result.namedTests].sort()).toEqual(['a pure tautology', 'adds two numbers']);
+    // The real, crashed test is still correctly credited (the original fix still holds)...
+    expect(result.failedUnderMutation).toContain('adds two numbers');
+    // ...but the unrelated, genuinely non-binding tautology is NOT swept up by the fallback.
+    expect(result.failedUnderMutation).not.toContain('a pure tautology');
+    expect(result.failedUnderMutation).toEqual(['adds two numbers']);
+  }, 30_000);
+
+  it('a mutated outcome with a DEFINED file value that matches no file the baseline ever saw hits the same project-wide fallback as "no file at all", never silently dropped', async () => {
+    // A direct, fully-controlled `forge-json` construction (never a real tool's own quirk) --
+    // targets the specific sub-case a critic round mutation-tested and found correct but
+    // unguarded: `outcome.file !== undefined`, but `namedTestsByFile.get(outcome.file)` itself
+    // returns `undefined` because the baseline never reported that file at all (as opposed to
+    // `outcome.file === undefined`, the sub-case every other test in this describe block already
+    // covers).
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'function add(a, b) { return a + b; }\nmodule.exports = { add };\n',
+      'impl.test.js': '// a placeholder: this in-house runner never reads this file\n',
+      'run-report.cjs': `
+const fs = require('fs');
+const exists = fs.existsSync('impl.js');
+const report = exists
+  ? { forgeTestReport: 1, tests: [{ name: 'adds two numbers', status: 'pass', file: 'impl.test.js' }] }
+  : { forgeTestReport: 1, tests: [{ name: 'UNRECOGNIZED', status: 'fail', file: 'a-file-the-baseline-never-saw.js' }] };
+console.log(JSON.stringify(report));
+`,
+    });
+    await commit(dir, 'the story: add(), run by an in-house runner reporting a real file field');
+    const customRunnerCommand: StructuredTestCommand = {
+      run: `${process.execPath} run-report.cjs`,
+      output: { source: 'stdout' },
+      format: 'forge-json',
+      scope: `${process.execPath} run-report.cjs`,
+    };
+
+    const result = await runBindingCheck({
+      ...structuredInput(dir, 'STORY-UNRECOGNIZED-FILE', baseSha, customRunnerCommand),
+      filesExpected: ['impl.js', 'impl.test.js'],
+    });
+
+    if (result.outcome !== 'completed')
+      throw new Error(`expected 'completed', got ${result.outcome}`);
+    expect(result.namedTests).toEqual(['adds two numbers']);
+    expect(result.failedUnderMutation).toEqual(['adds two numbers']);
+    expect(result.restoreVerified).toBe(true);
+  }, 30_000);
+
+  it('a "custom runner via translator" structured command flows through the real baseline/mutated/restore lifecycle (PLAN-M17.md P4\'s own "Tests first" line, third of three runner configs)', async () => {
+    const dir = await freshRepo();
+    const baseSha = await headSha(dir);
+    await writeFiles(dir, {
+      'impl.js': 'export function add(a, b) { return a + b; }\n',
+      'impl.test.js':
+        '// a placeholder: this in-house runner below has its own idiosyncratic invocation, never reads this file\n',
+      'run-tests.cjs': `
+const fs = require('fs');
+let pass = false;
+try {
+  const content = fs.readFileSync('impl.js', 'utf8');
+  pass = content.includes('a + b');
+} catch (e) { pass = false; }
+console.log('RESULT:' + (pass ? 'PASS' : 'FAIL') + ':adds two numbers');
+`,
+      'translate.cjs': `
+const fs = require('fs');
+const raw = fs.readFileSync(process.argv[2], 'utf8').trim();
+const parts = raw.split(':');
+process.stdout.write(JSON.stringify({ forgeTestReport: 1, tests: [{ name: parts[2], status: parts[1] === 'PASS' ? 'pass' : 'fail' }] }));
+`,
+    });
+    await commit(dir, 'the story: add(), run by an in-house runner with its own raw format');
+    const customRunnerCommand: StructuredTestCommand = {
+      run: `${process.execPath} run-tests.cjs`,
+      output: { source: 'stdout' },
+      format: 'tap', // irrelevant: translate, when present, always wins over format.
+      translate: `${process.execPath} translate.cjs {output}`,
+      // This in-house runner ignores {files} entirely (it always checks the one impl.js it knows
+      // about) -- declared anyway so canScopeTestLayer passes; `{files}` genuinely narrowing a run
+      // is already proven by this file's own dedicated "declared scope template" test above.
+      scope: `${process.execPath} run-tests.cjs`,
+    };
+
+    const result = await runBindingCheck({
+      ...structuredInput(dir, 'STORY-CUSTOM-RUNNER', baseSha, customRunnerCommand),
+      filesExpected: ['impl.js', 'impl.test.js'],
+      // `output.source: 'stdout'` + a declared `translate`: FORGE materialises the captured
+      // stdout into a real file for the translator (`runTranslator`'s own doc comment,
+      // `reporter.ts`) -- needs a REAL `createTempPath`, unlike every other test in this
+      // describe block, which never reaches that code path.
+      createTempPath: makeRealTempPath(dir),
+    });
+
+    if (result.outcome !== 'completed')
+      throw new Error(`expected 'completed', got ${result.outcome}`);
+    expect(result.namedTests).toEqual(['adds two numbers']);
+    expect(result.failedUnderMutation).toEqual(['adds two numbers']);
+    expect(result.restoreVerified).toBe(true);
+  }, 30_000);
 });
 
 describe('runBindingCheck — never mutates the main repository', () => {

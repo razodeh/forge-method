@@ -46,20 +46,17 @@ import {
 } from '@forge/vcs';
 
 import {
+  canScopeTestLayer,
   createBindingLane,
   runChangeLevelCheck,
+  runScopedLayer,
   splitImplementationAndTestPaths,
   type BindingCheckInput,
   type BindingCheckOutcome,
   type ForHunkMode,
 } from './binding.ts';
 import { computeHunks, type Hunk, type TextHunk } from './hunks.ts';
-import {
-  runAndNormalize,
-  type RunAndNormalizeResult,
-  type TestFailureKind,
-  type TestOutcome,
-} from './reporter.ts';
+import type { RunAndNormalizeResult, TestFailureKind, TestOutcome } from './reporter.ts';
 
 /**
  * The plan's own "about two dozen" (`process/plans/PLAN-M16.md` P12), made concrete: this piece's own
@@ -247,15 +244,35 @@ export interface HunkMutationOptions {
  * tell an assertion failure from a load failure; a hunk's own verdict does, so this is a deliberate,
  * disclosed parallel implementation of the identical name/file-matching mechanism, not a shared helper
  * split in two). A named test matched directly by name carries whatever `kind` its own real outcome
- * reports; one recovered only via `TestOutcome.file` (a synthetic whole-file-load-failure outcome,
+ * reports; one recovered via `TestOutcome.file` (a synthetic whole-file-load-failure outcome,
  * `reporter.ts`'s own `kind: 'load'`) carries that file outcome's own `kind` for every named test the
  * baseline discovered in that file — the whole file could not run, so none of its own tests ran either,
- * real binding evidence for each of them regardless of what the final verdict calls it. */
+ * real binding evidence for each of them regardless of what the final verdict calls it.
+ *
+ * **An unmatched outcome with NO usable file attribution at all is credited to EVERY known test NOT
+ * already confirmed passing elsewhere in this same run** (`specs/22` M17 P4) — the identical
+ * fallback, for the identical reason and with the identical evidence-scoped exclusion, `binding.ts`'s
+ * own `namesFailedUnderMutation` applies (that function's own doc comment has the full reasoning,
+ * the real `node --test --test-reporter=junit` whole-file-crash reproduction that found the original
+ * gap, and the real "an unrelated tautology in its own, unaffected file" reproduction that found
+ * this narrower, project-wide-blast-radius one): some structured format genuinely cannot say which
+ * file crashed at all, and crediting every known test rather than silently dropping the signal is
+ * the one choice that can never read a revert that broke everything as a false `uncovered` -- but a
+ * test this SAME run can directly, positively vouch for (its own real, non-failing outcome) is never
+ * swept up just because some unrelated file also crashed. */
 function classifyMutationOutcomes(
   namedTestsByFile: ReadonlyMap<string, readonly string[]>,
   knownNames: ReadonlySet<string>,
   outcomes: readonly TestOutcome[],
 ): ReadonlyMap<string, TestFailureKind | undefined> {
+  const confirmedPassing = new Set<string>();
+  for (const outcome of outcomes) {
+    if (outcome.status !== 'fail' && knownNames.has(outcome.name)) {
+      confirmedPassing.add(outcome.name);
+    }
+  }
+  const fallbackNames = [...knownNames].filter((name) => !confirmedPassing.has(name));
+
   const failedByName = new Map<string, TestFailureKind | undefined>();
   for (const outcome of outcomes) {
     if (outcome.status !== 'fail') continue;
@@ -263,8 +280,9 @@ function classifyMutationOutcomes(
       failedByName.set(outcome.name, outcome.kind);
       continue;
     }
-    if (outcome.file === undefined) continue;
-    for (const name of namedTestsByFile.get(outcome.file) ?? []) {
+    const namesInFile = outcome.file === undefined ? undefined : namedTestsByFile.get(outcome.file);
+    const names = namesInFile ?? fallbackNames;
+    for (const name of names) {
       if (!failedByName.has(name)) failedByName.set(name, outcome.kind);
     }
   }
@@ -313,14 +331,15 @@ function verdictFromRun(
   if (run.outcome === 'tool-error')
     return { kind: 'skipped', reason: `tool-error: ${run.message}` };
   if (run.outcome === 'missing-command') {
-    // Unreachable through this module's own public entry point: `runAndNormalize` is always called
-    // here with `input.testCommand`, a non-optional `string` on `BindingCheckInput` — the identical
-    // overload narrowing `binding.ts`'s own calls already rely on. Checked explicitly (R5: a branch
-    // only reachable by calling a private function directly, bypassing the real entry point, is not a
-    // real branch to keep) rather than asserted away, matching this file's own "a stillborn mutant
-    // proves nothing" stance toward never silently guessing a verdict.
+    // Unreachable through this module's own public entry point: every real run here goes through
+    // `binding.ts`'s own `runScopedLayer` (`specs/22` M17 P4), whose return type already excludes
+    // `'missing-command'` -- the identical overload narrowing this file's own calls already rely on,
+    // legacy or structured alike. Checked explicitly (R5: a branch only reachable by calling a
+    // private function directly, bypassing the real entry point, is not a real branch to keep) rather
+    // than asserted away, matching this file's own "a stillborn mutant proves nothing" stance toward
+    // never silently guessing a verdict.
     throw new Error(
-      'forge/hunk-mutation: unreachable: testCommand is always a defined string here.',
+      'forge/hunk-mutation: unreachable: runScopedLayer never returns "missing-command".',
     );
   }
   if (run.report.outcomes.some((outcome) => outcome.kind === 'timeout')) return { kind: 'timeout' };
@@ -382,16 +401,7 @@ async function runTextHunkAlone(
 ): Promise<HunkVerdict> {
   const applied = await applyHunkReversal(lane.path, hunk);
   if (!applied) return { kind: 'invalid', reason: 'reversal-failed' };
-  const run = await runAndNormalize(
-    input.testCommand,
-    lane.path,
-    input.ecosystem,
-    input.createTempPath,
-    undefined,
-    undefined,
-    testPaths,
-    input.timeoutMs,
-  );
+  const run = await runScopedLayer(input, lane.path, testPaths);
   return verdictFromRun(run, forHunkMode, false);
 }
 
@@ -411,16 +421,7 @@ async function runWholeFileMutant(
   forHunkMode: ForHunkMode,
 ): Promise<HunkVerdict> {
   await revertPathsToRevision(lane, fromSha, [relativePath]);
-  const run = await runAndNormalize(
-    input.testCommand,
-    lane.path,
-    input.ecosystem,
-    input.createTempPath,
-    undefined,
-    undefined,
-    testPaths,
-    input.timeoutMs,
-  );
+  const run = await runScopedLayer(input, lane.path, testPaths);
   return verdictFromRun(run, forHunkMode, true);
 }
 
@@ -573,6 +574,14 @@ export async function runHunkMutationCheck(
   const { implementationPaths, testPaths } = splitImplementationAndTestPaths(input.filesExpected);
   if (testPaths.length === 0) {
     return { outcome: { outcome: 'no-test-paths' } };
+  }
+  // Checked before any lane exists (`specs/22` M17 P4) -- hunk mode would otherwise need up to
+  // `options.maxHunks` EXTRA whole-suite runs beyond the change-level check's own fixed three, which
+  // makes the unsafe-to-recover-scope problem `canScopeTestLayer`'s own doc comment (`binding.ts`)
+  // describes for a SINGLE scopeless run even more acute here; refused outright, the same way, before
+  // either cost is ever paid.
+  if (!canScopeTestLayer(input)) {
+    return { outcome: { outcome: 'structured-layer-needs-scope' } };
   }
 
   const lane = await createBindingLane(input);

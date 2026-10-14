@@ -110,6 +110,10 @@ Fixture story body.
 async function freshProject(
   options: {
     readonly tautologyTestName?: string;
+    // `specs/22` M17 P4: a plain string (legacy, unchanged default) or a structured
+    // `testCommands.unit` entry -- `Record<string, unknown>`, the identical reasoning
+    // `bin-binding.test.ts`'s own sibling `testCommandOverride` doc comment already gives.
+    readonly testCommandOverride?: string | Readonly<Record<string, unknown>>;
   } = {},
 ): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-bin-exempt-'));
@@ -121,7 +125,10 @@ async function freshProject(
   await writeFile(path.join(dir, 'package.json'), '{"name":"fixture","private":true}\n', 'utf8');
   const config = {
     ...DEFAULT_CONFIG,
-    execution: { ...DEFAULT_CONFIG.execution, testCommands: { unit: TEST_COMMAND } },
+    execution: {
+      ...DEFAULT_CONFIG.execution,
+      testCommands: { unit: options.testCommandOverride ?? TEST_COMMAND },
+    },
   };
   await mkdir(path.join(dir, '.forge'), { recursive: true });
   await writeFile(path.join(dir, '.forge', 'config.yaml'), YAML.stringify(config), 'utf8');
@@ -330,6 +337,49 @@ describe('forge test exempt — a valid exemption', () => {
     };
     expect(bindingParsed.passed).toBe(true);
     expect(bindingParsed.nonBinding).toEqual([]);
+    expect(bindingParsed.exempt).toBe(true);
+    expect(bindingParsed.bound).toEqual(['adds']);
+  }, 60_000);
+
+  it('a structured execution.testCommands.unit entry with a declared "scope" template is routed correctly too (specs/22 M17 P4)', async () => {
+    const dir = await freshProject({
+      testCommandOverride: {
+        run: `${TEST_COMMAND} --reporter=json`,
+        output: { source: 'stdout' },
+        format: 'vitest-json',
+        scope: `${TEST_COMMAND} --reporter=json {files}`,
+      },
+    });
+
+    const exempt = run(
+      [
+        'test',
+        'exempt',
+        'STORY-001',
+        'tautology',
+        '--reason',
+        'A pure tautology, never touches impl.js.',
+        '--owner',
+        'alice',
+        '--expires',
+        isoDate(30),
+        '--json',
+      ],
+      dir,
+    );
+    expect(exempt.status, exempt.stderr).toBe(0);
+    const exemptParsed = JSON.parse(exempt.stdout) as { readonly recorded: boolean };
+    expect(exemptParsed.recorded).toBe(true);
+    await amendOntoImplementation(dir);
+
+    const binding = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir);
+    expect(binding.status).toBe(0);
+    const bindingParsed = JSON.parse(binding.stdout) as {
+      readonly passed: boolean;
+      readonly exempt: boolean;
+      readonly bound: readonly string[];
+    };
+    expect(bindingParsed.passed).toBe(true);
     expect(bindingParsed.exempt).toBe(true);
     expect(bindingParsed.bound).toEqual(['adds']);
   }, 60_000);

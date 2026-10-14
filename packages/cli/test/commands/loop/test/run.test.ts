@@ -7,7 +7,7 @@
  * @see PLAN-M8.md P4
  */
 import { createRequire } from 'node:module';
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -59,25 +59,7 @@ function ctx(dir: string, testCommands: TestCommands) {
   return { paths: new ProjectPaths(dir), projectRoot: dir, testCommands };
 }
 
-describe('testRun — a structured testCommands.<layer> entry is not yet routed through here (specs/22 M17 P3)', () => {
-  it('default rule: a structured unit entry is treated the same as "no command configured", never run', async () => {
-    const dir = await tempDir();
-    // A real package.json so ecosystem detection succeeds and execution reaches the per-layer loop
-    // this test is actually about -- the pre-existing ecosystem gate above it (`PLAN-M17.md` P4's own
-    // surface) is not this test's concern.
-    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
-    const result = await testRun(
-      ctx(dir, {
-        unit: { run: 'exit 1', output: { source: 'stdout' }, format: 'tap' },
-      }),
-      {},
-      UNUSED_TEMP_PATH,
-    );
-    expect(result.problems).toEqual([
-      'no test-layer command is configured (execution.testCommands has none of unit/integration/contract/e2e)',
-    ]);
-  });
-
+describe('testRun — lint/typecheck: the structured testCommands form has no meaning for this exit-code-driven check (specs/22 M17 P3)', () => {
   it('--rule lint: a structured lint entry cannot be run here, with an honest message naming what IS configured (never the misleading "not configured")', async () => {
     const dir = await tempDir();
     const result = await testRun(
@@ -101,6 +83,190 @@ describe('testRun — a structured testCommands.<layer> entry is not yet routed 
       'execution.testCommands.typecheck is the structured testCommands form, which this exit-code-driven check cannot run',
     ]);
   });
+});
+
+describe('testRun — default rule: a structured testCommands.<layer> entry runs through runStructuredTestLayer (specs/22 M17 P4)', () => {
+  it('a real node --test TAP-emitting unit layer runs for real: failed:0, with AC ids extracted from the real names', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'sample.test.js'),
+      `
+const test = require('node:test');
+const assert = require('node:assert');
+test('AC-920-1 passes', () => { assert.ok(true); });
+test('AC-920-2 also passes', () => { assert.ok(true); });
+`,
+      'utf8',
+    );
+    const result = await testRun(
+      ctx(dir, { unit: { run: `${NODE} --test`, output: { source: 'stdout' }, format: 'tap' } }),
+      {},
+      UNUSED_TEMP_PATH,
+    );
+    // No failure here at all -- nothing to retry-in-isolation, so this test stays free of the
+    // "no filter declared" degradation the dedicated tests below cover on their own.
+    expect(result.failed).toBe(0);
+    expect(result.problems).toBeUndefined();
+    const byName = new Map((result.outcomes ?? []).map((o) => [o.name, o]));
+    expect(byName.get('AC-920-1 passes')).toMatchObject({ acId: 'AC-920-1', status: 'pass' });
+    expect(byName.get('AC-920-2 also passes')).toMatchObject({
+      acId: 'AC-920-2',
+      status: 'pass',
+    });
+  });
+
+  it('--scope story (options.files given): a declared "scope" template is rendered with {files} and genuinely narrows which file runs', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'a.test.js'),
+      `const test = require('node:test'); const assert = require('node:assert'); test('AC-921-1 a-only', () => { assert.ok(true); });`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'b.test.js'),
+      `const test = require('node:test'); const assert = require('node:assert'); test('AC-921-2 b-only', () => { assert.ok(true); });`,
+      'utf8',
+    );
+    const result = await testRun(
+      ctx(dir, {
+        unit: {
+          run: `${NODE} --test`,
+          output: { source: 'stdout' },
+          format: 'tap',
+          scope: `${NODE} --test {files}`,
+        },
+      }),
+      { files: ['a.test.js'] },
+      UNUSED_TEMP_PATH,
+    );
+    expect(result.problems).toBeUndefined();
+    const names = (result.outcomes ?? []).map((o) => o.name);
+    expect(names).toEqual(['AC-921-1 a-only']);
+  });
+
+  it('--scope story (options.files given) but no "scope" template declared: degrades to the whole layer, with a stated problem -- never a silent partial pass', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'a.test.js'),
+      `const test = require('node:test'); const assert = require('node:assert'); test('AC-922-1 a-only', () => { assert.ok(true); });`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'b.test.js'),
+      `const test = require('node:test'); const assert = require('node:assert'); test('AC-922-2 b-only', () => { assert.ok(true); });`,
+      'utf8',
+    );
+    const result = await testRun(
+      ctx(dir, {
+        unit: { run: `${NODE} --test`, output: { source: 'stdout' }, format: 'tap' },
+      }),
+      { files: ['a.test.js'] },
+      UNUSED_TEMP_PATH,
+    );
+    expect(result.problems?.some((p) => p.includes('"scope"'))).toBe(true);
+    // The WHOLE layer ran (both files), never silently narrowed to a wrong, partial subset.
+    const names = (result.outcomes ?? []).map((o) => o.name).sort();
+    expect(names).toEqual(['AC-922-1 a-only', 'AC-922-2 b-only']);
+  });
+
+  it('retry-in-isolation: a declared "filter" template is rendered with {name:regex} and correctly classifies a real flake', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    // The identical counter-file flake fixture `VITEST_CMD`'s own sibling test uses, adapted to
+    // node's own test runner: fails on this process's first real invocation only.
+    await writeFile(
+      path.join(dir, 'flakes.test.js'),
+      `
+const fs = require('node:fs');
+const test = require('node:test');
+const assert = require('node:assert');
+const counterPath = './counter.txt';
+const count = fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, 'utf8')) + 1 : 1;
+fs.writeFileSync(counterPath, String(count));
+test('AC-923-1 flakes on the first real invocation only', () => { assert.ok(count > 1); });
+`,
+      'utf8',
+    );
+    const result = await testRun(
+      ctx(dir, {
+        unit: {
+          run: `${NODE} --test`,
+          output: { source: 'stdout' },
+          format: 'tap',
+          // `{name:regex}` is used BARE, never wrapped in an extra pair of quotes: the placeholder
+          // already renders a complete, self-quoted shell token (`renderTestCommandTemplate`'s own
+          // doc comment) -- double-quoting it (`'{name:regex}'`) would make the shell see an empty
+          // `''` immediately followed by the real pattern UNQUOTED, which then splits on its own
+          // spaces into several stray positional arguments. A critic round found exactly that
+          // mistake in an earlier draft of this fixture: it still happened to "pass" only because
+          // the resulting truncated, unanchored pattern coincidentally still matched this one test.
+          filter: `${NODE} --test --test-name-pattern={name:regex} flakes.test.js`,
+        },
+      }),
+      {},
+      UNUSED_TEMP_PATH,
+    );
+    // F-TEST-6: the original failing run still counts, even though the isolated retry itself passed.
+    expect(result.failed, JSON.stringify(result.problems)).toBe(1);
+    const flakyState = await readFlakyState(new ProjectPaths(dir));
+    // TAP (unlike vitest's own JSON) carries no file concept at all (`tap.ts`'s own doc comment) --
+    // `flakyKey` therefore keys this record by the bare name alone, never a `file::name` compound
+    // (`findFlakyRecord`'s own `::`-suffix lookup, used by every sibling vitest-based test in this
+    // file, would never match here).
+    const record = flakyState.tests['AC-923-1 flakes on the first real invocation only'];
+    expect(record?.outcomes).toEqual(['fail']);
+  });
+
+  it('MUTATION EVIDENCE: retry-in-isolation with no "filter" template declared never treats the skip as "not flaky" -- flaky.json is never written this run', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    await writeFile(
+      path.join(dir, 'always-fails.test.js'),
+      `const test = require('node:test'); const assert = require('node:assert'); test('AC-924-1 always fails', () => { assert.fail('nope'); });`,
+      'utf8',
+    );
+    const result = await testRun(
+      ctx(dir, { unit: { run: `${NODE} --test`, output: { source: 'stdout' }, format: 'tap' } }),
+      {},
+      UNUSED_TEMP_PATH,
+    );
+    // The real, first-pass failure still counts (F-TEST-6: retries never make a gate pass).
+    expect(result.failed).toBe(1);
+    expect(result.problems?.some((p) => p.includes('"filter"'))).toBe(true);
+    expect(result.problems?.some((p) => p.includes('unclassified'))).toBe(true);
+    // Never silently recorded as a resolved, non-flaky "pass": a mutant that skipped straight to
+    // `flakeOccurrence.set(key, true)` instead of leaving it unset (this file's own `problems` guard
+    // then never firing) would persist a flaky.json record of `['pass']` for this test -- the exact
+    // "no filter declared is NOT not-flaky" fact this test pins.
+    await expect(access(path.join(dir, 'docs/forge/reports/flaky.json'))).rejects.toThrow();
+  });
+
+  it('options.timeoutMs reaches a structured layer too: a genuinely hung structured run is killed near the declared bound', async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, 'package.json'), '{}', 'utf8');
+    const started = Date.now();
+    const result = await testRun(
+      ctx(dir, {
+        unit: {
+          run: `${NODE} -e "setTimeout(() => {}, 60000)"`,
+          output: { source: 'stdout' },
+          format: 'tap',
+        },
+      }),
+      { timeoutMs: 400 },
+      UNUSED_TEMP_PATH,
+    );
+    // Killed near the declared 400ms bound, not left to run out the structured layer's own default
+    // (`DEFAULT_TEST_RUN_TIMEOUT_MS`, 20 minutes) -- proof `options.timeoutMs` genuinely reached
+    // `runStructuredTestLayer`'s own run, not merely accepted and silently dropped.
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(result.failed).toBeGreaterThanOrEqual(1);
+    const timedOut = (result.outcomes ?? []).some((outcome) => outcome.kind === 'timeout');
+    expect(timedOut).toBe(true);
+  }, 15_000);
 });
 
 describe('testRun — default rule (real vitest)', () => {

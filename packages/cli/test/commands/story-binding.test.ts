@@ -319,7 +319,7 @@ describe('forge story verify — test:binding (specs/22 M15 P5)', () => {
     expect(check?.message).toContain('execution.testCommands.unit');
   }, 30_000);
 
-  it('is unverifiable, the same as "not configured", for a structured execution.testCommands.unit entry (specs/22 M17 P3: not yet routed through runBindingCheck)', async () => {
+  it('is unverifiable, naming the missing "scope" template, for a structured execution.testCommands.unit entry with none declared (specs/22 M17 P4)', async () => {
     const { ctx } = await freshProject();
     const structured: StoryVerifyContext = {
       ...ctx,
@@ -333,6 +333,36 @@ describe('forge story verify — test:binding (specs/22 M15 P5)', () => {
     const check = outcome.report.checks.find((c) => c.check === 'test:binding');
     expect(check?.status).toBe('unverifiable');
     expect(check?.message).toContain('execution.testCommands.unit');
+    expect(check?.message).toContain('"scope"');
+  }, 30_000);
+
+  it('passes for a genuinely binding test with a structured execution.testCommands.unit entry that DOES declare a "scope" template (specs/22 M17 P4)', async () => {
+    const { dir, ctx } = await freshProject();
+    // `TEST_COMMAND` has no `--reporter=json` of its own: the LEGACY path (`reporter.ts`'s own
+    // `runVitest`) appends it automatically, but a structured `run`/`scope` template is executed
+    // VERBATIM (`runStructuredTestLayer`), so it must be spelled out here.
+    const base = `${TEST_COMMAND} --reporter=json`;
+    const structured: StoryVerifyContext = {
+      ...ctx,
+      testCommands: {
+        unit: {
+          run: base,
+          output: { source: 'stdout' },
+          format: 'vitest-json',
+          scope: `${base} {files}`,
+        },
+      },
+    };
+
+    const outcome = await storyVerify(structured, 'STORY-001');
+
+    expect(outcome.kind).toBe('verified');
+    if (outcome.kind !== 'verified') throw new Error('unreachable');
+    const check = outcome.report.checks.find((c) => c.check === 'test:binding');
+    expect(check?.status).toBe('pass');
+    await expect(readdir(path.join(dir, 'docs/forge/reports/mutation'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   }, 30_000);
 
   it('is fail, never a silent pass, when the scratch worktree is not fully restored after the check', async () => {

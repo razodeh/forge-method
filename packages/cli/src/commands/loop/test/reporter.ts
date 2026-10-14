@@ -14,7 +14,7 @@ import { ForgeError } from '@forge/core';
 import { readTextFile, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
 import { runShellCommand } from '@forge/engine/dispatch';
 import { parseForgeTestReport, type ForgeTestReportEntry } from '@forge/schemas';
-import type { StructuredTestCommand } from '@forge/schemas/config';
+import type { StructuredTestCommand, TestCommandEntry } from '@forge/schemas/config';
 import { XMLParser } from 'fast-xml-parser';
 
 import { extractAcId } from './ac-binding.ts';
@@ -848,6 +848,241 @@ export async function runStructuredTestLayer(
     };
   }
   return { outcome: 'ran', report: { outcomes: parsed.tests.map(outcomeFromReportEntry) } };
+}
+
+// --- scoped dispatch: legacy-or-structured, files-scoped-or-whole, single-test-or-not ----------
+// (post-v1.0, `specs/22` M17 P4: every consumer that used to call `runAndNormalize` directly, now
+// routed through here so BOTH forms share one dispatcher instead of each consumer growing its own
+// `typeof command === 'string'` branch.)
+
+/** Substitutes `{files}`/`{name}`/`{name:regex}` inside a structured `testCommands.<layer>` template
+ * (`run`, `scope` or `filter` -- `18` §18.3's own "`{files}` and `{name}`/`{name:regex}` placeholders
+ * where the project supports them") with real, shell-quoted values -- the one place this substitution
+ * happens, so `scope`/`filter` rendering (below) and any future template-shaped field share it rather
+ * than each growing an independently-drifting copy. A placeholder with no corresponding value in
+ * `values` is left untouched, verbatim: a project authoring a template that uses a placeholder this
+ * call does not supply is that project's own authoring mistake, surfaced naturally as whatever real
+ * shell error the still-brace-containing command produces when it runs -- never silently dropped or
+ * guessed at.
+ *
+ * `{files}` becomes every one of `values.files`, individually shell-quoted (`shellQuote`, this file's
+ * own pre-existing helper) and space-joined -- already project-relative, the identical convention
+ * `runVitest`/`runPytest`'s own pre-existing `files` parameter already established above. `{name}` is
+ * `values.name`, shell-quoted verbatim -- a literal match, for a runner whose own filter flag takes
+ * one (pytest's `-k`, e.g.). `{name:regex}` is `values.name`, anchored (`^...$`) and regex-escaped
+ * (`escapeRegExp`, this file's own pre-existing helper) before being shell-quoted -- for a runner whose
+ * own filter flag takes a regex (vitest's `-t`). Order between the two `{name...}` replacements does
+ * not matter: `'{name:regex}'` never contains `'{name}'` as a substring (the `:` breaks it), so neither
+ * `replaceAll` call can ever fire on text the other one produced.
+ *
+ * Every `replaceAll` call below passes a REPLACER FUNCTION, never a bare string -- see the inline
+ * comment at the first one for why a string replacement is unsound here (not an edge case: it broke
+ * for every real `{name:regex}` value, including the empty string).
+ *
+ * **Every placeholder already renders a COMPLETE, self-quoted shell token.** A project's own
+ * template uses it bare (`-t {name:regex}`), never wrapped in an extra pair of quotes
+ * (`-t '{name:regex}'`) -- that would make the shell see an empty `''` immediately followed by the
+ * real, UNQUOTED value, which then splits on its own internal spaces into several stray positional
+ * arguments. A critic round found exactly this mistake in one of this piece's own test fixtures: it
+ * still happened to "pass" only because the resulting truncated, unanchored pattern coincidentally
+ * still matched the one test under test.
+ *
+ * @see specs/18 §18.3
+ * @see specs/22 M17 P4
+ */
+export function renderTestCommandTemplate(
+  template: string,
+  values: { readonly files?: readonly string[]; readonly name?: string },
+): string {
+  let rendered = template;
+  if (values.files !== undefined) {
+    const filesArg = values.files.map((file) => shellQuote(file)).join(' ');
+    // A REPLACER FUNCTION, never a bare replacement string (a critic round reproduced this
+    // directly): `String.prototype.replaceAll(search, replacement)` runs a STRING `replacement`
+    // through `GetSubstitution` even when `search` is itself a plain string, not a regex -- `$&`,
+    // `` $` ``, `$'`, `$$` are magic tokens in that string regardless. `shellQuote`'s own closing
+    // `'` immediately preceded by the literal regex anchor `$` (below, for `{name:regex}`) means
+    // the computed replacement ALWAYS ends in the literal two characters `$` then `'` -- which
+    // `GetSubstitution` reads as `$'` ("insert everything after the match"), silently eating the
+    // closing quote and duplicating whatever text follows the placeholder, for EVERY name,
+    // including the empty string -- not merely an adversarial one. The identical risk applies to
+    // `{files}`/`{name}` whenever a project-authored value (a test name, a file name) happens to
+    // contain `$$`/`$&`/`` $` ``/`$'` anywhere at all. A function's return value is used VERBATIM
+    // (per spec, `GetSubstitution` is never applied to it), which sidesteps the whole class.
+    rendered = rendered.replaceAll('{files}', () => filesArg);
+  }
+  if (values.name !== undefined) {
+    const regexArg = shellQuote(`^${escapeRegExp(values.name)}$`);
+    rendered = rendered.replaceAll('{name:regex}', () => regexArg);
+    const nameArg = shellQuote(values.name);
+    rendered = rendered.replaceAll('{name}', () => nameArg);
+  }
+  return rendered;
+}
+
+/** `command` with `timeoutMs` overridden when `timeoutMs` is given, falling back to the layer's own
+ * declared `timeoutMs` (or `runStructuredTestLayer`'s own default) otherwise. `runStructuredTestLayer`
+ * (P3's own signature) has no override PARAMETER -- it reads only `command.timeoutMs` -- so an
+ * external override (`bin.ts`'s own `--timeout-ms` flag, threaded as `BindingCheckInput.timeoutMs`/
+ * `TestRunOptions.timeoutMs`) can only reach it by building the object it reads from. Exported so
+ * `binding.ts`'s own `runScopedLayer` applies the identical one-line rule `runTestLayerCommand`/
+ * `runTestLayerRetry` below apply, rather than a second, independently-drifting copy. A critic round
+ * reproduced directly that the first draft of all three call sites passed the structured command
+ * straight through unmodified, silently dropping `timeoutMs` for every structured, scoped run or
+ * retry -- fixed here, once, for all three. */
+export function withTimeoutOverride(
+  command: StructuredTestCommand,
+  timeoutMs: number | undefined,
+): StructuredTestCommand {
+  return timeoutMs === undefined ? command : { ...command, timeoutMs };
+}
+
+/** `runTestLayerCommand`'s own result: the real run, plus whether it had to degrade to do it.
+ * `degraded` is `true` only when `files` was given (a caller asked to scope this run to a closed set
+ * of test files) but the structured command had no `scope` template to honour that with, so the
+ * WHOLE configured `run` executed instead (`18` §18.3's own degradation table, `specs/22` M17 Decision
+ * 3: "no scope -> ... runs the whole suite instead"). Always `false` for a legacy string command
+ * (`files`-scoping is native there, never a degradation) and whenever `files` itself was not given
+ * (nothing was asked to be scoped in the first place). */
+export interface TestLayerRunResult {
+  readonly run: Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>;
+  readonly degraded: boolean;
+}
+
+/**
+ * Runs `command` -- a legacy string or a structured `testCommands.<layer>` entry alike -- optionally
+ * scoped to a closed list of project-relative `files`. The one dispatcher `run.ts`'s own default-rule
+ * layer loop and `--scope story` narrowing both go through, so the legacy-vs-structured and
+ * scoped-vs-whole branching lives in exactly one place.
+ *
+ * `files === undefined` runs `command` exactly as declared, with no scoping at all -- `command.run`
+ * for a structured entry, the bare string for a legacy one -- matching `runAndNormalize`'s own
+ * existing "no filter given" behaviour (never a degradation: nothing was asked to be scoped).
+ * `files` given scopes to exactly that closed list: a legacy string passes straight through to
+ * `runAndNormalize`'s own already-shipped `files` parameter (vitest/pytest positional file
+ * arguments, unchanged). A structured command with a declared `scope` renders `{files}` into it and
+ * runs THAT as `commandToRun` (`runStructuredTestLayer`'s own seam for exactly this). A structured
+ * command with NO `scope` degrades to running `command.run` unscoped instead -- `TestLayerRunResult.
+ * degraded` tells the caller so, never silently (`18` §18.3's degradation table). This degradation is
+ * safe for THIS consumer because nothing downstream needs to recover "exactly these files" from the
+ * result -- `run.ts`'s own callers (the project-wide aggregate, `checkAcCoverage`'s AC-id keying) read
+ * every outcome regardless of which file it came from; `binding.ts`/`hunk-mutation.ts` do NOT reuse
+ * this function for exactly that reason (see `binding.ts`'s own `runScopedLayer`, which refuses
+ * instead -- its own doc comment has the full reasoning).
+ *
+ * `timeoutMs` reaches the structured branch too, via `withTimeoutOverride` (above).
+ *
+ * @see specs/18 §18.3
+ * @see specs/13 F-TEST-7 point 5
+ * @see specs/22 M17 P4
+ */
+export async function runTestLayerCommand(
+  command: TestCommandEntry,
+  cwd: string,
+  paths: ProjectPaths,
+  ecosystem: 'js' | 'python',
+  createTempPath: () => string,
+  files?: readonly string[],
+  timeoutMs?: number,
+): Promise<TestLayerRunResult> {
+  if (typeof command === 'string') {
+    const run = await runAndNormalize(
+      command,
+      cwd,
+      ecosystem,
+      createTempPath,
+      undefined,
+      undefined,
+      files,
+      timeoutMs,
+    );
+    return { run, degraded: false };
+  }
+  if (files === undefined || command.scope === undefined) {
+    const run = await runStructuredTestLayer(
+      withTimeoutOverride(command, timeoutMs),
+      cwd,
+      paths,
+      createTempPath,
+    );
+    return { run, degraded: files !== undefined };
+  }
+  const rendered = renderTestCommandTemplate(command.scope, { files });
+  const run = await runStructuredTestLayer(
+    withTimeoutOverride(command, timeoutMs),
+    cwd,
+    paths,
+    createTempPath,
+    rendered,
+  );
+  return { run, degraded: false };
+}
+
+/** `runTestLayerRetry`'s own result: either a real, single-test run, or `'not-retryable'` -- the
+ * structured command declared no `filter` template, so there is no way to run this one test in
+ * isolation at all (`18` §18.3's degradation table: "no filter -> the flaky-retry-in-isolation
+ * mechanism is skipped... recorded unclassified"). Never reached for a legacy string command, which
+ * always supports retry-in-isolation natively (`runAndNormalize`'s own `testNameFilter`/`fileFilter`
+ * parameters). */
+export type RetryInIsolationResult =
+  | {
+      readonly kind: 'ran';
+      readonly run: Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>;
+    }
+  | { readonly kind: 'not-retryable' };
+
+/**
+ * Runs `command` scoped to exactly one named test, for F-TEST-6's own retry-in-isolation
+ * classification (`run.ts`'s only real caller). A legacy string command runs through
+ * `runAndNormalize`'s own existing `testNameFilter`/`fileFilter` parameters, unchanged. A structured
+ * command with a declared `filter` renders `{name}`/`{name:regex}` into it (`file` is not itself a
+ * template placeholder `18` §18.3 defines -- a project whose own filter needs file precision too
+ * authors a `filter` template that also uses `{files}`, substituted here from `file` when known,
+ * exactly like `scope`'s own `{files}` rendering). A structured command with NO `filter` returns
+ * `'not-retryable'` -- no run is attempted at all, so the caller cannot mistake "could not even try"
+ * for a real, observed outcome. `timeoutMs` reaches the structured branch too, via
+ * `withTimeoutOverride` (above).
+ *
+ * @see specs/13 F-TEST-6
+ * @see specs/18 §18.3
+ * @see specs/22 M17 P4
+ */
+export async function runTestLayerRetry(
+  command: TestCommandEntry,
+  cwd: string,
+  paths: ProjectPaths,
+  ecosystem: 'js' | 'python',
+  createTempPath: () => string,
+  name: string,
+  file: string | undefined,
+  timeoutMs?: number,
+): Promise<RetryInIsolationResult> {
+  if (typeof command === 'string') {
+    const run = await runAndNormalize(
+      command,
+      cwd,
+      ecosystem,
+      createTempPath,
+      name,
+      file,
+      undefined,
+      timeoutMs,
+    );
+    return { kind: 'ran', run };
+  }
+  if (command.filter === undefined) return { kind: 'not-retryable' };
+  const rendered = renderTestCommandTemplate(command.filter, {
+    name,
+    ...(file === undefined ? {} : { files: [file] }),
+  });
+  const run = await runStructuredTestLayer(
+    withTimeoutOverride(command, timeoutMs),
+    cwd,
+    paths,
+    createTempPath,
+    rendered,
+  );
+  return { kind: 'ran', run };
 }
 
 // --- test-results.json round-trip --------------------------------------------------------------
