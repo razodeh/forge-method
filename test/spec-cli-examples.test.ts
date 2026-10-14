@@ -437,18 +437,46 @@ interface Scan {
   readonly visible: readonly string[];
 }
 
-/** One pass over the lines that tracks code fences and HTML comments, which may span lines. Inside a
- * fence a `<!--` is code; inside a comment a fence is commentary. */
+/** One pass over the lines that tracks fenced code (a backtick fence or a tilde fence — CommonMark
+ * allows either, and a fence only closes against its own character, so a tilde line inside a backtick
+ * fence, or vice versa, is code, not a close), bare indented code (four spaces or a tab, opened only
+ * right after a blank line or the document start, exactly CommonMark's own "cannot interrupt a
+ * paragraph" rule, simplified to not also track list-item indentation), and a hidden `<div>...</div>`
+ * wrapper (nestable, tracked by depth, read the same way a comment is: content inside is commentary,
+ * not prose). Any one of the four may span lines. Inside a fence or an indented-code line, a `<!--` or
+ * a `<div>` is code; inside a comment or a div, a fence or an indented line is commentary; whichever of
+ * `<!--`/`<div` opens first on a line wins, the same rule a fence and a comment already used only
+ * between the two of them. */
 function scanLines(lines: readonly string[]): Scan {
   const prose: (string | undefined)[] = [];
   const visible: string[] = [];
   let inFence = false;
+  let fenceChar = '';
   let inComment = false;
+  let divDepth = 0;
+  let inIndentedCode = false;
+  let previousKept = '';
   for (const raw of lines) {
     if (inFence) {
       prose.push(undefined);
       visible.push(raw);
-      inFence = !/^\s*```+\s*$/.test(raw);
+      const closesFence = fenceChar === '`' ? /^\s*`{3,}\s*$/.test(raw) : /^\s*~{3,}\s*$/.test(raw);
+      inFence = !closesFence;
+      continue;
+    }
+    const blank = raw.trim() === '';
+    const indented = /^(?: {4,}|\t)\S/.test(raw);
+    if (blank) {
+      inIndentedCode = false;
+    } else if (inIndentedCode) {
+      if (!indented) inIndentedCode = false;
+    } else if (indented && previousKept === '' && !inComment && divDepth === 0) {
+      inIndentedCode = true;
+    }
+    if (inIndentedCode) {
+      prose.push(undefined);
+      visible.push(raw);
+      previousKept = raw;
       continue;
     }
     let line = '';
@@ -459,24 +487,50 @@ function scanLines(lines: readonly string[]): Scan {
         if (close === -1) break;
         at = close + 3;
         inComment = false;
+      } else if (divDepth > 0) {
+        const openIdx = raw.indexOf('<div', at);
+        const closeIdx = raw.indexOf('</div>', at);
+        if (closeIdx !== -1 && (openIdx === -1 || closeIdx <= openIdx)) {
+          at = closeIdx + '</div>'.length;
+          divDepth -= 1;
+        } else if (openIdx !== -1) {
+          const tagEnd = raw.indexOf('>', openIdx);
+          at = tagEnd === -1 ? raw.length : tagEnd + 1;
+          divDepth += 1;
+        } else {
+          break;
+        }
       } else {
-        const open = raw.indexOf('<!--', at);
-        if (open === -1) {
+        const commentAt = raw.indexOf('<!--', at);
+        const divAt = raw.indexOf('<div', at);
+        const candidates = [commentAt, divAt].filter((index) => index !== -1);
+        if (candidates.length === 0) {
           line += raw.slice(at);
           break;
         }
-        line += raw.slice(at, open);
-        at = open + 4;
-        inComment = true;
+        const next = Math.min(...candidates);
+        line += raw.slice(at, next);
+        if (next === commentAt) {
+          at = next + 4;
+          inComment = true;
+        } else {
+          const tagEnd = raw.indexOf('>', next);
+          at = tagEnd === -1 ? raw.length : tagEnd + 1;
+          divDepth = 1;
+        }
       }
     }
     visible.push(line);
-    if (/^\s*```+[^`]*$/.test(line)) {
+    const backtickFence = /^\s*`{3,}[^`]*$/.test(line);
+    const tildeFence = !backtickFence && /^\s*~{3,}.*$/.test(line);
+    if (backtickFence || tildeFence) {
       inFence = true;
+      fenceChar = backtickFence ? '`' : '~';
       prose.push(undefined);
     } else {
       prose.push(line);
     }
+    previousKept = line;
   }
   return { prose, visible };
 }
@@ -700,13 +754,15 @@ function splitSentences(text: string): string[] {
 }
 
 /** The block that opens with `sentences[0]` holds exactly `sentences`, in order, split by the same rule
- * `beginsASentence` uses, with nothing before, between or after them: a last fragment that ends in `:`
- * or in a closing code span (a trailing backtick) is allowed, for a rule that trails into a list or a
- * fenced example. Every non-final sentence must itself run to a full stop. Closes the block around a
- * pinned sentence, so a sentence inserted next to it, a relocation into the block, or a swap with an
- * adjacent sentence or block, all turn this red — unlike `expectPinned`, which only pins the sentence
- * itself. Reads nothing but `scope` and the literal `sentences` given here: deleting or re-pinning any
- * other `it` never affects this one. */
+ * `beginsASentence` uses, with nothing before, between or after them: a last fragment that ends in `:`,
+ * in a closing code span (a trailing backtick) or in a table row's own closing `|` is allowed, for a
+ * rule that trails into a list or a fenced example, or a sentence that is the last cell content of a
+ * table row (`splitSentences` reports the row's trailing `|` as its own final, markerless fragment,
+ * since nothing in its own split delimiters ever consumes it). Every non-final sentence must itself run
+ * to a full stop. Closes the block around a pinned sentence, so a sentence inserted next to it, a
+ * relocation into the block, or a swap with an adjacent sentence or block, all turn this red — unlike
+ * `expectPinned`, which only pins the sentence itself. Reads nothing but `scope` and the literal
+ * `sentences` given here: deleting or re-pinning any other `it` never affects this one. */
 function expectBlock(scope: Section, sentences: readonly string[]): void {
   expect(sentences.length > 0, 'expectBlock needs at least one sentence').toBe(true);
   const wanted = sentences.map((sentence) => normalise(sentence));
@@ -718,8 +774,8 @@ function expectBlock(scope: Section, sentences: readonly string[]): void {
   }
   const last = wanted[wanted.length - 1]!;
   expect(
-    /\*\*$|[.!?]$/.test(last) || last.endsWith(':') || last.endsWith('`'),
-    `expectBlock's last sentence must end in a full stop, a bold lead-in, a colon or a code span: ${JSON.stringify(last)}`,
+    /\*\*$|[.!?]$/.test(last) || last.endsWith(':') || last.endsWith('`') || last === '|',
+    `expectBlock's last sentence must end in a full stop, a bold lead-in, a colon, a code span or a table row's closing pipe: ${JSON.stringify(last)}`,
   ).toBe(true);
   const firstNeedle = wanted[0]!;
   const matches = scope.blocks.filter((block) => block.text.startsWith(firstNeedle));
@@ -6345,6 +6401,464 @@ describe('pinned sentences (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313, PLAN-M17.m
     expectPinned(spec07_73(), [
       "Both are summed from the adapter's own real **per-model** usage breakdown the result message carries (every model call made through the query pipeline — the main loop, Task subagents, sidechains and internal calls), never read from the main-loop-only usage field alone: the main-loop-only field excludes exactly the subagent and sidechain spend a real multi-agent FORGE step routinely makes, so a ledger that reads only it under-reports real cache spend whenever a step uses either.",
     ]);
+  });
+});
+
+describe("pin-test gaps closed to block granularity (specs/22 M17 P19) (PLAN-M17.md P19, SPEC-QUESTIONS.md Q294) — 77 of the 78 sentence-only pins an earlier milestone's own spec-first piece left open at block granularity (disclosed in GAUNTLET-LOG.md), confirmed still needed by a fresh re-audit this piece ran itself, now each also pinned to its own block, so a sentence inserted beside, relocated into, or swapped with one of them turns this red, not just the original expectPinned", () => {
+  const spec03 = () => headingSection(readSpec('03-cli-and-installer.md'), '### 3.2.5 ');
+  const spec10Gates = () =>
+    headingSection(readSpec('10-workflow-engine-and-lifecycle.md'), '## 10.3 ');
+  const spec17 = (prefix: string) => headingSection(readSpec('17-brownfield-ingestion.md'), prefix);
+  const spec18 = (prefix: string) =>
+    headingSection(readSpec('18-persistence-config-and-schemas.md'), prefix);
+  const spec22M16 = () => headingSection(readSpec('22-build-plan-and-milestones.md'), '## M16 — ');
+
+  it('M16 specs/03 §3.2.5 `forge parity capture` row block: the row, its human-act refusal, the --name default and the identical-capture no-op', () => {
+    expectBlock(spec03(), [
+      '| `forge parity capture [--name <name>]` | (Post-v1.0, `specs/22` M16; not wired yet.) Observe the reference a parity declaration names, at its declared ref and in a scratch worktree, and write the content-addressed capture under `.forge/parity/captures/` (`13` F-TEST-9).',
+      'A human act: no workflow runs it, and it refuses whenever the FORGE session marker `FORGE_RUN_ID` is present, whichever run it names (`10` §10.3 rule 6 defines the marker, an honest-session signal and not a security boundary).',
+      'Without `--name`, every declaration; a `--name` that matches no declaration is refused.',
+      'Capturing identical behaviour again changes nothing; a capture that would differ from an existing one for the same key is refused, never overwritten.',
+      '|',
+    ]);
+  });
+
+  it('M16 specs/03 §3.2.5 `forge parity check` row block: the row, --trusted, --story, the exit code and the refusal reasons', () => {
+    expectBlock(spec03(), [
+      "| `forge parity check [--name <name>] [--trusted <ref>] [--story <id>] [--no-record]` | (Post-v1.0, `specs/22` M16; not wired yet.) Compare the candidate, observed in place, with each declaration's selected capture, and write one `ParityEvidence` record for the invocation (`18` §18.7) unless given `--no-record`, which writes none.",
+      '`--trusted <ref>` names the trust anchor, a full commit sha or a ref name that begins `refs/` and that `git check-ref-format` accepts: everything under `.forge/parity/` is compared, as it is on disk, with the tree at that ref, and a difference is `oracle-changed` (`13` F-TEST-9); without it nothing is compared and the record says `trusted: null`.',
+      '`--story <id>` names the story the record is for.',
+      'Exit 0 only when no verdict is failing.',
+      'No declaration (`no-declarations`) and nothing compared (`nothing-compared`) each fail with a `reason` rather than passing; a `--name` that matches no declaration, and a `--trusted` that is not in that form or does not resolve, are refused.',
+      'It is the one deterministic check, `behavior:parity`, of the workflow-scoped gate `G-Parity` (`10` §10.3 rule 8), which runs it as `forge parity check --json --no-record --trusted refs/heads/main`.',
+      '|',
+    ]);
+  });
+
+  it('M16 specs/03 §3.2.5 `forge evidence prune` row block: the row, the --apply refusal, --keep and the never-pruned guarantee', () => {
+    expectBlock(spec03(), [
+      '| `forge evidence prune [--apply] [--keep <n>]` | (Post-v1.0, `specs/22` M16; not wired yet.) Retention for `MutationEvidence`, `EvidenceBundle` and `ParityEvidence` records (`18` §18.7, Retention).',
+      'A dry run unless `--apply`, which refuses whenever the FORGE session marker `FORGE_RUN_ID` is present, as `forge parity capture` does.',
+      '`--keep <n>` keeps the `n` newest (highest-id) records per type and subject, `n` an integer of at least 1, default 5.',
+      'The highest id of each type, and any record something still references, is never pruned; what is referenced is computed to a fixed point, and a prune that cannot enumerate every store that can hold an evidence id refuses and removes nothing.',
+      '|',
+    ]);
+  });
+
+  it('M16 specs/03 §3.2.5 `forge test binding --hunks` row block: the row, the --base requirement and the report-only exit code', () => {
+    expectBlock(spec03(), [
+      '| `forge test binding --story <id> --hunks --base <ref> [--max-hunks <n>]` | (Post-v1.0, `specs/22` M16; not wired yet.) The `--hunks` form of `forge test binding`: behavioural binding at hunk granularity rather than for the change as a whole (`13` F-TEST-10).',
+      '`--hunks` requires `--base`, and `--base` without `--hunks` is a usage error.',
+      'Above `--max-hunks` it degrades to file or change granularity and says so.',
+      'Report-only: the exit code follows the change-level result over the same `--base` range, by the rule it follows without `--hunks`.',
+      '|',
+    ]);
+  });
+
+  it('M17 specs/03 §3.2.5 `forge test adopt` row block: the row, --write promotion, --agent and what it prints', () => {
+    expectBlock(spec03(), [
+      "| `forge test adopt [--write] [--agent] [--json]` | (Post-v1.0, `specs/22` M17; not wired yet.) Detects, or hands off to the agent-run `adopt-tests` workflow for, a project's test runner per layer (`13` F-TEST-11): inspects manifests, CI configuration and build files; writes a structured `execution.testCommands` entry preferring the runner's richest machine-readable format to a STAGED proposal record, `.forge/test-adopt/<layer>.proposal.yaml`, never straight to `.forge/config.yaml`.",
+      "`--write`, run alone, is the separate PROMOTION step: it copies a layer's staged proposal into the live `.forge/config.yaml`, which it refuses (typed, not a silent no-op) until that proposal's translator proof has passed and a human has approved it at `G-TestAdopt` (`10`).",
+      '`--agent` requests the `adopt-tests` workflow directly rather than only on an unrecognised runner.',
+      'Prints what it detected or proposed, the translator-proof result where one ran, and, for `--write`, the promotion outcome.',
+      '|',
+    ]);
+  });
+
+  it('M17 specs/03 §3.2.5 `forge migrate run` row block: the row, --migration, the exit codes and the --json envelope', () => {
+    expectBlock(spec03(), [
+      "| `forge migrate run --phase <expand\\|migrate\\|contract> [--migration <id>] [--json]` | (Post-v1.0, `specs/22` M17; not wired yet — disclosed since `Q213`/`Q202`.) Applies every not-yet-applied entry of `docs/forge/kb/data/migrations.yaml` (`09` §9.7 point 4, the `model-data` brief's own shape) whose `phase` matches the given value, in the file's own apply order, honouring each entry's `after`/`expands` dependency: for each, runs the migration script or backfill routine the entry's own owning ADR named (built by the `expand`/`contract` workflow step that precedes this command in the `migrate` workflow), recording which entries this invocation applied so a repeat invocation is a no-op for them (the scripts themselves are also required to be independently idempotent, `12` F-DATA-6).",
+      '`--migration <id>` restricts the run to one named entry rather than every entry of the given phase.',
+      'Exit 0 only when every entry it attempted applied cleanly; 1 when one failed or could not be found; 2 on a usage error (an unknown `--phase` value, or `--migration` naming an id `migrations.yaml` does not have).',
+      '`--json` prints `{"v":1,"phase":"<the --phase value>","applied":["id",...],"failed":0,"errors":0,"problems"?}`, the same `errors`/`problems` convention `forge test run`\'s own envelope uses (`09` §9.5).',
+      '|',
+    ]);
+  });
+
+  it('M16/M17 specs/03 §3.2.5 trailer paragraph block: the test <sub> row history, the shared --json envelope, the retention default and the two new M17 rows', () => {
+    expectBlock(spec03(), [
+      'Before M16 the `forge test <sub>` row omitted `binding` and `exempt`, both wired since `specs/22` M15 (`forge test binding [--story <id>]` reports behavioural binding, `13` F-TEST-5; `forge test exempt <storyId> <testId> --reason <text> --owner <identifier> --expires <iso-date>` records an exemption, `13` F-TEST-8).',
+      'That omission predates M16; the row now lists them.',
+      'Each of the four M16 commands above takes the global `--json` flag (§3.2) and prints one `{"v":1,...}` object (§3.5).',
+      'The retention default of 5 follows §3.4\'s "retain last 5" backups.',
+      'The two M17 rows above are new CLI surface this file did not define before M17 P1: `forge adopt` and `forge spec re-derive` already had rows (§3.2.1, §3.2.2), confirmed still accurate against what P11/P17 build; `forge test adopt` and `forge migrate run` did not exist here at all.',
+    ]);
+  });
+
+  it('M16 specs/10 §10.3 reference-oracle paragraph block: the inputs-contract line, the five refusal reasons and the no-nothing-as-success guard', () => {
+    expectBlock(spec10Gates(), [
+      '(Post-v1.0, `specs/22` M16.) A check against a reference oracle (`13` F-TEST-9) holds the same line for its own inputs.',
+      "A check with no declaration at all (`no-declarations`), a declaration with no capture of its reference, an expired review or `unobservable` entry (a declaration's `expires` date, or an entry's expiry, has been reached), an oracle that changed since its trust anchor (`oracle-changed`), and a declaration that compares nothing, because it has no surface that is not exempt as `unobservable` (`nothing-compared`), each fail with a stated `reason`: an absent reference is not parity, and an empty comparison is not a match.",
+      'A check that would print no passing and no failing case is refused (`ok: false`) instead, so `failOn: "failing > 0"` can never read nothing as success.',
+      "Every check's result records its stdout, its exit code and its stderr (stderr sanitised of secrets and control bytes, and capped) as the audit trail (rule 4); an approval or waiver event carries their digests.",
+    ]);
+  });
+
+  it('M16 specs/17 §17.4 item-3 characterisation-tests block: tests-before-refactor, the differential oracle, the reviewed-immutable reference and the BASELINE tag', () => {
+    expectBlock(spec17('## 17.4 '), [
+      '**Characterisation tests before refactoring.**',
+      'Untested code that must change gets tests capturing *current* behaviour first (differential oracle, `13` F-TEST-2 #5).',
+      'Only then does it change.',
+      '(Post-v1.0, `specs/22` M16.) The system as found is a valid reference for that comparison, but only as a *reviewed, immutable* one (`13` F-TEST-9): a parity declaration whose `reference.ref` names the commit that holds the system as found, captured by a human act, never a recording the refactoring agent makes of the code it is about to change.',
+      "The `BASELINE` tag that adoption's phase 8 creates (§17.2) is a legitimate `reference.ref`, where one exists.",
+    ]);
+  });
+
+  it('M16 specs/18 §18.4 payload-versioning block: v, no per-payload version, kind-first dispatch, the additive rule and the parity payload', () => {
+    expectBlock(spec18('## 18.4 '), [
+      '**Payload versioning (post-v1.0, `specs/22` M16).**',
+      '`v` versions the envelope and nothing else: it is the field of `ForgeEvent` above, and a log whose events carry any other `v` is refused by the reader, not guessed at.',
+      'No payload carries a version of its own.',
+      "A payload's shape is selected by its event `type` and, for `CheckRun`, by its `kind` (`'binding'` and `'exemption-declared'` from M15, `'parity'` from M16), checked first and explicitly, never inferred from which other fields happen to be present.",
+      'Adding a `kind`, or adding an optional field to an existing `kind`, is additive and leaves `v` at 1: a reader skips a `kind` it does not recognise, reads an optional field only when it is present and well-typed, and ignores a field it does not know.',
+      'A change that is not additive (a field changing its meaning or its type, a required field appearing) takes a new `kind` and never reinterprets an existing one.',
+      "A `'parity'` payload carries the count per verdict, the total, the evidence id (null for a check run with `--no-record`) and the declaration names, never an observation, and, like the other kinds, it is written only where the run's id reaches the command in `FORGE_RUN_ID` and the command can name the run's own project root; a hunk run's counts and `granularity` are optional fields on the existing `'binding'` payload.",
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 append-only-discipline block: both types append-only, their own distinct file-per-run paths, what "superseded" means and the existing-path refusal', () => {
+    expectBlock(spec18('## 18.7 '), [
+      'Both are genuinely **append-only — never edited, only superseded**',
+      "(`PLAN-M15.md` P2's own binding Mandate, mirroring the deprecate-not-delete discipline this registry already uses: an id, once allocated, is never reused or silently overwritten — `18` §18.8).",
+      "Concretely, each is a NEW, distinctly-id'd file every time one is produced, never a rewrite of a prior one: `MutationEvidence`'s path (`reports/mutation/{story}-{ts}.md`, mirroring `GateReport`'s own `{gate}-{ts}` naming) makes every `forge test binding` run its own file; `EvidenceBundle`'s path (`reports/evidence/{id}-{story}.md`) carries its own real `EVID-####` id, so two assemblies for the same story — or two concurrent stories, `PLAN-M15.md` P7's own \"Tests first\" requirement — are two distinct files, never one file edited twice.",
+      '"Superseded" means exactly what it means for an ADR (`08` §8.3/§8.4\'s `status: superseded` convention): an older instance stays on disk, readable, until `forge evidence prune` removes it (§18.7, Retention), and a newer one exists; nothing here claims a bundle is a single revised document the way a Story is (an earlier draft of this entry wrongly claimed that — see `SPEC-QUESTIONS.md` Q280\'s round-2 record — and separately miscited `18` §18.8 as defining "superseded," which it does not; the real definition is `08`\'s).',
+      'The writer refuses an attempt to write to an already-existing path of either type (`PLAN-M15.md` P2\'s own "a bundle that edits an existing evidence record is refused" test) rather than relying on the naming scheme alone to make collision merely unlikely.',
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 hunk-level-MutationEvidence block: the EvidenceBundle.parityEvidence addition, the revert-hunks shape and the one-new-record rule', () => {
+    expectBlock(spec18('## 18.7 '), [
+      '`EvidenceBundle` gains an optional `parityEvidence` list, the ids of the `ParityEvidence` records a bundle rests on, beside its `bindingEvidence`; a bundle without it stays valid, and M16 changes no bundle assembler, so nothing populates it yet.',
+      '`MutationEvidence` gains a second shape for hunk-level mutation (`13` F-TEST-10), which its field list above already anticipated ("the exact commit range or hunk set reverted"): its `mutationKind` has a second member, `revert-hunks`, beside `revert-implementation`, and a record of that kind carries, beyond what schema version 1 records, the base sha the hunks were taken against, the diff algorithm, the `granularity` used (`hunk`, `file` or `change`) and the hunk list: each hunk\'s id, path, ranges, content hash, verdict and `killedBy`.',
+      'A hunk run is its own new record; an existing change-level record is never rewritten to add one.',
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 schemaVersion-migrations block: the 1→2 bump, purity and the golden-file requirement, reversibility and the upgrade-coverage gap', () => {
+    expectBlock(spec18('## 18.7 '), [
+      'A record that uses a field schema version 1 lacks carries `schemaVersion: 2` (§18.6), and two migrations (§18.9) are added with those fields, both `1→2`: `MutationEvidence` and `EvidenceBundle`.',
+      'Each sets `schemaVersion: 2` going up and changes nothing else (a version-1 record is otherwise already a valid version-2 record), is pure, and is covered by a golden-file test with a real "before" fixture, as §18.9 requires: the fixture\'s "after" differs from its "before" by `schemaVersion` at least.',
+      'Whether either declares `reversible: true` is settled when it is written (`specs/22` M16 P5); one that does removes the version-2 fields and sets `schemaVersion: 1` going down, and a hunk-level `MutationEvidence` record has no version-1 form (`revert-hunks` is not a version-1 `mutationKind`), so that migration, if reversible, refuses such a record going down rather than stripping it.',
+      'As built, the artifact-migration step of `forge upgrade` (`03` §3.4, step 4) lists only the documents under the specs root (`packages/cli/src/commands/upgrade/migrate-artifacts.ts`), so a record under `reports/` is not reached by it: version-1 evidence stays version 1 on disk.',
+      'Until a migration has run, every reader of these two types must accept `schemaVersion` 1 and 2 (`specs/22` M16 P5).',
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention-intro block: evidence files accumulate, and forge evidence prune is the deferred M15 policy', () => {
+    expectBlock(spec18('## 18.7 '), [
+      '**Retention (post-v1.0, `specs/22` M16).**',
+      'Evidence files accumulate: every run writes a new one and none is edited.',
+      '`forge evidence prune` (`03` §3.2.5) is the retention policy `specs/22` M15 P7 deferred.',
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention three-types block: MutationEvidence/EvidenceBundle/ParityEvidence only, and what it never prunes', () => {
+    expectBlock(spec18('## 18.7 '), [
+      'It manages three types, `MutationEvidence`, `EvidenceBundle` and `ParityEvidence`, and nothing else.',
+      "It never prunes a parity capture (the oracle's baseline, not its evidence), a collection-shaped artifact, the event log, or the tombstones below.",
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention dry-run-by-default block', () => {
+    expectBlock(spec18('## 18.7 '), [
+      'It is a dry run by default: a dry run writes nothing and names what it would remove, and only `--apply` removes anything.',
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention --apply-refusal block: the FORGE_RUN_ID refusal and the always-allowed dry run', () => {
+    expectBlock(spec18('## 18.7 '), [
+      '`--apply` refuses whenever the FORGE session marker `FORGE_RUN_ID` is present, whichever run it names (`10` §10.3 rule 6 defines the marker, an honest-session signal and not a security boundary), because a prune is a human act, as `forge parity capture` is: a run must not be able to discard the evidence about its own work.',
+      'A dry run is always allowed.',
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention --keep block: the newest-n-per-subject rule, the numeric-id ordering and the default of 5', () => {
+    expectBlock(spec18('## 18.7 '), [
+      '`--keep <n>` keeps the newest `n` records per type and subject: the story id when the record was written for a story, else the single shared subject `project`.',
+      "Newest means highest id, compared as a number (§18.8), never a file's modification time.",
+      "`n` is an integer of at least 1 (0, a negative number and a non-integer are refused) and defaults to 5, the precedent being `03` §3.4's retention of the last 5 backups.",
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention highest-id-never-pruned block: stated on its own for the allocator no-reuse guarantee', () => {
+    expectBlock(spec18('## 18.7 '), [
+      'The highest id of each type is never pruned.',
+      "`n` of at least 1 already implies it; it is stated on its own because the allocator's no-reuse guarantee rests on it (§18.8: allocation is a scan of what exists).",
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention fixed-point-protection block: a referenced record is protected, computed to a fixed point, visiting-order-independent', () => {
+    expectBlock(spec18('## 18.7 '), [
+      'A record that anything still references is protected and reported with the reason.',
+      'What survives is computed to a fixed point: it starts from the records `--keep` and the highest-id rule keep, and adds every record that a surviving record, or a store outside the evidence records, references, until nothing more is added.',
+      'A record referenced only by a record this prune removes is therefore not protected, and the outcome does not depend on the order in which records are visited.',
+      "The stores that can hold an evidence id (a surviving `EvidenceBundle`, a gate approval or waiver under `10` §10.3's evidence resolution, and whatever else the command's own enumeration finds) are enumerated and tested when it is built (`specs/22` M16 P14).",
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention cannot-enumerate-refuses block', () => {
+    expectBlock(spec18('## 18.7 '), [
+      'A prune that cannot enumerate every store that can hold an evidence id, because one is unreadable or does not parse, refuses and removes nothing: a reference it could not see is one it could break.',
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention two-step-pruning block: tombstone first, removal second, crash recovery, idempotence and the pruned-vs-dangling answer', () => {
+    expectBlock(spec18('## 18.7 '), [
+      'Pruning a record is two steps in a fixed order.',
+      "A tombstone for its id (`docs/forge/reports/pruned/<id>.json`: the id, the type, the subject, the record's sha256 and the time) is created first, atomically (written whole to a temporary file beside it and renamed into place, so one that exists is never partial); the record is removed second.",
+      'A crash between the two leaves a pending removal, a tombstone with its record still present.',
+      'While both exist the record wins: a reference to the id resolves to the record, never to "pruned".',
+      'A later prune completes a pending removal only if that record is still selected for removal by that prune; otherwise the record stays.',
+      'The stores are enumerated once more after the tombstones are written and before any record is removed, and a record that has been referenced since the first enumeration is not removed (its tombstone stays, a pending removal as above); a reference written after that second enumeration is not seen, so `--apply` is not safe to run while a run or an approval that could cite a record it removes is in progress.',
+      'A repeated or concurrent prune is idempotent.',
+      'A reference to an id that has been pruned (its record removed) resolves to a distinct "pruned" answer that names the tombstone, never to "dangling".',
+    ]);
+  });
+
+  it('M16 specs/18 §18.7 Retention tombstone-reader block: whether the allocator also reads tombstones is a build-time choice, either way no id reused', () => {
+    expectBlock(spec18('## 18.7 '), [
+      'Whether the id allocator also reads the tombstones is decided when the command is built (`specs/22` M16 P14); either way an id is never issued twice.',
+    ]);
+  });
+
+  it('M16 specs/22 M16 "Build:" paragraph block: the harness, the two commands, G-Parity, the registered ParityEvidence type, per-hunk mutation and retention', () => {
+    expectBlock(spec22M16(), [
+      '**Build:**',
+      "a behaviour-parity harness over observable surfaces FORGE can capture without owning the app (process stdout/exit codes, HTTP request/response pairs, library call/return, file outputs); `forge parity capture` and `forge parity check --json`; the workflow-scoped gate `G-Parity`, whose one `behavior:parity` deterministic check is reached through explicit `kind: gate` steps in the workflows that have a reference; parity evidence as a registered `ParityEvidence` artifact type plus the additive optional `EvidenceBundle.parityEvidence` id list; per-hunk mutation raising M15's binding evidence from change-level to hunk-level attribution; an evidence retention policy, deferred from M15 P7.",
+    ]);
+  });
+
+  it('M16 specs/22 M16 "Do not build:" paragraph block: no visual/screenshot parity, no parity claim for greenfield work', () => {
+    expectBlock(spec22M16(), [
+      '**Do not build:**',
+      "visual/screenshot parity — FORGE is not UI-framework-specific and a pixel oracle needs a rendering target it does not own; a parity claim for greenfield work, which has no reference by definition and must keep relying on M15's binding oracle.",
+    ]);
+  });
+
+  it('M16 specs/22 M16 exit-tests paragraph block: the describe-name naming rule, the non-vacuous -t "M16" requirement and the twice-run parity exit test', () => {
+    expectBlock(spec22M16(), [
+      'Every M16 test\'s `describe` name carries `(specs/22 M16 P<n>)`, which is what `-t "M16"` selects on.',
+      'That filter exits 0 when it selects nothing, so a green `-t "M16"` run is not by itself evidence that anything ran: the exit gate also requires that every piece that adds tests has at least one test carrying its own `(specs/22 M16 P<n>)` marker.',
+      'The `forge parity check --json` exit tests run over one fixture refactor twice, once with a behaviour-preserving change (exit 0) and once with a behaviour-changing one (non-zero), so a check that never refuses and a check that always refuses each fail the gate.',
+    ]);
+  });
+
+  // Not re-pinned here (78th of the 78): the rule-8 numbered-list opening ("8. (Post-v1.0 ...) A
+  // gate may be workflow-scoped ...") already has full insertion/relocation/swap protection from the
+  // pre-existing r3g block at "M16 specs/10 rule 8 block" above (`expectBlock` matches on
+  // block.text, which a numbered-list block.text never includes its own "8. " marker in, so that
+  // block already closes this content regardless of the marker). Giving it a second, parallel
+  // expectBlock with the "8. "-prefixed text would just fail "found 0 blocks", because no block ever
+  // opens with a list marker. The one gap that sentence-only pin still has — a renumbering that
+  // relabels it "9." while leaving its content alone — is a different property than this piece's
+  // mandate (content insertion/relocation/swap within a block) and is left as a disclosed gap.
+});
+
+describe('scanLines: tilde fences, indented code and hidden <div> wrappers (specs/22 M17 P19) (PLAN-M17.md P19) — closing the three shapes an earlier milestone\'s spec-first piece flagged as still evading expectAbsent (GAUNTLET-LOG.md, "item 10"); no specs/*.md file currently uses any of the three (checked by grep across every spec file before writing these), so all three are proven here against a synthetic fixture built the same way the existing fence/comment tests already are', () => {
+  const sectionOf = (text: string) => sectionFromLines(text.split('\n'));
+
+  it('M17 P19 scanLines: a tilde fence hides its content from prose exactly as a backtick fence does, and the two never cross-close each other', () => {
+    const tilded = sectionOf(
+      [
+        '# Heading',
+        '',
+        'Before the tilde fence.',
+        '',
+        '~~~yaml',
+        'fenced: A sentence only inside a tilde fence.',
+        '~~~',
+        '',
+        'After the tilde fence.',
+        '',
+      ].join('\n'),
+    );
+    expect(() => {
+      expectPinned(tilded, ['Before the tilde fence.', 'After the tilde fence.']);
+    }).not.toThrow();
+    expect(() => {
+      expectPinned(tilded, ['A sentence only inside a tilde fence.']);
+    }).toThrow();
+    expect(() => {
+      expectAbsent(tilded, ['A sentence only inside a tilde fence.']);
+    }).toThrow();
+    expect(() => {
+      expectLines(tilded, ['fenced: A sentence only inside a tilde fence.']);
+    }).not.toThrow();
+    // Direct, sentence-boundary-independent proof (the fenced line's own "fenced: " prefix would
+    // make expectPinned throw on an invalid sentence start regardless of fencing, so that throw
+    // alone would not prove the fence worked): the literal text must not reach prose at all.
+    expect(tilded.text).not.toContain('A sentence only inside a tilde fence.');
+
+    const crossed = sectionOf(
+      [
+        '# Heading',
+        '',
+        '~~~',
+        'still fenced: a line of backticks does not close a tilde fence',
+        '```',
+        'still fenced after the backtick line too',
+        '~~~',
+        '',
+        'After the mixed fence.',
+        '',
+      ].join('\n'),
+    );
+    expect(() => {
+      expectPinned(crossed, ['After the mixed fence.']);
+    }).not.toThrow();
+    expect(() => {
+      expectAbsent(crossed, ['still fenced after the backtick line too']);
+    }).toThrow();
+  });
+
+  it('M17 P19 scanLines: a bare 4-space-indented block hides its content from prose exactly as a fenced block does, but only when it opens right after a blank line or the document start', () => {
+    const indented = sectionOf(
+      [
+        '# Heading',
+        '',
+        'Before the indented block.',
+        '',
+        '    A sentence only inside bare indented code.',
+        '',
+        'After the indented block.',
+        '',
+      ].join('\n'),
+    );
+    expect(() => {
+      expectPinned(indented, ['Before the indented block.', 'After the indented block.']);
+    }).not.toThrow();
+    // The indented line opens right after a blank line, so if it were NOT swallowed as code it would
+    // read as an ordinary new paragraph (a real block start `beginsASentence` accepts): this needle,
+    // on its own with no confounding prefix, only fails to be found because the line is hidden.
+    expect(() => {
+      expectPinned(indented, ['A sentence only inside bare indented code.']);
+    }).toThrow();
+    expect(() => {
+      expectAbsent(indented, ['A sentence only inside bare indented code.']);
+    }).toThrow();
+    expect(() => {
+      expectLines(indented, ['    A sentence only inside bare indented code.']);
+    }).not.toThrow();
+    expect(indented.text).not.toContain('A sentence only inside bare indented code.');
+
+    const wrappedParagraph = sectionOf(
+      [
+        '# Heading',
+        '',
+        'A paragraph that',
+        '    wraps with extra indentation, still one paragraph, because it does not follow a blank line.',
+        '',
+      ].join('\n'),
+    );
+    expect(() => {
+      expectPinned(wrappedParagraph, [
+        'A paragraph that wraps with extra indentation, still one paragraph, because it does not follow a blank line.',
+      ]);
+    }).not.toThrow();
+  });
+
+  it('M17 P19 scanLines: a `<div>...</div>` wrapper hides its content from prose exactly as an HTML comment does, including a nested div and one spanning several lines', () => {
+    const divved = sectionOf(
+      [
+        '# Heading',
+        '',
+        'Visible sentence.',
+        '<div>A hidden sentence in a one-line div.</div>',
+        '',
+        'Another visible sentence. <div>',
+        'A multi-line div hides this sentence.',
+        '<div>A nested div inside it.</div>',
+        '</div>',
+        '',
+        'After the div.',
+        '',
+      ].join('\n'),
+    );
+    expect(() => {
+      expectPinned(divved, ['Visible sentence.', 'Another visible sentence.', 'After the div.']);
+    }).not.toThrow();
+    for (const hidden of [
+      'A hidden sentence in a one-line div.',
+      'A multi-line div hides this sentence.',
+      'A nested div inside it.',
+    ]) {
+      expect(() => {
+        expectPinned(divved, [hidden]);
+      }).toThrow();
+      expect(() => {
+        expectAbsent(divved, [hidden]);
+      }).toThrow();
+      // Direct, sentence-boundary-independent proof, for the same reason as the tilde-fence test
+      // above: none of these three ever reach prose at all, not merely "fail to parse as a sentence".
+      expect(divved.text).not.toContain(hidden);
+    }
+  });
+
+  it('M17 P19 scanLines: a fence always wins over a div, and an open div blocks a fresh indented-code open — the two never misfire into each other', () => {
+    const fenceWins = sectionOf(
+      [
+        '# Heading',
+        '',
+        '```html',
+        '<div>',
+        'still fenced, not a div',
+        '```',
+        '',
+        'After.',
+        '',
+      ].join('\n'),
+    );
+    expect(() => {
+      expectPinned(fenceWins, ['After.']);
+    }).not.toThrow();
+    expect(() => {
+      expectAbsent(fenceWins, ['still fenced, not a div']);
+    }).toThrow();
+
+    const divBlocksIndent = sectionOf(
+      [
+        '# Heading',
+        '',
+        'Prose. <div>',
+        '    looks indented but is inside the div, not a bare code block',
+        '</div>',
+        '',
+        'After.',
+        '',
+      ].join('\n'),
+    );
+    expect(() => {
+      expectAbsent(divBlocksIndent, [
+        'looks indented but is inside the div, not a bare code block',
+      ]);
+    }).toThrow();
+    expect(() => {
+      expectLines(divBlocksIndent, [
+        '    looks indented but is inside the div, not a bare code block',
+      ]);
+    }).toThrow();
+    expect(() => {
+      expectPinned(divBlocksIndent, ['Prose.', 'After.']);
+    }).not.toThrow();
+  });
+
+  it("M17 P19 pin helpers: expectBlock accepts a table row's own trailing ` | ` as the block's final element, the shape every real table-row block-pin in this piece needs", () => {
+    const row = sectionOf(
+      [
+        '# Heading',
+        '',
+        '| Command | What it does |',
+        '| --- | --- |',
+        '| `forge x` | First sentence. Second sentence. |',
+        '',
+      ].join('\n'),
+    );
+    expect(() => {
+      expectBlock(row, ['| `forge x` | First sentence.', 'Second sentence.', '|']);
+    }).not.toThrow();
+    expect(() => {
+      expectBlock(row, ['| `forge x` | First sentence.', 'Second sentence.']);
+    }).toThrow();
   });
 });
 
