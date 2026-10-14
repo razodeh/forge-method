@@ -944,10 +944,22 @@ export async function runAgentWork(
   }
 
   const detail: StepOutcomeDetail = { kind: 'agent', session };
+  // `specs/22` M17 P15 (defect C, `SPEC-QUESTIONS.md` Q294 D2): NOT `session.changedFiles.length > 0`.
+  // A real adapter derives `changedFiles` from `git status --porcelain` in the lane, taken AFTER the
+  // session ends -- a session that commits its own work there (it has no mechanical bar to running `git
+  // commit` itself, given `exec`) leaves that status clean, so `changedFiles` comes back empty even
+  // though the lane's committed history now differs from `baseSha`. `work.changed` gates `runLaneLifecycle`'s
+  // own commit-AND-claim-enforcement block (`steps.ts`, `if (work.changed)`): trusting the session's own
+  // report there let such a commit skip `enforceClaim` entirely and land unreviewed. `hasChanges` asks git
+  // directly whether the lane differs from its base AT ALL -- committed, staged, unstaged or untracked
+  // alike (`diffLaneChanges`) -- exactly the same real check the adapter-crash path just above and every
+  // `command`-kind step (`runCommandStep`, below) already use for the identical reason (neither has a
+  // self-report to trust either). `ctx.vcs.commit` already no-ops safely on an already-clean tree
+  // (`commitInLane`'s own doc comment), so asking unconditionally costs nothing on the common, honest path.
   if (!session.ok) {
     const message = session.error?.message ?? 'Session ended without success.';
     return {
-      changed: session.changedFiles.length > 0,
+      changed: await ctx.vcs.hasChanges(lane, baseSha),
       commitSubject: session.finalText.slice(0, 72),
       detail,
       failure: { source: 'adapter', code: session.error?.code, message },
@@ -955,14 +967,14 @@ export async function runAgentWork(
   }
   if (resultFailure !== undefined) {
     return {
-      changed: session.changedFiles.length > 0,
+      changed: await ctx.vcs.hasChanges(lane, baseSha),
       commitSubject: session.finalText.slice(0, 72) || node.id,
       detail,
       failure: resultFailure,
     };
   }
   return {
-    changed: session.changedFiles.length > 0,
+    changed: await ctx.vcs.hasChanges(lane, baseSha),
     commitSubject: session.finalText.slice(0, 72) || node.id,
     detail,
   };

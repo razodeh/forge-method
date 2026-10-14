@@ -21,12 +21,45 @@ import { errorMessage, existsAtRevision, resolveRevision, wrapGitFailure } from 
 import type { LaneHandle } from './lanes.ts';
 
 /** Every path that differs between `baseSha` and the lane worktree's *actual current state* — committed,
- * staged, unstaged, and untracked alike — added, modified, and deleted. `baseSha` is resolved via
- * `resolveRevision` before it ever reaches `git diff` as a bare positional argument, for the same reason
- * `lanes.ts`'s own `createLaneWorktree` resolves `integrationBase` first: a flag-shaped caller-supplied
- * ref must never reach a git subcommand unresolved.
+ * staged, unstaged, and untracked alike — added, modified, and deleted, UNIONED with every path that
+ * differs between `baseSha` and `HEAD` itself (`specs/22` M17 P15 round 2, two independent gauntlet
+ * critics, each with a live empirical repro). `baseSha` is resolved via `resolveRevision` before it ever
+ * reaches `git diff` as a bare positional argument, for the same reason `lanes.ts`'s own
+ * `createLaneWorktree` resolves `integrationBase` first: a flag-shaped caller-supplied ref must never
+ * reach a git subcommand unresolved.
  *
- * Two flags on the `git diff` call, neither optional, both fixing a real bug a gauntlet critic round
+ * **Why the union, not the worktree-relative form alone.** `git diff <oneRef>` (no second ref) compares
+ * `<oneRef>` against *the live worktree*, never against `HEAD`'s own tree directly — so it is structurally
+ * blind to any divergence that exists only in committed history while the worktree happens to read back
+ * clean. A session with `exec` can arrange exactly that split two ways, both confirmed live, in a real
+ * repository, by two independent critics: (1) commit an out-of-claim file for real, then edit the
+ * worktree back to its pre-tamper state WITHOUT a second commit — `HEAD` (what a later `attemptRebase`
+ * actually replays, commit by commit, onto the integration branch) still has the tampered blob, `git show
+ * HEAD:<path>` proves it, but the worktree reads clean, so the one-ref form alone reports nothing; (2)
+ * move the branch ref to a brand-new commit built entirely from plumbing (`git hash-object` +
+ * `git mktree` + `git commit-tree` + `git update-ref`), which never touches the worktree or the index at
+ * all, so there is no worktree-relative trace whatsoever even though `HEAD`'s own tree now differs. Both
+ * are closed by also running the *history-relative* two-ref form, `git diff <baseSha> HEAD`, which compares
+ * two trees directly and never consults the worktree — the identical mechanism `VcsFacade.changedFiles`
+ * (`packages/engine/src/dispatch/facades.ts`), `verifyDeclaredOutputs` and `resumeSwarmReviewStep` already
+ * use for "what did this lane actually commit," for the identical reason: a self-report or a worktree-only
+ * check is not a substitute for asking `HEAD` itself. The worktree-relative form is kept, not replaced —
+ * it is still the only thing that sees a genuinely uncommitted write (staged, unstaged or untracked) that
+ * `HEAD` has not moved to reflect at all, which the two-ref form alone would miss outright.
+ *
+ * This still does not promise that a path never transiently held bad content in some commit strictly
+ * between `baseSha` and `HEAD` that a *later* commit in the same range fully re-reverted (so neither tree
+ * endpoint differs at that path): no two-endpoint tree comparison, by construction, can see a difference
+ * that nets to zero between the two points it compares. Closing that would need walking every commit in
+ * `baseSha..HEAD` individually, not just its two endpoints — disclosed as a residual, strictly adversarial
+ * gap (constructing a multi-commit round trip that nets to nothing is deliberate, not accidental), and
+ * notably no stronger a promise than this same codebase's own existing, shipped claim-revert mechanism
+ * already makes for the ordinary, non-self-committing case: a `strict` revert's own correction lands as a
+ * *second* commit after the violation's own, so the violating commit itself is never purged from the
+ * lane's history either, by design (`enforceClaim`'s own doc comment: "Reverting never fails the step
+ * directly... this function's job ends at giving that caller the structured facts").
+ *
+ * Two flags on the `git diff` calls, neither optional, both fixing a real bug a gauntlet critic round
  * found by actually constructing the failure rather than assuming git's behaviour:
  *
  * 1. **`--no-renames`.** Porcelain `git diff` enables rename detection *by default* — confirmed
@@ -60,7 +93,7 @@ import type { LaneHandle } from './lanes.ts';
  * recovery-after-partial-failure workflow this file's own error message recommends — fix the blocker,
  * call this again — immediately hit an unrelated, misleading `VCS-DIRTY-TREE` rejection instead.
  *
- * Fixed properly by diffing `baseSha` against a *single* ref (git's own two-argument-vs-one-argument
+ * Fixed at the time by diffing `baseSha` against a *single* ref (git's own two-argument-vs-one-argument
  * `diff` distinction: one ref compares against the live working tree and index, not just the other
  * commit) plus `git ls-files --others --exclude-standard` for untracked files `git diff` never reports
  * regardless of ref count — together, the actual current state, committed or not. This has a second,
@@ -68,25 +101,49 @@ import type { LaneHandle } from './lanes.ts';
  * enforce more than once. A file `enforceClaim` has already reverted to its exact `baseSha` content
  * naturally stops appearing in this output on the next call — confirmed empirically — with no special
  * retry logic needed anywhere; a file that failed to revert (`VCS-CLAIM-REVERT-FAILED`) naturally keeps
- * appearing until it's actually fixed. */
+ * appearing until it's actually fixed. That single-ref fix closed the uncommitted-write gap this
+ * paragraph describes, but — as the opening paragraphs above explain — it is not, on its own, a
+ * complete answer to "what has this lane actually changed": M17 P15 round 2 adds the two-ref,
+ * history-relative form back in alongside it, as a union, not a reversion. */
 export async function diffLaneChanges(
   handle: LaneHandle,
   baseSha: string,
 ): Promise<readonly string[]> {
   const resolvedBase = await resolveRevision(handle.path, baseSha);
-  const { stdout: diffOutput } = await wrapGitFailure(
-    () =>
-      execa('git', ['diff', '--no-renames', '-z', '--name-only', resolvedBase], {
-        cwd: handle.path,
-      }),
-    `diffing the lane worktree at "${handle.path}" against "${baseSha}"`,
-  );
-  const { stdout: untrackedOutput } = await wrapGitFailure(
-    () => execa('git', ['ls-files', '-z', '--others', '--exclude-standard'], { cwd: handle.path }),
-    `listing untracked files in the lane worktree at "${handle.path}"`,
-  );
+  // Three independent reads against the same repository, nothing in any one gating another — run
+  // concurrently (this is now one real subprocess spawn more than before this piece, `specs/22` M17
+  // P15 round 2; sequencing them would add that whole extra latency on every lane operation for
+  // nothing, when it can instead overlap). `Promise.all` is in order here only so the three awaited
+  // destructures below read naturally; it carries no sequencing meaning of its own.
+  const [{ stdout: diffOutput }, { stdout: historyOutput }, { stdout: untrackedOutput }] =
+    await Promise.all([
+      wrapGitFailure(
+        () =>
+          execa('git', ['diff', '--no-renames', '-z', '--name-only', resolvedBase], {
+            cwd: handle.path,
+          }),
+        `diffing the lane worktree at "${handle.path}" against "${baseSha}"`,
+      ),
+      // History-relative: two refs, so git compares the two TREES directly and never consults the
+      // worktree at all — the one thing the single-ref form above structurally cannot do (see this
+      // function's own doc comment). The trailing `--` ends the revision list before any pathspec,
+      // the same defensive habit `git.ts`'s own revision-resolving callers already use.
+      wrapGitFailure(
+        () =>
+          execa('git', ['diff', '--no-renames', '-z', '--name-only', resolvedBase, 'HEAD', '--'], {
+            cwd: handle.path,
+          }),
+        `diffing the lane's own committed history at "${handle.path}" against "${baseSha}"`,
+      ),
+      wrapGitFailure(
+        () =>
+          execa('git', ['ls-files', '-z', '--others', '--exclude-standard'], { cwd: handle.path }),
+        `listing untracked files in the lane worktree at "${handle.path}"`,
+      ),
+    ]);
   const changed = new Set([
     ...diffOutput.split('\0').filter((entry) => entry !== ''),
+    ...historyOutput.split('\0').filter((entry) => entry !== ''),
     ...untrackedOutput.split('\0').filter((entry) => entry !== ''),
   ]);
   return [...changed].sort();
@@ -172,8 +229,19 @@ export async function enforceClaim(
           `reverting out-of-claim file "${file}" to its state at "${baseSha}"`,
         );
       } else {
+        // `--ignore-unmatch` (`specs/22` M17 P15 round 2): a file a commit added via raw plumbing
+        // (this function's own doc comment) was never written to the worktree or staged in the index
+        // at all, so plain `git rm -f` finds no pathspec match for it and throws — confirmed
+        // empirically — even though it is a completely ordinary, cleanly revertable new-file case from
+        // every other angle (`existsAtRevision` already established it is new, not modified). The
+        // index already reflects the file as absent relative to `baseSha` the moment `HEAD` moved to
+        // include it (`git status` shows a staged deletion with no `git rm` ever having run), so there
+        // is nothing destructive here to suppress: `--ignore-unmatch` only widens "there was genuinely
+        // nothing to remove" into a success, never a real removal failure (a locked, unwritable
+        // directory still throws exactly as before — confirmed empirically, `claims.test.ts`'s own
+        // permission-based tests pin it).
         await wrapGitFailure(
-          () => execa('git', ['rm', '-f', '--', file], { cwd: handle.path }),
+          () => execa('git', ['rm', '--ignore-unmatch', '-f', '--', file], { cwd: handle.path }),
           `removing out-of-claim new file "${file}"`,
         );
       }

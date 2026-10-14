@@ -8,8 +8,10 @@
  * (`SPEC-QUESTIONS.md` Q208, finding 4).
  *
  * **Which tree.** The check runs in `runLaneLifecycle` after the session, the commit and claim enforcement
- * (`06` §6.4, §6.7; both run only when the adapter reports changed files, so an agent that commits its own
- * work leaves enforcement skipped, as for every step), against the lane branch's *committed* state (`git diff <base> HEAD`, content read from
+ * (`06` §6.4, §6.7; both run whenever the lane differs from its base at all -- `ctx.vcs.hasChanges`,
+ * `specs/22` M17 P15, `SPEC-QUESTIONS.md` Q294 D2 -- including a session that committed its own work
+ * inside the lane, which can no longer leave enforcement skipped the way trusting the adapter's own
+ * self-reported changed-file list once let it), against the lane branch's *committed* state (`git diff <base> HEAD`, content read from
  * the object database): that, and nothing else, is what a later `merge` step carries into the integration
  * branch. A file that exists only in the worktree, or that claim enforcement reverted, is not a produced
  * output, and the failure message says which of those happened.

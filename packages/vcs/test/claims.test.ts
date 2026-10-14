@@ -165,7 +165,7 @@ describe('diffLaneChanges', () => {
     expect(await diffLaneChanges(handle, baseSha)).toEqual(['tracked.txt']);
   });
 
-  it('is safe to call again after enforceClaim has already reverted a file: the reverted file stops appearing', async () => {
+  it('is safe to call again once the caller has committed the first revert: the reverted file stops appearing', async () => {
     const cwd = await createTempRepo();
     await mkdir(path.join(cwd, 'src'), { recursive: true });
     await writeFile(path.join(cwd, 'src', 'a.ts'), 'in claim');
@@ -182,12 +182,131 @@ describe('diffLaneChanges', () => {
     const first = await enforceClaim(handle, baseSha, ['src/**'], 'strict');
     expect(first.outOfClaim).toEqual(['shared.txt']);
 
-    // enforceClaim's own revert is deliberately left uncommitted (a caller decides when/how to commit)
-    // — this call must not treat that as an unrelated "dirty tree" problem, and must not still flag the
-    // now-reverted file as a violation.
+    // `enforceClaim`'s own revert is deliberately left uncommitted (a caller decides when/how to
+    // commit, `SPEC-QUESTIONS.md` Q66's own design point 4) -- `runLaneLifecycle` (`steps.ts`), the
+    // one real production caller, always commits it immediately afterward, in the same function call,
+    // before anything could call `enforceClaim` a second time. This call mirrors that real sequence.
+    await commitAll(handle.path, 'revert out-of-claim changes');
     const second = await enforceClaim(handle, baseSha, ['src/**'], 'strict');
     expect(second.outOfClaim).toEqual([]);
     expect(second.reverted).toEqual([]);
+  });
+
+  // M17 P15 round 2 (gauntlet critics): a REVISION of this file's own prior claim, not a new concern.
+  // Before this piece, this test (just above) called `enforceClaim` TWICE with no commit between the
+  // calls and asserted the second call saw nothing -- true only because `diffLaneChanges` was
+  // worktree-relative alone, so `enforceClaim`'s own uncommitted `git checkout` revert (which touches
+  // the worktree AND stages it, but never commits) looked, to that narrower check, exactly like nothing
+  // had ever been wrong. Once `diffLaneChanges` also asks `HEAD` directly (this file's own "history-
+  // relative detection" tests), that is no longer true: `HEAD` genuinely still differs from `baseSha`
+  // at `shared.txt` until a REAL commit moves it, so a second, uncommitted-interval call to
+  // `enforceClaim` now correctly reports the violation again -- there is no real caller this breaks
+  // (`enforceClaim` has exactly one production call site, `runLaneLifecycle`, `steps.ts:516`, which
+  // always commits the revert in the same function call before anything else could call this again),
+  // and treating the earlier version's unconditional "a second call sees nothing" claim as a timeless
+  // promise this fix had to preserve would have meant leaving the BLOCKING gap open instead.
+  it('without a commit in between, calling it again on the SAME uncommitted revert still reports the violation (HEAD has not moved)', async () => {
+    const cwd = await createTempRepo();
+    await mkdir(path.join(cwd, 'src'), { recursive: true });
+    await writeFile(path.join(cwd, 'src', 'a.ts'), 'in claim');
+    await writeFile(path.join(cwd, 'shared.txt'), 'original');
+    const baseSha = await commitAll(cwd, 'seed');
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
+    await writeFile(path.join(handle.path, 'shared.txt'), 'lane modified this out of claim');
+    await commitAll(handle.path, 'lane work');
+
+    const first = await enforceClaim(handle, baseSha, ['src/**'], 'strict');
+    expect(first.outOfClaim).toEqual(['shared.txt']);
+    // No commit here, deliberately.
+    const second = await enforceClaim(handle, baseSha, ['src/**'], 'strict');
+    expect(second.outOfClaim).toEqual(['shared.txt']);
+    // Still reverted a second time -- `git checkout <baseSha> -- shared.txt` is itself idempotent, so
+    // this is harmless busywork, never a destructive double-revert, and the file's own content is
+    // identical either way.
+    expect(second.reverted).toEqual(['shared.txt']);
+    await expect(readFile(path.join(handle.path, 'shared.txt'), 'utf8')).resolves.toBe('original');
+  });
+
+  // M17 P15 round 2 (gauntlet critics, both independently): the one-ref worktree diff plus
+  // untracked-files listing above is blind to anything whose trace lives ONLY in committed history,
+  // never in the worktree a `git diff <oneRef>` actually compares against. A session with `exec` can
+  // trivially arrange that split -- commit an out-of-claim file for real, then make the worktree look
+  // clean again without a second commit (the simplest case below), or move the branch ref to a new
+  // commit via raw plumbing that never touches the worktree or index at all (the second case). Either
+  // way `git show HEAD:<path>` still has the content; the worktree-only check never asks `HEAD`.
+  describe('history-relative detection (specs/22 M17 P15)', () => {
+    it('reports a path whose committed HEAD diverges from baseSha even when a later, uncommitted worktree edit makes it look clean again', async () => {
+      const cwd = await createTempRepo();
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'a.ts'), 'in claim');
+      const baseSha = await commitAll(cwd, 'seed');
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: baseSha,
+      });
+      // A real self-commit of an out-of-claim file -- not a hypothetical.
+      await writeFile(path.join(handle.path, 'tampered.txt'), 'bad content');
+      await commitAll(handle.path, 'self-commit: tampered');
+      // Then the worktree is edited back to absent, WITHOUT a second commit: HEAD (the commit a
+      // later rebase actually replays) still carries the tampered blob; only the live worktree is
+      // clean. `git show HEAD:tampered.txt` below is the fact a worktree-only diff cannot see.
+      await rm(path.join(handle.path, 'tampered.txt'));
+      const headTampered = await execa('git', ['show', 'HEAD:tampered.txt'], { cwd: handle.path });
+      expect(headTampered.stdout).toBe('bad content');
+
+      const changed = await diffLaneChanges(handle, baseSha);
+
+      expect(changed).toContain('tampered.txt');
+    });
+
+    it('reports a path a commit added via raw plumbing (hash-object/mktree/commit-tree/update-ref), even though neither the worktree nor the index was ever touched', async () => {
+      const cwd = await createTempRepo();
+      await mkdir(path.join(cwd, 'src'), { recursive: true });
+      await writeFile(path.join(cwd, 'src', 'a.ts'), 'in claim');
+      const baseSha = await commitAll(cwd, 'seed');
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: baseSha,
+      });
+      const headBefore = (
+        await execa('git', ['rev-parse', 'HEAD'], { cwd: handle.path })
+      ).stdout.trim();
+      const { stdout: blob } = await execa('git', ['hash-object', '-w', '--stdin'], {
+        cwd: handle.path,
+        input: 'plumbing bad content',
+      });
+      const { stdout: baseTree } = await execa('git', ['rev-parse', 'HEAD^{tree}'], {
+        cwd: handle.path,
+      });
+      const { stdout: existingEntries } = await execa('git', ['ls-tree', baseTree.trim()], {
+        cwd: handle.path,
+      });
+      const { stdout: newTree } = await execa('git', ['mktree'], {
+        cwd: handle.path,
+        input: `${existingEntries}\n100644 blob ${blob.trim()}\tplumbed.txt\n`,
+      });
+      const { stdout: newCommit } = await execa(
+        'git',
+        ['commit-tree', newTree.trim(), '-p', headBefore, '-m', 'plumbing tamper'],
+        { cwd: handle.path },
+      );
+      // No `git add`, no `git commit` -- only the branch ref moves. Confirmed: `plumbed.txt` is not on
+      // disk at all, yet HEAD (now the plumbed commit) has it.
+      await execa('git', ['update-ref', 'HEAD', newCommit.trim()], { cwd: handle.path });
+      await expect(access(path.join(handle.path, 'plumbed.txt'))).rejects.toThrow();
+      const headPlumbed = await execa('git', ['show', 'HEAD:plumbed.txt'], { cwd: handle.path });
+      expect(headPlumbed.stdout).toBe('plumbing bad content');
+
+      const changed = await diffLaneChanges(handle, baseSha);
+
+      expect(changed).toContain('plumbed.txt');
+    });
   });
 });
 
@@ -364,6 +483,76 @@ describe('enforceClaim', () => {
     await expect(readFile(path.join(handle.path, 'src', '.eslintrc.json'), 'utf8')).resolves.toBe(
       '{}',
     );
+  });
+
+  // M17 P15 round 2: `enforceClaim` is only as good as `diffLaneChanges`' own detection (see that
+  // describe block's own "history-relative detection" tests above) -- these two prove the REVERT side
+  // completes cleanly once detection does, including the one case detection alone does not fully close:
+  // a brand-new file that was never materialized in the worktree or index at all (raw plumbing), where
+  // `git rm -f` has nothing on disk or in the index to match and would otherwise throw
+  // `VCS-CLAIM-REVERT-FAILED` on a file there was never anything wrong with reverting.
+  describe('history-relative detection (specs/22 M17 P15)', () => {
+    it('strict: reverts a self-commit whose own later, uncommitted worktree edit had made it invisible to a worktree-only diff', async () => {
+      const { baseSha, handle } = await setupLaneWithInClaimBaseline();
+      await writeFile(path.join(handle.path, 'tampered.txt'), 'bad content');
+      await commitAll(handle.path, 'self-commit: tampered');
+      await rm(path.join(handle.path, 'tampered.txt'));
+
+      const result = await enforceClaim(handle, baseSha, ['src/**'], 'strict');
+
+      expect(result.outOfClaim).toEqual(['tampered.txt']);
+      expect(result.reverted).toEqual(['tampered.txt']);
+      await expect(access(path.join(handle.path, 'tampered.txt'))).rejects.toThrow();
+      // The caller's own revert commit (enforceClaim never commits itself) then leaves HEAD's own
+      // tree with no trace of it either -- the property that actually matters once this lane is
+      // later rebased onto the integration branch, commit by commit.
+      await commitAll(handle.path, 'revert out-of-claim changes');
+      const { stdout: finalDiff } = await execa(
+        'git',
+        ['diff', '--no-renames', '-z', '--name-only', baseSha, 'HEAD', '--'],
+        { cwd: handle.path },
+      );
+      expect(finalDiff.split('\0').filter((entry) => entry !== '')).not.toContain('tampered.txt');
+    });
+
+    it('strict: removes a brand-new out-of-claim file a commit introduced via raw plumbing, never materialized in the worktree or index, without VCS-CLAIM-REVERT-FAILED', async () => {
+      const { baseSha, handle } = await setupLaneWithInClaimBaseline();
+      const headBefore = (
+        await execa('git', ['rev-parse', 'HEAD'], { cwd: handle.path })
+      ).stdout.trim();
+      const { stdout: blob } = await execa('git', ['hash-object', '-w', '--stdin'], {
+        cwd: handle.path,
+        input: 'plumbing bad content',
+      });
+      const { stdout: baseTree } = await execa('git', ['rev-parse', 'HEAD^{tree}'], {
+        cwd: handle.path,
+      });
+      const { stdout: existingEntries } = await execa('git', ['ls-tree', baseTree.trim()], {
+        cwd: handle.path,
+      });
+      const { stdout: newTree } = await execa('git', ['mktree'], {
+        cwd: handle.path,
+        input: `${existingEntries}\n100644 blob ${blob.trim()}\tplumbed.txt\n`,
+      });
+      const { stdout: newCommit } = await execa(
+        'git',
+        ['commit-tree', newTree.trim(), '-p', headBefore, '-m', 'plumbing tamper'],
+        { cwd: handle.path },
+      );
+      await execa('git', ['update-ref', 'HEAD', newCommit.trim()], { cwd: handle.path });
+
+      const result = await enforceClaim(handle, baseSha, ['src/**'], 'strict');
+
+      expect(result.outOfClaim).toEqual(['plumbed.txt']);
+      expect(result.reverted).toEqual(['plumbed.txt']);
+      await commitAll(handle.path, 'revert out-of-claim changes');
+      const { stdout: finalDiff } = await execa(
+        'git',
+        ['diff', '--no-renames', '-z', '--name-only', baseSha, 'HEAD', '--'],
+        { cwd: handle.path },
+      );
+      expect(finalDiff.split('\0').filter((entry) => entry !== '')).not.toContain('plumbed.txt');
+    });
   });
 
   // POSIX permission bits only, and never as root — see `packages/vcs/test/git.test.ts`'s identical

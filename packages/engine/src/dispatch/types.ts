@@ -154,13 +154,20 @@ export interface VcsFacade {
    * always did before this piece (a caller that supplies no real backing lane store, e.g. a unit-test
    * fake exercising claim/output logic alone, pays nothing for a retry concern it never creates). */
   removeLaneIfPresent?(stepId: string): Promise<void>;
-  /** Whether `handle`'s own worktree differs from `baseSha` at all — a `command`-kind step's own work
-   * callback (`steps.ts`) has no cheaper, already-computed signal the way an agent session's own
-   * `SessionResult.changedFiles` is: an arbitrary shell command's stdout/exit code say nothing about
-   * which files, if any, it touched. Checked before committing so a command that legitimately made no
-   * changes (a validation-only command, say) succeeds without one, the same as a no-op agent session
-   * already does — not attempting a real `git commit` against an empty diff and treating the resulting
-   * "nothing to commit" failure as though the step itself had gone wrong. */
+  /** Whether `handle` differs from `baseSha` at all — committed, staged, unstaged or untracked alike,
+   * via `@forge/vcs`'s own `diffLaneChanges` (`specs/22` M17 P15 round 2: history-relative, UNIONED with
+   * worktree-relative, so a divergence that lives only in committed `HEAD` and one that lives only in an
+   * uncommitted write are both seen). A `command`-kind step's own work callback (`steps.ts`) has no
+   * cheaper, already-computed signal at all: an arbitrary shell command's stdout/exit code say nothing
+   * about which files, if any, it touched. An `agent`-kind step's own callback (`runAgentWork`, `steps.ts`
+   * — `specs/22` M17 P15) does NOT use the session's own self-reported `SessionResult.changedFiles`
+   * here, by design, for the identical "no trustworthy cheap signal" reason: a real adapter derives that
+   * field from `git status --porcelain` taken in the lane after the session ends, and a session that
+   * committed its own work there (nothing mechanically stops a session with `exec` from running `git
+   * commit` itself) leaves that status clean regardless of what it actually changed. Checked before
+   * committing so a step that legitimately made no changes (a validation-only command, a no-op agent
+   * turn) succeeds without one — not attempting a real `git commit` against an empty diff and treating
+   * the resulting "nothing to commit" failure as though the step itself had gone wrong. */
   hasChanges(handle: LaneHandle, baseSha: string): Promise<boolean>;
   /** `PLAN-M14.md` P36: resets `handle`'s own worktree back to `targetRevision` — `git reset --hard` plus
    * `git clean -fd` (ignored files left untouched), `@forge/vcs`'s own real `resetLaneWorktree`
