@@ -21,7 +21,8 @@
  * private `registerEntries`/`entryId`/`sectionRoot` (this piece's own Surface does not touch that
  * file, `P10`'s territory): the tiny amount of shape they would have supplied is duplicated here in
  * miniature, the same "duplicate the shape, not the private symbol" precedent `steps.ts`'s own
- * `CLAIM_FAILURE_CONTROL_CHARS` already sets for the identical reason.
+ * `AGENT_TEXT_CONTROL_CHARS` (renamed from `CLAIM_FAILURE_CONTROL_CHARS` by M17 P12, once it became
+ * shared by more than claim-failure paths) already sets for the identical reason.
  *
  * **Pending vs. lane-bound.** `REVIEW-NNN` is always reserved with a lane already in hand (inside the
  * lane the report will be written into, `writeReport`): from the moment it exists, `existsSync` on that
