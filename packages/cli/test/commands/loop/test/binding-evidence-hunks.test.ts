@@ -27,7 +27,10 @@ import YAML from 'yaml';
 
 import { assembleAndWriteMutationEvidence } from '../../../../src/commands/loop/test/binding-evidence.ts';
 import type { BindingCheckCompleted } from '../../../../src/commands/loop/test/binding.ts';
-import type { HunkMutationReport } from '../../../../src/commands/loop/test/hunk-mutation.ts';
+import {
+  UNCOVERED_HUNK_REASON,
+  type HunkMutationReport,
+} from '../../../../src/commands/loop/test/hunk-mutation.ts';
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -92,7 +95,7 @@ function hunkMutationReport(overrides: Partial<HunkMutationReport> = {}): HunkMu
           0,
           64,
         ),
-        verdict: { kind: 'uncovered' },
+        verdict: { kind: 'uncovered', reason: UNCOVERED_HUNK_REASON },
       },
     ],
     ...overrides,

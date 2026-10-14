@@ -92,6 +92,15 @@ export interface UpgradeReport {
    * missing. Critic round 1 finding (M14 P43): without this field a real `regenerated: true` caused
    * *only* by missing files was invisible everywhere (no report field, nothing for `bin.ts` to print). */
   readonly missingFiles: readonly string[];
+  /** `specs/22` M17 P13 (defect #21a): which `GITIGNORE_ENTRIES` (`@forge/cli/init`) were missing
+   * from the project's own real `.gitignore` and are merged in by a real run — computed as a plan
+   * before the dry-run/full-run branch either way, exactly like `staleFiles`/`missingFiles` above, so
+   * a dry run reports what a real run would add without writing it. Always present, empty when
+   * nothing is missing (the common case: an already-upgraded project, or one `forge init` itself just
+   * wrote). Deliberately NOT folded into `regenerated`: `.gitignore` is a merged, hand-owned file
+   * (`WrittenFile.generated: false`), never one of the wholesale-rewritten regenerable directories
+   * `regenerated` describes, the same distinction `FORGE.md`/`config.local.yaml` already draw. */
+  readonly gitignoreEntriesAdded: readonly string[];
   /** Whether the regenerable directories were (real run) or would be (dry run, when any document
    * needs migrating, the module/template version itself has drifted, or `staleFiles`/`missingFiles` is
    * non-empty in the plan above — `PLAN-M14.md` P43: real, whatever the version pair) rewritten. */

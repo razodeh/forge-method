@@ -387,6 +387,121 @@ describe('forge test binding — a non-binding test', () => {
   }, 30_000);
 });
 
+describe('forge test binding --json — notes when every named test is nonBinding (specs/22 M17 P13) (defect #10)', () => {
+  it('adds a note explaining the all-nonBinding result is the expected signature of a behaviour-preserving change, not a false failure', async () => {
+    // The identical fixture the "a non-binding test" describe above already proves is a real,
+    // non-artifact non-binding result -- here it is also the ONLY named test, so `bound` is empty:
+    // exactly the all-nonBinding shape `process/GAUNTLET-LOG.md`'s `## M16 P17` live run found gives
+    // no hint at all in the existing output that this is expected for a behaviour-preserving story.
+    const dir = await freshProject({
+      filesExpected: ['impl.js', 'tautology.test.js'],
+      skipImpl: true,
+    });
+    await writeFile(
+      path.join(dir, 'impl.js'),
+      'export function add(a, b) { return a + b; }\n',
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'tautology.test.js'),
+      "import { test, expect } from 'vitest';\ntest('tautology', () => { expect(true).toBe(true); });\n",
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'the story: a genuinely unrelated test file'], {
+      cwd: dir,
+    });
+
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir);
+
+    expect(result.status).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly passed: boolean;
+      readonly bound: readonly string[];
+      readonly nonBinding: readonly string[];
+      readonly notes: readonly string[];
+    };
+    expect(parsed.bound).toEqual([]);
+    expect(parsed.nonBinding).toEqual(['tautology']);
+    expect(parsed.notes).toHaveLength(1);
+    expect(parsed.notes[0]).toContain('nonBinding');
+    expect(parsed.notes[0]).toContain('behaviour-preserving');
+    // Still fails (`incomplete > 0`): the note explains the result, it never suppresses it.
+    expect(parsed.passed).toBe(false);
+  }, 30_000);
+
+  it("stays empty when at least one named test IS bound -- a genuine, partial non-binding result is a real finding, not this note's case", async () => {
+    // Both a real, mutation-killed test (`adds`, exercises `impl.js`) and the identical unrelated
+    // tautology test in ONE story, so `bound` is non-empty while `nonBinding` still is too -- proves
+    // the note's own condition is "every named test", never "at least one". `tautology.test.js` is
+    // folded into the SAME implementation commit via `--amend` (a throwaway fixture repo, not this
+    // piece's own deliverable history) rather than a third, separate commit: a third commit would
+    // shift `HEAD~1` to the implementation commit itself (impl.js unchanged across it), silently
+    // making `add()` un-revertible and `adds` wrongly read `nonBinding` too -- the real reason the
+    // very next test (a dedicated discover-mode case) adds its own file at this exact point instead
+    // of after an extra commit.
+    const dir = await freshProject({
+      filesExpected: ['impl.js', 'impl.test.js', 'tautology.test.js'],
+    });
+    await writeFile(
+      path.join(dir, 'tautology.test.js'),
+      "import { test, expect } from 'vitest';\ntest('tautology', () => { expect(true).toBe(true); });\n",
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '--amend', '--no-edit'], { cwd: dir });
+
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir);
+
+    const parsed = JSON.parse(result.stdout) as {
+      readonly bound: readonly string[];
+      readonly nonBinding: readonly string[];
+      readonly notes: readonly string[];
+    };
+    expect(parsed.bound).toEqual(['adds']);
+    expect(parsed.nonBinding).toEqual(['tautology']);
+    expect(parsed.notes).toEqual([]);
+  }, 30_000);
+
+  it('a fully-bound story (no non-binding tests at all) reports an empty notes array too', async () => {
+    const dir = await freshProject();
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir);
+
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as { readonly notes: readonly string[] };
+    expect(parsed.notes).toEqual([]);
+  }, 30_000);
+
+  it('discover mode prefixes the note with the story id, the identical convention bound/nonBinding already use', async () => {
+    const dir = await freshProject({
+      status: 'done',
+      filesExpected: ['impl.js', 'tautology.test.js'],
+      skipImpl: true,
+    });
+    await writeFile(
+      path.join(dir, 'impl.js'),
+      'export function add(a, b) { return a + b; }\n',
+      'utf8',
+    );
+    await writeFile(
+      path.join(dir, 'tautology.test.js'),
+      "import { test, expect } from 'vitest';\ntest('tautology', () => { expect(true).toBe(true); });\n",
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'the story: a genuinely unrelated test file'], {
+      cwd: dir,
+    });
+
+    const result = run(['test', 'binding', '--json'], dir);
+
+    const parsed = JSON.parse(result.stdout) as { readonly notes: readonly string[] };
+    expect(parsed.notes).toHaveLength(1);
+    expect(parsed.notes[0]).toContain('STORY-001');
+    expect(parsed.notes[0]).toContain('nonBinding');
+  }, 30_000);
+});
+
 describe('forge test binding — a dirty working tree', () => {
   it('is refused before any git work, never reaching the lane/revert/test machinery', async () => {
     const dir = await freshProject();
@@ -633,6 +748,51 @@ describe('forge test binding — a story document that exists but fails its own 
     expect(parsed.error.code).toBe('RUN-110');
     expect(parsed.error.message).toContain('does not validate as a Story');
     expect(parsed.error.message).not.toContain('does not name a real story');
+  }, 30_000);
+});
+
+describe('forge test binding — RUN-110 carries the real schema issues, not a generic message (specs/22 M17 P13)', () => {
+  it('names the exact field and the real Zod message ("files_expected: Expected array, received string"), never just "does not validate" with nothing else', async () => {
+    // Defect #16 (`PLAN-M17.md`): the prior `RUN-110` 'invalid' message named only the fact of failure,
+    // dropping `parsedStory.error.issues` entirely -- a human fixing a malformed Story had to re-run
+    // `storySchema.safeParse` by hand to learn which field, and why. Reuses the identical malformed
+    // fixture the test above already proves is a real schema failure.
+    const dir = await freshProject();
+    await writeFile(
+      path.join(dir, 'docs/forge/specs/stories/STORY-002-malformed.md'),
+      [
+        '---',
+        'id: STORY-002',
+        'type: Story',
+        'schemaVersion: 1',
+        'title: Malformed fixture story',
+        'files_expected: "this-should-be-an-array-not-a-string"',
+        'created: 2026-01-01',
+        'updated: 2026-01-01',
+        'revision: 1',
+        'author: architect',
+        'changelog: []',
+        '---',
+        '',
+        'Malformed fixture body.',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await execa('git', ['add', '-A'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'add a malformed story'], { cwd: dir });
+
+    const result = run(['test', 'binding', '--story', 'STORY-002', '--json'], dir);
+
+    expect(result.status).toBe(2);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly error: { readonly code: string; readonly message: string };
+    };
+    expect(parsed.error.code).toBe('RUN-110');
+    // The real, live Zod issue for this exact fixture (confirmed directly against the installed
+    // zod@3.25.76 and the real `storySchema`, not assumed): path `files_expected`, message "Expected
+    // array, received string" -- `RUN-110`'s message joins `path: message`.
+    expect(parsed.error.message).toContain('files_expected: Expected array, received string');
   }, 30_000);
 });
 

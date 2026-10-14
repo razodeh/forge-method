@@ -1552,6 +1552,43 @@ describe('forge upgrade (real subprocess dispatch, PLAN-M12.md P2)', () => {
     expect(humanResult.stdout).toContain(`missing: ${relPath}`);
   });
 
+  it('a real, pre-M17 project missing a MANAGED .gitignore entry reports it as gitignoreEntriesAdded, visibly, in both --json and the human line (specs/22 M17 P13, critic round 2 finding, defect #21a)', async () => {
+    const dir = await realProject();
+    const gitignorePath = path.join(dir, '.gitignore');
+    const before = await readFile(gitignorePath, 'utf8');
+    // `realProject()`'s own real `forge init` already wrote every CURRENT managed entry -- stripping
+    // the newest one back out is the one real way to simulate "an existing project upgrading past
+    // the version that added it" without a second, hand-maintained copy of the managed list.
+    expect(before).toContain('.forge/backups/');
+    const stripped = before.replace('.forge/backups/\n', '');
+    await writeFile(gitignorePath, stripped, 'utf8');
+
+    const jsonResult = run(['upgrade', '--dry-run', '--json', '-C', dir]);
+    expect(jsonResult.status).toBe(0);
+    const parsed = JSON.parse(jsonResult.stdout) as {
+      readonly report: { readonly gitignoreEntriesAdded: readonly string[] };
+    };
+    expect(parsed.report.gitignoreEntriesAdded).toEqual(['.forge/backups/']);
+    // A real dry run: nothing written.
+    expect(await readFile(gitignorePath, 'utf8')).toBe(stripped);
+
+    // Critic round 2, finding 1 (MAJOR): before this fix, nothing in the human-readable branch ever
+    // mentioned `.gitignore` at all -- a real run merged it with zero console indication. `--dry-run`
+    // says "would merge" (nothing written yet); a real run below says "merged" (the actual result).
+    const humanDryRun = run(['upgrade', '--dry-run', '-C', dir]);
+    expect(humanDryRun.status).toBe(0);
+    expect(humanDryRun.stdout).toContain('would merge 1 new entry into .gitignore');
+    expect(humanDryRun.stdout).toContain('gitignore: .forge/backups/');
+
+    const real = run(['upgrade', '-C', dir]);
+    expect(real.status).toBe(0);
+    expect(real.stdout).toContain('merged 1 new entry into .gitignore');
+    expect(real.stdout).not.toContain('would merge');
+    expect(real.stdout).toContain('gitignore: .forge/backups/');
+    const after = await readFile(gitignorePath, 'utf8');
+    expect(after).toContain('.forge/backups/');
+  }, 90_000);
+
   it('a real, hand-edited regenerable file reports as editedFiles (not staleFiles) in `--dry-run --json`, and the human line names its count and path (PLAN-M14.md P43)', async () => {
     const dir = await realProject();
     const workflowPath = path.join(dir, '.forge/workflows/intake.workflow.yaml');

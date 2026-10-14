@@ -2046,7 +2046,14 @@ async function resolveStoryById(paths: ProjectPaths, storyId: string): Promise<S
   }
   const parsedStory = storySchema.safeParse(storyDoc.frontMatter);
   if (!parsedStory.success) {
-    throw new ForgeError('RUN-110', { storyId, reason: 'invalid' });
+    // `specs/22` M17 P13 (defect #16): the real Zod issues were computed right here and then
+    // discarded -- `codes.ts`'s own RUN-110 doc comment has the full history. Formatted with this
+    // codebase's own established `path: message` convention (`CFG-008`, `RUN-065`, `extensions/src/
+    // module/parse.ts`'s `formatZodIssues`, …), never a bespoke one.
+    const issues = parsedStory.error.issues
+      .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+      .join('; ');
+    throw new ForgeError('RUN-110', { storyId, reason: 'invalid', issues });
   }
   return parsedStory.data;
 }
@@ -2055,8 +2062,10 @@ async function resolveStoryById(paths: ProjectPaths, storyId: string): Promise<S
  * `HunkVerdict`'s discriminated union down to the plain, flat `{id, path, verdict, killedBy?,
  * reason?}` shape this family's own envelopes already use elsewhere (`ParityEvidence`'s own
  * `declarations` entries: "verdict and, where that is not match, its reason"). `killedBy` only for
- * `kind: 'killed'`, `reason` only for `kind: 'invalid'`/`'skipped'` — omitted, never `undefined` as a
- * value, matching this file's own established `exactOptionalPropertyTypes` convention throughout. */
+ * `kind: 'killed'`, `reason` for `kind: 'invalid'`/`'skipped'`/`'uncovered'` (`specs/22` M17 P13,
+ * defect #10: an `'uncovered'` verdict now carries `UNCOVERED_HUNK_REASON`, additive — every M16
+ * caller already treats `reason` as optional) — omitted, never `undefined` as a value, matching this
+ * file's own established `exactOptionalPropertyTypes` convention throughout. */
 function hunkEntryToJson(entry: HunkMutationEntry): {
   readonly id: string;
   readonly path: string;
@@ -2070,7 +2079,9 @@ function hunkEntryToJson(entry: HunkMutationEntry): {
     path: entry.path,
     verdict: verdict.kind,
     ...(verdict.kind === 'killed' ? { killedBy: verdict.killedBy } : {}),
-    ...(verdict.kind === 'invalid' || verdict.kind === 'skipped' ? { reason: verdict.reason } : {}),
+    ...(verdict.kind === 'invalid' || verdict.kind === 'skipped' || verdict.kind === 'uncovered'
+      ? { reason: verdict.reason }
+      : {}),
   };
 }
 
@@ -2099,6 +2110,31 @@ function hunkMutationToJson(report: HunkMutationReport): {
     timeoutHunks: count('timeout'),
     skippedHunks: count('skipped'),
   };
+}
+
+/**
+ * `specs/22` M17 P13 (defect #10): an all-`nonBinding` result over a story's REAL named tests is the
+ * expected, correct signature of a behaviour-preserving change (a pure refactor's own defining
+ * property is that every real test passes identically against the old and the new implementation --
+ * `process/GAUNTLET-LOG.md`'s `## M16 P17` live run found the command's own output gave no hint of
+ * this at all, reading as a false failure signal to a reader who had not independently worked out the
+ * reasoning). Returns `undefined` for the two cases this note is NOT about: nothing named at all
+ * (`tests` empty -- `runOneStoryBinding`'s own `'skipped'`/`'problem'` kinds never reach here, so this
+ * is defence in depth, not a reachable branch today), and a genuine PARTIAL non-binding result (at
+ * least one test bound) -- that is still a real finding on its own terms, never this note's case.
+ * Additive only: every M15/M16 `--json` field this envelope already carries is unaffected
+ * (`specs/22` 22.1 rule 4) -- `incomplete`/`passed` still count a nonBinding test exactly as before,
+ * this note only explains what the result means, it never suppresses or softens it.
+ */
+function allNonBindingNote(tests: readonly TestOutcomeEntry[]): string | undefined {
+  if (tests.length === 0 || tests.some((test) => test.binding)) return undefined;
+  return (
+    'Every named test is classified nonBinding. This is the expected, correct signature of a ' +
+    'behaviour-preserving change (for example a pure refactor): a test that passes identically ' +
+    'against the old and the new implementation cannot demonstrate AC-test binding by design -- it ' +
+    'is not necessarily a false result. Check restoreVerified and, with --hunks, the per-hunk ' +
+    'verdicts for the finer-grained picture.'
+  );
 }
 
 /** `--story <id>` given: `specs/22` M15 P4's own single-story behavior, unchanged byte-for-byte since
@@ -2181,6 +2217,12 @@ async function runSingleStoryBindingCommand(
   // deviation from that established convention (M15 P4, before `test:binding` was ever wired into a
   // real gate), not a new rule P5 invented.
   const incomplete = outcome.nonBinding.length + (outcome.restoreVerified ? 0 : 1);
+  // `specs/22` M17 P13: computed once, alongside `incomplete` above -- additive only, always present
+  // (empty when there is nothing to note). Never folded into `incomplete`/`passed`: those still count
+  // a nonBinding test exactly as before (`specs/22` 22.1 rule 4); this only explains what the result
+  // means.
+  const singleStoryNote = allNonBindingNote(outcome.tests);
+  const notes: readonly string[] = singleStoryNote === undefined ? [] : [singleStoryNote];
   if (json) {
     console.log(
       JSON.stringify({
@@ -2198,6 +2240,7 @@ async function runSingleStoryBindingCommand(
         evidenceId: outcome.evidenceId,
         restoreVerified: outcome.restoreVerified,
         tests: outcome.tests,
+        notes,
         // `specs/22` M16 P12: additive only, present iff `--hunks` ran AND the change-level check
         // reached 'completed' -- every M15 field above is unchanged either way (`13` F-TEST-10).
         ...(outcome.hunkMutation === undefined ? {} : hunkMutationToJson(outcome.hunkMutation)),
@@ -2287,6 +2330,10 @@ async function runDiscoverModeBindingCommand(
   const nonBinding: string[] = [];
   const evidenceIds: string[] = [];
   const problems: string[] = [];
+  // `specs/22` M17 P13: one entry per `done` story that is itself entirely nonBinding -- prefixed by
+  // story id, the identical convention `bound`/`nonBinding` above already use, so a reader can tell
+  // WHICH checked story the note is about in an aggregate, multi-story run.
+  const notes: string[] = [];
   let restoreVerified = true;
   let exempt = false;
   for (const outcome of outcomes) {
@@ -2300,6 +2347,8 @@ async function runDiscoverModeBindingCommand(
     evidenceIds.push(outcome.evidenceId);
     if (!outcome.restoreVerified) restoreVerified = false;
     if (outcome.exemptApplied) exempt = true;
+    const note = allNonBindingNote(outcome.tests);
+    if (note !== undefined) notes.push(`${outcome.storyId}: ${note}`);
   }
   // Named `passed`, never `ok` -- the identical reason `runSingleStoryBindingCommand`'s own envelope
   // avoids `ok` (its own doc comment has the full story): `evaluateGate`'s `failureMarker` treats `ok`
@@ -2330,6 +2379,7 @@ async function runDiscoverModeBindingCommand(
         evidenceIds,
         restoreVerified,
         problems,
+        notes,
       }),
     );
   } else {
@@ -2992,6 +3042,11 @@ async function runUpgradeCommand(
   const sanitizedStaleFiles = report.staleFiles.map(sanitizeForTerminal);
   const sanitizedEditedFiles = report.editedFiles.map(sanitizeForTerminal);
   const sanitizedMissingFiles = report.missingFiles.map(sanitizeForTerminal);
+  // `specs/22` M17 P13 (defect #21a): `GITIGNORE_ENTRIES` is a fixed, compile-time literal list
+  // (`@forge/cli/init`), never project-controlled input the way `staleFiles`/`missingFiles` paths
+  // are — sanitizing it anyway matches this function's own established belt-and-suspenders choice
+  // for the other three arrays rather than carving out a silent exception.
+  const sanitizedGitignoreEntriesAdded = report.gitignoreEntriesAdded.map(sanitizeForTerminal);
   if (json) {
     const sanitizedReport = {
       ...report,
@@ -3001,6 +3056,7 @@ async function runUpgradeCommand(
       staleFiles: sanitizedStaleFiles,
       editedFiles: sanitizedEditedFiles,
       missingFiles: sanitizedMissingFiles,
+      gitignoreEntriesAdded: sanitizedGitignoreEntriesAdded,
     };
     console.log(JSON.stringify({ v: 1, report: sanitizedReport }));
   } else {
@@ -3035,6 +3091,34 @@ async function runUpgradeCommand(
       printUpgradePlanPreview('stale', sanitizedStaleFiles);
       printUpgradePlanPreview('edited', sanitizedEditedFiles);
       printUpgradePlanPreview('missing', sanitizedMissingFiles);
+    }
+    // `specs/22` M17 P13 (defect #21a, critic round 2 finding): `.gitignore` is a merged, hand-owned
+    // file, never one of the "materialised regenerable files" the summary line above describes (see
+    // `UpgradeReport.gitignoreEntriesAdded`'s own doc comment), so it gets its own line rather than
+    // being folded into that wording — but it still needs ONE, which the `--json` branch above
+    // already had via the plain `...report` spread and this branch did not: a real run that merges
+    // new entries into a project's `.gitignore` used to do so with zero console indication, the exact
+    // "FORGE silently touches something and says nothing" shape this piece's own Mandate (CLI
+    // clarity) exists to close. A dedicated preview, not `printUpgradePlanPreview` (`entr(y/ies)`
+    // are managed ignore patterns, not regenerable files — reusing that helper's own "file(s)"
+    // trailer here would misdescribe what was actually added). `dryRun`-aware verb: `gitignoreEntriesAdded`
+    // is the same real, pre-write PLAN on a dry run (nothing written yet) as it is the actually-merged
+    // result on a real run — "merged" would be a false claim on `--dry-run`.
+    if (sanitizedGitignoreEntriesAdded.length > 0) {
+      const verb = dryRun ? 'would merge' : 'merged';
+      console.log(
+        `  ${verb} ${String(sanitizedGitignoreEntriesAdded.length)} new ` +
+          `entr${sanitizedGitignoreEntriesAdded.length === 1 ? 'y' : 'ies'} into .gitignore:`,
+      );
+      for (const entry of sanitizedGitignoreEntriesAdded.slice(0, UPGRADE_PLAN_PREVIEW_LIMIT)) {
+        console.log(`    gitignore: ${entry}`);
+      }
+      if (sanitizedGitignoreEntriesAdded.length > UPGRADE_PLAN_PREVIEW_LIMIT) {
+        console.log(
+          `    ... and ${String(sanitizedGitignoreEntriesAdded.length - UPGRADE_PLAN_PREVIEW_LIMIT)} ` +
+            'more gitignore entry/entries.',
+        );
+      }
     }
   }
   return report.doctor?.ok === false ? EXIT_CODES.prerequisiteMissing : EXIT_CODES.success;

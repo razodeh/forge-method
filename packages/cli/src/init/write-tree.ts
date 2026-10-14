@@ -314,7 +314,15 @@ async function writeDocsSkeleton(
   return written;
 }
 
-const GITIGNORE_ENTRIES = [
+/** Every `.gitignore` entry FORGE itself manages -- exported so `runUpgrade`'s own merge step
+ * (`03` §3.4, `specs/22` M17 P13, defect #21a) can reuse this single, authoritative list rather than
+ * hand-copy it and risk the two silently drifting apart. That drift already cost one real finding:
+ * `.forge/backups/` below was missing from a project's own ALREADY-WRITTEN `.gitignore` until a human
+ * patched it by hand (`specs/22` M15 P14's own live run) -- `forge init` wrote the new entry into
+ * every brand-new project from that point on, but an EXISTING project upgrading past the version that
+ * added it had nothing that ever retrofitted its own, already-materialised `.gitignore`.
+ */
+export const GITIGNORE_ENTRIES = [
   '.forge/config.local.yaml',
   '.forge/overrides.local/',
   '.forge/secrets.local.yaml',
@@ -329,15 +337,65 @@ const GITIGNORE_ENTRIES = [
   '.forge/backups/',
 ];
 
-async function appendGitignore(target: ProjectPaths): Promise<WrittenFile> {
+/** `target`'s real, on-disk `.gitignore` content -- `''` when the file does not exist yet, the
+ * identical "treat absent as empty" reading both `mergeGitignoreEntries` and its own prior,
+ * `init`-only form already used. Factored out so a read-only plan and the real merge below read the
+ * file exactly once each, never twice for one call. */
+async function readGitignore(target: ProjectPaths): Promise<string> {
+  const resolved = target.resolveWithin('.gitignore');
+  return (await pathExists(resolved)) ? await readTextFile(resolved) : '';
+}
+
+/**
+ * Read-only: which of `GITIGNORE_ENTRIES` are missing from `target`'s real `.gitignore` right now.
+ * Never writes anything -- `runUpgrade`'s own `--dry-run` reports exactly this list as what a real
+ * run would add, without touching the filesystem (`03` §3.4's own "`--dry-run` prints the plan
+ * without writing").
+ *
+ * @see specs/03 §3.4
+ * @see specs/22 M17 P13
+ */
+export async function planGitignoreEntries(target: ProjectPaths): Promise<readonly string[]> {
+  const existing = await readGitignore(target);
+  return GITIGNORE_ENTRIES.filter((entry) => !existing.includes(entry));
+}
+
+/**
+ * Writes every `GITIGNORE_ENTRIES` entry missing from `target`'s real `.gitignore` (creating the file
+ * from nothing when none exists yet), appended under one `# FORGE` block, after every line already
+ * there -- the project's own custom entries and FORGE's own already-present ones alike -- untouched.
+ * A call that finds nothing missing still performs the (no-op) write, matching every other regenerable
+ * write in this module; `runUpgrade` skips the call entirely when `planGitignoreEntries` is already
+ * empty, so the real side effects a report's own `backupPath`/`doctor` fields imply stay aligned with
+ * whether anything in `.gitignore` actually changed.
+ *
+ * `init`'s own `writeInitTree` and `upgrade`'s own `runUpgrade` (`specs/22` M17 P13, defect #21a) both
+ * call this one function rather than each keeping its own copy of the merge logic -- the same
+ * single-source-of-truth reasoning `GITIGNORE_ENTRIES`'s own doc comment states.
+ *
+ * @see specs/03 §3.4
+ * @see specs/22 M17 P13
+ */
+export async function mergeGitignoreEntries(
+  target: ProjectPaths,
+): Promise<{ readonly file: WrittenFile; readonly added: readonly string[] }> {
   const relPath = '.gitignore';
   const resolved = target.resolveWithin(relPath);
-  const existing = (await pathExists(resolved)) ? await readTextFile(resolved) : '';
-  const missing = GITIGNORE_ENTRIES.filter((entry) => !existing.includes(entry));
+  const existing = await readGitignore(target);
+  const added = GITIGNORE_ENTRIES.filter((entry) => !existing.includes(entry));
   const separator = existing.length > 0 && !existing.endsWith('\n') ? '\n' : '';
-  const block = missing.length > 0 ? `${separator}\n# FORGE\n${missing.join('\n')}\n` : '';
+  // `specs/22` M17 P13 (critic round 2, finding 3): this function now has TWO real callers --
+  // `writeInitTree` (a brand-new project, never any existing `# FORGE` block) and `runUpgrade` (an
+  // existing project, which already has one from its own earlier `forge init`/`forge upgrade`, every
+  // time this call actually has anything to add). The pre-M17-P13 single-caller version always wrote
+  // a fresh `# FORGE` header, safely, because it only ever ran once per project; writing a SECOND
+  // header here would leave a real, valid but confusing `.gitignore` with two separate `# FORGE`
+  // sections. The header is written only when the file does not already carry one.
+  const hasForgeHeader = existing.includes('# FORGE');
+  const header = hasForgeHeader ? '' : '\n# FORGE\n';
+  const block = added.length > 0 ? `${separator}${header}${added.join('\n')}\n` : '';
   await writeFileAtomic(resolved, existing + block);
-  return { path: relPath, generated: false };
+  return { file: { path: relPath, generated: false }, added };
 }
 
 function forgeMd(config: ForgeConfig, ideaPath: string | undefined): string {
@@ -403,7 +461,7 @@ export async function writeInitTree(input: WriteTreeInput): Promise<readonly Wri
   written.push(...(await writeConfigLocalAndManifest(target, modulesDir, options)));
   written.push(...(await writeRegenerableContent(target, modulesDir)));
   written.push(...(await writeDocsSkeleton(target, config)));
-  written.push(await appendGitignore(target));
+  written.push((await mergeGitignoreEntries(target)).file);
 
   let ideaPath: string | undefined;
   if (ideaContent !== undefined) {

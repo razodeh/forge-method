@@ -25,6 +25,7 @@ import {
 import {
   DEFAULT_MAX_HUNKS,
   runHunkMutationCheck,
+  UNCOVERED_HUNK_REASON,
   type HunkMutationEntry,
 } from '../../../../src/commands/loop/test/hunk-mutation.ts';
 
@@ -179,7 +180,50 @@ describe('runHunkMutationCheck — a comment-only hunk (specs/22 M16 P12) (13 F-
       throw new Error(`expected 'completed' with a report, got ${result.outcome.outcome}`);
     }
     expect(result.hunkMutation.hunks).toHaveLength(1);
-    expect(result.hunkMutation.hunks[0]?.verdict).toEqual({ kind: 'uncovered' });
+    // `specs/22` M17 P13 (defect #10): `'uncovered'` now carries a real, stated `reason`.
+    expect(result.hunkMutation.hunks[0]?.verdict).toEqual({
+      kind: 'uncovered',
+      reason: UNCOVERED_HUNK_REASON,
+    });
+  }, 30_000);
+});
+
+describe('runHunkMutationCheck — an uncovered hunk names a real, stated reason, not a bare label (specs/22 M17 P13)', () => {
+  it('the reason explains that no test could tell the revert apart from the unmutated code, and is the exported UNCOVERED_HUNK_REASON exactly', async () => {
+    // Reuses the identical comment-only fixture above -- the simplest real, deterministic way to
+    // produce a genuine `uncovered` verdict (a comment can never fail any test, under any reversal).
+    const dir = await freshRepo();
+    await writeFiles(dir, { 'impl.js': 'export function add(a, b) {\n  return a + b;\n}\n' });
+    const baseSha = await commit(dir, 'base');
+    await writeFiles(dir, {
+      'impl.js': '// adds two numbers together\nexport function add(a, b) {\n  return a + b;\n}\n',
+      'impl.test.js':
+        "import { test, expect } from 'vitest';\n" +
+        "import { add } from './impl.js';\n" +
+        "test('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+    });
+    await commit(dir, 'the story: a comment, no behaviour change');
+
+    const result = await runHunkMutationCheck(
+      {
+        ...baseInput(dir, 'STORY-UNCOVERED-REASON', baseSha),
+        filesExpected: ['impl.js', 'impl.test.js'],
+      },
+      { maxHunks: DEFAULT_MAX_HUNKS },
+    );
+
+    if (result.outcome.outcome !== 'completed' || result.hunkMutation === undefined) {
+      throw new Error(`expected 'completed' with a report, got ${result.outcome.outcome}`);
+    }
+    const verdict = result.hunkMutation.hunks[0]?.verdict;
+    if (verdict?.kind !== 'uncovered') {
+      throw new Error(
+        `expected one uncovered hunk, got ${JSON.stringify(result.hunkMutation.hunks)}`,
+      );
+    }
+    expect(verdict.reason).toBe(UNCOVERED_HUNK_REASON);
+    expect(verdict.reason.length).toBeGreaterThan('uncovered'.length);
+    expect(verdict.reason).toContain('coverage');
   }, 30_000);
 });
 

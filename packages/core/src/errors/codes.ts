@@ -759,17 +759,27 @@ export const ERROR_CODES = {
   // story" to pass, omitting `--story` became a real, documented mode of its own (every `done` story,
   // `runDiscoverModeBindingCommand`) rather than a usage error — `RUN-110` only ever fires once a real
   // `--story <id>` value failed to resolve.
+  //
+  // `issues` (`specs/22` M17 P13, defect #16, `PLAN-M17.md`'s own defect register): the 'invalid'
+  // branch above still only ever stated THAT the document failed to validate, never WHICH field or
+  // why — `bin.ts`'s own `resolveStoryById` had `parsedStory.error.issues` in hand (the real Zod
+  // `ZodError`) and dropped it before ever constructing this error. `issues` is the same
+  // `path.join('.') || '(root)'`: `message`-joined, `'; '`-separated shape this codebase already uses
+  // throughout (`CFG-008`, `RUN-065`, `CFG-021`, …) rather than a new convention. Optional, and only
+  // ever populated for `reason === 'invalid'` — the identical `techniqueId`/`path?`/`issues?` shape
+  // `RUN-065` already establishes for "two distinct triggers, only one of which has a real issues
+  // string to show."
   'RUN-110': {
     severity: 'error',
     exitCode: EXIT_CODES.usage,
-    message: (d: { storyId: string; reason: 'not-found' | 'invalid' }) =>
+    message: (d: { storyId: string; reason: 'not-found' | 'invalid'; issues?: string }) =>
       d.reason === 'invalid'
-        ? `${show(d.storyId)} exists under docs/forge/specs/stories/ but its document does not validate as a Story.`
+        ? `${show(d.storyId)} exists under docs/forge/specs/stories/ but its document does not validate as a Story: ${show(d.issues ?? '(no issues reported)')}.`
         : `${show(d.storyId)} does not name a real story under docs/forge/specs/stories/.`,
     remedy:
       'Pass --story <id> naming a real Story under docs/forge/specs/stories/ whose document validates ' +
       'against the Story schema (see `forge spec list`); if the story exists but was just flagged ' +
-      'invalid, fix the field(s) the schema rejects.',
+      'invalid, fix the field(s) named above.',
   },
   // `specs/22` M15 P4: `forge test binding` has no real tests to run — one of three, genuinely
   // distinct real causes `reason` disambiguates: `'no-test-paths'` (the one named story's own

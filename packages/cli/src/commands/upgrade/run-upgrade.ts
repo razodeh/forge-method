@@ -14,6 +14,8 @@ import * as YAML from 'yaml';
 import { runDoctor } from '../doctor/index.ts';
 import {
   buildManifest,
+  mergeGitignoreEntries,
+  planGitignoreEntries,
   planRegenerableContent,
   readPackageVersion,
   writeRegenerableContent,
@@ -117,6 +119,12 @@ export async function runUpgrade(
     staleFiles.length > 0 ||
     missingFiles.length > 0;
 
+  // `specs/22` M17 P13 (defect #21a): the identical "plan before the dry-run/full-run branch either
+  // way" shape `staleFiles`/`missingFiles` above already use, reused here for `.gitignore` rather than
+  // invented fresh -- `@forge/cli/init`'s own `GITIGNORE_ENTRIES` is the single list both `forge init`
+  // and this function merge from (`write-tree.ts`'s own doc comment has the full drift history).
+  const gitignorePlan = await planGitignoreEntries(paths);
+
   if (options.dryRun === true) {
     return {
       v: 1,
@@ -128,6 +136,7 @@ export async function runUpgrade(
       staleFiles,
       editedFiles,
       missingFiles,
+      gitignoreEntriesAdded: gitignorePlan,
     };
   }
 
@@ -135,6 +144,14 @@ export async function runUpgrade(
   const backupPath = await createBackup(paths, projectRoot, clock, deps.specsRoot);
 
   await applyArtifactMigrations(paths, planned);
+
+  // Skipped entirely when the plan above already found nothing missing: `mergeGitignoreEntries`
+  // would still perform its own no-op write (read, find nothing missing, write back the identical
+  // content), and skipping it keeps a no-change upgrade from touching this file's mtime at all, the
+  // same "equal version pair + nothing stale + nothing missing is a true no-op" guarantee this
+  // function's own idempotency test already holds `.forge/manifest.yaml` to.
+  const gitignoreEntriesAdded =
+    gitignorePlan.length > 0 ? (await mergeGitignoreEntries(paths)).added : [];
 
   const regeneratedFiles = await writeRegenerableContent(paths, deps.modulesDir, {
     ...(options.onConflict !== undefined ? { mode: options.onConflict } : {}),
@@ -168,6 +185,7 @@ export async function runUpgrade(
     staleFiles,
     editedFiles,
     missingFiles,
+    gitignoreEntriesAdded,
     doctor,
   };
 }

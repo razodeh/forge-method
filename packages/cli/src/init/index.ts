@@ -22,6 +22,8 @@ export {
   type TierMapReport,
 } from './tier-map.ts';
 export {
+  mergeGitignoreEntries,
+  planGitignoreEntries,
   planRegenerableContent,
   writeRegenerableContent,
   type RegenerableFilePlanEntry,

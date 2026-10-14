@@ -320,6 +320,39 @@ describe('forge test binding --hunks — the written MutationEvidence record (sp
   }, 60_000);
 });
 
+describe('forge test binding --hunks --json — the uncovered hunk carries a real reason (specs/22 M17 P13)', () => {
+  it('the --json envelope names why no test caught the revert; the persisted record still omits it, deliberately, unchanged', async () => {
+    const { dir, baseSha } = await projectWithKilledAndUncoveredHunk();
+    const result = run(
+      ['test', 'binding', '--story', 'STORY-001', '--hunks', '--base', baseSha, '--json'],
+      dir,
+    );
+    expect(result.status).toBe(0);
+    const envelope = JSON.parse(result.stdout.trim()) as Envelope;
+    const uncoveredHunk = (envelope.hunks ?? []).find((hunk) => hunk.verdict === 'uncovered');
+    const killedHunk = (envelope.hunks ?? []).find((hunk) => hunk.verdict === 'killed');
+    if (uncoveredHunk === undefined || killedHunk === undefined) {
+      throw new Error('expected one killed and one uncovered hunk in the fixture');
+    }
+    // Defect #10 (`PLAN-M17.md`): `uncovered` used to carry no `reason` at all.
+    expect(uncoveredHunk.reason).toBeDefined();
+    expect((uncoveredHunk.reason ?? '').length).toBeGreaterThan(0);
+    // `killed` never carries `reason` -- unchanged (`killedBy` is its own field).
+    expect(killedHunk.reason).toBeUndefined();
+
+    // The persisted MutationEvidence record on disk is a DIFFERENT, already-fixed-shape contract
+    // (`specs/18` §18.7's own exhaustive hunk-list field names, `.strict()`-enforced by
+    // `hunkEntrySchema`): `binding-evidence.ts`'s own `hunkEntryToRecord` deliberately never persists
+    // `reason` for any non-killed kind, `uncovered` included -- this real round trip proves that
+    // still holds (a regression that started persisting it would fail `mutationEvidenceSchema`'s own
+    // `.strict()` check below, not silently pass).
+    const filePath = await theOneMutationFile(dir);
+    const frontMatter = await readFrontMatter(filePath);
+    const parsed = mutationEvidenceSchema.safeParse(frontMatter);
+    expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true);
+  }, 30_000);
+});
+
 // `specs/22` M16 P15: the real, spawned-subprocess proof that a genuine `--hunks` run's own counts
 // reach the EXISTING `CheckRun{kind:'binding'}` event additively -- `check-telemetry.test.ts`-shaped
 // assertions belong here, not in a new file, since this file already has the one real fixture

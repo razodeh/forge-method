@@ -71,21 +71,41 @@ import type { RunAndNormalizeResult, TestFailureKind, TestOutcome } from './repo
 export const DEFAULT_MAX_HUNKS = 25;
 
 /**
+ * `specs/22` M17 P13 (defect #10, `PLAN-M17.md`'s own register, the real finding
+ * `process/GAUNTLET-LOG.md`'s `## M16 P17` live run disclosed and left for "a future piece"): a bare
+ * `{kind: 'uncovered'}` named nothing about WHY no test caught this hunk's own revert, which a
+ * critic-free human reading `--json` output could easily misread as a tool defect or a test-quality
+ * gap rather than what it may just as well be — the real mutation genuinely cannot be told apart from
+ * the unmutated code by any test that ran, "behaviourally silent" by construction (the live run's own
+ * words: reverting one hunk of a multi-hunk refactor can leave a complete, still-correct alternate
+ * implementation behind, which no dynamic test result can ever distinguish from a genuine coverage
+ * gap). This constant states that honestly, once, rather than at every call site.
+ */
+export const UNCOVERED_HUNK_REASON =
+  'No test failed when this hunk was reverted alone. This can mean a real gap in test coverage, ' +
+  'that the change is semantically inert (for example comment- or formatting-only), or that this ' +
+  'hunk is not behaviourally independent of the rest of the diff (reverting it alone can still ' +
+  'leave a complete, working implementation) -- inspect the reverted region by hand to tell which.';
+
+/**
  * One hunk's own real verdict (`13` F-TEST-10). `killedBy` names the tests that demonstrated a real
  * assertion or crash failure (never a test attributed only via a `load` failure, even when that same
  * load failure is what makes the overall verdict `killed` at `file`/`change` granularity — see this
  * module's own header comment) — present if and only if `kind === 'killed'`. `reason` is a short,
- * stated cause, present for `kind === 'invalid'` (`'reversal-failed'` or `'load-failure'`) and for
- * `kind === 'skipped'` (the engine problem that kept the run from proceeding) — omitted (never `undefined`
- * as a value) everywhere else, the identical `exactOptionalPropertyTypes` convention `reporter.ts`'s
- * own `makeOutcome` already establishes.
+ * stated cause: `UNCOVERED_HUNK_REASON` verbatim for `kind === 'uncovered'` (`specs/22` M17 P13,
+ * additive — every M16 caller that only ever matched on `.kind` is unaffected); present for
+ * `kind === 'invalid'` (`'reversal-failed'` or `'load-failure'`) and for `kind === 'skipped'` (the
+ * engine problem that kept the run from proceeding) — omitted (never `undefined` as a value)
+ * everywhere else (`kind === 'killed'`/`'timeout'`), the identical `exactOptionalPropertyTypes`
+ * convention `reporter.ts`'s own `makeOutcome` already establishes.
  *
  * @see specs/13 F-TEST-10
  * @see specs/22 M16 P12
+ * @see specs/22 M17 P13
  */
 export type HunkVerdict =
   | { readonly kind: 'killed'; readonly killedBy: readonly string[] }
-  | { readonly kind: 'uncovered' }
+  | { readonly kind: 'uncovered'; readonly reason: string }
   | { readonly kind: 'invalid'; readonly reason: 'reversal-failed' | 'load-failure' }
   | { readonly kind: 'timeout' }
   | { readonly kind: 'skipped'; readonly reason: string };
@@ -300,7 +320,7 @@ function toHunkVerdict(
   countLoadAsKill: boolean,
 ): HunkVerdict {
   const names = [...failedByName.keys()];
-  if (names.length === 0) return { kind: 'uncovered' };
+  if (names.length === 0) return { kind: 'uncovered', reason: UNCOVERED_HUNK_REASON };
   const nonLoad = names.filter((name) => failedByName.get(name) !== 'load').sort();
   if (nonLoad.length > 0) return { kind: 'killed', killedBy: nonLoad };
   // Every attributed failure here is a `load` failure: a stillborn mutant for a lone text hunk

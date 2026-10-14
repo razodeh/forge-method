@@ -2,7 +2,7 @@
  * `runUpgrade` — `03` §3.4's own seven-step pipeline: backup -> migrate -> regenerate -> re-doctor,
  * against a real `forge init`-produced project.
  */
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -576,5 +576,136 @@ describe('runUpgrade', () => {
       expect(await readFile(filePath, 'utf8')).not.toContain('# hand-edited');
       expect(await readFile(filePath, 'utf8')).toContain('id: sample');
     });
+  });
+
+  describe('merges missing MANAGED .gitignore entries into an existing project (specs/22 M17 P13) (defect #21a)', () => {
+    const GITIGNORE_REL_PATH = '.gitignore';
+
+    /** Simulates a project `forge init`-ed by an older FORGE version, before `.forge/backups/` joined
+     * the managed list (`specs/22` M15 P14's own real live-run finding) -- `createTestProject`'s own
+     * real `forge init` already wrote every CURRENT managed entry, so stripping the newest one back
+     * out is the one real way to produce "an existing project missing a managed entry" without this
+     * test needing its own second, hand-maintained copy of the managed list. */
+    async function stripBackupsEntry(project: Awaited<ReturnType<typeof createTestProject>>) {
+      const gitignorePath = path.join(project.dir, GITIGNORE_REL_PATH);
+      const before = await readFile(gitignorePath, 'utf8');
+      expect(before).toContain('.forge/backups/');
+      await writeFile(gitignorePath, before.replace('.forge/backups/\n', ''), 'utf8');
+      return { gitignorePath, before };
+    }
+
+    it(
+      'a dry run reports the missing managed entry and writes nothing at all',
+      async () => {
+        const project = await createTestProject();
+        const { gitignorePath, before } = await stripBackupsEntry(project);
+        const stripped = before.replace('.forge/backups/\n', '');
+
+        const report = await runUpgrade(
+          project.paths,
+          project.dir,
+          { dryRun: true },
+          baseDeps(project),
+        );
+
+        expect(report.gitignoreEntriesAdded).toEqual(['.forge/backups/']);
+        expect(await readFile(gitignorePath, 'utf8')).toBe(stripped);
+      },
+      // Same load-sensitivity this file's own "is idempotent" test above already documents (a real
+      // `forge init` plus a real `runUpgrade` pass, under the resource contention of the full
+      // monorepo suite running concurrently) -- reuses the identical, already-justified timeout
+      // rather than inventing a second one.
+      SLOW_TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "a real run merges the missing entry back in, preserving the human's own unrelated line untouched",
+      async () => {
+        const project = await createTestProject();
+        const { gitignorePath, before } = await stripBackupsEntry(project);
+        const stripped = before.replace('.forge/backups/\n', '');
+        await writeFile(gitignorePath, `${stripped}my-own-ignore-rule/\n`, 'utf8');
+
+        const report = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+
+        expect(report.gitignoreEntriesAdded).toEqual(['.forge/backups/']);
+        const after = await readFile(gitignorePath, 'utf8');
+        expect(after).toContain('my-own-ignore-rule/');
+        expect(after).toContain('.forge/backups/');
+        expect(after).toContain('.forge/state/');
+      },
+      SLOW_TEST_TIMEOUT_MS,
+    );
+
+    it(
+      "a real run against a project's own pre-existing # FORGE header never writes a second one -- exactly one block after merging (specs/22 M17 P13, critic round 2 finding 3)",
+      async () => {
+        // `createTestProject()`'s own real `forge init` already wrote one real `# FORGE` header (the
+        // ordinary case every real upgrade actually runs against) -- `stripBackupsEntry` removes only
+        // the one managed LINE, the header stays. The pre-M17-P13, single-caller `appendGitignore`
+        // only ever ran once per project and could safely assume no header existed yet; this function
+        // now also runs here, against a file that already has one.
+        const project = await createTestProject();
+        const { gitignorePath } = await stripBackupsEntry(project);
+
+        await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+
+        const after = await readFile(gitignorePath, 'utf8');
+        expect(after.split('# FORGE')).toHaveLength(2); // exactly one real occurrence
+        expect(after).toContain('.forge/backups/');
+      },
+      SLOW_TEST_TIMEOUT_MS,
+    );
+
+    it(
+      'reports an empty gitignoreEntriesAdded and leaves .gitignore byte-identical when every managed entry is already present (idempotent, zero-change)',
+      async () => {
+        const project = await createTestProject();
+        const gitignorePath = path.join(project.dir, GITIGNORE_REL_PATH);
+        const before = await readFile(gitignorePath, 'utf8');
+
+        const report = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+
+        expect(report.gitignoreEntriesAdded).toEqual([]);
+        expect(await readFile(gitignorePath, 'utf8')).toBe(before);
+      },
+      SLOW_TEST_TIMEOUT_MS,
+    );
+
+    it(
+      'a real second upgrade with nothing missing does not even rewrite .gitignore -- a real mtime check, not just a content comparison (specs/22 M17 P13, critic round 2 finding 2)',
+      async () => {
+        // A content-only comparison (the test above) cannot tell "wrote the identical bytes back"
+        // apart from "never touched the file at all" -- both leave the string equal. `run-upgrade.ts`'s
+        // own doc comment on `gitignoreEntriesAdded`'s plan-guard claims the real no-op explicitly
+        // ("keeps a no-change upgrade from touching this file's mtime at all"); this proves that
+        // claim with a real stat, the identical `statSync(...).mtimeMs` before/after pattern
+        // `packages/kb/test/db/read.test.ts` already establishes for an analogous "this call must not
+        // touch the file" guarantee.
+        const project = await createTestProject();
+        const gitignorePath = path.join(project.dir, GITIGNORE_REL_PATH);
+        const beforeMtimeMs = (await stat(gitignorePath)).mtimeMs;
+
+        await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+
+        expect((await stat(gitignorePath)).mtimeMs).toBe(beforeMtimeMs);
+      },
+      SLOW_TEST_TIMEOUT_MS,
+    );
+
+    it(
+      'creates a real .gitignore from nothing when the project has none at all',
+      async () => {
+        const project = await createTestProject();
+        const gitignorePath = path.join(project.dir, GITIGNORE_REL_PATH);
+        await rm(gitignorePath);
+
+        const report = await runUpgrade(project.paths, project.dir, {}, baseDeps(project));
+
+        expect(report.gitignoreEntriesAdded.length).toBeGreaterThan(0);
+        expect(await readFile(gitignorePath, 'utf8')).toContain('.forge/state/');
+      },
+      SLOW_TEST_TIMEOUT_MS,
+    );
   });
 });
