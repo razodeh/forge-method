@@ -29642,3 +29642,84 @@ never-built `origin/HEAD`/`init.defaultBranch` mechanism rather than what this p
 built — the code's own doc comment discloses this honestly; the spec text itself was not updated.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P9`.
+
+## Q324 — M17 P12: engine messages and telemetry that reach the right place — two gauntlet rounds, each finding the fix recreating its own target bug one layer deeper, and the DECISIONs that closed each
+
+**Context.** Three register defects: #7 (command-failure messages preferred stderr over stdout
+outright), #15 (commit subjects used a raw `finalText` slice), #21b/B (merge-skip telemetry named no
+entry; in-run `G-Parity` telemetry reached the wrong project root). Each fix held up; the mechanism
+built to fix defect #7 specifically needed two full rounds to close completely, each round's own
+gauntlet finding a real, reproduced instance of the identical failure class — losing real diagnostic
+content — recreated inside the fix meant to prevent exactly that.
+
+**DECISION 1 — `FORGE_COMMIT_SUBJECT:` is a narrow, local, `steps.ts`-only convention, never an
+eighth `ForgeControlToken`.** The Mandate's own prose names it as "a `FORGE_COMMIT_SUBJECT:` control
+token," but `specs/05-agent-system.md` names exactly seven `FORGE_*` tokens and `SPEC-QUESTIONS.md`
+Q58 point 12 is explicit: "No eighth token is named anywhere in the spec pack; none invented." Per
+the standing precedence rule (specs > Decisions > a piece's own prose), the override is recognized
+only by `commitSubjectFor` on a session's own `finalText`, never folded into
+`SessionResult.controlTokens`, never stripped by `stripControlTokens`, never advertised in the
+operating contract. Both critics independently traced every real consumer of `finalText`/
+`controlTokens` at the adapter layer and confirmed no live call site runs `stripControlTokens` on
+agent `finalText` at all (only `parseControlTokens`, which extracts but never removes) — so there is
+no current leak, and the one disclosed, non-live residual (a `FORGE_COMMIT_SUBJECT:` line would
+classify as `unknown` rather than `recognized` if ever run through either mechanism) is named in the
+code's own doc comment for whoever adds the first such call site.
+
+**DECISION 2 — the in-run `G-Parity` telemetry fix needed two independent halves, not one.** The
+root cause split into `gateEnv` lacking `FORGE_PROJECT_ROOT` (fixed in `context.ts`) AND `forge
+parity check`'s own CLI handler never reading that env var for its telemetry destination (fixed in
+`check-command.ts`+`bin.ts`, mirroring the pre-existing `StoryVerifyContext.telemetryProjectRoot`
+pattern) — fixing only the first half would have been a silent no-op for the Mandate's own named
+exit scenario (`G-Parity` → `forge report`). The sibling `G-Verify`/merge-check instances of the
+identical mechanism gap are disclosed, not fixed, named explicitly as out of this piece's own cited
+Surface.
+
+**DECISION 3 — `matchingSkipChecksEntry` is a deliberate, local duplicate of `skipsChecksFor`'s
+segment-match logic, not a widened shared function.** `skipsChecksFor` is shared with `@forge/cli`'s
+own standalone `forge merge`/`forge merge --all`, which assigns its result directly to a `boolean`
+field — widening its return shape for one telemetry caller's need would force an edit outside this
+piece's own Surface. Both critics independently confirmed this reasoning by reading the real caller.
+
+**DECISION 4 (round 1) — the command-failure-message fix combines both streams, strips only a closed
+list of real Node warning names, and surfaces a `--json` envelope's problem text first.** Round 1's
+own gauntlet found and fixed: a long Node stack trace's own real cause, sitting near the top, was
+dropped by the first draft's tail-only line truncation (the doc comment's own claim of keeping "a
+stack trace's head" didn't match the code, which took the tail) — fixed by keeping both head and
+tail halves with an honest "N lines omitted" marker. A wildcard `\w*Warning:` regex deleted ANY
+custom project warning sharing Node's own documented `process.emitWarning(message, name)` shape —
+fixed by matching a closed, specific list of the real Node-internal warning names only, confirmed
+live (6 of 7 directly triggered on the current Node version; the 7th may be stale from an older
+Node, harmless either way since an inert, never-emitted name matches and drops nothing). A moderate
+finding (`extractJsonEnvelopeProblem`'s own returned text had no length bound, unlike the
+stderr/stdout excerpts) was closed with its own character cap.
+
+**DECISION 5 (round 2) — the line-truncation fix's own char-level fallback needed a dynamic budget
+allocator, not a fixed half-each split.** When line-trimmed content still exceeded the overall
+character budget, the first fix's own fallback sliced the already-flattened, concatenated head+tail
+string from both ends with a rigid half-each cut — real content buried in a bulky section past its
+own half's boundary, but not within the blob's very last characters either, fell into neither slice
+and was silently dropped, with no disclosure marker, reproduced twice through the real engine.
+`splitExcerptBudget` now gives a short section exactly what it needs and hands the unused remainder
+to the other side, so a short tail never caps a bulky head at a half-budget it has no need for.
+
+**Disclosed, not fixed, a structural limit named and TESTED, not merely claimed**: a single,
+unsplittable line wider than the whole excerpt budget has no section boundary for
+`splitExcerptBudget` to reallocate across — content in its own true middle remains genuinely
+unreachable by any two-edge truncation scheme, raising the total budget or finding semantic
+structure to split on being the only way to close it further. A dedicated test proves both the
+positive guarantee (content near either edge of a long single line survives) and the disclosed limit
+(content in the true middle does not) in the same assertion, so the boundary stays verified rather
+than merely asserted.
+
+**Also disclosed (non-blocking, both critics independently confirmed accurate)**: `facades.ts`'s
+own `toMergeChecks` carries the identical, pre-existing, unfixed defect-#7 pattern — its own comment,
+made inaccurate as a side effect of this diff's changes to `steps.ts`, is corrected to not claim a
+parity that no longer exists; the real behavior stays out of this piece's own cited Surface. A
+`clipEnvelopeProblem`/`extractJsonEnvelopeProblem` field-ordering interaction (a sufficiently long
+`problems` array can push `error.message` out of the lead line's own budget) is judged adversarial-
+only — the untruncated raw excerpt below the lead line almost always still carries the content in
+practice, and genuinely losing it needs deliberately balancing both fields' own sizes against the
+budget, not an ordinary envelope shape.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P12`.

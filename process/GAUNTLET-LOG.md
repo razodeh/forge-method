@@ -23678,3 +23678,51 @@ name what diverged without asserting an unprovable cause, and adding the missing
 mutation-confirmed.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q323`.
+
+## M17 P12
+
+Fixes 3 register defects. **Defect #7**: a command step's failure message preferred stderr over
+stdout outright (`stderr.trim() === '' ? stdout : stderr`), discarding a real `--json` envelope's
+own `problems`/`error.message` whenever a harmless Node runtime-warning line happened to land on
+stderr. New `buildCommandFailureMessage` combines both streams, drops only a specific closed set of
+real Node warning names (never an open wildcard), and surfaces a `--json` envelope's own problem
+text first. **Defect #15**: a run's own commit subject used `session.finalText.slice(0, 72)` instead
+of something meaningful; `commitSubjectFor` now reads an explicit `FORGE_COMMIT_SUBJECT:` control
+line, else a brief's own title, else the bare step id — the override is deliberately a narrow,
+local, `steps.ts`-only convention, never an eighth `ForgeControlToken` (the Mandate's own prose
+contradicts `specs/05` and `SPEC-QUESTIONS.md` Q58's explicit "no eighth token is named anywhere in
+the spec pack; none invented"). **Defect #21b/B**: merge telemetry never named which `skipChecks`
+entry caused a skip, and the in-run `G-Parity` gate's own telemetry reached the lane's cwd rather
+than the real project root `forge report` later reads from — both fixed, with the sibling
+`G-Verify`/merge-check instances of defect B disclosed, not fixed (out of this piece's own cited
+Surface).
+
+**Round 1's gauntlet found two real, reproduced bugs in the new failure-message fix itself — the
+exact failure class it exists to prevent, recreated one layer deeper.** A long Node stack trace's
+own real cause, sitting near the top, was silently dropped by a tail-only line-level truncation
+(the doc comment claimed "a stack trace's head" was kept; the code took the tail). A wildcard
+`\w*Warning:` regex deleted ANY custom project warning sharing Node's own documented
+`process.emitWarning(message, name)` shape, not just Node's own built-ins. Fixed: line-level
+truncation now keeps both head and tail halves with an honest "N lines omitted" marker; the warning
+filter now matches a closed, specific list of real Node warning names. A third, moderate finding
+(an unbounded `--json` envelope problem text) was also closed with its own character cap. Both
+critics independently found and confirmed a pre-existing sibling file's own stale comment, made
+inaccurate as a side effect of this diff (not this piece's job to fix the underlying behavior,
+`facades.ts`'s own identical, disclosed, out-of-Surface defect-#7 pattern — just the comment).
+
+**Round 2's gauntlet found the round-1 fix for the line-truncation bug had its own narrower,
+char-level instance of the identical bug, reproduced twice through the real engine.** When the
+line-trimmed content still exceeded the overall character budget, the fallback sliced the
+flattened, already-concatenated head+tail string from both its own ends with a rigid, fixed half-
+each split — content buried in a bulky head or tail section, past its own half's boundary but not
+within the very last characters of the whole blob either, fell into neither slice and was dropped
+silently, with no "omitted" marker to disclose it. Closed with a dynamic budget allocator
+(`splitExcerptBudget`): when one side's own real length already fits in half the budget, it gets
+exactly what it needs and the remainder goes to the other side, so a short tail never caps a bulky
+head at a half-budget it doesn't need. A structural residual is disclosed and TESTED, not merely
+claimed fixed: a single, unsplittable line wider than the whole budget has no section boundary to
+reallocate across, so content in its own true middle remains unreachable by any two-edge scheme —
+the same category of honest, disclosed limit this milestone's other pieces have reached elsewhere
+(the net-zero multi-commit gap in M17 P15, for instance), not a silent gap.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q324`.
