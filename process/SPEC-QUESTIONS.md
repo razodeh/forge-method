@@ -29791,3 +29791,19 @@ existing header and merging into it; `forge init`'s own from-scratch path is unt
 its own full, unmodified test suite still passing.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P13`.
+
+## Q326 — M17, orchestrator direct fix: `prune-multiprocess.test.ts`'s own `REPO_ROOT` climbed one level past the real repo root
+
+**Context.** `packages/cli/test/commands/evidence/prune-multiprocess.test.ts:41` computed `REPO_ROOT`
+with 6 `../` segments, copied verbatim (per its own header comment) from
+`loop/test/exemptions.test.ts:502`, which correctly needs six — that file lives one directory
+deeper (`.../loop/test/`) than this one (`.../evidence/`). Five segments are correct here; six climb
+one level past the real repo root, into the shared parent directory holding every M17 worktree
+during this milestone's heavy multi-worktree dispatch, spawning a stray `.forge-test-scratch/` there
+and causing spurious `ERR_MODULE_NOT_FOUND: Cannot find package '@forge/core'` failures any
+concurrently-running piece could mistake for its own regression.
+
+**DECISION** — found by M17 P13's builder, outside its own declared Surface (pre-existing, landed
+with `840310b`/M17 P14 round 2, confirmed via `git log`), correctly disclosed rather than fixed
+in-piece. Fixed directly by the orchestrator (`162fd74`): one `../` segment removed, verified the
+resolved path is now the real repo root.
