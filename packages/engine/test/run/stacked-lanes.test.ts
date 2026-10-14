@@ -334,15 +334,17 @@ describe('a chain inside one merge sees its predecessor before the merge (stacke
       expect.arrayContaining(['tests/a.test.txt', 'src/a.txt', 'docs/review.txt']),
     );
     // No duplicate commit: lane N holds lane N-1's commits, and landing N-1 first made N replay only its own.
+    // `specs/22` M17 P12 (defect #15): the commit subject is now `<step id>: <brief>`, never the
+    // session's own `finalText` (`did gen`/`did impl`/`did review`, this fixture's own scripted text).
     expect(await laneCommitSubjects(project)).toEqual(
       expect.arrayContaining([
-        'forge(st): did gen',
-        'forge(st): did impl',
-        'forge(st): did review',
+        'forge(st): st:gen: do gen',
+        'forge(st): st:impl: do impl',
+        'forge(st): st:review: do review',
       ]),
     );
     expect(
-      (await laneCommitSubjects(project)).filter((s) => s === 'forge(st): did gen'),
+      (await laneCommitSubjects(project)).filter((s) => s === 'forge(st): st:gen: do gen'),
     ).toHaveLength(1);
     const events = await eventsOf(project);
     expect(events.filter((event) => event.type === 'MergeCompleted')).toHaveLength(3);
@@ -477,9 +479,10 @@ describe('a chain inside one merge sees its predecessor before the merge (stacke
     expect(await filesOnIntegration(project)).toEqual(
       expect.arrayContaining(['tests/one.txt', 'src/one.txt', 'tests/two.txt', 'src/two.txt']),
     );
+    // `specs/22` M17 P12 (defect #15): `<step id>: <brief>`, never the session's own scripted `finalText`.
     const subjects = await laneCommitSubjects(project);
     for (const step of ['gen1', 'impl1', 'gen2', 'impl2']) {
-      expect(subjects.filter((s) => s === `forge(tc): did ${step}`)).toHaveLength(1);
+      expect(subjects.filter((s) => s === `forge(tc): tc:${step}: do ${step}`)).toHaveLength(1);
     }
     expect((await eventsOf(project)).some((event) => event.type === 'MergeConflict')).toBe(false);
   });
@@ -1519,9 +1522,10 @@ describe('crash and resume of a stacked chain is idempotent', () => {
       expect(await filesOnIntegration(project)).toEqual(
         expect.arrayContaining(['tests/a.txt', 'src/a.txt', 'docs/r.txt']),
       );
+      // `specs/22` M17 P12 (defect #15): `<step id>: <brief>`, never the session's own scripted `finalText`.
       const subjects = await laneCommitSubjects(project);
       for (const name of ['gen', 'impl', 'review']) {
-        expect(subjects.filter((s) => s === `forge(rs): did ${name}`)).toHaveLength(1);
+        expect(subjects.filter((s) => s === `forge(rs): rs:${name}: do ${name}`)).toHaveLength(1);
       }
       expect(await git(project.integrationPath, 'status', '--porcelain')).toBe('');
       expect(ctx.laneRegistry.size).toBe(0);

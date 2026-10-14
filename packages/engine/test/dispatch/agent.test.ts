@@ -1103,3 +1103,108 @@ describe('a declared KB output reserves a collision-free id before assembly (PLA
     expect(prompt).toContain('reserved id `ADR-0001`');
   });
 });
+
+describe('runAgentWork — commit subject uses the step id and brief title, never truncated narration (specs/22 M17 P12) (#15)', () => {
+  it("defaults to '<step id>: <brief title>', not the first 72 characters of the session's own finalText", async () => {
+    const projectRoot = await createTempRepo('agent-commit-subject-default');
+    const adapter = new FakePlatformAdapter();
+    const longNarration =
+      'This is a long paragraph of agent narration describing, in prose, everything the session did ' +
+      'and why, which used to be sliced at 72 characters to make the lane commit subject.';
+    adapter.script(() => true, { text: [longNarration] });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const lane = { laneId: 'lane-subject-default', path: projectRoot, branch: 'main' };
+    const stepNode = node({
+      id: 'wf:implement',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'briefs/fix-the-thing.md',
+    });
+
+    const work = await runAgentWork(stepNode, ctx, lane, 'HEAD', { kind: 'start' });
+
+    expect(work.commitSubject).toBe('wf:implement: fix-the-thing');
+    expect(work.commitSubject).not.toContain('long paragraph');
+    expect(work.commitSubject.length).toBeLessThan(longNarration.length);
+  });
+
+  it('falls back to the bare step id when the step has no authored brief at all', async () => {
+    const projectRoot = await createTempRepo('agent-commit-subject-no-brief');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, { text: ['narration irrelevant here'] });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const lane = { laneId: 'lane-subject-no-brief', path: projectRoot, branch: 'main' };
+    const stepNode = node({ id: 'wf:implement', kind: 'agent', agent: toAgentId('engineer') });
+
+    const work = await runAgentWork(stepNode, ctx, lane, 'HEAD', { kind: 'start' });
+
+    expect(work.commitSubject).toBe('wf:implement');
+  });
+
+  it('a FORGE_COMMIT_SUBJECT: line in the session finalText overrides the default entirely', async () => {
+    const projectRoot = await createTempRepo('agent-commit-subject-override');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: [
+        'Some narration first.\nFORGE_COMMIT_SUBJECT: fix the auth bug\nMore narration after.',
+      ],
+    });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const lane = { laneId: 'lane-subject-override', path: projectRoot, branch: 'main' };
+    const stepNode = node({
+      id: 'wf:implement',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'briefs/fix-the-thing.md',
+    });
+
+    const work = await runAgentWork(stepNode, ctx, lane, 'HEAD', { kind: 'start' });
+
+    expect(work.commitSubject).toBe('fix the auth bug');
+  });
+
+  it('strips a control character from a FORGE_COMMIT_SUBJECT: override before it reaches the real commit subject (gauntlet critic round 1, MINOR: a regression test for sanitizing logic the critic hand-verified sound but previously untested)', async () => {
+    const projectRoot = await createTempRepo('agent-commit-subject-control-char');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['FORGE_COMMIT_SUBJECT: fix\u0007the bug'],
+    });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const lane = { laneId: 'lane-subject-control-char', path: projectRoot, branch: 'main' };
+    const stepNode = node({ id: 'wf:implement', kind: 'agent', agent: toAgentId('engineer') });
+
+    const work = await runAgentWork(stepNode, ctx, lane, 'HEAD', { kind: 'start' });
+
+    expect(work.commitSubject).toBe('fix the bug');
+    expect(work.commitSubject).not.toContain('\u0007');
+  });
+
+  it('end to end: the FORGE_COMMIT_SUBJECT: override really lands as the real git commit subject line', async () => {
+    const projectRoot = await createTempRepo('agent-commit-subject-e2e');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: [
+        'Long narration the old code would have sliced.\nFORGE_COMMIT_SUBJECT: add the widget',
+      ],
+      writeFiles: [{ relativePath: 'a.txt', content: 'x\n' }],
+    });
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:implement',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'briefs/fix-the-thing.md',
+      produces: ['a.txt'],
+    });
+
+    const outcome = await executeStep(stepNode, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    const worktreesDir = await worktreesRootFor(await realpath(projectRoot));
+    const [laneDir] = await readdir(worktreesDir);
+    const { stdout } = await execa('git', ['log', '-1', '--format=%s'], {
+      cwd: path.join(worktreesDir, laneDir ?? ''),
+    });
+    expect(stdout.trim()).toBe('forge(wf): add the widget');
+  });
+});

@@ -34,6 +34,7 @@ import {
   type RunParityCheckOptions,
 } from '../../../src/commands/parity/check-command.ts';
 import { emitParityCheckTelemetry } from '../../../src/commands/parity/check-telemetry.ts';
+import { buildReport } from '../../../src/commands/report.ts';
 
 const PARITY_EVIDENCE_TYPE = definitionForType('ParityEvidence');
 
@@ -659,6 +660,77 @@ describe('runParityCheck: telemetry CheckRun{kind:"parity"} (specs/22 M16 P15)',
     const names = parityRuns[0]?.['declarationNames'] as readonly string[];
     expect(names[0]).not.toContain(secret);
     expect(names[0]).toContain('[REDACTED]');
+  });
+});
+
+describe("runParityCheck: telemetryProjectRoot sends the CheckRun{kind:'parity'} event to the REAL project root, never wherever the check itself ran (specs/22 M17 P12) (defect B)", () => {
+  it('writes the event under telemetryProjectRoot, not under projectRoot, when the two differ -- the in-run gate shape, where projectRoot is really the integration worktree', async () => {
+    const dir = await freshProject();
+    await writeDeclaration(dir, 'sample');
+    await commitAll(dir, 'declare');
+    await runParityCapture(captureOptions(dir));
+    await writeBehavior(dir, CHANGED_BODY);
+    const realProjectRoot = await mkdtemp(path.join(tmpdir(), 'forge-p12-telemetry-root-'));
+    dirs.push(realProjectRoot);
+
+    await runParityCheck(
+      checkOptions(dir, {
+        runId: 'run-telemetry-root',
+        noRecord: true,
+        telemetryProjectRoot: realProjectRoot,
+      }),
+    );
+
+    const atRealRoot = [];
+    for await (const event of readEvents(realProjectRoot, 'run-telemetry-root')) {
+      atRealRoot.push(event);
+    }
+    expect(atRealRoot.some((event) => event.type === 'CheckRun')).toBe(true);
+    // Never ALSO duplicated under the directory the check itself ran in.
+    expect(await pathExists(new ProjectPaths(dir).resolveState('runs'))).toBe(false);
+  });
+
+  it('falls back to projectRoot when telemetryProjectRoot is omitted -- the ordinary, standalone human invocation, where the two always coincide', async () => {
+    const dir = await freshProject();
+    await writeDeclaration(dir, 'sample');
+    await commitAll(dir, 'declare');
+    await runParityCapture(captureOptions(dir));
+
+    await runParityCheck(checkOptions(dir, { runId: 'run-telemetry-fallback', noRecord: true }));
+
+    const atProjectRoot = [];
+    for await (const event of readEvents(dir, 'run-telemetry-fallback')) atProjectRoot.push(event);
+    expect(atProjectRoot.some((event) => event.type === 'CheckRun')).toBe(true);
+  });
+
+  it("the event is really visible to forge report's own buildReport, reading the real project root (the whole point of defect B: an in-run G-Parity evaluation now appears in forge report)", async () => {
+    const dir = await freshProject();
+    await writeDeclaration(dir, 'sample');
+    await commitAll(dir, 'declare');
+    await runParityCapture(captureOptions(dir));
+    await writeBehavior(dir, CHANGED_BODY);
+    const realProjectRoot = await mkdtemp(path.join(tmpdir(), 'forge-p12-report-root-'));
+    dirs.push(realProjectRoot);
+
+    await runParityCheck(
+      checkOptions(dir, {
+        runId: 'run-report-visible',
+        noRecord: true,
+        telemetryProjectRoot: realProjectRoot,
+      }),
+    );
+
+    const scorecard = await buildReport({
+      paths: new ProjectPaths(realProjectRoot),
+      projectRoot: realProjectRoot,
+      reportsRoot: 'docs/forge/reports',
+      clock: SYSTEM_CLOCK,
+    });
+    expect(scorecard.parity).toMatchObject({
+      checksRun: 1,
+      totalDeclarations: 1,
+      verdictCounts: expect.objectContaining({ mismatch: 1 }) as unknown,
+    });
   });
 });
 

@@ -15,6 +15,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { ForgeError } from '@forge/core/errors';
 import { readEvents } from '@forge/telemetry/events';
+import { slugifyStepId } from '@forge/vcs';
 import { describe, expect, it } from 'vitest';
 
 import { executeStep } from '../../src/dispatch/execute.ts';
@@ -136,6 +137,85 @@ describe('runMergeStep — skipChecks (specs/22 M15 P14)', () => {
     if (outcome.detail.kind === 'merge') {
       expect(outcome.detail.merges[0]?.outcome.kind).toBe('clean');
     }
+  });
+});
+
+describe('runMergeStep — a skipChecks lane carries a real reason on its own MergeStarted event (specs/22 M17 P12) (#21b, defect B)', () => {
+  it('a lane named in skipChecks names skipChecks and the matching entry on its own MergeStarted event; a lane not named in skipChecks carries no such field at all', async () => {
+    const projectRoot = await createTempRepo('merge-skip-checks-reason');
+    const ctx = createTestContext({ projectRoot, runId: 'run-skip-checks-reason' });
+    await executeStep(
+      node({ id: 'wf:red', kind: 'command', run: 'echo red > red.txt', produces: ['red.txt'] }),
+      ctx,
+    );
+    await executeStep(
+      node({
+        id: 'wf:green',
+        kind: 'command',
+        run: 'echo green > green.txt',
+        produces: ['green.txt'],
+      }),
+      ctx,
+    );
+
+    await executeStep(
+      node({
+        id: 'wf:merge',
+        kind: 'merge',
+        dependsOn: ['wf:red', 'wf:green'],
+        mergePolicy: { conflict: 'abort', postChecks: 'true', skipChecks: ['red'] },
+      }),
+      ctx,
+    );
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-skip-checks-reason')) events.push(event);
+    const started = events.filter((event) => event.type === 'MergeStarted');
+    const redSlug = slugifyStepId('wf:red');
+    const greenSlug = slugifyStepId('wf:green');
+    const redStarted = started.find((event) => 'laneId' in event && event.laneId.includes(redSlug));
+    const greenStarted = started.find(
+      (event) => 'laneId' in event && event.laneId.includes(greenSlug),
+    );
+    expect(redStarted?.payload).toMatchObject({
+      skipChecksReason: expect.stringContaining('red') as unknown,
+    });
+    expect(
+      greenStarted?.payload === undefined ||
+        !Object.prototype.hasOwnProperty.call(greenStarted.payload, 'skipChecksReason'),
+    ).toBe(true);
+  });
+
+  it('matches by compiled-id segment, the identical rule skipsChecksFor uses, naming the configured bare entry (not the full compiled id) in the reason', async () => {
+    const projectRoot = await createTempRepo('merge-skip-checks-reason-segment');
+    const ctx = createTestContext({ projectRoot, runId: 'run-skip-reason-segment' });
+    await executeStep(
+      node({
+        id: 'build-stage:generate-tests:STORY-001',
+        kind: 'command',
+        run: 'echo test > test.txt',
+        produces: ['test.txt'],
+      }),
+      ctx,
+    );
+
+    await executeStep(
+      node({
+        id: 'wf:merge',
+        kind: 'merge',
+        dependsOn: ['build-stage:generate-tests:STORY-001'],
+        mergePolicy: { conflict: 'abort', postChecks: 'true', skipChecks: ['generate-tests'] },
+      }),
+      ctx,
+    );
+
+    const events = [];
+    for await (const event of readEvents(projectRoot, 'run-skip-reason-segment'))
+      events.push(event);
+    const started = events.find((event) => event.type === 'MergeStarted');
+    expect(started?.payload).toMatchObject({
+      skipChecksReason: expect.stringContaining('generate-tests') as unknown,
+    });
   });
 });
 

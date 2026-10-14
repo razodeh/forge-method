@@ -148,8 +148,11 @@ export function resumePrompt(stepKey: string): string {
 
 const BRIEF_BASENAME = /^briefs\/([^/\\]+)\.md$/;
 
-/** `15` §15.3's `prompt.briefs.<key>`: the key is the workflow brief's basename without `.md`. */
-function briefKeyOf(reference: string): string | undefined {
+/** `15` §15.3's `prompt.briefs.<key>`: the key is the workflow brief's basename without `.md`. Exported
+ * (`specs/22` M17 P12): `dispatch/steps.ts`'s own default commit-subject derivation reuses this exact
+ * rule for a step's own `node.brief` rather than a second, independently-written basename regex that
+ * could silently drift from what `prompt.briefs.<key>` itself means. */
+export function briefKeyOf(reference: string): string | undefined {
   return BRIEF_BASENAME.exec(reference)?.[1];
 }
 

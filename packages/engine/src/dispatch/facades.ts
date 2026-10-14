@@ -359,7 +359,11 @@ function toMergeChecks(
     const flooded = result.outputLimitExceeded === true;
     const passed = exitCode === 0 && !timedOut && !flooded;
     // `stderr || stdout`, not bare `stderr`: many real check commands report their failure on stdout, leaving
-    // stderr empty -- the identical fallback `steps.ts`'s own inline-command failure path already uses.
+    // stderr empty. `specs/22` M17 P12 (disclosed gap, not fixed here -- out of that piece's own Surface):
+    // `steps.ts`'s own `runCommandStep` failure message used to take the identical one-or-the-other fallback,
+    // but that piece replaced it with `buildCommandFailureMessage` (combines a bounded stderr+stdout excerpt,
+    // drops known Node runtime-warning lines, and surfaces a `--json` envelope's own problems/error.message)
+    // -- this function's own behaviour is unchanged and no longer has that same parity to point to.
     if (passed) return { passed, summary: stdout };
     const output = tailOf(stderr.trim() === '' ? stdout : stderr);
     if (label === undefined && !timedOut && !flooded) return { passed, summary: output };

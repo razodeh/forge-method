@@ -129,6 +129,16 @@ export interface LandLaneOptions {
   /** Layers of a named check set that had no configured command: recorded on `MergeStarted`, so a merge that ran
    * fewer checks than its set names says so. */
   readonly skippedLayers?: ResolvedLaneChecks['skipped'] | undefined;
+  /** `specs/22` M17 P12 (defect #21b / defect B): why THIS lane's own `checks` above were replaced with
+   * an empty pre/post pair by `MergePolicy.skipChecks` (`runMergeStep`'s own `skipsChecksFor` call,
+   * `dispatch/steps.ts`) — `undefined` for every other lane, including one whose checks are empty for
+   * an unrelated reason (nothing configured for its set). `landLane` itself has no concept of
+   * `MergePolicy` at all (`integrateLane`'s own automatic-integration caller never has one to read), so
+   * the caller that DOES know names the reason explicitly rather than this function trying to infer
+   * intent from an empty `checks` shape it cannot tell apart from "nothing was ever configured." Recorded
+   * on `MergeStarted` beside `checkPayload` (`describeChecks`) so a lane silently skipped by config is
+   * no longer indistinguishable, in the event log, from one that simply had nothing to run. */
+  readonly skipChecksReason?: string | undefined;
   /** `PLAN-M14.md` P18: a swarm-review lane's own bound verdict (`concerns` -- the only value a caller
    * ever passes here; `clear` lands exactly like any other lane, no trailer, and `incomplete`/`blocked`
    * never reach `landLane` at all, refused earlier) and the `REVIEW-NNN` id it came from, read from the
@@ -172,7 +182,8 @@ export async function landLane(
   ctx: LandLaneDeps,
   options: LandLaneOptions,
 ): Promise<LandLaneResult> {
-  const { eventStepId, laneStepId, lane, conflictPolicy, checks, skippedLayers } = options;
+  const { eventStepId, laneStepId, lane, conflictPolicy, checks, skippedLayers, skipChecksReason } =
+    options;
   const { reviewVerdict, reviewReportId, replayFrom } = options;
   const reviewFields =
     reviewVerdict === undefined || reviewReportId === undefined
@@ -202,8 +213,9 @@ export async function landLane(
   // has no sixth name for it, and the real signal is the step's own `StepOutcome{status:'failed'}`,
   // the same place every other handler in this module surfaces a failure that is not one of its own
   // already-registered event types.
-  // What the checks are (labels, never the commands: they may hold secrets) and what a named set could not run.
-  const checkPayload = describeChecks(checks, skippedLayers);
+  // What the checks are (labels, never the commands: they may hold secrets), what a named set could
+  // not run, and (specs/22 M17 P12) why they were replaced with nothing at all, when that is why.
+  const checkPayload = describeChecks(checks, skippedLayers, skipChecksReason);
   await ctx.telemetry.emit({
     type: 'MergeStarted',
     stepId: eventStepId,
@@ -337,6 +349,7 @@ export async function landLane(
 function describeChecks(
   checks: MergeCandidateChecks,
   skipped: ResolvedLaneChecks['skipped'] | undefined,
+  skipChecksReason?: string,
 ): Record<string, unknown> | undefined {
   // `PLAN-M14.md` P40: shared with `@forge/cli`'s own `merge.ts` (`checkLabelsOf`, `merge-checks.ts`) —
   // a critic round caught the two independently duplicating this exact "label, never the command text
@@ -345,13 +358,22 @@ function describeChecks(
   const post = checkLabelsOf(checks.postCommands);
   const skippedPre = skipped?.pre ?? [];
   const skippedPost = skipped?.post ?? [];
-  if (pre.length + post.length + skippedPre.length + skippedPost.length === 0) return undefined;
+  // `specs/22` M17 P12 (defect #21b / defect B): `skipChecksReason` alone must still produce a payload
+  // -- a `skipChecks`-named lane's own `checks` are, BY DESIGN, exactly as empty as a lane that simply
+  // had nothing configured, and this is the one field that tells the two apart in the event log.
+  if (
+    pre.length + post.length + skippedPre.length + skippedPost.length === 0 &&
+    skipChecksReason === undefined
+  ) {
+    return undefined;
+  }
   return {
     preChecks: pre,
     postChecks: post,
     ...(skippedPre.length + skippedPost.length === 0
       ? {}
       : { skippedLayers: { pre: skippedPre, post: skippedPost } }),
+    ...(skipChecksReason === undefined ? {} : { skipChecksReason }),
   };
 }
 

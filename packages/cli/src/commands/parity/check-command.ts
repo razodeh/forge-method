@@ -158,6 +158,23 @@ export interface RunParityCheckOptions {
    *    no `runId` — see that function's own doc comment for the mechanism and the real subprocess proof.
    */
   readonly runId?: string | undefined;
+  /**
+   * `specs/22` M17 P12 (defect #21b was the lane-telemetry half of this; this is the gate-telemetry
+   * half, defect B): the REAL project root path 1 above's own account says telemetry needs, threaded
+   * through separately from {@link RunParityCheckOptions.projectRoot} rather than overloading that field
+   * -- `projectRoot` itself must stay exactly what it already is (the directory this invocation's own
+   * parity machinery actually checks: `ProjectPaths`, `checkTrustAnchor`, `takeTreeSnapshot`, the
+   * declaration load at this module's own `processDeclaration`/`listDeclarationNames`), which for a
+   * real in-run `G-Parity` gate evaluation is `ctx.integrationPath` (`runGateStep`'s own `cwd`), never
+   * the real project root. Swapping `projectRoot` itself for the real root, as path 1's own account
+   * already warns, would make this invocation check the WRONG tree entirely. Mirrors `story.ts`'s own
+   * identical split (`StoryVerifyContext.telemetryProjectRoot`, read by `checkBinding` for
+   * `emitBindingCheckTelemetry`; `bin.ts`'s own `runStoryCommand` supplies it): `projectRoot`
+   * stays lane/worktree-scoped for the real work, this one field is only ever read for where the
+   * `CheckRun{kind:'parity'}` event itself lands. `undefined` (the ordinary, standalone human
+   * invocation, where the two always coincide) falls back to `options.projectRoot` unchanged.
+   */
+  readonly telemetryProjectRoot?: string | undefined;
 }
 
 /** One declaration's own outcome in the `--json` envelope, in the exact field order `13` F-TEST-9's
@@ -969,7 +986,9 @@ export async function runParityCheck(
   // exemptions.ts`), never `runBindingCheck`'s own looser stance (see `check-telemetry.ts`'s own
   // header comment for why the two call sites differ).
   await emitParityCheckTelemetry({
-    projectRoot: options.projectRoot,
+    // `specs/22` M17 P12 (defect B): the real project root when this call's own caller supplied one
+    // (an in-run gate evaluation); `options.projectRoot` unchanged otherwise (every other caller).
+    projectRoot: options.telemetryProjectRoot ?? options.projectRoot,
     runId: options.runId,
     clock,
     total: envelopeDeclarations.length,

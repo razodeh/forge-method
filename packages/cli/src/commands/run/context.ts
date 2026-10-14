@@ -904,10 +904,18 @@ export async function buildRunEngineContext(
   // also what `mergeQueue`/`ctx.commandEnv` use for their own, unrelated purposes (the launcher shim's
   // `PATH`/`FORGE_RUN_ID`).
   const integrationTipAtStart = await integrationTipAtStartOfRun(input.paths, input.runId);
-  const gateEnv =
-    integrationTipAtStart === undefined
-      ? input.commandEnv
-      : { ...input.commandEnv, FORGE_BASE_REF: integrationTipAtStart };
+  // `specs/22` M17 P12 (defect B): ALSO `FORGE_PROJECT_ROOT`, unconditionally -- a gate check's own
+  // `cwd` (`runGateStep`'s own `ctx.integrationPath`, `dispatch/steps.ts`) is never this run's real
+  // project root, so a check that shells out to a second `forge` command (`forge parity check`,
+  // `G-Parity.gate.yaml`) had no way to tell its own real root apart from the integration worktree it
+  // happens to run in -- the identical gap `check-command.ts`'s own `RunParityCheckOptions.runId` doc
+  // comment already disclosed as "well past this piece's own surface" for M16 P15, closed here by
+  // naming the real root explicitly rather than leaving every such command to guess from its own `cwd`.
+  const gateEnv = {
+    ...input.commandEnv,
+    FORGE_PROJECT_ROOT: input.projectRoot,
+    ...(integrationTipAtStart === undefined ? {} : { FORGE_BASE_REF: integrationTipAtStart }),
+  };
 
   return {
     adapter: input.adapter,

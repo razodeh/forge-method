@@ -777,6 +777,50 @@ checks:
   });
 });
 
+// `specs/22` M17 P12 (defect B): the in-run gate evaluator's own env now ALSO carries
+// `FORGE_PROJECT_ROOT`, the real project root -- real, not stubbed, the identical "a real gate/check
+// YAML file, a real `ctx.gates.evaluate` call, a real spawned `node -e ...`" proof the FORGE_BASE_REF
+// block above already establishes. A gate check's own `cwd` (`runGateStep`'s own `ctx.integrationPath`,
+// `dispatch/steps.ts`) is never this project's own root -- that is exactly the gap this fixes: before
+// it, a command this env var is handed to (e.g. `forge parity check`) had no way to tell its own real
+// project root apart from whatever directory it happened to be run in.
+describe("the in-run gate evaluator's own FORGE_PROJECT_ROOT (specs/22 M17 P12) (defect B)", () => {
+  const PROJECT_ROOT_GATE_ID = 'G-ProjectRootProbe';
+  const PROJECT_ROOT_GATE_YAML = `id: ${PROJECT_ROOT_GATE_ID}
+checks:
+  deterministic:
+    - id: project-root-probe
+      run: "node -e \\"console.log(JSON.stringify({root:process.env.FORGE_PROJECT_ROOT||'',errors:0}))\\""
+      parser: json
+      failOn: "errors > 0"
+`;
+
+  it("supplies this run's own real project root, even though the check itself runs with a DIFFERENT cwd (the integration worktree, never the project root)", async () => {
+    const project = await createTestProject();
+    await writeFile(
+      path.join(project.dir, CHECKS_ROOT, `${PROJECT_ROOT_GATE_ID}.gate.yaml`),
+      PROJECT_ROOT_GATE_YAML,
+    );
+
+    const ctx = await buildRunEngineContext({
+      paths: project.paths,
+      projectRoot: project.dir,
+      config: project.config,
+      runId: 'run-project-root',
+      adapter: fixtureAdapter(),
+      checksRoot: CHECKS_ROOT,
+      agentsRoot: AGENTS_ROOT,
+    });
+    // A deliberately different directory, standing in for `ctx.integrationPath` (never `project.dir`
+    // itself): proves the env var names the REAL project root regardless of the check's own `cwd`.
+    const report = await ctx.gates.evaluate(PROJECT_ROOT_GATE_ID, ctx.integrationPath);
+    const check = report.checks.find((c) => c.checkId === 'project-root-probe');
+    expect(ctx.integrationPath).not.toBe(project.dir);
+    expect(check?.passed).toBe(true);
+    expect(JSON.parse(check?.stdout ?? '{}')).toEqual({ root: project.dir, errors: 0 });
+  });
+});
+
 /** A real commit directly on `main`, in the project's own primary working tree (not a lane, not the
  * integration worktree) — what a human, or a `deliver` step, does. */
 async function commitOnMain(projectDir: string, file: string, content: string): Promise<void> {

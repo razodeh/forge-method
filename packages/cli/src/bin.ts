@@ -1346,6 +1346,14 @@ async function runParityCommand(
       projectRoot,
       parentEnv: env,
       runId: env[FORGE_RUN_ID],
+      // `specs/22` M17 P12 (defect B): the real project root, when this invocation carries one, for the
+      // `CheckRun{kind:'parity'}` event alone (`check-command.ts`'s own `RunParityCheckOptions
+      // .telemetryProjectRoot` doc comment) -- `projectRoot` above is untouched and still names
+      // whatever directory this invocation's own parity machinery actually checks (the integration
+      // worktree, for a real in-run `G-Parity` gate evaluation).
+      ...(env['FORGE_PROJECT_ROOT'] === undefined
+        ? {}
+        : { telemetryProjectRoot: env['FORGE_PROJECT_ROOT'] }),
       ...(reportsRoot === undefined ? {} : { reportsRoot }),
       ...(name === undefined ? {} : { name }),
       ...(resolvedTrusted === undefined ? {} : { trusted: resolvedTrusted }),
