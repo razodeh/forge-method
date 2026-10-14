@@ -38,7 +38,7 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-const REPO_ROOT = fileURLToPath(new URL('../../../../../..', import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL('../../../../..', import.meta.url));
 const PRUNE_MODULE_PATH = fileURLToPath(
   new URL('../../../src/commands/evidence/prune-command.ts', import.meta.url),
 );
