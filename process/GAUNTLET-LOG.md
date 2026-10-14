@@ -23628,3 +23628,53 @@ residual, accepted cost is now one-directional only (a name with NO other outcom
 whose own file also never ran for an unrelated reason, is still credited) and never a silent drop.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q322`.
+
+## M17 P9
+
+Every hardcoded `TRUNK`/`'main'` literal now reads a real `vcs.trunk` config field (default
+`"main"`), including a second, undocumented hardcode the builder found in `bin.ts`'s
+`runMergeCommand`, not even named `TRUNK`. New `forge land [--run <id>]` (`06` §6.5's own explicit
+requirement): fast-forwards trunk in the project's OWN checked-out working tree, never a bare
+`git update-ref`/push — verified empirically that a push to a branch checked out elsewhere is
+refused by `receive.denyCurrentBranch`, while `update-ref` instead silently desyncs that worktree's
+own index, mirroring `syncIntegrationBranchToTrunk`'s own established safety posture exactly.
+`--trusted @trunk` resolves entirely in `bin.ts`'s own CLI dispatcher, keeping `check-command.ts`/
+`trust-anchor.ts` (11 existing call sites) untouched.
+
+**Round 1's gauntlet converged, independently, on a BLOCKING defect neither critic needed the
+other's help to find: `vcs.trunk`'s own schema field had no `.default()`.** Nested inside two
+`.strict()` schemas with zero defaults-merge in any of 6 real `readConfig` call sites, this piece as
+first built would have broken EVERY pre-existing FORGE project immediately on landing — any
+`.forge/config.yaml` written before this piece, with no `trunk` key, would fail validation outright,
+`CFG-001` fatal, on every single command. Verified by mutation against the piece's own golden-config
+fixture. Fixed with `.default('main')`. The same round also found: `forge land --run <id>` didn't
+scope to that run at all (`runId` was display-only; landing an earlier run on a shared,
+accumulating integration branch could silently land a later run's work too — verified via a
+constructed 2-run repro); Decision 7's own `forge init` auto-detection half was never built, while
+new AND pre-existing docs falsely claimed it was (demonstrated reachable: plain git without macOS's
+own vendor `init.defaultbranch=main` nudge produces `master`, but config would still silently say
+`main`); the fixture's own copy of `G-Parity.gate.yaml` was never updated to `@trunk`, carrying a
+now-stale generated-content hash; and a minor doc-comment misattribution of `RUN-048`.
+
+**Round 2 closed all 6.** `forge init` now reads back git's own real choice after `git init`
+(`detectRealTrunkBranch`) rather than inventing a nonexistent `init.defaultBranch` config key or a
+network-dependent `origin/HEAD` query — delivering the practical guarantee for both cases that
+matter (a fresh init, and a pre-existing/cloned repo already on some other branch). This surfaced a
+real, unrelated regression the builder found only by actually running the suite: 5 existing test
+fixtures assumed `git init` always defaults to `"main"` — the build machine's own git defaults to
+`"master"` — fixed to read the real written config value dynamically instead of a hardcoded literal.
+`forge land --run <id>`'s scoping gap, confirmed by both critics to have no reliable structural fix
+(there is no way to carve "this run's own slice" out of a shared, accumulating branch), is closed
+with a non-fatal, provably-scoped disclosure (`describeExtraLandedWork`) rather than a fabricated
+partial-landing mechanism — it fires only when the run's own last recorded `MergeCompleted` sha is a
+real, provable ancestor of what actually landed.
+
+**Round 3 found that disclosure's own wording asserted more than it could prove.** A critic
+constructed a real case — a run's own merge-queue failure path reverting itself via `git revert` —
+where the warning fired but blamed "another run or lane" for what was actually the run reverting
+itself: narrow and non-dangerous (nothing blocked or lost), but a demonstrably wrong attribution,
+plus a "provably not an ancestor" branch with zero test coverage. Closed by rewording the message to
+name what diverged without asserting an unprovable cause, and adding the missing test — both
+mutation-confirmed.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q323`.

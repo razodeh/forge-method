@@ -29551,3 +29551,78 @@ in the run, whose own file also never ran for an unrelated reason, is still cred
 project-wide fallback) and never again a silent drop of a real regression.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P4`.
+
+## Q323 — M17 P9: trunk as configuration, and landing a finished run — a schema breaking-change bug both critics converged on independently, and three gauntlet rounds closing a cascade of real findings
+
+**Context.** `vcs.trunk` replaces every hardcoded `TRUNK`/`'main'` literal; new `forge land` fast-
+forwards trunk from a lane's own worktree, per `06` §6.5's explicit requirement. Both independent
+critics, working on different assigned angles, converged on the same most-severe finding without
+coordinating.
+
+**DECISION 1 — `vcs.trunk` carries `.default('main')`, not a bare required field.** As first built,
+the field had no default, nested inside two `.strict()` schemas with zero defaults-merge in any of
+6 real `readConfig` call sites repo-wide — meaning this piece would have broken every pre-existing
+FORGE project on landing (`CFG-001` fatal on every command, for any config without the new key).
+Verified by mutation against the piece's own golden-config fixture: removing the default reproduced
+exactly the predicted Zod `invalid_type`/`Required` error across 21 tests.
+
+**DECISION 2 — `forge init` actually detects the real trunk branch (`detectRealTrunkBranch`, reads
+back `git symbolic-ref --short HEAD` after `git init` runs), rather than correcting docs that
+falsely claimed an unbuilt mechanism.** `specs/18` §18.3 / Decision 7 require `vcs.trunk` be
+proposed from `origin/HEAD`/`init.defaultBranch`; this piece is the plan's sole owner of that
+decision, so leaving it unbuilt meant nothing else ever would. New AND pre-existing docs (including
+a new code comment this piece itself wrote) falsely claimed the mechanism already worked — reachable
+concretely: a git install without macOS's own vendor `init.defaultbranch=main` nudge produces
+`master`, while `.forge/config.yaml` would still silently say `main`. Reading back git's own actual
+post-init choice (rather than querying a config key — `init.defaultBranch` — that doesn't exist
+anywhere in this codebase, or making a network call to inspect a remote) delivers the practical
+guarantee for both cases that matter: a fresh init, and a pre-existing/cloned repo already on some
+other branch. Disclosed, not covered: a fresh init against a directory with a remote already
+configured but never fetched, where `origin/HEAD` could differ from what `git init` itself just
+created — real remote-state handling, genuinely separate scope.
+
+**Real, unrelated regression this surfaced, fixed as a necessary consequence**: 5 existing test
+fixtures (`test/agent-prompts-all-workflows.test.ts`, `test/forge-debug-real-project.test.ts`,
+`test/nine-steps-claims.test.ts`, `test/intake-workflow.test.ts`, `test/authoring-roles-run.test.ts`
+×2) called the real `runInit` and then separately forced a hardcoded `git checkout -q -B 'main'`,
+an assumption that was safe before this piece (`trunk` was always the hardcoded literal) but false
+the moment real detection existed on a machine whose own git defaults to `master`. Each now reads
+the real written `vcs.trunk` value and checks that out dynamically instead.
+
+**DECISION 3 — `forge land --run <id>`'s scoping gap is closed with a non-fatal, provably-scoped
+disclosure, not a fabricated partial-landing mechanism.** `runId` was display-only; a shared,
+accumulating integration branch meant landing an earlier run could silently land a later run's work
+too. Both critics independently confirmed there is no reliable way to carve "this run's own slice"
+out of a shared branch (integration branches are shared by design). `describeExtraLandedWork` fires
+only when the run's own last recorded `MergeCompleted` sha (from its real event log) is a real,
+provable ancestor of what actually landed — never a guess, silent when no evidence exists either
+way. Disclosed, not closed further: a run with no event log at all (including, notably, every
+existing `bin-land.test.ts` test's own direct-commit construction) has no signal and gets no
+warning — the honest boundary of what this mechanism can detect.
+
+**DECISION 4 — the warning's own wording names what diverged, never asserts an unprovable cause.**
+A critic constructed a real, narrow, non-dangerous case the mechanism hadn't disclosed: a run whose
+own merge-queue failure path reverts itself via `git revert` produces a revert commit that is a
+real, provable descendant of that same run's own stale `MergeCompleted` sha — triggering the
+warning, which originally blamed "another run or lane" for what was actually the run reverting
+itself. Reworded to name the divergence without asserting a culprit; the self-revert case still
+fires the warning (a real divergence did happen) but no longer misattributes it. A second,
+previously-uncovered branch (the recorded sha provably NOT an ancestor of what landed) gained a
+dedicated test; mutation-confirmed both ways.
+
+**Also closed**: the fixture's own `G-Parity.gate.yaml` copy, missed when the template was fixed to
+`@trunk`, regenerated correctly (hash recomputed via the real production `sha256`/
+`hasGeneratedFileDrifted` functions, independently re-derived by both critics, not merely trusted);
+a doc-comment misattribution of `RUN-048`; `RUN-156`'s remedy now names the integration worktree's
+own resolved path via a shared, non-duplicated formula, matching `RUN-107`'s established convention.
+
+**Disclosed, tracked separately, not this piece's to fix**: a critic root-caused
+`test/authoring-roles-run.test.ts`'s 16 unrelated failures to a stale comment in
+`packages/engine/src/failures/classify.ts` — M17 P10's own real retry wiring (already landed) made
+the comment's "the retry loop has no production caller yet" claim false, so this test's own
+1-`StepFailed` assertions have been stale since P10 landed, now correctly getting 2 (retry-then-
+escalate). Needs its own follow-up piece. `specs/18` §18.3 still literally describes the OLD,
+never-built `origin/HEAD`/`init.defaultBranch` mechanism rather than what this piece actually
+built — the code's own doc comment discloses this honestly; the spec text itself was not updated.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P9`.
