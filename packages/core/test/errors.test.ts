@@ -375,6 +375,44 @@ describe('specs/02 §2.6 — exit codes', () => {
   );
 });
 
+describe('USR-006 — forge migrate run usage errors (03 §3.2.5) (specs/22 M17 P18)', () => {
+  it('exits with the usage code', () => {
+    expect(exitCodeFor(new ForgeError('USR-006', { value: 'bogus', reason: 'bad-phase' }))).toBe(2);
+  });
+
+  it.each([
+    [
+      'missing-phase',
+      '',
+      '--phase is required: forge migrate run --phase <expand|migrate|contract>.',
+    ],
+    ['bad-phase', 'bogus', '--phase bogus is not one of expand, migrate or contract.'],
+    [
+      'unknown-migration',
+      'nope',
+      '--migration nope does not name an entry of the given --phase in migrations.yaml.',
+    ],
+  ] as const)('reason %s renders its own distinct message', (reason, value, expected) => {
+    const error = new ForgeError('USR-006', { value, reason });
+    expect(error.message).toBe(expected);
+    expect(error.remedy).toMatch(/--phase expand, migrate or contract/);
+  });
+});
+
+describe('RUN-157 — forge migrate run gave up waiting for the migrate lock (specs/22 M17 P18)', () => {
+  it('exits with the lock-held code, the same one CFG-002 uses', () => {
+    expect(exitCodeFor(new ForgeError('RUN-157', { pid: 4242 }))).toBe(
+      exitCodeFor(new ForgeError('CFG-002', { pid: 4242, host: 'x' })),
+    );
+  });
+
+  it('names the holder pid in both the message and the remedy names the lock file', () => {
+    const error = new ForgeError('RUN-157', { pid: 4242 });
+    expect(error.message).toContain('4242');
+    expect(error.remedy).toContain('.forge/migrate/lock.json');
+  });
+});
+
 describe('isForgeError', () => {
   it('narrows a ForgeError', () => {
     const value: unknown = new ForgeError('KB-005', { entry: 'KB-1', conflictsWith: 'ADR-1' });

@@ -642,6 +642,35 @@ export const ERROR_CODES = {
       'repository (for example --base HEAD~1); --max-hunks is only meaningful alongside --hunks; or ' +
       'drop --hunks/--base/--max-hunks together to run the plain change-level check.',
   },
+  'USR-006': {
+    // `specs/22` M17 P18 (`03` §3.2.5): `forge migrate run --phase <expand|migrate|contract>
+    // [--migration <id>]`'s own two usage-error causes share one code, the identical "one shape of
+    // mistake, several causes" convention USR-005 already establishes for `forge test binding
+    // --hunks`. Both are refused BEFORE any `migrations.yaml` entry is read or applied (`03` §3.2.5's
+    // own "2 on a usage error"): `--phase` missing entirely or not one of the three declared values
+    // (the row's own signature has no default), and a `--migration <id>` that `migrations.yaml`
+    // either does not declare at all, or declares under a DIFFERENT phase than the one `--phase`
+    // names -- `--migration` "restricts the run to one named entry rather than every entry of the
+    // given phase" (`03` §3.2.5), which only means something for an id that is one of THAT phase's
+    // own entries.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.usage,
+    message: (d: {
+      value: string;
+      reason: 'missing-phase' | 'bad-phase' | 'unknown-migration';
+    }) => {
+      if (d.reason === 'missing-phase') {
+        return '--phase is required: forge migrate run --phase <expand|migrate|contract>.';
+      }
+      if (d.reason === 'bad-phase') {
+        return `--phase ${show(d.value)} is not one of expand, migrate or contract.`;
+      }
+      return `--migration ${show(d.value)} does not name an entry of the given --phase in migrations.yaml.`;
+    },
+    remedy:
+      'Pass --phase expand, migrate or contract, and, if given, --migration naming an id ' +
+      'migrations.yaml declares under that same phase.',
+  },
   'RUN-131': {
     // `specs/22` M16 P11 round-2 fix (adversarial critic): `computeHunks` zips the `-U0` diff's own
     // per-file sections against the text paths it already resolved from the structurally unquoted
@@ -3611,6 +3640,22 @@ export const ERROR_CODES = {
       'Merge the current trunk tip into the integration branch, at the path the message above ' +
       'names, resolve any conflicts there, commit the result, then run `forge land` again for the ' +
       'same run id to re-attempt the landing.',
+  },
+  'RUN-157': {
+    // `specs/22` M17 P18 (`commands/migrate/lock.ts`): `forge migrate run` waited (bounded, polling)
+    // for another real, live, non-stale holder of `.forge/migrate/lock.json` to release it, and that
+    // wait was genuinely exhausted. Distinct from `CFG-002` (the project-wide run supervisor lock,
+    // which refuses immediately rather than waiting): two migrate invocations naming different ids
+    // are not mutually exclusive by design, so this is reached only when the SAME holder is still
+    // working well past this command's own generous default wait, not on ordinary overlap.
+    severity: 'fatal',
+    exitCode: EXIT_CODES.lockHeld,
+    message: (d: { pid: number }) =>
+      `Another "forge migrate run" (pid ${show(d.pid)}) has held this project's migrate lock for ` +
+      'too long; gave up waiting for it to finish.',
+    remedy:
+      'Wait for the other "forge migrate run" invocation to finish, or confirm it is no longer ' +
+      'running and remove .forge/migrate/lock.json by hand, then run the command again.',
   },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 

@@ -263,6 +263,7 @@ import {
   isTestLayerRule,
   runTestLayerCommand,
 } from './commands/loop/test/layer-command.ts';
+import { isMigratePhase, migrateRun } from './commands/migrate/run.ts';
 import {
   abortRun,
   assertStopped,
@@ -1772,6 +1773,49 @@ async function runTestRunCommand(
   } else {
     console.log(
       `forge test run${rule === undefined ? '' : ` --rule ${rule}`}: failed=${String(result.failed)} errors=${String(result.errors)}.`,
+    );
+  }
+  return result.failed > 0 || result.errors > 0 ? 1 : 0;
+}
+
+/** `forge migrate run --phase <expand|migrate|contract> [--migration <id>] [--json]` (`03` §3.2.5,
+ * `specs/22` M17 P18, #14) — the CLI dispatch wrapper around the library call `migrateRun`
+ * (`commands/migrate/run.ts`), the identical "validate the usage shape here, return a plain result
+ * there" split `runTestRunCommand` above already establishes. `--phase` missing or not one of
+ * `MIGRATE_PHASES`, and `--migration <id>` naming no entry of that phase (the one case
+ * `migrateRun` itself detects, since it needs the parsed `migrations.yaml` to know), are both a
+ * typed `ForgeError('USR-006', ...)`: thrown here, never swallowed into the plain `{v:1,...}`
+ * envelope below, so the top-level handler's own refusal envelope and exit code 2 apply. */
+async function runMigrateRunCommand(
+  paths: ProjectPaths,
+  projectRoot: string,
+  phaseRaw: string | undefined,
+  migration: string | undefined,
+  json: boolean,
+): Promise<number> {
+  if (phaseRaw === undefined) {
+    throw new ForgeError('USR-006', { value: '', reason: 'missing-phase' });
+  }
+  if (!isMigratePhase(phaseRaw)) {
+    throw new ForgeError('USR-006', { value: phaseRaw, reason: 'bad-phase' });
+  }
+  const ctx = buildSpecContext(paths);
+  const outcome = await migrateRun(ctx, projectRoot, {
+    phase: phaseRaw,
+    ...(migration === undefined ? {} : { migration }),
+  });
+  if (outcome.kind === 'unknown-migration') {
+    throw new ForgeError('USR-006', { value: migration ?? '', reason: 'unknown-migration' });
+  }
+  const { result } = outcome;
+  if (json) {
+    console.log(JSON.stringify({ v: 1, ...result }));
+  } else if ((result.problems ?? []).length > 0) {
+    for (const problem of result.problems ?? []) console.error(problem);
+  } else {
+    console.log(
+      `forge migrate run --phase ${result.phase}: applied=${String(result.applied.length)} ` +
+        `failed=${String(result.failed)} errors=${String(result.errors)}.`,
     );
   }
   return result.failed > 0 || result.errors > 0 ? 1 : 0;
@@ -5731,6 +5775,26 @@ async function main(): Promise<number> {
   if (command === 'test' && (sub === 'plan' || sub === 'generate' || sub === 'report')) {
     assertNoArgs(rest);
     return runTestRefusal(sub);
+  }
+
+  // `forge migrate run --phase <expand|migrate|contract> [--migration <id>]` (`03` §3.2.5, `specs/22`
+  // M17 P18, #14): the one real subcommand this row names. `--phase`/`--migration` are both
+  // value-taking flags, parsed the identical way `test run`'s own `--rule`/`--timeout-ms` are above;
+  // an unknown flag is refused by `parseCommandFlags` itself (`USR-002`), and an extra positional
+  // (anything after `run`) by `assertNoArgs`.
+  if (command === 'migrate' && sub === 'run') {
+    const { values, positionals: migrateRunPositionals } = parseCommandFlags(rest, {
+      '--phase': true,
+      '--migration': true,
+    });
+    assertNoArgs(migrateRunPositionals);
+    return runMigrateRunCommand(
+      paths,
+      projectRoot,
+      values.get('--phase'),
+      values.get('--migration'),
+      flags.json,
+    );
   }
 
   // `afterCommand` (unlike `sub`/`rest` above) makes no assumption that the token right after the

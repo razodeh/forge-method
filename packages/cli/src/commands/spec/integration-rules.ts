@@ -548,3 +548,58 @@ export async function validateMigrationOrder(
     return refused(rule, cause);
   }
 }
+
+// --- forge migrate run's own read of this same declaration (specs/22 M17 P18) -----------------------
+
+/** One `migrations.yaml` entry, exactly as declared -- the same `migrationSchema` this module's own
+ * `validateMigrationOrder` parses, inferred rather than hand-copied so the two can never drift on what
+ * a well-formed entry looks like.
+ *
+ * @see specs/03 §3.2.5
+ * @see specs/22 M17 P18
+ */
+export type MigrationEntry = z.infer<typeof migrationSchema>;
+
+/** `readMigrationEntries`'s own result: the file's entries, schema-valid and in apply order, or the
+ * violations that made it unreadable. Deliberately silent on id/release/phase/dependency CONSISTENCY
+ * (`validateMigrationOrder` is the one check for that) -- `forge migrate run` (`commands/migrate/
+ * run.ts`) calls both, in sequence, exactly as `forge spec validate --rule
+ * migration-order-violations` calls only the second; this type only ever answers "is the file itself
+ * well-formed," never "is it safe to apply." */
+export type ReadMigrationsResult =
+  | { readonly kind: 'ok'; readonly migrations: readonly MigrationEntry[] }
+  | { readonly kind: 'invalid'; readonly violations: readonly RuleViolation[] };
+
+/**
+ * Reads `docs/forge/kb/data/migrations.yaml` for `forge migrate run` (`03` §3.2.5) -- the one real
+ * entry point into this file this module exposes beyond `validateMigrationOrder` itself, so the two
+ * callers can never read "a well-formed migrations.yaml" two different ways. A missing file, an
+ * unreadable one, or one that fails `migrationSchema` each come back as `'invalid'` with the real
+ * violation(s) describing why (the identical messages `validateMigrationOrder` would report for the
+ * same file, reusing its own `readDeclaration`/`issueLines` helpers rather than a second copy of
+ * either).
+ *
+ * @see specs/03 §3.2.5
+ * @see specs/09 §9.7 point 4
+ * @see specs/22 M17 P18
+ */
+export async function readMigrationEntries(ctx: SpecCommandContext): Promise<ReadMigrationsResult> {
+  const declaration = await readDeclaration(
+    ctx,
+    MIGRATIONS_FILE,
+    'The migration order',
+    REMEDY_MIGRATIONS_FILE,
+  );
+  if (declaration.kind === 'problem') {
+    return { kind: 'invalid', violations: [declaration.violation] };
+  }
+  const path = `${ctx.kbRoot}/${MIGRATIONS_FILE}`;
+  const parsed = migrationsSchema.safeParse(declaration.data);
+  if (!parsed.success) {
+    return {
+      kind: 'invalid',
+      violations: issueLines(path, path, parsed.error, REMEDY_MIGRATIONS_FILE),
+    };
+  }
+  return { kind: 'ok', migrations: parsed.data.migrations };
+}

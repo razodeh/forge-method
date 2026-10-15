@@ -72,8 +72,11 @@ const BIN = path.join(repoRoot, 'packages', 'cli', 'src', 'bin.ts');
 const KNOWN_UNACCEPTED: Readonly<Record<string, string>> = {
   'forge adopt inventory --json':
     'Q213: `forge adopt` is wired nowhere in bin.ts (`17` §17.6 defines `forge adopt [dir] [--scope] [--depth] [--no-verify]`, the whole eight-phase pipeline, and no `inventory` subcommand). Wiring it needs the adopt pipeline context (CARTOGRAPHY/INFERENCE dispatch), which is a product decision, not this piece. Deferred by `P11-TRIAGE.md` §5.',
-  'forge migrate run --phase expand --json':
-    'Q213 / Q202 finding 8: `03` defines no `forge migrate` command and `10` §10.5 gives `migrate` no cut-over step (D7, an L3+ product decision). Deferred by `P11-TRIAGE.md` §5.',
+  // `forge migrate run --phase expand --json` (the `migrate-data` step's own literal command):
+  // CLOSED by `specs/22` M17 P18 -- `forge migrate run` is now wired in bin.ts (`commands/migrate/
+  // run.ts`); the throwaway project this file probes has no `docs/forge/kb/data/migrations.yaml` at
+  // all, so the real command now ACCEPTS this invocation (exit 1, errors: 1, a `problems` entry
+  // naming the missing declaration) rather than being rejected as unwired.
   'forge spec re-derive --json':
     'Q213: `03` §3.2.2 lists `list|show|validate|trace|matrix|orphans|new` for `forge spec`; `09` §9.7 says only that affected tests are re-derived after a spec change, with no command that does it. Deferred by `P11-TRIAGE.md` §5.',
 };

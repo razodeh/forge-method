@@ -25,10 +25,14 @@ Code and tests in the lane, limited to the change set in the ADR (request any ot
 - Whatever lets old and new coexist: dual writes, or reads that fall back from new to old, behind
   the switch the ADR names.
 - The migration script or backfill routine that the data migration step
-  (`forge migrate run --phase expand`) runs. Build it at the path and with the arguments the ADR
-  names for the data migration, so a runner can execute it non-interactively, and state in the
-  change how it reports completion. It is idempotent (a second run changes nothing), resumable after
-  a crash, batched and throttled.
+  (`forge migrate run --phase expand`, `03` §3.2.5) runs. The path is fixed, not yours to choose:
+  `docs/forge/migrations/<id>.mjs`, where `<id>` is exactly the `id` of this ADR's own
+  `expand`-phase `migrations.yaml` entry (the plan ADR's "Declarations the gate reads" section names
+  it). A plain Node script, run non-interactively as `node docs/forge/migrations/<id>.mjs` with no
+  arguments: exit 0 means it applied cleanly, any other exit (or a timeout) means it did not, so
+  state in the change how it reports its own progress and completion through its own exit code and
+  output, never through an argument or a return value `forge migrate run` could read. It is
+  idempotent (a second run changes nothing), resumable after a crash, batched and throttled.
 - A down migration where one is possible, and an explicit flag on the migration where it is not.
 - Tests: the existing suite unchanged, which is what shows backward compatibility; the ADR's
   verification oracle (differential or round-trip between old and new representation); the script

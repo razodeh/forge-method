@@ -532,10 +532,11 @@ describe('M17 Phase A: surfaces specs/22 M17 names that are not yet built (specs
     ).toBe(false);
   });
 
-  it('5. `forge migrate run` is not wired in bin.ts (also pinned in test/command-steps.test.ts)', () => {
-    const bin = readPkg('packages/cli/src/bin.ts');
-    expect(bin).not.toContain("'migrate'");
-  });
+  // 5. (specs/22 M17 P18, #14) CLOSED: `forge migrate run` is wired in bin.ts
+  // (`commands/migrate/run.ts`) and removed from `test/command-steps.test.ts`'s own
+  // `KNOWN_UNACCEPTED` pin -- this file's own standing rule ("the day a piece builds one of them,
+  // the matching test fails until the pin is updated on purpose") is why this entry moved from an
+  // `it()` to a comment rather than simply being deleted.
 
   // 6. (specs/22 M17 P10, #3) CLOSED: `driveToCompletion` (`packages/engine/src/run/run-engine.ts`)
   // now consults `decideRetry`/`computeBackoff` on every failed outcome -- the real caller this entry

@@ -946,13 +946,209 @@ unobservable:
 // Same reason as `REFACTOR_EXPRESSION_CONTEXT` above: left inferred, passed as a variable, `vars: {}`.
 const MIGRATE_EXPRESSION_CONTEXT = { migrationGoal: 'expand the users table', vars: {} };
 
-describe('the real migrate workflow, wired to G-Parity (specs/22 M16 P9)', () => {
+/** `plan-migration`'s own real, schema-valid `ADR` output (`08` §8.4, `category: data`,
+ * `framework: schema-evolution-migrations`, the exact shape `briefs/plan-migration.md`'s own
+ * "Produce" section names) -- `ADR-0001`, the id the registry's own reservation deterministically
+ * assigns the first ADR a fresh project (no prior ADR document anywhere) ever produces. */
+const MIGRATE_ADR_RELATIVE = 'docs/forge/kb/decisions/ADR-0001-add-user-email.md';
+const MIGRATE_ADR_CONTENT = `---
+id: ADR-0001
+type: ADR
+schemaVersion: 1
+title: Add a nullable email column to the users table
+status: proposed
+created: 2026-01-01
+updated: 2026-01-01
+revision: 1
+author: architect
+changelog: []
+category: data
+deciders: [architect]
+date: 2026-01-01
+reversibility: medium
+blast_radius: []
+revisit_trigger: 'n/a'
+supersedes: []
+superseded_by: null
+related: []
+diagrams: []
+framework: schema-evolution-migrations
+sources:
+  - kind: human
+    ref: fixture
+---
+
+## Context
+
+x
+
+## Options considered
+
+x
+
+## Decision
+
+x
+
+## Diagram
+
+x
+
+## Consequences
+
+x
+
+## Reversal plan
+
+x
+`;
+
+/** `plan-migration`'s own real, machine-readable `migrations.yaml` (`09` §9.7 point 4) -- one
+ * `expand`-phase entry, the only phase `migrate-data`'s own real `forge migrate run --phase expand
+ * --json` (`migrate.workflow.yaml`) ever applies. */
+const MIGRATE_MIGRATIONS_YAML_RELATIVE = 'docs/forge/kb/data/migrations.yaml';
+const MIGRATE_MIGRATIONS_YAML_CONTENT = `migrations:
+  - id: add-user-email-expand
+    phase: expand
+    release: 1
+`;
+
+/** `expand`'s own real migration script, at the one fixed, FORGE-owned path `forge migrate run`
+ * itself looks for (`commands/migrate/run.ts`'s own header doc comment has the full reasoning for
+ * why the path is fixed rather than ADR-chosen): a real Node script, genuinely run as a subprocess,
+ * that records its own invocation and exits 0. Deliberately does not touch `sum.mjs` -- the parity
+ * surface this fixture's own `G-Parity` check observes must stay byte-identical for `verify-parity`
+ * to pass cleanly. */
+const MIGRATE_SCRIPT_RELATIVE = 'docs/forge/migrations/add-user-email-expand.mjs';
+const MIGRATE_SCRIPT_CONTENT =
+  "import { appendFileSync } from 'node:fs';\nappendFileSync('migration-applied.log', 'add-user-email-expand\\n');\n";
+
+/** A real git repository with the real, shipped `G-Parity.gate.yaml` and `migrate.workflow.yaml`
+ * installed (read verbatim from `@forge/templates`), a real passing test command, and real
+ * `architect`/`backend` agents + briefs for the two agent steps `migrate.workflow.yaml` names
+ * (`plan-migration`, `expand`/`contract`) -- the identical recipe `createRefactorProject` already
+ * establishes for `refactor`, reused here against `migrate`. The same `sum.mjs` reference file as
+ * that fixture gives this project a real, observable parity surface of its own, deliberately
+ * unrelated to the schema migration itself (the migration's own `migrate-data` step has no
+ * observable *process* surface a `behavior:parity` check could compare against; `sum.mjs` is what
+ * `G-Parity` actually observes here, exactly as it does for `refactor`). */
+async function createMigrateProject(): Promise<ParityProject> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'forge-p18-migrate-'));
+  registerCleanup(dir);
+  await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+  await execa('git', ['config', 'user.email', 'fixture@example.com'], { cwd: dir });
+  await execa('git', ['config', 'user.name', 'Fixture'], { cwd: dir });
+
+  await writeFile(path.join(dir, '.gitignore'), '.forge/state/\n', 'utf8');
+  await writeFile(path.join(dir, 'package.json'), '{}\n', 'utf8');
+  await writeFile(
+    path.join(dir, 'sample.test.js'),
+    "import { test, expect } from 'vitest';\ntest('passes', () => { expect(1).toBe(1); });\n",
+    'utf8',
+  );
+  await writeFile(
+    path.join(dir, 'sum.mjs'),
+    await readFile(path.join(PARITY_FIXTURE_ROOT, 'reference/sum.mjs'), 'utf8'),
+    'utf8',
+  );
+
+  const config: ForgeConfig = {
+    ...DEFAULT_CONFIG,
+    execution: {
+      ...DEFAULT_CONFIG.execution,
+      testCommands: { ...DEFAULT_CONFIG.execution.testCommands, unit: REAL_VITEST_CMD },
+      retainLaneWorktrees: 'always',
+    },
+    models: FIXTURE_MODELS,
+  };
+  await mkdir(path.join(dir, '.forge'), { recursive: true });
+  await writeFile(path.join(dir, '.forge/config.yaml'), YAML.stringify(config), 'utf8');
+
+  await mkdir(path.join(dir, '.forge/workflows'), { recursive: true });
+  await writeFile(
+    path.join(dir, '.forge/workflows/migrate.workflow.yaml'),
+    await readFile(path.join(TEMPLATES_ROOT, 'workflows/migrate.workflow.yaml'), 'utf8'),
+    'utf8',
+  );
+  await mkdir(path.join(dir, '.forge/checks'), { recursive: true });
+  await writeFile(
+    path.join(dir, '.forge/checks/G-Parity.gate.yaml'),
+    await readFile(path.join(TEMPLATES_ROOT, 'checks/G-Parity.gate.yaml'), 'utf8'),
+    'utf8',
+  );
+
+  await writeFixtureAgent(dir, 'architect', 'Architect', { write: true, code: true });
+  await writeFixtureAgent(dir, 'backend', 'Backend', { write: true, code: true });
+  await mkdir(path.join(dir, '.forge/briefs'), { recursive: true });
+  await writeFile(
+    path.join(dir, '.forge/briefs/plan-migration.md'),
+    'Plan the expand-contract migration for the users table and declare its phases.\n',
+    'utf8',
+  );
+  await writeFile(
+    path.join(dir, '.forge/briefs/migration-expand.md'),
+    'Build the additive half of the migration exactly as the plan ADR specifies.\n',
+    'utf8',
+  );
+  await writeFile(
+    path.join(dir, '.forge/briefs/migration-contract.md'),
+    'Remove the old structure, once every precondition is evidenced.\n',
+    'utf8',
+  );
+
+  await commitAll(dir, 'fixture project: reference sum.mjs, migrate workflow, G-Parity gate');
+
+  return { dir, paths: new ProjectPaths(dir), config };
+}
+
+/** A fake adapter scripted for `migrate`'s own two agent steps: `plan-migration` (writes the real
+ * ADR and `migrations.yaml`) and `expand` (writes the real migration script at the one fixed path
+ * `forge migrate run` looks for). `contract` replies with text only -- `migration-contract.md`'s own
+ * real brief tells a real agent to stop when no precondition is evidenced (true here: no step in
+ * this workflow ever deploys or switches readers), and a fake adapter honours the identical "write
+ * nothing" outcome without needing to simulate that reasoning itself; `contract` declares no
+ * `outputs:` of its own, so an empty reply is a real, valid success. */
+function migrateAdapter(): FakePlatformAdapter {
+  const adapter = new FakePlatformAdapter();
+  adapter.script((request) => request.stepId.endsWith(':plan-migration'), {
+    text: ['planned the expand-contract migration for the users table'],
+    writeFiles: [
+      { relativePath: MIGRATE_ADR_RELATIVE, content: MIGRATE_ADR_CONTENT },
+      { relativePath: MIGRATE_MIGRATIONS_YAML_RELATIVE, content: MIGRATE_MIGRATIONS_YAML_CONTENT },
+    ],
+  });
+  adapter.script((request) => request.stepId.endsWith(':expand'), {
+    text: ['built the additive migration script'],
+    writeFiles: [{ relativePath: MIGRATE_SCRIPT_RELATIVE, content: MIGRATE_SCRIPT_CONTENT }],
+  });
+  adapter.script((request) => request.stepId.endsWith(':contract'), {
+    text: ['no precondition for the contract phase is evidenced yet; nothing removed'],
+  });
+  return adapter;
+}
+
+async function runMigrate(project: ParityProject, adapter: FakePlatformAdapter, runId: string) {
+  return runWorkflow(testRunDepsFor(project, adapter), {
+    workflowId: 'migrate',
+    expressionContext: MIGRATE_EXPRESSION_CONTEXT,
+    runId,
+    host: 'test-host',
+  });
+}
+
+describe('the real migrate workflow, wired to G-Parity, through a real forge run (specs/22 M17 P18) (#14)', () => {
   // `forge migrate run` itself is not wired into `bin.ts` at all (`test/command-steps.test.ts`'s own
   // `KNOWN_UNACCEPTED` pin: "Q213 / Q202 finding 8 ... Deferred by P11-TRIAGE.md §5", pre-existing and
   // not this piece's job to close) -- migrate-data therefore cannot pass for real, so verify-parity
   // cannot be reached end to end. What IS real here: the compiled plan orders verify-parity after
   // verify-migration and before nothing else, naming G-Parity, exactly as `test/workflows.test.ts`'s
   // own generic compile/gate-id tests already confirm for all 20 shipped workflows including this one.
+  //
+  // CLOSED by `specs/22` M17 P18 (#14): `forge migrate run` is now wired (`commands/migrate/run.ts`),
+  // and the two tests below are the real, end-to-end proof this doc comment's own premise asked for --
+  // `migrate-data` genuinely succeeds and `verify-parity` is genuinely REACHED for the first time,
+  // through a real `forge run migrate`, never only the compiled-plan shape the test just below still
+  // checks on its own (kept, unchanged: it is still a real, independent fact about the shipped YAML).
   it('compiles with verify-parity (kind: gate, gate: G-Parity) depending on verify-migration, as its own real, last step', async () => {
     const source = await readFile(
       path.join(TEMPLATES_ROOT, 'workflows/migrate.workflow.yaml'),
@@ -976,6 +1172,77 @@ describe('the real migrate workflow, wired to G-Parity (specs/22 M16 P9)', () =>
     // No step depends on verify-parity: it is the real last step of the real, shipped workflow.
     expect(compiled.nodes.some((n) => n.dependsOn.includes('migrate:verify-parity'))).toBe(false);
   });
+
+  // The real end-to-end reachability proof `specs/22` M17 P18 (#14) exists to make: a real fixture
+  // migration, through the real `migrate` workflow, reaching `verify-parity` for the first time ever
+  // -- `migrate-data`'s own real `forge migrate run --phase expand --json` genuinely succeeds
+  // (instead of failing "is not wired into this real... dispatcher yet"), so `contract`/
+  // `verify-migration` run after it, and `verify-parity` is dispatched and evaluated. With a real
+  // parity declaration and a real capture, the whole workflow reaches a clean `completed` run.
+  it('migrate-data succeeds for real, and verify-parity is reached AND passes cleanly, completing the whole run', async () => {
+    const project = await createMigrateProject();
+    await declareAndCapture(project);
+
+    const result = await runMigrate(project, migrateAdapter(), 'run-migrate-e2e-pass');
+
+    expect(result.kind).toBe('run');
+    if (result.kind !== 'run') throw new Error('unreachable');
+    expect(result.runState.stepStatuses.get('migrate:plan-migration')).toBe('succeeded');
+    expect(result.runState.stepStatuses.get('migrate:expand')).toBe('succeeded');
+    // THE decisive step: a plain `kind: command` step whose own `run` string the engine shells
+    // out to literally (`dispatch/steps.ts`'s `runCommandStep`) -- this is the real CLI, not a
+    // stub, genuinely reading the real migrations.yaml this run's own plan-migration step wrote,
+    // genuinely finding and running the real script expand's own step wrote, and genuinely
+    // exiting 0.
+    expect(result.runState.stepStatuses.get('migrate:migrate-data')).toBe('succeeded');
+    expect(result.runState.stepStatuses.get('migrate:contract')).toBe('succeeded');
+    expect(result.runState.stepStatuses.get('migrate:verify-migration')).toBe('succeeded');
+    // Reachability itself: before this piece, the run never got here at all (`migrate-data`
+    // always failed first) -- `stepStatuses.has(...)` is the exact predicate the sibling
+    // `refactor` tests above use to prove the OPPOSITE (non-reachability) when `preflight-parity`
+    // fails before any agent step runs.
+    expect(result.runState.stepStatuses.has('migrate:verify-parity')).toBe(true);
+    expect(result.runState.stepStatuses.get('migrate:verify-parity')).toBe('succeeded');
+    expect(result.runState.runStatus).toBe('completed');
+
+    const events = await gateEvaluatedEvents(project, 'run-migrate-e2e-pass');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      stepId: 'migrate:verify-parity',
+      gateId: 'G-Parity',
+      passed: true,
+    });
+  }, 60_000);
+
+  // The complementary half of the same proof: reachability does not depend on the check happening
+  // to pass. With NO parity declaration at all, `migrate-data` still succeeds for real (it has
+  // nothing to do with parity at all), `verify-parity` is still reached (dispatched and evaluated --
+  // never skipped, never silently treated as passing), and ONLY THEN does it fail, on its own real
+  // `behavior:parity` check finding no declaration -- the identical `no-declarations` reason the
+  // direct `evaluateGate` tests above exercise, now reached through a genuine, real run of `migrate`
+  // for the first time.
+  it('migrate-data succeeds for real even with no parity declaration at all, and verify-parity is still reached (and fails there, on its own real check, never "not wired")', async () => {
+    const project = await createMigrateProject();
+    // No declareAndCapture call: no .forge/parity/ declaration exists anywhere in this project.
+
+    const result = await runMigrate(project, migrateAdapter(), 'run-migrate-e2e-no-decl');
+
+    expect(result.kind).toBe('run');
+    if (result.kind !== 'run') throw new Error('unreachable');
+    expect(result.runState.stepStatuses.get('migrate:migrate-data')).toBe('succeeded');
+    expect(result.runState.stepStatuses.get('migrate:verify-migration')).toBe('succeeded');
+    expect(result.runState.stepStatuses.has('migrate:verify-parity')).toBe(true);
+    expect(result.runState.stepStatuses.get('migrate:verify-parity')).toBe('failed');
+    expect(result.runState.runStatus).toBe('failed');
+
+    const events = await gateEvaluatedEvents(project, 'run-migrate-e2e-no-decl');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      stepId: 'migrate:verify-parity',
+      gateId: 'G-Parity',
+      passed: false,
+    });
+  }, 60_000);
 });
 
 // M16 P9 fix-pass round 2, Fix 1 (MUST-FIX, HIGH severity, both critics/the orchestrator): `forge

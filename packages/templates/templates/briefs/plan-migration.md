@@ -37,9 +37,13 @@ considered, Decision, Diagram, Consequences, Reversal plan. It must contain:
   switches the readers or deploys, and name the KB file under `delivery/` where the evidence of the
   reader switch and the deployment will be recorded, and by whom: that must happen between the data
   migration and the contract phase, and the plan must say by whom and how it will be evidenced.
-- **How the data migration runs**: the path of the migration script or routine the data migration
-  step executes (`forge migrate run --phase expand`) and its arguments, so the expand step builds
-  exactly that.
+- **How the data migration runs**: `forge migrate run --phase expand` (`03` §3.2.5) applies this
+  ADR's own `expand`-phase `migrations.yaml` entry by running a plain Node script at the ONE fixed
+  path its own id names: `docs/forge/migrations/<id>.mjs` (`<id>` is the exact `id` this ADR appends
+  below — not a path this ADR chooses; the location is fixed, the same way `migrations.yaml`'s own
+  location already is). State here only what that script itself must do (the backfill logic, batched
+  and resumable, and how it reports its own completion) and its own idempotency — the expand step
+  builds it at exactly that path, with no path of its own to decide.
 - **What the contract step can check itself.** Split the contract preconditions into those checkable
   by searching and reading the repository (no remaining references) and those that must arrive as
   recorded evidence (the deployment, the restore point), with where each will be recorded.
@@ -61,6 +65,10 @@ order, each naming `release` (the release that phase ships in) and, on the `migr
 entries, `expands` (this ADR's `expand` entry's id): the `contract` entry's `release` must be later
 than its `expands` entry's and later than every `migrate` entry of the same `expands`, since the
 destructive change is always a separate, later release. `model-data.md` shows the full shape.
+
+The `id` chosen for an `expand`-phase entry is not a free label: `forge migrate run --phase expand`
+(`03` §3.2.5) applies it by running `docs/forge/migrations/<id>.mjs`, exactly that id, so the expand
+step must build the script at the path that id mechanically names.
 
 ### Acceptance criteria
 
