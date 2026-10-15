@@ -9,7 +9,7 @@
  * @see specs/02 §2.8
  * @see PLAN-M1.md P8
  */
-import type { ForgeConfig } from './schema.ts';
+import { DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS, type ForgeConfig } from './schema.ts';
 
 export const DEFAULT_CONFIG: ForgeConfig = {
   version: 1,
@@ -105,7 +105,23 @@ export const DEFAULT_CONFIG: ForgeConfig = {
     requireCaptions: true,
   },
   quality: {
-    coverage: { lines: 85, branches: 80, ratchet: true },
+    // `specs/22` M17 P5: `source`'s default (`istanbul-json`) reproduces the pre-M17 hard-coded
+    // `coverage/coverage-summary.json` assumption exactly; `path` stays unset (use `source`'s own
+    // conventional path) -- the identical `execution.testRoots: undefined` convention above for an
+    // optional leaf a pre-existing `.forge/config.yaml` has no key for yet. (`path`, not `18` §18.3's
+    // own literal `format` -- `schema.ts`'s own `COVERAGE_SOURCES`/`path` doc comments have the full
+    // naming-collision reasoning.)
+    coverage: {
+      lines: 85,
+      branches: 80,
+      ratchet: true,
+      source: 'istanbul-json',
+      path: undefined,
+    },
+    // Spread, not assigned directly: `DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS` is a readonly `as const`
+    // tuple (so `schema.ts`'s own `z.enum`-style precedent still gets literal types elsewhere were it
+    // ever needed), while `configSchema`'s own `z.array(...)` infers a mutable `string[]` here.
+    oracleLint: { testFileGlobs: [...DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS] },
     flake: { maxRatePct: 2, window: 20, quarantineCap: 5 },
     pyramid: { maxE2ESharePct: 15 },
     dodProfileDefault: 'backend-default',

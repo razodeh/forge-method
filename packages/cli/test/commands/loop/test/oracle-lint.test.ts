@@ -497,3 +497,48 @@ test('AC-997-1 comments containing a stray brace do not confuse the scanner', ()
     expect(result.violations[0]?.pattern).toBe('weak-assertion');
   });
 });
+
+describe('runOracleLint — configurable test-file globs, quality.oracleLint.testFileGlobs (specs/22 M17 P5)', () => {
+  it('does not scan a *_test.go file at all with the built-in default globs, even one with an obvious violation', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'invoice_test.go',
+      `test('AC-999-1 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+    );
+
+    const result = await runOracleLint(paths);
+
+    expect(result.errors).toBe(0);
+    expect(result.violations).toEqual([]);
+  });
+
+  it('scans a project whose tests are *_test.go when that glob is configured, flagging a real violation', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'invoice_test.go',
+      `test('AC-999-2 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+    );
+
+    const result = await runOracleLint(paths, ['*_test.go']);
+
+    expect(result.errors).toBe(1);
+    expect(result.violations[0]?.pattern).toBe('weak-assertion');
+    expect(result.violations[0]?.file).toBe('invoice_test.go');
+  });
+
+  it('a configured glob set replaces the default entirely: a *.test.js file is no longer scanned', async () => {
+    const { dir, paths } = await project();
+    await writeTestFile(
+      dir,
+      'weak.test.js',
+      `test('AC-999-3 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+    );
+
+    const result = await runOracleLint(paths, ['*_test.go']);
+
+    expect(result.errors).toBe(0);
+    expect(result.violations).toEqual([]);
+  });
+});

@@ -160,6 +160,43 @@ describe('forge story evidence (real subprocess)', () => {
     }
   });
 
+  it('honours a real, configured quality.coverage.source: ratchetRegressions in the written EvidenceBundle reflects a real lcov.info, not the istanbul default (specs/22 M17 P5)', async () => {
+    // Proves `runStoryEvidenceCommand`'s own real wiring (`bin.ts`): `coverage/coverage-summary.json`
+    // (istanbul-json's own conventional path) is deliberately left absent, so a clean
+    // `ratchetRegressions: 0` with no `problems` entry could only come from the real, configured
+    // lcov.info actually being read -- a fallback to the istanbul default would instead report a
+    // real "no coverage data found" problem and force `regressions >= 1`.
+    const dir = await project();
+    const configPath = path.join(dir, '.forge/config.yaml');
+    const config = YAML.parse(await readFile(configPath, 'utf8')) as {
+      quality: { coverage: Record<string, unknown> };
+    };
+    Object.assign(config.quality.coverage, { source: 'lcov' });
+    await writeFile(configPath, YAML.stringify(config), 'utf8');
+    await mkdir(path.join(dir, 'coverage'), { recursive: true });
+    await writeFile(
+      path.join(dir, 'coverage/lcov.info'),
+      'SF:src/a.ts\nDA:1,5\nDA:2,0\nend_of_record\n',
+      'utf8',
+    );
+    const runId = 'run-cov';
+    await seedReview(dir, runId);
+
+    const result = forge(['story', 'evidence', 'STORY-001', '--json'], dir, {
+      FORGE_RUN_ID: runId,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    const body = JSON.parse(result.stdout) as { readonly path: string };
+    const text = await readFile(path.join(dir, body.path), 'utf8');
+    const parsed = evidenceBundleSchema.safeParse(YAML.parse(text.split('---\n')[1] ?? ''));
+    expect(parsed.success, parsed.success ? '' : JSON.stringify(parsed.error.issues)).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.coverage.ratchetRegressions).toBe(0);
+      expect(parsed.data.coverage.problems).toBeUndefined();
+    }
+  });
+
   it('refuses with GATE-516 (missing-review), exit 5 (a real precondition, not a usage mistake), naming the story, when no review was ever recorded for it', async () => {
     const dir = await project();
     const result = forge(['story', 'evidence', 'STORY-001', '--json'], dir, {

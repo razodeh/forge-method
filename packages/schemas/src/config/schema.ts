@@ -187,6 +187,41 @@ export const TEST_REPORT_FORMATS = [
  * table unparsed (`pnpm typecheck` catches a missing `Record` key). */
 export type TestReportFormat = (typeof TEST_REPORT_FORMATS)[number];
 
+// `specs/22` M17 P5 (`18` §18.3's own "quality.coverage.source/.format" paragraph -- the sibling
+// `path` field below is this piece's own renaming of that paragraph's "`format`", not a second,
+// independent field): the coverage report shapes `loop/test/coverage.ts` can parse, replacing the
+// pre-M17 hard-coded assumption that
+// coverage always arrives as Istanbul/v8's own `coverage/coverage-summary.json`. `istanbul-json` is
+// the real default: `quality.coverage.source` is optional precisely so a `.forge/config.yaml`
+// written before this field existed (which `readConfig`, `commands/config.ts`, validates directly,
+// with no defaults-merge step of its own) stays valid, and `coverage.ts`'s own resolution treats an
+// absent `source` as `istanbul-json` -- behaving byte-identically to pre-M17 FORGE.
+export const COVERAGE_SOURCES = ['istanbul-json', 'lcov', 'cobertura', 'jacoco'] as const;
+
+/** One of `COVERAGE_SOURCES` — `loop/test/coverage.ts`'s own per-format reader dispatch takes exactly
+ * this type, so a future fifth format cannot silently fall through unparsed. */
+export type CoverageSource = (typeof COVERAGE_SOURCES)[number];
+
+// `specs/22` M17 P5 (`13` F-TEST-2, `18` §18.3): `test:oracle-lint`'s own test-file discovery set,
+// ported verbatim from `oracle-lint.ts`'s own pre-M17 hard-coded `TEST_FILE_SUFFIXES`/`isTestFile`
+// logic into glob form (matched against each file's own basename, never a full path). The whole
+// `quality.oracleLint` object is optional for the identical reason `source` above is: a
+// `.forge/config.yaml` written before this field existed has no such key at all, and `oracle-
+// lint.ts`'s own resolution treats an absent value as this exact list -- scanning exactly the files
+// pre-M17 FORGE did. Deliberately asymmetric (`.spec.js`/`.spec.ts` only, no `.spec.jsx`/
+// `.spec.tsx`) because the pre-M17 code being ported was asymmetric too -- not revisited here, since
+// "defaults unchanged" (PLAN-M17.md P5) is the whole point.
+export const DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS = [
+  '*.test.js',
+  '*.test.jsx',
+  '*.test.ts',
+  '*.test.tsx',
+  '*.spec.js',
+  '*.spec.ts',
+  'test_*.py',
+  '*_test.py',
+] as const;
+
 // `output.path` is a project-relative file FORGE itself allocates and deletes before every run of
 // that layer (`18` §18.3's own "a stale report is never read" guarantee) -- it is read with the same
 // `ProjectPaths.resolveWithin` containment every other project-relative write/delete in this codebase
@@ -404,8 +439,53 @@ const qualitySchema = z
         lines: z.number().min(0).max(100),
         branches: z.number().min(0).max(100),
         ratchet: z.boolean(),
+        // `specs/22` M17 P5: which coverage report shape `forge test coverage` parses -- see this
+        // field's own group doc comment at `COVERAGE_SOURCES` above. Optional, unlike `lines`/
+        // `branches`/`ratchet` above (every one of those predates this piece and was always
+        // required): a `.forge/config.yaml` written before this field existed has no such key, and
+        // `readConfig` (`commands/config.ts`) validates the raw file directly with no defaults-merge
+        // step of its own, so a required field here would break every such file outright. Unset means
+        // `istanbul-json` -- `coverage.ts`'s own resolution, not a schema-level default.
+        source: z.enum(COVERAGE_SOURCES).optional(),
+        // `specs/22` M17 P5: a project-relative OVERRIDE of `source`'s own conventional report path
+        // (`coverage/coverage-summary.json` for istanbul-json, `coverage/lcov.info` for lcov,
+        // `coverage/cobertura-coverage.xml` for cobertura, `coverage/jacoco.xml` for jacoco).
+        // `18` §18.3's own normative text (committed by P1 before this piece) names this field
+        // `format` -- NOT used here: a round-2 critic found that name collides, in the same spec
+        // section, with the unrelated, already-shipped `execution.testCommands.<layer>.format`
+        // (an ENUM picking a parser, `TEST_REPORT_FORMATS`) -- `quality.coverage.format: 'lcov'`, the
+        // exact value a user would type by analogy with that sibling field, would otherwise pass
+        // validation and get read as a literal, nonsensical path. Named `path` instead, since that is
+        // genuinely what it holds -- a real, disclosed deviation from `18` §18.3's own literal text,
+        // not a silent one: this piece's own report names it for the orchestrator to record in
+        // `SPEC-QUESTIONS.md` and amend `18` to match (this package does not edit `process/**`
+        // itself). Unset (the default): read `source`'s own conventional path.
+        path: z
+          .string()
+          .min(1)
+          .refine(isValidReleasePathEntry, (entry) => ({
+            message:
+              `"${entry}" is not a valid quality.coverage.path entry: it must be non-blank and ` +
+              'project-relative (no leading "/" or "\\\\", no drive letter), contain no ".." segment, ' +
+              'and not start with "!".',
+          }))
+          .optional(),
       })
       .strict(),
+    // `specs/22` M17 P5 (`13` F-TEST-2): `test:oracle-lint`'s own test-file discovery set -- see
+    // `DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS`'s own doc comment above for what the default preserves.
+    // The whole object is optional (not only `testFileGlobs` within it), the identical `gates:
+    // gatesSchema.optional()` pattern above: a `.forge/config.yaml` written before this piece existed
+    // has no `quality.oracleLint` key at all, not merely an empty one -- `walk.ts`'s own `unwrap()`
+    // already handles an optional whole-object leaf correctly (added for `gates`, reused here
+    // unchanged). Unset means `DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS` -- `oracle-lint.ts`'s own
+    // resolution, not a schema-level default.
+    oracleLint: z
+      .object({
+        testFileGlobs: z.array(z.string().min(1)).min(1),
+      })
+      .strict()
+      .optional(),
     flake: z
       .object({
         maxRatePct: z.number().min(0).max(100),

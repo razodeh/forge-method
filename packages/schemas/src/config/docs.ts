@@ -83,6 +83,9 @@ export type ConfigKeyPath =
   | 'quality.coverage.lines'
   | 'quality.coverage.branches'
   | 'quality.coverage.ratchet'
+  | 'quality.coverage.source'
+  | 'quality.coverage.path'
+  | 'quality.oracleLint.testFileGlobs'
   | 'quality.flake.maxRatePct'
   | 'quality.flake.window'
   | 'quality.flake.quarantineCap'
@@ -198,6 +201,16 @@ export const CONFIG_KEY_DOCS: Readonly<Record<ConfigKeyPath, string>> = {
   'quality.coverage.branches': 'Minimum required branch coverage percentage.',
   'quality.coverage.ratchet':
     'Whether coverage is required to never decrease from its recorded high.',
+  'quality.coverage.source':
+    'Which coverage report shape `forge test coverage` parses: istanbul-json (default), lcov, ' +
+    'cobertura, or jacoco.',
+  'quality.coverage.path':
+    "Project-relative override of `source`'s own conventional report path (e.g. `coverage/" +
+    'coverage-summary.json` for istanbul-json). Unset: read that conventional path.',
+  'quality.oracleLint.testFileGlobs':
+    "Glob patterns, matched against each test file's own basename, that `test:oracle-lint` scans. " +
+    'Defaults to the pre-M17 built-in set (`*.test.{js,jsx,ts,tsx}`, `*.spec.{js,ts}`, ' +
+    '`test_*.py`/`*_test.py`).',
   'quality.flake.maxRatePct': 'Maximum tolerated flaky-test rate, as a percentage.',
   'quality.flake.window': 'Number of recent runs the flake rate is computed over.',
   'quality.flake.quarantineCap': 'Maximum number of tests that may be quarantined at once.',

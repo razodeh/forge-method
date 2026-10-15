@@ -211,6 +211,35 @@ async function setTestCommand(dir: string, layer: string, command: string): Prom
   await writeFile(configPath, YAML.stringify(parsed), 'utf8');
 }
 
+/** Patches `quality.coverage.{source,path}` in the project's own real, `forge init`-written
+ * `.forge/config.yaml` — proves `runTestCoverageCommand`'s own real wiring (`bin.ts`, `specs/22`
+ * M17 P5) end to end through the real CLI dispatcher, not only through `testCoverage` called
+ * directly (`test/commands/loop/test/coverage.test.ts` already covers that exhaustively). */
+async function setQualityCoverage(
+  dir: string,
+  patch: { readonly source?: string; readonly path?: string },
+): Promise<void> {
+  const configPath = path.join(dir, '.forge/config.yaml');
+  const parsed = YAML.parse(await readFile(configPath, 'utf8')) as {
+    quality: { coverage: Record<string, unknown> };
+  };
+  Object.assign(parsed.quality.coverage, patch);
+  await writeFile(configPath, YAML.stringify(parsed), 'utf8');
+}
+
+/** Patches `quality.oracleLint.testFileGlobs` in the project's own real, `forge init`-written
+ * `.forge/config.yaml` — proves `runTestRunCommand`'s own real wiring (`bin.ts`, `specs/22` M17 P5)
+ * end to end through the real CLI dispatcher. The project's own written config has no `oracleLint`
+ * key at all yet (optional, `specs/22` M17 P5) — this adds it. */
+async function setOracleLintGlobs(dir: string, globs: readonly string[]): Promise<void> {
+  const configPath = path.join(dir, '.forge/config.yaml');
+  const parsed = YAML.parse(await readFile(configPath, 'utf8')) as {
+    quality: { oracleLint?: { testFileGlobs: readonly string[] } };
+  };
+  parsed.quality.oracleLint = { testFileGlobs: globs };
+  await writeFile(configPath, YAML.stringify(parsed), 'utf8');
+}
+
 function resolveRealVitestEntry(): string {
   const require = createRequire(import.meta.url);
   const packageJsonPath = require.resolve('vitest/package.json');
@@ -526,6 +555,27 @@ describe('forge (real subprocess dispatch)', () => {
     expect(parsed.errors).toBe(1);
   });
 
+  it('runs `forge test run --rule oracle-lint --json` for real end to end, honouring a real, configured quality.oracleLint.testFileGlobs (specs/22 M17 P5)', async () => {
+    // Proves `runTestRunCommand`'s own real wiring (`bin.ts`): a project's real, committed
+    // `.forge/config.yaml` names `*_test.go` as its test-file glob, and a real `*_test.go` fixture
+    // with an obvious violation is only found and flagged once that config is actually read and
+    // threaded through -- never through `testRun`/`runOracleLint` called directly
+    // (`test/commands/loop/test/{run,oracle-lint}.test.ts` already cover that exhaustively).
+    const dir = await realProject();
+    await setOracleLintGlobs(dir, ['*_test.go']);
+    await writeFile(
+      path.join(dir, 'invoice_test.go'),
+      `test('AC-901-1 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+      'utf8',
+    );
+
+    const result = run(['test', 'run', '--rule', 'oracle-lint', '--json', '-C', dir]);
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as { readonly errors: number };
+    expect(parsed.errors).toBe(1);
+  });
+
   it('runs `forge test coverage --rule acceptance-criteria --json` for real end to end, vacuously exiting 0 with no done stories at all', async () => {
     // `PLAN-M8.md` P6's own Checks section: proves the full real pipeline (readConfig-free —
     // `story:ac-coverage` needs no `testCommands` entry — SpecGraph/story load -> JSON envelope ->
@@ -538,6 +588,28 @@ describe('forge (real subprocess dispatch)', () => {
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as { readonly coverage: number };
     expect(parsed.coverage).toBe(100);
+  });
+
+  it('runs `forge test coverage --json` for real end to end, honouring a real, configured quality.coverage.{source,path} (specs/22 M17 P5)', async () => {
+    // Proves `runTestCoverageCommand`'s own real wiring (`bin.ts`): a project's real, committed
+    // `.forge/config.yaml` names `lcov` at a non-conventional `path`, and the real lcov.info written
+    // there is what the real CLI dispatch actually reads -- never through `testCoverage` called
+    // directly (`test/commands/loop/test/coverage.test.ts` already covers every format
+    // exhaustively). `coverage/coverage-summary.json` (istanbul-json's own conventional path) is
+    // deliberately left absent, so a 100%/0% result could only come from the real lcov.info.
+    const dir = await realProject();
+    await setQualityCoverage(dir, { source: 'lcov', path: 'build/my-lcov.info' });
+    await mkdir(path.join(dir, 'build'), { recursive: true });
+    await writeFile(
+      path.join(dir, 'build/my-lcov.info'),
+      'SF:src/a.ts\nDA:1,5\nDA:2,0\nDA:3,0\nend_of_record\n',
+      'utf8',
+    );
+
+    const result = run(['test', 'coverage', '--json', '-C', dir]);
+
+    const parsed = JSON.parse(result.stdout) as { readonly coverage: number };
+    expect(parsed.coverage).toBeCloseTo(33.33, 2);
   });
 
   it('exits 2 with a real, specific message for an unrecognised "test coverage --rule" value', async () => {

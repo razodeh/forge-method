@@ -88,6 +88,11 @@ export interface TestRunContext {
    * `DEFAULT_FLAKE_CONFIG` (F-TEST-6's own literal defaults) when a caller has no real project config
    * to hand — a real caller (`bin.ts`) always passes the target project's own, already-read value. */
   readonly flakeConfig?: FlakeConfig;
+  /** `quality.oracleLint.testFileGlobs` (`specs/22` M17 P5) — only read by `options.rule ===
+   * 'oracle-lint'`; `runOracleLint`'s own default (`DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS`) applies
+   * when omitted, the identical "caller with no real project config hands nothing" convention
+   * `flakeConfig` above already establishes. */
+  readonly oracleLintGlobs?: readonly string[] | undefined;
   /** `false` runs the commands and reports, but leaves `docs/forge/reports/test-results.json` and `flaky.json`
    * untouched. `forge test run` is the one command that owns those two files (each run replaces the report and
    * prunes the flake records to what it saw); a caller that runs only ONE layer for its own purposes (`forge
@@ -498,7 +503,10 @@ function describeShellFailure(stdout: string, stderr: string): string {
  * `problems` (a directory/file this process could not read) are forwarded verbatim, so a scan that
  * could not fully complete never reads as a silent, clean `errors: 0`. */
 async function runOracleLintRule(ctx: TestRunContext): Promise<TestRunResult> {
-  const result = await runOracleLint(ctx.paths);
+  // A default-parameter call: `runOracleLint`'s own default applies identically whether
+  // `ctx.oracleLintGlobs` is omitted entirely or explicitly `undefined` (ordinary JS default-parameter
+  // semantics), so this never needs its own branch for "no override given."
+  const result = await runOracleLint(ctx.paths, ctx.oracleLintGlobs);
   return result.problems === undefined
     ? { failed: 0, errors: result.errors }
     : { failed: 0, errors: result.errors, problems: result.problems };

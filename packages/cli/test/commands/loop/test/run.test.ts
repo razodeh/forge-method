@@ -671,6 +671,38 @@ describe('testRun — --rule oracle-lint (F-TEST-2)', () => {
   });
 });
 
+describe('testRun — --rule oracle-lint honours ctx.oracleLintGlobs (specs/22 M17 P5)', () => {
+  it('scans a project whose tests are *_test.go when ctx.oracleLintGlobs names that pattern', async () => {
+    const dir = await tempDir();
+    await writeFile(
+      dir + '/invoice_test.go',
+      `test('AC-901-1 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+      'utf8',
+    );
+
+    const result = await testRun(
+      { ...ctx(dir, {}), oracleLintGlobs: ['*_test.go'] },
+      { rule: 'oracle-lint' },
+      UNUSED_TEMP_PATH,
+    );
+
+    expect(result.errors).toBe(1);
+  });
+
+  it('falls back to the built-in default globs when ctx.oracleLintGlobs is not given, unchanged from before this piece', async () => {
+    const dir = await tempDir();
+    await writeFile(
+      dir + '/invoice_test.go',
+      `test('AC-901-2 returns a result', () => { expect(doSomething()).toBeDefined(); });`,
+      'utf8',
+    );
+
+    const result = await testRun(ctx(dir, {}), { rule: 'oracle-lint' }, UNUSED_TEMP_PATH);
+
+    expect(result.errors).toBe(0);
+  });
+});
+
 /** Finds `state.tests`' own real entry for `testName` by qualified-key suffix — the real key is
  * `<file>::<name>` (`run.ts`'s own `flakyKey`), and `file` is vitest's own real, possibly
  * realpath-resolved absolute path (which need not match a plain `path.join(dir, ...)` literally on

@@ -687,8 +687,21 @@
               "minimum": 0,
               "type": "number"
             },
+            "path": {
+              "minLength": 1,
+              "type": "string"
+            },
             "ratchet": {
               "type": "boolean"
+            },
+            "source": {
+              "enum": [
+                "istanbul-json",
+                "lcov",
+                "cobertura",
+                "jacoco"
+              ],
+              "type": "string"
             }
           },
           "required": [
@@ -723,6 +736,23 @@
             "maxRatePct",
             "window",
             "quarantineCap"
+          ],
+          "type": "object"
+        },
+        "oracleLint": {
+          "additionalProperties": false,
+          "properties": {
+            "testFileGlobs": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "testFileGlobs"
           ],
           "type": "object"
         },

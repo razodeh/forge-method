@@ -25,10 +25,20 @@
  * weak-only `expect()` calls in one test with no strong assertion at all. Every one of those is
  * fixed below, each with its own doc comment at the fix site.
  *
+ * `specs/22` M17 P5: which files count as "a test file" at all is now configurable
+ * (`quality.oracleLint.testFileGlobs`, `runOracleLint`'s own second, optional parameter) rather than
+ * the hard-coded suffix/prefix set this file used to carry directly — `DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS`
+ * (`@forge/schemas/config`) ports that pre-M17 set verbatim into glob form so a caller that passes
+ * nothing (every pre-M17 caller and test) scans exactly the same files as before.
+ *
  * @see specs/13 §13.1 F-TEST-2
+ * @see specs/22 M17 P5
  * @see PLAN-M8.md P5
  */
+import { minimatch } from 'minimatch';
+
 import { listDirEntriesSorted, readTextFile, type ProjectPaths } from '@forge/core/fs';
+import { DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS } from '@forge/schemas/config';
 
 /** One of F-TEST-2's own banned patterns, as this scanner can actually detect it. */
 export type OracleLintPattern =
@@ -64,21 +74,22 @@ const SKIPPED_DIRECTORIES = new Set([
   'build',
   'coverage',
 ]);
-const TEST_FILE_SUFFIXES = [
-  '.test.js',
-  '.test.jsx',
-  '.test.ts',
-  '.test.tsx',
-  '.spec.js',
-  '.spec.ts',
-];
 
-function isTestFile(name: string): boolean {
-  return (
-    TEST_FILE_SUFFIXES.some((suffix) => name.endsWith(suffix)) ||
-    (name.startsWith('test_') && name.endsWith('.py')) ||
-    name.endsWith('_test.py')
-  );
+/** The engine's own established glob-matching convention (`@forge/engine/dispatch/outputs.ts`'s
+ * `MATCH_OPTIONS`, not exported — redeclared here identically rather than imported, since
+ * `@forge/cli` already depends directly on `minimatch` for the same convention, `story.ts`'s own
+ * `MATCH_OPTIONS`): `dot: true` so a dotfile test name still matches; `nonegate`/`nocomment` so a
+ * glob starting with `!`/`#` is read as a literal pattern, never a negation/comment — a project's
+ * `quality.oracleLint.testFileGlobs` entry is a scan target, not a claim or exclusion list, so there
+ * is no real use for glob negation here, and treating `!`/`#` as literal is the same conservative
+ * choice `sharedMutablePaths`/`paths.release` already make for config-declared globs. */
+const MATCH_OPTIONS = { dot: true, nonegate: true, nocomment: true } as const;
+
+/** `name` is a file's own basename (never a full or relative path) — every glob in `globs` is matched
+ * against it directly, the identical scope `isTestFile`'s own pre-M17 hard-coded suffix/prefix checks
+ * already had. */
+function isTestFile(name: string, globs: readonly string[]): boolean {
+  return globs.some((glob) => minimatch(name, glob, MATCH_OPTIONS));
 }
 
 /** `code` on the real `ForgeError.cause` Node ever attaches — `listDirEntriesSorted`/`readTextFile`
@@ -98,6 +109,7 @@ function isRealErrnoCode(error: unknown, code: string): boolean {
 async function discoverTestFiles(
   paths: ProjectPaths,
   problems: string[],
+  globs: readonly string[],
   relativeDir = '',
 ): Promise<readonly string[]> {
   const dirRelPath = relativeDir === '' ? '.' : relativeDir;
@@ -116,8 +128,8 @@ async function discoverTestFiles(
     const childRel = relativeDir === '' ? entry.name : `${relativeDir}/${entry.name}`;
     if (entry.isDirectory) {
       if (SKIPPED_DIRECTORIES.has(entry.name)) continue;
-      files.push(...(await discoverTestFiles(paths, problems, childRel)));
-    } else if (isTestFile(entry.name)) {
+      files.push(...(await discoverTestFiles(paths, problems, globs, childRel)));
+    } else if (isTestFile(entry.name, globs)) {
       files.push(childRel);
     }
   }
@@ -404,10 +416,19 @@ async function readTextFileRelative(
 /** `09` §9.5/F-TEST-2's own oracle-lint check, over every real test file under `paths`' own root.
  * Never throws for an ordinary real-world failure (a file this process cannot read, a directory
  * that no longer exists mid-walk): each becomes a real `problems` entry, never a silent `errors: 0`
- * that would read as "every test file was scanned and found clean." */
-export async function runOracleLint(paths: ProjectPaths): Promise<OracleLintResult> {
+ * that would read as "every test file was scanned and found clean."
+ *
+ * `testFileGlobs` (`specs/22` M17 P5, `quality.oracleLint.testFileGlobs`) names which files count as
+ * a test file at all, matched against each file's own basename. Omitted, every pre-M17 caller
+ * (including every test in this file's own suite) scans exactly the same files as before
+ * (`DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS`) — a real caller with a project config to hand
+ * (`run.ts`'s own `runOracleLintRule`) always passes the target project's own, already-read value. */
+export async function runOracleLint(
+  paths: ProjectPaths,
+  testFileGlobs: readonly string[] = DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS,
+): Promise<OracleLintResult> {
   const problems: string[] = [];
-  const files = await discoverTestFiles(paths, problems);
+  const files = await discoverTestFiles(paths, problems, testFileGlobs);
   const violations: OracleLintViolation[] = [];
   for (const file of files) {
     const source = await readTextFileRelative(paths, file, problems);

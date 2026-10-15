@@ -11,9 +11,12 @@ export {
   legacyStringTestCommands,
   testCommandEntrySchema,
   TEST_REPORT_FORMATS,
+  COVERAGE_SOURCES,
+  DEFAULT_ORACLE_LINT_TEST_FILE_GLOBS,
   type ForgeConfig,
   type StructuredTestCommand,
   type TestCommandEntry,
   type TestReportFormat,
+  type CoverageSource,
 } from './schema.ts';
 export { configLeafPaths } from './walk.ts';

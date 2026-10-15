@@ -107,7 +107,25 @@ function goldenConfig(): Record<string, unknown> {
       requireCaptions: true,
     },
     quality: {
-      coverage: { lines: 85, branches: 80, ratchet: true },
+      // `18` §18.3's own example YAML carries `source: istanbul-json` too (`specs/22` M17 P5) —
+      // added to this transcription for the same reason `project.adopted`/`vcs.trunk` above were:
+      // this piece added the field after the original transcription was written.
+      coverage: { lines: 85, branches: 80, ratchet: true, source: 'istanbul-json' },
+      // Not part of `18` §18.3's own shown YAML at all (`specs/22` M17 P5 added this field with no
+      // spec-text example to transcribe) — the real built-in default list, so this golden fixture
+      // still exercises a real, valid value rather than an arbitrary placeholder.
+      oracleLint: {
+        testFileGlobs: [
+          '*.test.js',
+          '*.test.jsx',
+          '*.test.ts',
+          '*.test.tsx',
+          '*.spec.js',
+          '*.spec.ts',
+          'test_*.py',
+          '*_test.py',
+        ],
+      },
       flake: { maxRatePct: 2, window: 20, quarantineCap: 5 },
       pyramid: { maxE2ESharePct: 15 },
       dodProfileDefault: 'backend-default',

@@ -1755,6 +1755,10 @@ async function runTestRunCommand(
     projectRoot,
     testCommands: config.execution.testCommands,
     flakeConfig: config.quality.flake,
+    // `specs/22` M17 P5: `quality.oracleLint` itself is optional (a `.forge/config.yaml` written
+    // before this piece existed has no such key at all) -- `?.` reads `undefined` for one, which
+    // `testRun`/`runOracleLintRule` already treat as "use the built-in default".
+    oracleLintGlobs: config.quality.oracleLint?.testFileGlobs,
   };
   const options = {
     ...(rule === undefined ? {} : { rule }),
@@ -2681,7 +2685,16 @@ async function runTestCoverageCommand(
   rule: TestCoverageRuleId | undefined,
   json: boolean,
 ): Promise<number> {
-  const ctx = { paths, projectRoot, specsRoot: SPECS_ROOT };
+  const config = await readConfig(paths);
+  // `specs/22` M17 P5: `quality.coverage.{source,path}`, read from the project's own config --
+  // `undefined` for either (a `.forge/config.yaml` written before this piece existed) reads as
+  // `testCoverage`'s own pre-M17 default (`istanbul-json` at its conventional path), unchanged.
+  const ctx = {
+    paths,
+    projectRoot,
+    specsRoot: SPECS_ROOT,
+    coverage: config.quality.coverage,
+  };
   const options = rule === undefined ? {} : { rule };
   const result = await testCoverage(ctx, options);
   if (json) {
@@ -4968,7 +4981,14 @@ async function runStoryEvidenceCommand(
     return rendering.exitCode;
   }
   const { report } = verifyOutcome;
-  const coverageCtx = { paths, projectRoot, specsRoot: SPECS_ROOT };
+  // `specs/22` M17 P5: ratchet coverage reads the project's own configured source/path too, the
+  // identical wiring `runTestCoverageCommand` above already does.
+  const coverageCtx = {
+    paths,
+    projectRoot,
+    specsRoot: SPECS_ROOT,
+    coverage: config.quality.coverage,
+  };
   const [acCoverage, ratchetCoverage] = await Promise.all([
     testCoverage(coverageCtx, { rule: 'acceptance-criteria' }),
     testCoverage(coverageCtx, { rule: 'ratchet' }),
