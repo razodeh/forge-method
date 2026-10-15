@@ -704,6 +704,25 @@ const EXEMPT: readonly {
       /the\s+device\s+rows\s+still\s+to\s+be\s+run\s+for\s+`docs\/forge\/kb\/mobile\/device-matrix\.md`/,
     why: 'the Task record only lists the rows a person must add there; the same brief says "Do not write results into device-matrix.md"',
   },
+  {
+    step: 'plan-stage:write-test-plan',
+    path: 'docs/forge/kb/assumptions.md',
+    sentence:
+      /Record\s+any\s+unresolved\s+question\s+in\s+`open_questions`[\s\S]*?any\s+assumption\s+you\s+made\s+in\s+`assumptions`/,
+    why:
+      'PROSE_REGISTER reads "Record ... assumption" as a write to the free-text KB register page, but ' +
+      "this sentence means the HandoffRecord's own structured `assumptions` field (an array of " +
+      '`ASM-nnn` objects, not prose) -- the agent never writes `docs/forge/kb/assumptions.md` here',
+  },
+  {
+    step: 'migrate:plan-migration',
+    path: 'docs/forge/migrations/x.mjs',
+    sentence:
+      /applies\s+this\s*\n?\s*ADR's\s+own\s+`expand`-phase\s+`migrations\.yaml`\s+entry\s+by\s+running\s+a\s+plain\s+Node\s+script\s+at\s+the\s+ONE\s+fixed/,
+    why:
+      "the ADR's text states where the id names the script will live so the plan is concrete, but the " +
+      'expand step builds it there later (migration-expand.md) -- plan-migration never writes it itself',
+  },
 ];
 
 /**

@@ -30016,3 +30016,30 @@ content gap: `migrate/run.ts`'s `runShellCommand` invokes a fixed `node <path>` 
 surface's own vetted, never-composed-onto `run` declaration (status `trusted`, same class as
 `facades.ts`'s `check.run`). Fixed directly by the orchestrator: both rows added to `INVENTORY`,
 confirmed green (`test/shell-sinks-inventory.test.ts` 5/5).
+
+## Q332 — M17, orchestrator direct fix: two real false positives in the brief-write-paths extractor
+
+**Context.** P2's own coverage-ratchet work flagged `test/brief-write-paths-in-claim.test.ts` as one
+of 3 pre-existing, deterministic failures blocking it. Re-investigated directly on main at `0704a30`:
+one of the original 3 (`shell-sinks-inventory.test.ts`) is now fixed (Q331). Of the other two,
+`gate-fail-closed.test.ts`'s specific sub-test now passes cleanly across 4 consecutive isolated runs
+at zero host load (consistent ~20s each) — the earlier "genuinely real, reproduced twice" finding
+cited 184s/906s runtimes for what is normally a ~20s test, strongly suggesting that finding was
+itself a host-contention artifact from this session's own heavy parallel dispatch, not a
+deterministic defect. Reclassifying it as unconfirmed rather than real; not fixed here.
+
+`test/brief-write-paths-in-claim.test.ts` IS confirmed real, with two genuine false positives in the
+extractor's `PROSE_REGISTER` heuristic (never a claim-enforcement bug — the extractor's own two
+designed escape hatches, `EXEMPT`/`IMPLIED_WRITES`, exist for exactly this): (1)
+`plan-stage:write-test-plan`'s "Record any unresolved question in `open_questions` ... and any
+assumption you made in `assumptions`" is read as a write to the free-text KB register page
+`docs/forge/kb/assumptions.md`, but it means the `HandoffRecord`'s own structured `assumptions`
+field (an array of `ASM-nnn` objects); (2) `migrate:plan-migration`'s (M17 P18) "How the data
+migration runs" bullet, which states where the id names the expand-phase script will live so the
+ADR is concrete, is read as the plan-migration step itself writing
+`docs/forge/migrations/<id>.mjs` — it is the LATER `migration-expand` step that builds it.
+
+**DECISION** — fixed directly by the orchestrator: two new `EXEMPT` entries added, each tied to its
+own exact sentence and `why`. Confirmed `test/brief-write-paths-in-claim.test.ts` 18/18 (both the
+default and `RELOCATED` layouts, plus the "stale exemption" check confirming both new entries were
+actually matched). `pnpm typecheck`/lint/prettier clean.
