@@ -29807,3 +29807,54 @@ concurrently-running piece could mistake for its own regression.
 with `840310b`/M17 P14 round 2, confirmed via `git log`), correctly disclosed rather than fixed
 in-piece. Fixed directly by the orchestrator (`162fd74`): one `../` segment removed, verified the
 resolved path is now the real repo root.
+
+## Q327 — M17 P5: coverage and oracle-lint stop assuming a runner — two real parser bugs, a real naming collision, and the DECISIONs that closed each
+
+**Context.** `quality.coverage.{source,path}` (4 formats) and `quality.oracleLint.testFileGlobs`
+replace hard-coded runner assumptions in coverage reading and oracle-lint's own test-file discovery.
+
+**DECISION 1 — both new config fields are optional, never required-with-a-default.** The builder
+independently discovered (not told, not copying a known lesson) that `readConfig` does zero
+defaults-merge against a parsed `.forge/config.yaml` — `configSchema.safeParse(raw)` runs directly
+on the loaded YAML. A required field would have broken every pre-existing project's config outright
+on first read. This is the identical root cause M17 P9's own `vcs.trunk` schema bug surfaced (a
+blocking finding there) — closed here proactively, before any critic needed to find it, mirroring
+the existing `gates`/`testRoots`/`mergeChecks` whole-object-optional precedent exactly.
+
+**DECISION 2 — `parseLcovSummary` derives coverage totals from real `DA:` per-line records
+directly, falling back to a report's own aggregate `LF:`/`LH:` line only when a file has no `DA:`
+records at all.** The first draft trusted `LF:`/`LH:` exclusively — real, non-adversarial lcov
+output (not every writer emits the aggregate line; several third-party parsers specifically exist
+to recompute from `DA:` for this exact reason) silently resolved to a false 100% coverage report
+with no `problems` entry, confirmed by direct reproduction. This directly undermined coverage's own
+role as a floor detector (`13` F-TEST-5).
+
+**DECISION 3 — every non-istanbul format's own untrusted path string is normalized to forward
+slashes at the one point it enters the file, before any relative/absolute logic runs.** A Windows-
+separator (`\`) path in a Cobertura/JaCoCo `filename` attribute — a real shape some .NET/Coverlet-
+style exporters on Windows CI write — survived unsplit into the ratchet baseline as one garbled
+top-level key, silently corrupting per-file/per-package grouping with no crash and no disclosure, a
+direct `QUALITY-BAR.md` R11 gap (no Windows-shaped-path test existed for this new code).
+
+**DECISION 4 — `quality.coverage.format` is renamed to `quality.coverage.path`, resolving a real
+naming collision rather than only disclosing it.** The original name collided in meaning with the
+unrelated, pre-existing `execution.testCommands.<layer>.format` enum — same spec section (`18`
+§18.3), same field name, completely different purpose (a path override vs. a parser-selecting
+enum). Confirmed empirically reachable: `quality.coverage.format: 'lcov'` — exactly what a user
+would type by analogy with the sibling field — passed schema validation and was read as a literal
+path, producing a confusing "no coverage data found at lcov" rather than a clear validation error.
+The rename closes the collision at its root; `specs/18` §18.3's own text and its pinned sentence in
+`test/spec-cli-examples.test.ts` are amended together to match, by the orchestrator (the builder's
+own mandate forbids editing `process/**`/specs).
+
+**Also closed**: a stale ratchet-diagnostic message hardcoding "coverage-summary.json" for every
+source, now threading the real resolved report path through; zero end-to-end test coverage for the
+3 real `bin.ts` config-wiring call sites, now proven by real subprocess tests per site.
+
+**Disclosed, not this piece's to fix, confirmed pre-existing**: `CFG-001`'s own error message
+swallows the actionable Zod issue detail (field name, real message) for ANY config validation
+failure, not introduced by this piece — already reachable via the pre-existing `gates: {}` case
+(M14 P16); this piece's own new `oracleLint: {}` case is one more instance of an existing gap, not
+a new one.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P5`.

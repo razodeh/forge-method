@@ -23770,3 +23770,45 @@ merges into an existing `# FORGE` block instead of duplicating it, with the pre-
 caller path (`forge init` against a from-scratch file) left byte-for-byte unchanged.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q325`.
+
+## M17 P5
+
+`quality.coverage.{source,path}` (`istanbul-json`/`lcov`/`cobertura`/`jacoco`) replace a hard-coded
+istanbul-only coverage reader; each format's own pure parser normalizes into the pre-existing
+`IstanbulSummary` shape so the already-tested ratchet logic is reused unmodified.
+`quality.oracleLint.testFileGlobs` makes oracle-lint's test-file glob set configurable via
+`minimatch` (already a direct dependency), reusing the project's own established match-options
+convention exactly. Both new fields are optional, not required-with-a-default: the builder
+independently discovered `readConfig` does zero defaults-merge against a parsed config file, so a
+required field would have broken every pre-existing project outright — the identical lesson this
+milestone's own `vcs.trunk` schema bug (M17 P9) already surfaced, applied here proactively before a
+critic ever needed to find it.
+
+**The gauntlet found two real, non-adversarial correctness bugs in the new parsers, both confirmed
+by direct reproduction against realistic, non-malicious tool output.** `parseLcovSummary` trusted
+only a report's own aggregate `LF:`/`LH:` line, silently reporting 100% coverage when real `DA:`
+miss data existed but no aggregate line was present — not every real lcov writer emits one; several
+third-party lcov parsers exist specifically to recompute from `DA:` because this exact gap is known
+in the wild. Fixed by deriving totals from `DA:` records directly whenever any exist, falling back
+to the aggregate line only when a file has none. Cobertura/JaCoCo filenames using a Windows path
+separator were never normalized before this piece's own path-relativization logic ran, silently
+corrupting per-file/per-package grouping and causing permanent ratchet-baseline churn (confirmed a
+direct `process/QUALITY-BAR.md` R11 gap: no Windows-shaped-path test existed for the new code).
+Fixed by normalizing every non-istanbul format's own untrusted path string to forward slashes at the
+one point it enters the file.
+
+**A real naming collision, not just ambiguous spec text, was found and fixed by renaming, not
+merely disclosing.** The originally-named `quality.coverage.format` collided in meaning with the
+unrelated `execution.testCommands.<layer>.format` enum — same spec section, same field name,
+completely different purpose (a path override vs. a parser-selecting enum). A critic confirmed
+empirically that a user typing a parser name by analogy with the sibling field (e.g. `'lcov'`)
+passes schema validation and produces a confusing path-not-found error rather than a clear mistake.
+Renamed to `quality.coverage.path`, since that is genuinely what the field holds; `specs/18` §18.3
+and its own pinned sentence amended together to match.
+
+Also closed: a stale ratchet-diagnostic message hardcoding "coverage-summary.json" regardless of
+the actually-configured source (now threads the real, resolved report path through); zero
+end-to-end test coverage for the 3 real `bin.ts` config-wiring call sites (correct by direct code
+reading, now proven by real subprocess tests per site).
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q327`.
