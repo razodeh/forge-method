@@ -41,8 +41,9 @@ describe('runEmitSchemas', () => {
   it('emits exactly one file per registered artifact type, plus one for config', () => {
     const schemas = runEmitSchemas();
     // 27 registry types (specs/18 §18.7, post-v1.0 M15: + MutationEvidence, EvidenceBundle, Exemption,
-    // Disclosure; post-v1.0 M16: + ParityEvidence) + configSchema.
-    expect(schemas.size).toBe(28);
+    // Disclosure; post-v1.0 M16: + ParityEvidence; post-v1.0 M17: + the canonical forge-test-report,
+    // M17 P3) + configSchema.
+    expect(schemas.size).toBe(29);
     expect(schemas.has('config.schema.json')).toBe(true);
   });
 
