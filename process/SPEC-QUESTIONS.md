@@ -30000,3 +30000,19 @@ zero-tests guard and the exit-code-reconciliation check) to only one of the two 
 have it.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P6`.
+
+## Q331 — M17, orchestrator direct fix: two pre-existing shell-sinks-inventory gaps, confirmed benign
+
+**Context.** `test/shell-sinks-inventory.test.ts`'s static scan flagged two production files that
+start a shell but were missing their own `INVENTORY` row: `packages/cli/src/commands/migrate/
+run.ts` (M17 P18) and `packages/cli/src/commands/parity/http-server.ts` (M16 P8). Both pre-date
+P6; confirmed failing identically on main at `46f52e8`, before P6's own rebase — not a P6
+regression, and P6 doesn't touch either file.
+
+**DECISION** — both independently investigated and confirmed benign, not a genuine untrusted-
+content gap: `migrate/run.ts`'s `runShellCommand` invokes a fixed `node <path>` command naming a
+`migrations.yaml` entry already schema-validated before use, with the path itself `shellQuote`d
+(status `quoted`); `parity/http-server.ts`'s `execa(options.run, { shell: true })` runs an `http`
+surface's own vetted, never-composed-onto `run` declaration (status `trusted`, same class as
+`facades.ts`'s `check.run`). Fixed directly by the orchestrator: both rows added to `INVENTORY`,
+confirmed green (`test/shell-sinks-inventory.test.ts` 5/5).

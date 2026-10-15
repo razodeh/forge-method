@@ -91,6 +91,28 @@ const INVENTORY: Readonly<Record<string, Sink>> = {
     checks: 'as facades.ts; a human typed the command',
     status: 'trusted',
   },
+  'packages/cli/src/commands/migrate/run.ts': {
+    source:
+      'a fixed `node <path>` invocation of `docs/forge/migrations/<id>.mjs`, `<id>` taken from a ' +
+      '`migrations.yaml` entry already validated by `readMigrationEntries`/`validateMigrationOrder` ' +
+      '(`runMigrationScript`, via `runShellCommand`)',
+    checks:
+      'the script path is wrapped in `shellQuote` before interpolation; no model or run-input text ' +
+      'reaches the command; a timeout (`DEFAULT_SCRIPT_TIMEOUT_MS`) bounds it and the migrate lock ' +
+      'serializes the ledger around it',
+    status: 'quoted',
+  },
+  'packages/cli/src/commands/parity/http-server.ts': {
+    source:
+      'an `http` surface declaration’s own vetted `run` (`.forge/parity/<name>.parity.yaml`, loaded ' +
+      'by `declaration.ts`’s strict loader), started once as the long-lived server (`startHttpServer`, ' +
+      '`execa(options.run, { shell: true, ... })`)',
+    checks:
+      'the literal declaration text only, never composed with case args/inputs or model text; a ' +
+      'scrubbed, pinned environment (`scrubbedEnvironment`/`PINNED_ENV`); author-trusted, the same as ' +
+      '`facades.ts`’s `check.run`',
+    status: 'trusted',
+  },
   'packages/cli/src/commands/loop/test/run.ts': {
     source:
       '`execution.testCommands.*` from `.forge/config.yaml` (the user’s own command), plus a fixed `--format json`',
