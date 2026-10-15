@@ -210,8 +210,8 @@ other undeclared capability here, degrades to a stated, typed, visible outcome, 
 - No `kind` signal in the chosen `format` (TAP, for one) → every failure reads `kind: 'assertion'`,
   `09` §9.5's own conservative default for hunk-mutation credit.
 
-**`quality.coverage.source`/`.format` (post-v1.0, `specs/22` M17).** `source` (`istanbul-json` default
-| `lcov` | `cobertura` | `jacoco`) and an optional `format` override replace the previously hard-coded
+**`quality.coverage.source`/`.path` (post-v1.0, `specs/22` M17).** `source` (`istanbul-json` default
+| `lcov` | `cobertura` | `jacoco`) and an optional `path` override replace the previously hard-coded
 assumption that coverage always arrives as Istanbul's own `coverage/coverage-summary.json` (confirmed
 pre-M17: `packages/cli/src/commands/loop/test/coverage.ts`'s own `COVERAGE_SUMMARY_RELATIVE_PATH`
 constant named exactly that path, unconditionally) — a project whose own tooling emits `lcov.info`,

@@ -6253,7 +6253,7 @@ describe('pinned sentences (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313, PLAN-M17.m
 
   it('M17 specs/18 §18.3: coverage source/format replaces the hard-coded Istanbul path', () => {
     expectPinned(spec18Config(), [
-      "**`quality.coverage.source`/`.format` (post-v1.0, `specs/22` M17).** `source` (`istanbul-json` default | `lcov` | `cobertura` | `jacoco`) and an optional `format` override replace the previously hard-coded assumption that coverage always arrives as Istanbul's own `coverage/coverage-summary.json` (confirmed pre-M17: `packages/cli/src/commands/loop/test/coverage.ts`'s own `COVERAGE_SUMMARY_RELATIVE_PATH` constant named exactly that path, unconditionally) — a project whose own tooling emits `lcov.info`, Cobertura XML or a JaCoCo report declares which, and coverage reads that format at that layer's own conventional path instead.",
+      "**`quality.coverage.source`/`.path` (post-v1.0, `specs/22` M17).** `source` (`istanbul-json` default | `lcov` | `cobertura` | `jacoco`) and an optional `path` override replace the previously hard-coded assumption that coverage always arrives as Istanbul's own `coverage/coverage-summary.json` (confirmed pre-M17: `packages/cli/src/commands/loop/test/coverage.ts`'s own `COVERAGE_SUMMARY_RELATIVE_PATH` constant named exactly that path, unconditionally) — a project whose own tooling emits `lcov.info`, Cobertura XML or a JaCoCo report declares which, and coverage reads that format at that layer's own conventional path instead.",
     ]);
   });
 
