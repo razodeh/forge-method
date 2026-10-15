@@ -23869,3 +23869,59 @@ alone didn't close — verified across 12+ consecutive clean runs, and confirmed
 mutation reverting to the naive kill, which then failed 5/5 runs deterministically once isolated.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q329`.
+
+## M17 P6
+
+`forge test adopt` inspects a project's own manifests across languages and monorepos — manifests,
+CI config, a `Makefile`'s own `test:` recipe — and proposes a structured `testCommands` entry when
+confident, preferring the richest built-in parser format available; otherwise hands off honestly
+rather than guessing, the one hand-off point P7's own agent-driven workflow will use. The translator
+proof is the one deterministic path by which any non-built-in format becomes trusted: schema
+validity, count reconciliation, a mandatory injected-failure probe matched by exact name,
+determinism across two runs, and a zero-tests guard — pinned to the translator's own content hash
+and the runner's version.
+
+**The gauntlet found real, non-adversarial bugs in both halves, each demonstrated with a concrete,
+realistic repro, not a hostile construction.** `Makefile` keyword matching read a runner's name
+appearing inside an ordinary migration-notice comment or an echoed string as a real invocation,
+confidently proposing exactly the wrong command, with zero test coverage protecting against it
+(loosening the keyword regex's own word-boundary left the entire existing suite green). JS detection
+ignored a project's own explicit `scripts.test` command when choosing among installed frameworks —
+an ordinary mid-migration state (one runner added as a dependency before the other is removed) —
+even though the same function already special-cased reading that field for Node's own built-in test
+runner. Both fixed: Makefile recipe lines are now segmented and comment/echo-stripped before the
+keyword regex ever runs, with a hedge in `reason` for a real invocation still scoped by `cd`/a shell
+guard; JS detection now cross-checks `scripts.test`'s own real content first, falling back to
+dependency presence only when the script names nothing actually installed.
+
+**The proof mechanism's own most severe finding: none of its 5 checks verified per-test attribution
+beyond the probe's own exact name, so a translator that swapped two OTHER real tests' statuses
+passed completely clean — not an adversarial construction, an ordinary off-by-one or name-confusion
+bug in a real translator could trigger the identical swap by accident, directly undermining the
+proof's own stated purpose.** Closed the catchable half: a real baseline run, taken before the probe
+ever exists, is now compared against the post-probe run, catching any mismatch on a test the probe
+never touches — proven with a real, position-keyed swap fixture. Rather than overclaim a full fix,
+the genuinely uncatchable half (a swap keyed by a test's own stable NAME, producing the identical
+wrong result with or without the probe, since a name-based bug has nothing for a before/after
+comparison to differ on) is proven, not silently left, as a disclosed, permanent, explicitly-labeled
+residual limit — closing it fully would require asking whoever proposes a configuration to also
+hand-verify a sample of the real suite, which the normative spec text does not ask of them, and this
+piece does not invent that requirement on its own authority.
+
+**Also found and closed: a real SIGKILL between writing the injected probe and its own cleanup
+leaked it into the live project tree forever, with no caller reachable from any shipped command
+today but a real, disclosed risk once P7 wires one.** Closed with a durable, fsync'd marker the next
+invocation reads and reclaims first, proven against a genuine SIGKILL of a real detached process
+group (not a simulated crash) — the identical hazard this codebase's own `shell.ts` already names,
+and that M17 P18's own gauntlet independently rediscovered the same session.
+
+**Also closed, minor**: a "canonical JSON" hash fallback that was actually key-order-sensitive; an
+error message reused from an unrelated context that didn't fit a probe-path collision (new
+`RUN-158`); a doc comment whose stated reason for `--write`'s own current refusal path didn't match
+what the real CLI flow actually hits first; `CFG-518`'s own structured `key` field always reading the
+`'(document)'` placeholder rather than the real offending key, now matching `CFG-510`'s established
+precedent; a missing test for a syntactically-valid-but-schema-invalid staged proposal; a check-
+ordering doc comment that attributed a shared vacuous-overlap hazard to only one of the two checks
+that actually have it.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q330`.

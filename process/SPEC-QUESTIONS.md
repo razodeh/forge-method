@@ -29933,3 +29933,70 @@ runs `--phase expand`); `test/workspace-floor.test.ts`'s pre-existing P14-fixtur
 unrelated (now independently confirmed by 5+ pieces this milestone).
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P18`.
+
+## Q330 — M17 P6: deterministic runner detection, and the translator proof — real bugs in both halves, an honestly-disclosed structural limit (not papered over), and the DECISIONs that closed each
+
+**Context.** `forge test adopt`'s detection half inspects a project's own manifests; the translator
+proof is the one deterministic path by which any non-built-in format becomes trusted, via 5 checks
+plus a mandatory injected-failure probe. Both independent critics found real, demonstrated bugs in
+detection; one found the proof's own most severe gap.
+
+**DECISION 1 — `Makefile` recipe lines are segmented and comment/echo-stripped before the runner-
+keyword regex ever runs, with a hedge in `reason` for a scoped/guarded match.** A critic reproduced
+directly: a `test:` recipe whose only real command is `./custom_runner.sh ...`, preceded by a
+comment naming pytest as no-longer-used, was confidently (and wrongly) detected as pytest — a
+realistic migration-notice shape, not hostile input, with zero existing test coverage protecting
+against it. Fixed by splitting each real recipe line into shell-command segments, dropping comment
+lines and no-op segments (`echo`/`printf`/`cat`/`true`/`false`/`:`) before matching; a real
+invocation still found behind `cd dir &&` or a shell guard is detected but hedged in `reason` rather
+than claimed unconditionally confident.
+
+**DECISION 2 — JS detection cross-checks `scripts.test`'s own real content before falling back to
+dependency-presence priority.** A critic reproduced directly: `devDependencies: {vitest, jest}` with
+`scripts.test: "jest --coverage"` was confidently detected as vitest, silently contradicting the
+project's own script — an ordinary mid-migration state, and an asymmetry with the SAME function's
+own pre-existing special-case for reading `scripts.test` when choosing Node's built-in test runner.
+Fixed by matching the script's own content first (reusing the identical word-boundary regex shape),
+cross-checked against real dependency presence so a script naming an uninstalled tool still falls
+through honestly rather than trusting unverified text.
+
+**DECISION 3 — the proof's own most severe finding is split into a closed half and an honestly-
+disclosed, proven-not-solved half, not a single overclaimed fix.** None of the 5 checks verified
+per-test attribution beyond the injected probe's own exact name; a critic built a real fixture where
+a translator swaps two OTHER tests' statuses (laundering a real bug as a pass, framing an innocent
+pass as a failure) while reporting the probe correctly — the proof returned `{ok: true}`. Not
+adversarial-only: an ordinary off-by-one or name-confusion bug in a real translator could trigger
+the identical swap by accident, directly undermining the proof's own stated purpose ("a translator
+is never trusted on its own word"). Closed the catchable half: a real baseline run taken before the
+probe ever exists is compared against the post-probe run, catching any mismatch on a test the probe
+itself never touches — this catches a POSITION-keyed swap (the critic's own exact repro), proven
+with a dedicated fixture. The genuinely uncatchable half — a swap keyed by a test's own stable NAME,
+which produces the identical wrong result with or without the probe, since nothing differs for a
+before/after comparison to see — is proven, not silently left, via a second, permanent, explicitly-
+labeled `'DISCLOSED, NOT SOLVED'` test. Closing this fully would require asking whoever proposes a
+configuration to also hand-verify a sample of the real suite, a requirement `13` F-TEST-11 does not
+make and this piece judged it should not invent on its own authority.
+
+**DECISION 4 — the SIGKILL-leaked-probe gap is closed with a real second-layer reclaim, not merely
+disclosed, proven against a genuine kill of a real detached process group.** A critic confirmed a
+SIGKILL between writing the probe and the `finally` cleanup leaves it behind in the real project
+tree forever, with `runTranslatorProof` having zero production call sites today (so not reachable by
+any shipped command yet, but a real risk once P7 wires one) and no second-layer reclaim unlike the
+comparable `hunk-mutation.ts`/`binding.ts` worktree mechanisms. Closed with a durable, fsync'd marker
+the next invocation reads and reclaims first — proven with a real spawned child process and a real
+`SIGKILL` against its own detached process group (the identical hazard this codebase's own
+`shell.ts` already names, and that M17 P18's own gauntlet independently rediscovered the same
+session for an unrelated command), not a simulated crash.
+
+**Also closed**: a "canonical JSON" hash fallback that was actually key-insertion-order-sensitive
+(now a real recursive key-sort); a reused error message that didn't fit a probe-path collision (new
+`RUN-158`, naming the real cause); a doc comment whose stated refusal reason (`'gate-not-available'`)
+didn't match what the real CLI flow currently hits first (`'proof-not-passing'`, since no shipped
+caller attaches a proof to a staged record yet); `CFG-518`'s structured `key` field always reading
+the `'(document)'` placeholder rather than the real offending Zod-issue path, now matching `CFG-510`'s
+own established precedent; a missing test for a syntactically-valid-but-schema-invalid staged
+proposal; a check-ordering doc comment that attributed a shared vacuous-overlap hazard (between the
+zero-tests guard and the exit-code-reconciliation check) to only one of the two checks that actually
+have it.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P6`.
