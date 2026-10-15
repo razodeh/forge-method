@@ -29858,3 +29858,17 @@ failure, not introduced by this piece — already reachable via the pre-existing
 a new one.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P5`.
+
+## Q328 — M17, orchestrator direct fix: `scripts/schema-drift.test.ts`'s own registered-type count was stale since P3 landed
+
+**Context.** `scripts/schema-drift.test.ts`'s `'emits exactly one file per registered artifact
+type, plus one for config'` test hardcoded `expect(schemas.size).toBe(28)`. M17 P3 registered
+`forge-test-report.schema.json` (the canonical test report every parser/translator normalizes
+into) when it landed, pushing the real count to 29 — this test has been red on main since, through
+every piece landed after P3, apparently never caught because no piece's own scoped-test list
+happened to include this specific file.
+
+**DECISION** — found by M17 P6's builder, outside its own declared Surface, correctly disclosed
+rather than fixed in-piece. Fixed directly by the orchestrator (`2e192e4`): count corrected to 29,
+comment updated to name `forge-test-report`/M17 P3 alongside the pre-existing M15/M16 additions it
+already listed.
