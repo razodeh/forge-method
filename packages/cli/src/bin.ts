@@ -232,6 +232,12 @@ import { gateValidateAll, workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
 import { test as runTestRefusal } from './commands/loop/test.ts';
 import {
+  runDetectionAndStage,
+  runPromotion,
+  type PromotionResult,
+} from './commands/loop/test/adopt.ts';
+import { DETECTED_LAYER } from './commands/loop/test/detect.ts';
+import {
   runBindingCheck,
   type BindingCheckCompleted,
   type TestLayerIdentity,
@@ -2791,6 +2797,65 @@ async function runTestFlakyCommand(paths: ProjectPaths, json: boolean): Promise<
     result.quarantined > flakeConfig.quarantineCap
     ? 1
     : 0;
+}
+
+/** Human-readable text for a {@link PromotionResult} -- `--write` always refuses in this build
+ * (`adopt.ts`'s own doc comment has the full reasoning: `G-TestAdopt` has no gate file yet, so no
+ * approval for it can exist), but each refusal names a different, real reason. */
+function describePromotionResult(result: PromotionResult): string {
+  if (result.outcome === 'no-staged-proposal') {
+    return `forge test adopt --write: no staged proposal exists for "${result.layer}" -- run "forge test adopt" first.`;
+  }
+  if (result.outcome === 'proof-not-passing') {
+    return `forge test adopt --write: ${result.detail}`;
+  }
+  return (
+    `forge test adopt --write: "${result.layer}"'s staged proposal has a passing translator proof, ` +
+    'but the G-TestAdopt gate it still needs human approval at is not available in this build ' +
+    '(specs/22 M17 P7) -- nothing was written to .forge/config.yaml.'
+  );
+}
+
+/** `forge test adopt [--write] [--agent] [--json]` (`03` §3.2.5, `13` F-TEST-11, `specs/22` M17 P6).
+ * `--agent` is a real, named, not-yet-built feature (`adopt-tests`, P7) -- refused loudly (`USR-003`),
+ * the same discipline `runTestRefusal` already applies to `test plan`/`generate`/`report`, rather
+ * than silently falling through to plain detection. `--write` always promotes to a refusal; see
+ * {@link describePromotionResult}. Bare `forge test adopt` runs deterministic detection and stages
+ * (or hands off) its one proposal (`detect.ts`'s own `DETECTED_LAYER`, the only layer this piece's
+ * detector ever targets). */
+async function runTestAdoptCommand(
+  paths: ProjectPaths,
+  write: boolean,
+  agent: boolean,
+  json: boolean,
+): Promise<number> {
+  if (agent) {
+    throw new ForgeError('USR-003', { feature: 'forge test adopt --agent (specs/22 M17 P7)' });
+  }
+  if (write) {
+    const result = await runPromotion(paths, DETECTED_LAYER);
+    if (json) {
+      console.log(JSON.stringify({ v: 1, ...result }));
+    } else {
+      console.error(describePromotionResult(result));
+    }
+    // Every real `PromotionResult` outcome today is a refusal (this file's own doc comment on
+    // `describePromotionResult`) -- `1`, unconditionally, rather than a comparison against an
+    // `'promoted'` literal `PromotionResult` cannot yet produce (which `pnpm typecheck` would reject
+    // as comparing against a value outside the union).
+    return 1;
+  }
+  const result = await runDetectionAndStage(paths);
+  if (json) {
+    console.log(JSON.stringify({ v: 1, ...result }));
+  } else if (result.outcome === 'staged') {
+    console.log(
+      `forge test adopt: staged a proposal for "${result.layer}" -- ${result.candidate.reason}`,
+    );
+  } else {
+    console.error(`forge test adopt: ${result.candidate.reason}`);
+  }
+  return result.outcome === 'staged' ? 0 : 1;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -5763,6 +5828,22 @@ async function main(): Promise<number> {
       values.get('--reason'),
       values.get('--owner'),
       values.get('--expires'),
+      flags.json,
+    );
+  }
+  if (command === 'test' && sub === 'adopt') {
+    // `specs/22` M17 P6 (`03` §3.2.5 row, `13` F-TEST-11): exactly the three documented flags, no
+    // layer positional at all -- this piece's own deterministic detector only ever targets one layer
+    // (`detect.ts`'s `DETECTED_LAYER`), so there is nothing else for a positional to select yet.
+    const { flags: adoptFlags, positionals } = parseCommandFlags(rest, {
+      '--write': false,
+      '--agent': false,
+    });
+    assertNoArgs(positionals);
+    return runTestAdoptCommand(
+      paths,
+      adoptFlags.has('--write'),
+      adoptFlags.has('--agent'),
       flags.json,
     );
   }

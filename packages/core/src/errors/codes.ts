@@ -3657,6 +3657,42 @@ export const ERROR_CODES = {
       'Wait for the other "forge migrate run" invocation to finish, or confirm it is no longer ' +
       'running and remove .forge/migrate/lock.json by hand, then run the command again.',
   },
+  // `specs/22` M17 P6 (`13` F-TEST-11): `.forge/test-adopt/<layer>.proposal.yaml`'s own strict loader
+  // (`adopt.ts`'s `loadStagedProposalOrThrow`) found the staged record malformed -- unparseable YAML,
+  // or a real schema problem (an unknown key, a `command` that is not a real `testCommandEntrySchema`
+  // value, a `proof` whose `ok`/`failedCheck` do not agree). Reuses `CFG-510`'s identical
+  // `file`/`key`/`detail`/`more` shape (that code's own comment already explains why a code sharing
+  // this exact shape needs no new `SAMPLE_DETAILS` keys in `errors.test.ts`) rather than declaring a
+  // fourth near-duplicate of it: both are "a committed, hand-editable project YAML file failed this
+  // codebase's own strict loader," differing only in which file and which loader.
+  'CFG-518': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; key: string; detail: string; more?: number }) =>
+      `Staged test-adopt proposal ${show(d.file)} is invalid at ${show(d.key)}: ${show(d.detail)}` +
+      (typeof d.more === 'number' && d.more > 0
+        ? ` (${String(d.more)} more problem(s) follow it)`
+        : '.'),
+    remedy:
+      'Fix the named key in the staged proposal record (specs/13 F-TEST-11 shows its shape), or ' +
+      're-run `forge test adopt` to regenerate it, then retry.',
+  },
+  // `specs/22` M17 P6 (`13` F-TEST-11), added after a fresh critic round: `proof.ts`'s own
+  // `runTranslatorProof` re-throws this, instead of letting `writeNewFileAtomic`'s generic `RUN-114`
+  // surface directly, when the caller's own chosen probe path already names a real file. `RUN-114`'s
+  // own message ("this artifact type is append-only... a new id or timestamp") is written for the
+  // `MutationEvidence`/`EvidenceBundle` append-only family and reads as nonsense for a probe
+  // collision, which is neither append-only nor identified by an id or a timestamp -- this names the
+  // real cause instead. The original `RUN-114` is preserved as `cause`.
+  'RUN-158': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { path: string }) =>
+      `${show(d.path)} already exists: the translator proof's own injected-failure probe is only ` +
+      'ever written to a NEW path, never over a real, pre-existing file.',
+    remedy:
+      "Choose a probe path that does not already exist in the project's own tree, then retry.",
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

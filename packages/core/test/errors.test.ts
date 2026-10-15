@@ -32,7 +32,9 @@ const SAMPLE_DETAILS = {
   // `GATE-506`/`GATE-507`/`GATE-508` (`PLAN-M13.md` P41): an unreadable gate document; an approval refused
   // because checks fail; an approver the gate does not name. `CFG-510` (`specs/22` M16 P2) reuses the
   // identical `file`/`key`/`detail` shape for an invalid parity declaration or capture, so it needs no
-  // keys of its own here.
+  // keys of its own here. `CFG-518` (`specs/22` M17 P6) reuses the identical shape again, for an invalid
+  // staged `.forge/test-adopt/<layer>.proposal.yaml` record -- also no keys of its own. `RUN-158`
+  // (`specs/22` M17 P6, added after a fresh critic round) reuses the pre-existing `path` key below.
   file: 'G-Verify.gate.yaml',
   key: 'checks.deterministic',
   failing: 'check test:run',
@@ -511,6 +513,30 @@ describe('every declared code renders end to end', () => {
     // `CFG-001`'s `line` is declared optional, so omitting it is legal and must still read as
     // absent rather than as the string "undefined".
     expect(new ForgeError('CFG-001', { path: 'x' }).message).toContain('<missing>');
+  });
+
+  it('CFG-518 names the file and the first problem, and counts the rest (specs/22 M17 P6)', () => {
+    // `SAMPLE_DETAILS.more` is absent (the generic `it.each` above always renders `more: undefined`,
+    // never exercising the "more problems follow" branch for any code that shares this shape) --
+    // this is the one dedicated test that does, for this piece's own new code.
+    const error = new ForgeError('CFG-518', {
+      file: '.forge/test-adopt/unit.proposal.yaml',
+      key: 'command',
+      detail: 'not a real structured testCommands entry',
+      more: 2,
+    });
+    expect(error.message).toContain('.forge/test-adopt/unit.proposal.yaml');
+    expect(error.message).toContain('command');
+    expect(error.message).toContain('not a real structured testCommands entry');
+    expect(error.message).toContain('2 more problem(s) follow it');
+  });
+
+  it("RUN-158 names the real cause (a probe collision), not RUN-114's own append-only wording (specs/22 M17 P6)", () => {
+    const error = new ForgeError('RUN-158', { path: 'probe.test.js' });
+    expect(error.message).toContain('probe.test.js');
+    expect(error.message).toContain('injected-failure probe');
+    expect(error.message).not.toContain('append-only');
+    expect(error.remedy).toContain('probe path');
   });
 
   it('RUN-109 degrades to <missing> rather than crashing for an idWidth no real registry entry ever has (PLAN-M14.md P8, critic round 2)', () => {

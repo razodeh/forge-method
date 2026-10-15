@@ -110,6 +110,20 @@ const INVENTORY: Readonly<Record<string, Sink>> = {
     checks: 'user-authored config; timeout and output cap (`ShellLimits`); no model text',
     status: 'trusted',
   },
+  'packages/cli/src/commands/loop/test/proof.ts': {
+    source:
+      '`runTranslatorProof` (`specs/22` M17 P6, `13` F-TEST-11): the SAME `command.run` text ' +
+      '`layer.ts`/`run.ts` already run, captured a second, independent time for the translator ' +
+      'proof’s own check 2 — no interpolation of its own at all, the identical pass-through ' +
+      '`run.ts`’s entry above already covers',
+    checks:
+      'for `forge test adopt`’s own confident-detection path (this piece’s real caller today), ' +
+      '`command.run` is one of `detect.ts`’s own fixed, hard-coded command-builder strings — no ' +
+      'user or model text reaches it at all; timeout and output cap (`ShellLimits`). An ' +
+      'agent-proposed command (P7) would need re-examination when that caller lands, the same way ' +
+      'every other row here is scoped to its own real caller',
+    status: 'trusted',
+  },
   'packages/vcs/src/claims.ts': {
     source:
       '`applySharedPathStrategy` `regenerate` `command` (workflow / config `sharedMutablePaths`)',
