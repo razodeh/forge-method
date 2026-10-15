@@ -29872,3 +29872,64 @@ happened to include this specific file.
 rather than fixed in-piece. Fixed directly by the orchestrator (`2e192e4`): count corrected to 29,
 comment updated to name `forge-test-report`/M17 P3 alongside the pre-existing M15/M16 additions it
 already listed.
+
+## Q329 — M17 P18: forge migrate run, and migrate parity made reachable — a cross-process ledger race, a brief/implementation mismatch, and the DECISIONs that closed each
+
+**Context.** `forge migrate run` is built per P1's own spec (`specs/03:119`, Decision 9); the
+`migrate` workflow's own `verify-parity` gate becomes reachable for the first time. Both independent
+critics converged on the same most-severe finding; one found a second, equally blocking issue.
+
+**DECISION 1 — the idempotency ledger's cross-process race is closed with a dedicated lock that
+waits rather than refuses.** Both critics independently reproduced the same bug live against the
+real compiled CLI: two concurrent, ordinary (not adversarial) `forge migrate run` invocations naming
+different migration ids each genuinely ran their own script, but the ledger's unprotected read-
+modify-write silently kept only one entry — the other's application lost with no `problems` entry,
+no nonzero exit, and a follow-up invocation re-running the lost entry's script a second time. `12`
+F-DATA-6 explicitly names "a decision on the multi-instance race" as required scope here; the first
+build never considered it. Closed with `commands/migrate/lock.ts`, deliberately modeled on
+`commands/run/lock.ts`'s own already-reviewed pattern (layering a read-back-after-write confirmation
+and an age-gated stale-reclaim fallback beyond a bare exclusive-create, the exact lesson this
+codebase's own cross-process-locking experience already established) but differing in the one
+load-bearing way this case needs: two invocations naming different, unrelated migration ids are not
+mutually exclusive, so this lock waits (bounded, polling) for the holder to finish rather than
+refusing outright (`RUN-157` only once the wait is genuinely exhausted).
+
+**DECISION 2 — per-entry ledger durability (not a single end-of-run batch write) is now proven by a
+real SIGKILL test, not merely asserted.** One critic's own suggested mutation (moving the per-entry
+write to one batched write after the full loop) is exactly what a new, real multi-process test now
+catches: a real SIGKILL sent at a precisely-observed moment (a real "started" marker file, not an
+inferred timing heuristic) loses only the one entry genuinely in flight, with the other two entries
+surviving untouched and the ledger correctly converging on a resumed invocation.
+
+**DECISION 3 — the fixed script-path convention (`docs/forge/migrations/<id>.mjs`) the command
+relies on is made real by correcting the shipped briefs, not merely disclosed as a gap.** A critic
+found the piece's own header comment asserted this convention already matched `briefs/
+plan-migration.md`/`briefs/migration-expand.md` — it did not; both briefs still described an
+architect free to choose and document any path. The piece's own reachability proof never caught
+this because its test fixture bypasses real brief content (a scripted fake adapter matches by step
+id, never reads the brief). In a real run, an architect following the real, uncorrected brief text
+could plausibly have built the script at the wrong path, reproducing "migrate parity unreachable"
+one layer deeper — directly undermining this piece's own stated purpose. Both briefs corrected to
+state the real, fixed convention; verified this doesn't regress either brief's own pre-existing
+content checks (`test/gate-declarations-authored.test.ts`) or the reachability proof itself.
+
+**Also closed, found by the orchestrator's own independent re-verification, not either critic**: the
+new SIGKILL durability test was itself flaky (1-in-3 failure rate, zero mutations, same code) — root-
+caused not to a watcher-latency gap but to `runLimitedShellCommand`'s own `detached: true` process-
+group boundary (a hazard this codebase's own `shell.ts` already documents for the identical reason),
+which let a naive pid-targeted kill leave the migration script's own process orphaned and running
+after the parent died. Fixed by walking the real process tree to kill every descendant individually,
+plus a real "started" marker file closing a second, narrower race. Verified across 12+ consecutive
+clean runs; confirmed load-bearing by reverting to the naive kill, which then failed 5/5 deterministically
+once properly isolated.
+
+**Disclosed, not this piece's to fix**: `specs/03:119`'s own exit-1 ("could not be found") and
+exit-2 ("`--migration` naming an id `migrations.yaml` does not have") clauses both use "not found"-
+shaped language for genuinely different triggers — resolved via a DECISION (exit-1 = a declared
+entry's script missing at runtime; exit-2 = the id itself absent from `migrations.yaml`, a pre-flight
+usage error), not edited in the pinned spec text itself. No shipped workflow step invokes `--phase
+migrate`/`--phase contract` (pre-existing characteristic of `migrate.workflow.yaml`, which only ever
+runs `--phase expand`); `test/workspace-floor.test.ts`'s pre-existing P14-fixture failure, confirmed
+unrelated (now independently confirmed by 5+ pieces this milestone).
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P18`.

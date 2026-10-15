@@ -23812,3 +23812,60 @@ end-to-end test coverage for the 3 real `bin.ts` config-wiring call sites (corre
 reading, now proven by real subprocess tests per site).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q327`.
+
+## M17 P18
+
+Builds `forge migrate run` per P1's own spec (`specs/03:119`, Decision 9: "the owner's instruction is
+'every defect fixed', and descoping would leave one standing"). Applies every not-yet-applied
+`migrations.yaml` entry whose `phase` matches `--phase`, in dependency order (`after`/`expands`),
+running each entry's migration script as a real subprocess and recording progress in a durable
+`.forge/migrate/applied.json` ledger so a repeat invocation is a genuine no-op — the scripts
+themselves are also required to be independently idempotent (`12` F-DATA-6). New `USR-006` for the
+three usage-error shapes.
+
+**The migrate workflow's own `verify-parity` gate was unreachable because nothing upstream
+(`migrate-data`) ever ran for real — proven reachable end to end, not just claimed.** Two new tests
+run the real engine through the real, shipped `migrate.workflow.yaml`/`G-Parity.gate.yaml` templates,
+with only the agent steps scripted, reaching and evaluating `verify-parity` for the first time ever
+— once with a real parity declaration (passes), once with none at all (fails on its own real check,
+never "not wired"), proving reachability doesn't depend on the check happening to pass.
+
+**The gauntlet found two blocking defects, both confirmed by direct, non-adversarial reproduction
+against the real compiled CLI, both independently converged on by both critics or found by one and
+verified sound by the other.** The idempotency ledger's read-modify-write had no cross-process
+protection at all — two concurrent, otherwise-unrelated `forge migrate run` invocations (an ordinary
+overlapping operation, not a crafted scenario) each genuinely ran their own migration script, but
+the final ledger silently kept only one entry, and a follow-up invocation then re-ran the lost
+entry's script a second time — directly defeating `12` F-DATA-6's own idempotency requirement, which
+explicitly names "a decision on the multi-instance race" as something this area must address. Fixed
+with a new, dedicated `commands/migrate/lock.ts`, reusing `commands/run/lock.ts`'s own already-
+reviewed primitives (`isProcessAlive`, the sync-write-plus-read-back-plus-age-gated-reclaim layering
+this codebase's own prior cross-process-locking experience calls for), differing in the one load-
+bearing way this case needs: it waits, bounded, for another legitimate holder to finish rather than
+refusing outright, since two invocations naming different migration ids are not mutually exclusive
+and both must eventually succeed. New real multi-process tests (two genuinely concurrent invocations;
+a real SIGKILL mid-apply, confirmed to lose only the entry genuinely in flight and converge correctly
+on resume) replace the gap; one critic's own suggested mutation (batching the per-entry ledger write
+into one write at the end) correctly killed the new SIGKILL durability test.
+
+Second, the fixed script-path convention the command relies on was stated as already matching the
+real, shipped briefs — it did not. Neither `briefs/plan-migration.md` nor `briefs/migration-expand.md`
+documented the fixed path anywhere; both still described the architect as free to choose and
+document any path, meaning a real agent following the real brief text could plausibly build the
+script somewhere `forge migrate run` would never find it, reproducing the exact "migrate parity
+unreachable" failure this piece exists to close, one layer deeper, invisible to the piece's own
+reachability proof because that proof's own test fixture bypasses real brief content entirely.
+Closed by correcting both briefs to state the real, fixed convention, verified not to regress either
+brief's own pre-existing content checks or the reachability proof itself.
+
+A real, non-deterministic test added during the fix round (a SIGKILL-timing race in the new
+durability test itself) was caught by the orchestrator's own independent re-run (not by either
+critic) and traced by the builder to its real root cause — not a watcher-latency gap as first
+hypothesized, but a `detached: true` process-group boundary this codebase's own `shell.ts` already
+names as a known hazard, meaning a naive pid-targeted kill left the migration script's own process
+orphaned and running after the parent died. Fixed by walking the real process tree to kill every
+descendant, plus a real "started" marker file eliminating a second, narrower race the first fix
+alone didn't close — verified across 12+ consecutive clean runs, and confirmed load-bearing by a
+mutation reverting to the naive kill, which then failed 5/5 runs deterministically once isolated.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q329`.
