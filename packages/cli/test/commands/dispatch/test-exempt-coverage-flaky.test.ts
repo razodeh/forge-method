@@ -289,11 +289,19 @@ describe('dispatchTestExemptCoverageFlaky (specs/22 M17 P2)', () => {
     ).rejects.toMatchObject({ code: 'USR-002' });
   });
 
-  it('refuses USR-003 for "test adopt --agent" -- not yet built', async () => {
+  it('"test adopt --agent" genuinely routes into runAdoptTestsAgent, not a stub refusal (specs/22 M17 P2/P7)', async () => {
+    // `specs/22` M17 P7 landed on `main` after this piece's own extraction base and closed the
+    // `USR-003` "not yet built" stub this test originally asserted (reconciled here at landing
+    // time: `runTestAdoptCommand`'s own doc comment and `git diff dcb145f..c96d9a8 -- bin.ts` have
+    // the full account). The real, deterministic `RUN-056` below -- the bare `createTestProject()`
+    // fixture has no real `.forge/agents/test-architect.yaml` roster entry -- is the correct,
+    // meaningful proof that `--agent` now reaches `buildLoopDepsForProject`/`runAdoptTestsAgent` for
+    // real, the identical "assert the real dependency-building refusal, not a live model call"
+    // convention `debug`/`review`/`panel`'s own dispatch-layer tests already use in this codebase.
     const project = await createTestProject();
     await expect(
       dispatchTestExemptCoverageFlaky(ctx(project, ['test', 'adopt', '--agent'])),
-    ).rejects.toMatchObject({ code: 'USR-003' });
+    ).rejects.toMatchObject({ code: 'RUN-056' });
   });
 
   it('exits non-zero for "test adopt" against a project with no recognisable test runner', async () => {

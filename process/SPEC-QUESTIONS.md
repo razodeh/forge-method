@@ -30180,3 +30180,26 @@ diffed the great majority of the 19 extracted files line by line against the rea
 constants); a stale call-site count in a doc comment.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P2`.
+
+## Q336 — M17, orchestrator direct fix: P2's own landing-time test fix was verified but never
+actually committed before the merge
+
+**Context.** While reconciling P2's rebase conflict with P7's real CLI additions at landing time,
+one of P2's own pre-existing tests (`test-exempt-coverage-flaky.test.ts`'s `"test adopt --agent"`
+case) was found stale — it still asserted the old, pre-P7 `USR-003` stub refusal, now genuinely
+obsolete since P7 wired `--agent` to real behaviour. The fix was written and verified green
+directly in the landing worktree (`wt-p2`) — but the edit was made AFTER `git rebase --continue`
+had already produced the final commit, and the orchestrator proceeded straight to merging without
+a follow-up commit. `git merge --ff-only` only merges committed history, so the verified fix never
+reached `main`, even though every verification pass in that same worktree showed it passing (vitest
+reads live file content, not the git index). The stale, broken test landed on `main` at `6d14d02`
+and was only caught by the very next `verify-commit.sh` clean-worktree backstop run.
+
+**DECISION** — fixed directly by the orchestrator on `main`: the identical, already-verified diff
+applied and committed directly, re-confirmed green in this exact checkout (`26/26`), lint/prettier
+clean. **Process lesson**: after resolving ANY conflict or fixing ANY test discovered mid-rebase,
+re-check `git status` for uncommitted changes in the landing worktree BEFORE merging to `main` —
+passing tests in a worktree proves the code is correct, never that it is committed.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P2` (no separate entry; this is a correction to that
+same piece's own landing, not a new finding).
