@@ -30128,3 +30128,55 @@ of its scope (confirmed via `git merge-base --is-ancestor`), not something P2 in
 matching the established "real child process/worker thread, never imported, never run as a vitest
 suite, unrecognised by `TEST_FILE`'s naming heuristic" shape every sibling entry in this set already
 uses. Confirmed `test/workspace-floor.test.ts` 18/18. `pnpm lint`/prettier clean.
+
+## Q335 — M17 P2: CI green — bin.ts's 6,041 lines of 0%-covered dispatch logic, the real cause of
+the whole repository's red coverage leg, and the DECISIONs that closed it
+
+**Context.** M17 exists because M16 was not complete by its own exit bar: `pnpm test`'s coverage
+leg was red, and the root cause traced to exactly one file — `packages/cli/src/bin.ts`, every
+command tested exclusively through real subprocess spawning, which v8's coverage provider
+structurally cannot see into. The task brief this piece started from framed it narrower ("CLI
+clarity, a pure, behavior-preserving refactor"); the real, controlling `PLAN-M17.md` P2 heading is
+broader ("CI green: bin.ts coverage, and the whole suite as the bar") and was followed instead, per
+`COMMON-HEAD.md`'s own standing precedence rule (the plan wins over a piece's own prose).
+
+**DECISION 1 — split the dispatcher, exclude the thin wrapper from coverage, prove the causal
+mechanism rather than assert it.** `bin.ts` cut from 6,041 to 56 lines; its logic moved into 16
+area files + `shared.ts` under `packages/cli/src/commands/dispatch/`, each covered by real,
+in-process tests (387 tests, 20 files) against real temp projects and the real `forge` CLI entry
+point. `bin.ts` added to `vitest.config.ts`'s coverage exclusion (the existing `scripts/*.mjs`
+precedent). The plan's own explicit mutation-evidence requirement — prove re-inlining a module
+makes its coverage vanish — was independently demonstrated twice, by the builder and by a critic,
+each with a different module, identical result both times.
+
+**DECISION 2 — the one structural coverage gap predates this piece; close it with this codebase's
+first `/* v8 ignore */` pragma, narrowly scoped, rather than invent a new test-injection seam.**
+`debug`/`review`/`panel`/`session resume`'s own success paths need a live platform-adapter call no
+`FakePlatformAdapter` substitution can reach at the CLI dispatch layer (the real adapter registry is
+hardcoded, confirmed independently by both critics) — the identical limit `bin.test.ts`'s own
+pre-existing subprocess suite already discloses, simply invisible before per-file floors existed
+since this code used to hide inside the excluded monolith. A whole-file exclusion would have wrongly
+exempted the rest of `plan-and-loop.ts`'s genuinely-testable code, so five precisely-scoped `/* v8
+ignore */` ranges were used instead, with a new, filename-exact (not glob) `eslint.config.js`
+override permitting them in that one file alone. `session show`/`export` turned out genuinely
+closeable (read-only, no live call needed) and were closed with a real test rather than ignored.
+
+**DECISION 3 — do not run the coverage-ratchet update under conditions that would corrupt it.** Six
+full-suite coverage attempts (varying worker count, excluding the one known-bad pre-existing test
+file, with/without `--coverage.reportOnFailure`) all hit `vitest.config.ts`'s own already-documented
+Q17 measurement-instability limitation — ~30 metrics across 10 entirely unrelated, already-tracked
+packages sitting a few points below their recorded marks, different numbers each run. Running
+`--update` here would have silently lowered real, already-established marks on pure noise — the
+exact false "review failure" this mechanism exists to prevent. `packages/cli`'s own first-ever
+coverage-ratchet baseline is left as an explicit, disclosed follow-up, not established under
+unreliable conditions; the per-file floors remain the real backstop in the meantime.
+
+**Both critics' own two full rounds found ZERO BLOCKING or MAJOR defects** — each independently
+diffed the great majority of the 19 extracted files line by line against the real pre-extraction
+`bin.ts` and confirmed byte-identical logic, including the single most complex extracted function
+(`test-binding.ts`'s `runRawBindingCheck`/`runOneStoryBinding`). Real minor findings, all fixed:
+3 spots re-inlining `assertNoArgs`'s exact body instead of calling the shared helper;
+`test-binding.ts`'s raw `0`/`1` literals (the only file of 16 not using the named `EXIT_CODES`
+constants); a stale call-site count in a doc comment.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P2`.
