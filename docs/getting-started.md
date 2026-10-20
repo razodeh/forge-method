@@ -18,6 +18,22 @@ reality.
   environment, not just an interactive `claude auth login`. `forge doctor` (step 3 below) tells you
   exactly what's missing if anything is.
 
+**A note on Windows, honestly.** `git`/`node`/`pnpm` install/build/typecheck/lint, and a project's
+own lane/integration worktrees (`worktreesRootFor`, section 14 below) already resolve a real Windows
+cache path (`%LOCALAPPDATA%`, falling back to `~/AppData/Local`) — this is real, not aspirational.
+What is NOT yet true: FORGE's own CI runs a Windows leg in the matrix, but has not been confirmed
+green there end to end (`pnpm test`'s own 45-minute ceiling has repeatedly been hit before a
+conclusive pass or fail on `ubuntu-latest`/`windows-latest`, independent of any Windows-specific
+defect); the shared observation step both `forge parity capture` and `forge parity check` go through
+(`observeParityDeclaration`, `packages/cli/src/commands/parity/observe.ts`) refuses outright on
+`win32` today (`ENV-007`) rather than running with a weaker guarantee, since its own single-quote
+shell-escaping defence is not safe to trust on Windows' argument-quoting rules; and a timed-out or
+aborted command on `win32` kills only the single top-level process, never its descendants
+(`packages/engine/src/dispatch/shell.ts`), since `taskkill`-based process-tree teardown is not wired
+yet. None of this is quietly assumed fixed — it is a tracked, not-yet-landed gap
+(`process/plans/PLAN-M17.md` P16, deliberately deferred this milestone pending real GitHub Windows
+CI and push authorization), not a silent one.
+
 FORGE has not yet had its first real npm publish (the changesets release pipeline — `specs/22` M12 —
 is built and ready, but running it is a real, separate action nobody has taken yet), so every
 command below is run from a checkout of this repository, either via the `pnpm forge` script alias or
@@ -217,8 +233,12 @@ forge report: binding 0/0 (0%)
 
 FORGE's real library code (tested independently, extensively) is ahead of what the `forge` CLI argv
 dispatcher currently exposes. As of this milestone, genuinely **not** reachable from the command
-line (each is a disclosed, deliberate scope boundary, not an oversight — see
-`packages/cli/src/bin.ts`'s own top-of-file doc comment for the authoritative, current list):
+line (each is a disclosed, deliberate scope boundary, not an oversight — read directly against the
+real `packages/cli/src/commands/dispatch/*.ts` area files below; since `specs/22` M17 P2 split the
+former 6,041-line `bin.ts` monolith into those files, `bin.ts` itself is a ~60-line entry point with
+no command list of its own left to point at, even though the CLI's own generic "not wired into this
+real, deliberately minimal dispatcher yet" fallback message still says to look there — a real,
+disclosed inconsistency in the tool's own text, not a reason to doubt this list):
 
 - `module list`/`module info`, `overlay list/remove/update/explain/diff/doctor/eject` (only
   `overlay add` is wired)
@@ -811,6 +831,420 @@ Two ways to land a run, and a project picks one by its own `execution.integratio
   Not on trunk, or a dirty working tree, when you run it? Refused typed too (`RUN-155`, or the
   project's own familiar `VCS-DIRTY-TREE`) — `forge land` never switches branches or discards
   uncommitted work on your behalf.
+
+## 11. Configuring your trunk branch
+
+Section 9 above already showed `@trunk` resolving through a real `.forge/config.yaml` key; this
+section is the dedicated, standalone version, run against the project section 2 built (trunk `main`,
+since that is what this machine's `git init` defaults to):
+
+```bash
+forge config get vcs.trunk
+```
+
+```
+vcs.trunk: "main"
+```
+
+`forge init` never hardcodes this: it reads back git's own real choice right after running
+`git init` (or, for an already-existing repository, whatever branch was already checked out), so a
+project whose trunk is genuinely `master` — or anything else — gets that value, not a literal
+default silently substituted for it. The literal default, `"main"`, is reached only when there is no
+real git repository to ask at all (`--no-git`).
+
+A project with an already-established trunk by some other name changes it the same way as any other
+config value:
+
+```bash
+forge config set vcs.trunk master
+forge config get vcs.trunk
+```
+
+```
+forge config set vcs.trunk: "master".
+vcs.trunk: "master"
+```
+
+This one key is what every `@trunk` symbol in this CLI resolves against —
+`forge parity check --trusted @trunk` (section 9), and the `vcs.trunk` fast-forward target
+`forge land` moves (section 10) — so changing it mid-project is a real, load-bearing change, not a
+cosmetic one: do it before a run is in flight, not during one. (This project's own `vcs.trunk` is
+reverted back to `main` for the rest of this guide — `git checkout -- .forge/config.yaml` undoes the
+`set` above cleanly, since it was never committed.)
+
+Before `specs/22` M17 P9, none of this was configurable at all: `@trunk` (and `G-Parity.gate.yaml`'s
+own `--trusted` flag) resolved to the literal string `"main"`, unconditionally, deep in this CLI's
+dispatcher — a project whose real trunk was `master` could never pass a real `refactor`'s `G-Parity`
+gate, for a reason that had nothing to do with parity itself. That defect is fixed, not merely
+mitigated — confirmed directly above, by actually changing the value and reading it back.
+
+## 12. Bringing an existing project's tests into FORGE
+
+Everything through section 8 assumed `execution.testCommands.unit` names a runner FORGE already
+understands (Vitest, by `detectEcosystem`). A project FORGE did not build may use anything. This
+section runs `forge test adopt` for real against two small, fresh projects — one whose test runner
+is confidently detected, one whose runner is genuinely unfamiliar — and then writes, by hand, the
+one artifact that brings an unfamiliar runner's raw output into FORGE's own canonical shape: a
+**translator**.
+
+### The detected case
+
+```bash
+mkdir /tmp/forge-adopt-detected && cd /tmp/forge-adopt-detected
+ANTHROPIC_API_KEY=<your key> forge init --name "Adopt Detected" --level L0 --yes
+cat > package.json <<'EOF'
+{
+  "name": "adopt-detected-demo",
+  "private": true,
+  "devDependencies": { "vitest": "^4.0.0" }
+}
+EOF
+git add -A && git commit -q -m "scaffold: forge init + a vitest devDependency"
+forge test adopt --json
+```
+
+```
+{"v":1,"outcome":"staged","layer":"unit","candidate":{"dir":".","layer":"unit","ecosystem":"javascript","runner":"vitest","confident":true,"command":{"run":"npx vitest run --reporter=json","output":{"source":"stdout"},"format":"vitest-json","scope":"npx vitest run --reporter=json {files}","filter":"npx vitest run --reporter=json -t {name:regex}"},"reason":"package.json declares \"vitest\" as a dependency."}}
+```
+
+A real `.forge/test-adopt/unit.proposal.yaml` now exists, `source: detected`, carrying exactly this
+command — written there, never into the live `execution.testCommands.unit`, which is still unset:
+detection only ever proposes (F-TEST-1's explicit-config-wins rule holds here too). (`run` goes
+through `npx` unconditionally for every detected JS runner this detector knows — `detect.ts`'s own
+fixed proposal for vitest/jest/mocha, not something this guide's own scratch project's bare
+`devDependencies` entry, with no real `node_modules` installed, caused.)
+
+### The handoff case: an in-house runner
+
+```bash
+mkdir /tmp/forge-adopt-handoff && cd /tmp/forge-adopt-handoff
+ANTHROPIC_API_KEY=<your key> forge init --name "Adopt Handoff" --level L0 --yes
+mkdir tests
+cat > tests/run.mjs <<'EOF'
+#!/usr/bin/env node
+// A tiny, bespoke in-house test "runner" -- not vitest, not pytest, not anything forge test adopt's
+// deterministic detector recognises. One line of output per test: "PASS <name>" or
+// "FAIL <name>: <reason>".
+const TESTS = {
+  'add works': () => {
+    const sum = 2 + 2;
+    if (sum !== 4) throw new Error(`expected 4, got ${sum}`);
+  },
+  'subtract works': () => {
+    const diff = 5 - 2;
+    if (diff !== 3) throw new Error(`expected 3, got ${diff}`);
+  },
+};
+let failed = 0;
+for (const [name, fn] of Object.entries(TESTS)) {
+  try {
+    fn();
+    console.log(`PASS ${name}`);
+  } catch (error) {
+    failed += 1;
+    console.log(`FAIL ${name}: ${error.message}`);
+  }
+}
+process.exit(failed > 0 ? 1 : 0);
+EOF
+node tests/run.mjs
+```
+
+```
+PASS add works
+PASS subtract works
+```
+
+Real tests, that really pass — `forge test adopt` still cannot recognise the runner, because nothing
+names it in a shape detection reads:
+
+```bash
+cat > package.json <<'EOF'
+{ "name": "adopt-handoff-demo", "private": true, "type": "module", "scripts": { "test": "node tests/run.mjs" } }
+EOF
+git add -A && git commit -q -m "scaffold: forge init + an in-house test runner"
+forge test adopt --json
+```
+
+```
+{"v":1,"outcome":"handoff","candidate":{"dir":".","layer":"unit","ecosystem":"javascript","confident":false,"reason":"package.json exists but names no recognised test runner (checked: vitest, jest, mocha, Node's built-in --test) in its dependencies or \"scripts.test\" (\"node tests/run.mjs\")."}}
+```
+
+Exit code 1, and nothing staged — a real, honest hand-off, not a guess forced into the nearest
+built-in shape. `13` F-TEST-11's own next step from here is `forge test adopt --agent`: an AI-driven
+workflow that investigates the project, runs its tests for real (including with a deliberately
+failing probe added), and either maps the runner onto a built-in format or writes a translator
+script. This guide does not run `--agent` — it spends real money on a real agent session, which
+[section 5](#5-see-what-a-workflow-would-do-without-running-it) already explained this guide
+deliberately stops short of. What follows instead is the identical artifact `--agent` would produce,
+written by hand, so the one closed-source part of this story (what the agent actually does) does not
+leave the rest of it undemonstrated.
+
+### Writing a translator by hand
+
+A **translator** is a small, project-committed script that reads a runner's raw output and prints
+`forge-test-report` v1 (`09` §9.5) on stdout — one JSON object,
+`{"forgeTestReport": 1, "tests": [{"name", "status": "pass"|"fail"|"skip", "file"?, "kind"?, "acId"?}]}`,
+`name` and `status` the only required fields. For `tests/run.mjs` above, whose own output is two
+kinds of line (`PASS <name>`/`FAIL <name>: <reason>`), the translator is a small regex over each
+line:
+
+```bash
+mkdir -p .forge/test-translators
+cat > .forge/test-translators/unit.mjs <<'EOF'
+#!/usr/bin/env node
+// Translates tests/run.mjs's own "PASS <name>" / "FAIL <name>: <reason>" lines into a
+// forge-test-report v1 document (specs/09 S9.5). Reads the runner's raw output from the file named
+// by argv[2] -- the real path a structured testCommands.<layer> entry's own {output} placeholder is
+// substituted with (reporter.ts's own substituteOutputPlaceholder).
+import { readFileSync } from 'node:fs';
+
+const raw = readFileSync(process.argv[2], 'utf8');
+const tests = [];
+for (const line of raw.split('\n')) {
+  const pass = /^PASS (.+)$/.exec(line);
+  if (pass) {
+    tests.push({ name: pass[1], status: 'pass' });
+    continue;
+  }
+  const fail = /^FAIL (.+?): (.+)$/.exec(line);
+  if (fail) tests.push({ name: fail[1], status: 'fail', kind: 'assertion' });
+}
+process.stdout.write(JSON.stringify({ forgeTestReport: 1, tests }));
+EOF
+node tests/run.mjs > /tmp/raw-output.txt
+node .forge/test-translators/unit.mjs /tmp/raw-output.txt
+```
+
+```
+{"forgeTestReport":1,"tests":[{"name":"add works","status":"pass"},{"name":"subtract works","status":"pass"}]}
+```
+
+Real output, really produced by running both scripts — not retyped from memory — and it really is a
+valid `forge-test-report`: piping it through this repository's own `parseForgeTestReport` (the exact
+function every built-in parser and every translator's output is checked against) confirms
+`{"ok": true, ...}`. The translator proof's own check 3 (the injected-failure probe) needs one more
+thing: a deliberately failing test added, so there is a real failure for the translator to report
+correctly (the probe `adopt-tests` itself would write and remove again automatically; here, added by
+hand, as a second copy of the runner rather than editing the first, so both remain runnable):
+
+```bash
+cat > tests/run-with-probe.mjs <<'EOF'
+#!/usr/bin/env node
+// tests/run.mjs, plus one deliberately failing test (the injected-failure probe).
+const TESTS = {
+  'add works': () => {
+    const sum = 2 + 2;
+    if (sum !== 4) throw new Error(`expected 4, got ${sum}`);
+  },
+  'subtract works': () => {
+    const diff = 5 - 2;
+    if (diff !== 3) throw new Error(`expected 3, got ${diff}`);
+  },
+  'probe always fails': () => {
+    throw new Error('deliberately injected failure');
+  },
+};
+let failed = 0;
+for (const [name, fn] of Object.entries(TESTS)) {
+  try {
+    fn();
+    console.log(`PASS ${name}`);
+  } catch (error) {
+    failed += 1;
+    console.log(`FAIL ${name}: ${error.message}`);
+  }
+}
+process.exit(failed > 0 ? 1 : 0);
+EOF
+node tests/run-with-probe.mjs > /tmp/raw-output-with-probe.txt
+node .forge/test-translators/unit.mjs /tmp/raw-output-with-probe.txt
+```
+
+```
+{"forgeTestReport":1,"tests":[{"name":"add works","status":"pass"},{"name":"subtract works","status":"pass"},{"name":"probe always fails","status":"fail","kind":"assertion"}]}
+```
+
+The probe is reported as `"fail"`, by its exact name, with the other two tests' statuses undisturbed
+— exactly what the translator proof's own check 3 looks for.
+
+**The one real gap in this story.** Having confirmed the translator works, the natural next step
+would be `execution.testCommands.unit` set to
+`{run: "node tests/run.mjs", output: {source: stdout}, format: forge-json, translate: "node .forge/test-translators/unit.mjs {output}"}`
+and the real proof run against it. As shipped today, there is no CLI command that does this for a
+hand-staged, non-agent proposal: `runTranslatorProof`'s only production caller is
+`forge test adopt --agent`'s own workflow (`packages/cli/src/commands/loop/test/adopt-agent.ts`) —
+confirmed directly by reading every real caller of `writeStagedProposal`, not inferred. Hand-staging
+the proposal anyway and asking for the real promotion or approval check both refuse honestly, naming
+exactly what is missing, never pretending a translator that was never actually proven is good
+enough:
+
+```bash
+mkdir -p .forge/test-adopt
+cat > .forge/test-adopt/unit.proposal.yaml <<'EOF'
+layer: unit
+source: human
+command:
+  run: node tests/run.mjs
+  output:
+    source: stdout
+  format: forge-json
+  translate: node .forge/test-translators/unit.mjs {output}
+reason: >-
+  Hand-written translator for this project's own in-house runner; no built-in format recognises
+  its bespoke output.
+EOF
+forge test adopt --write --json
+forge test adopt --check-proof unit
+```
+
+```
+{"v":1,"outcome":"proof-not-passing","layer":"unit","detail":"no translator proof has been recorded for this layer's staged proposal yet."}
+{"v":1,"layer":"unit","unapproved":1,"detail":"no translator proof has been recorded for this layer's staged proposal yet."}
+```
+
+The honest path from here, today, is `forge test adopt --agent` — it will find this already-written
+translator, run the real proof against it, and stage the result with a real, recorded verdict,
+rather than this guide (or you) fabricating one by hand. See
+[`method-guide.md`'s Test adoption section](method-guide.md#test-adoption-bringing-an-existing-projects-tests-into-forge)
+for the conceptual shape of what the agent does and why the proof exists at all.
+
+## 13. Retrying a transient failure
+
+An ordinary agent-session hiccup — a dropped connection, a provider outage — is retried
+automatically rather than failing the whole run; `method-guide.md`'s own
+[Retrying a transient step failure](method-guide.md#retrying-a-transient-step-failure) section has
+the full mechanism (the `retry:` policy, the never-retry-twice-identical-failure rule, real backoff
+with jitter). This guide does not run a real agent session, so it cannot show a live model-level
+transient failure retried end to end through the `forge` CLI — that is exactly the kind of thing
+[section 5](#5-see-what-a-workflow-would-do-without-running-it) already explained this guide
+deliberately stops short of, and the real, live version of it is P21's own job, not this guide's.
+
+What can be shown directly, right now, with no live session and no spend, is that the mechanism is
+real: this repository's own engine test suite exercises it with a scripted adapter that fails once
+and succeeds on retry, and asserts the real event sequence rather than merely describing it. From a
+checkout of this repository (substitute its real path for `$FORGE_REPO`, as in sections 2 and 9):
+
+```bash
+cd "$FORGE_REPO"
+node scripts/run-tests.mjs run packages/engine/test/run/run-engine.test.ts -t "driveToCompletion retry wiring"
+```
+
+Real output (abridged — per-test timings are omitted since they vary run to run; the test names and
+the pass count do not):
+
+```
+ ✓ packages/engine/test/run/run-engine.test.ts (22 tests | 18 skipped)
+       ✓ a transient (adapter) failure is retried, and the run completes once the retry succeeds
+       ✓ a repeated, byte-identical failure signature escalates after exactly two attempts (the never-retry rule), never reaching the compiled default’s own third
+       ✓ retry spend is attributed per step: a failed first attempt and a paid, successful retry each leave their own UsageRecorded entry under the one step id, summable
+       ✓ resume mid-retry is deterministic: a crash right after StepRetried (before the fresh attempt it authorises ever runs) still reaches the identical, completed final state on resume
+
+ Test Files  1 passed (1)
+      Tests  4 passed | 18 skipped (22)
+```
+
+And the real, disclosed boundary of that mechanism — that it only ever applies to an `agent`-kind
+step, never a `command`-kind one — is just as directly checkable, with a real `forge run` and no
+agent at all. A one-step workflow whose only step is a `command` that fails once and would succeed
+on a second try:
+
+```bash
+mkdir /tmp/forge-retry-demo && cd /tmp/forge-retry-demo
+ANTHROPIC_API_KEY=<your key> forge init --name "Retry Demo" --level L0 --yes
+git add -A && git commit -q -m "scaffold: forge init"
+cat > /tmp/retry-demo-flaky.mjs <<'EOF'
+// Fails exactly once, then succeeds on every later invocation. The counter file lives outside any
+// FORGE lane worktree, so it survives even if a retry got a fresh lane.
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+const counterPath = '/tmp/retry-demo-counter.txt';
+const attempt = existsSync(counterPath) ? Number(readFileSync(counterPath, 'utf8')) + 1 : 1;
+writeFileSync(counterPath, String(attempt));
+if (attempt === 1) { console.error('simulated transient failure (attempt 1)'); process.exit(1); }
+console.log('succeeded'); process.exit(0);
+EOF
+cat > .forge/workflows/retry-demo.workflow.yaml <<'EOF'
+id: retry-demo
+name: Retry Demo
+version: 1.0.0
+description: A scratch workflow, not a shipped one.
+levels: [L0, L1, L2, L3, L4]
+steps:
+  - id: flaky
+    kind: command
+    run: 'node /tmp/retry-demo-flaky.mjs'
+EOF
+git add -A && git commit -q -m "add a retry-demo workflow"
+forge run retry-demo --json
+```
+
+```
+{"v":1,"runId":"run-retry-demo-20261020133126244","runState":{"runId":"run-retry-demo-20261020133126244","planRef":"retry-demo","runStatus":"failed","stepStatuses":{},"unresolvedStepIds":[],"laneStatuses":{},"spentUsd":0,"sessionIds":{},"laneOrigins":{},"artifactPaths":{},"runFailure":{"reason":"step-failed","message":"1 step(s) failed (retry-demo:flaky)","failedSteps":["retry-demo:flaky"],"failedTotal":1,"unfinished":[],"unfinishedTotal":0}}}
+The run failed: 1 step(s) failed (retry-demo:flaky).
+Run `forge logs` to read each failed step and fix what it names, then start the workflow again with `forge run`: `forge resume` continues steps that were interrupted or never started, not steps that failed.
+```
+
+(`runId` embeds a real timestamp, so yours will legitimately differ — everything else above is the
+real, deterministic shape.) The run fails after exactly one attempt — reading the real event log for
+this run shows why: `StepScheduled` → `StepStarted` → `LaneCreated` → `LaneReady` → `StepFailed` →
+`RunFailed`, with no `StepRetried` anywhere. A `command`-kind step's own compiled retry policy
+defaults to `maxAttempts: 1` (`packages/engine/src/plan/compile.ts`'s own
+`NON_AGENT_DEFAULT_MAX_ATTEMPTS`), and the workflow schema has no `retry:` field on a `command` step
+at all to override it with — confirmed here by actually running it, not merely read off the source.
+Retrying a flaky shell command is the workflow author's own job today (loop it with `&&` inside the
+command, or wrap it in a script), not something this mechanism does outside an `agent`-kind step.
+
+## 14. Worktree location: where lane and integration worktrees live
+
+The run just above created a real lane worktree (`LaneCreated`/`LaneReady`, in its own event log) —
+`forge doctor`, run against the same `/tmp/forge-retry-demo` project, reports on it directly, now
+that the run has finished and left it behind:
+
+```bash
+forge doctor
+```
+
+Real output, abridged to the three worktree-related lines (`forge doctor` also checks Node/pnpm
+versions, the platform adapter, config validity, and more — see section 1):
+
+```
+ok git-version: git version 2.39.5 (Apple Git-154) satisfies the 2.30 worktree-support floor.
+warning orphaned-worktrees: 2 real orphaned lane worktree(s).
+ok legacy-in-tree-worktrees: No legacy in-tree worktrees (pre-M17 `.forge/state/worktrees/`).
+```
+
+(Two, not one: the failed step's own lane, plus the run's own integration worktree, both finished
+and unclaimed. A project with no finished run yet reads
+`ok orphaned-worktrees: No orphaned lane worktrees.` instead — not a sign anything is wrong.)
+Post-`specs/22` M17 (Decision 6, P8), every one of these worktrees lives outside the project tree
+entirely, under the platform's own real cache directory, keyed by a stable hash of the project's own
+real, resolved path: `~/Library/Caches/forge/<hash>/worktrees/` on macOS,
+`%LOCALAPPDATA%/forge/<hash>/worktrees/` on Windows, `~/.cache/forge/<hash>/worktrees/` on Linux (or
+`$XDG_CACHE_HOME/forge/<hash>/worktrees/` wherever that is set).
+
+```bash
+find ~/Library/Caches/forge -maxdepth 3 -type d
+```
+
+```
+/Users/you/Library/Caches/forge/becd95eb221b9af2
+/Users/you/Library/Caches/forge/becd95eb221b9af2/worktrees
+/Users/you/Library/Caches/forge/becd95eb221b9af2/worktrees/integration-forge-integration-current
+/Users/you/Library/Caches/forge/becd95eb221b9af2/worktrees/run-retry-demo-20261020133126244-retry-demo-flaky-79f28903
+```
+
+(the real output above was captured on macOS, against this exact walkthrough, with only the home
+directory itself replaced by `/Users/you` — the project-hash directory name, and everything below
+it, is real: it is specific to this one project's own real path and will legitimately differ for
+you, as will anything else your own machine's cache directory already held before this section, but
+this project's own real output genuinely was exactly these two worktree directories, matching
+`forge doctor`'s own count above.) Before this, a lane lived at `<project>/.forge/state/worktrees/`
+— inside the tree a project's own test runner globs when looking for its own test files, which is
+the real, confirmed bug this moved away from: a runner's own glob could wander into a lane's
+in-progress copy of the project and get confused by code that was never meant to be running yet.
+`forge doctor`'s `legacy-in-tree-worktrees` check (above) is what still watches for a worktree left
+behind at the old location by a pre-M17 run, or a project upgraded mid-run — `ok` here because this
+project was created fresh, post-M17.
 
 ## Where to go next
 

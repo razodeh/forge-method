@@ -146,6 +146,59 @@ file-ownership claims, scheduled as a DAG rather than a sequential human-driven 
 shows lane status for the active run; `forge merge --lane <id>` (or `--all`) merges a lane's
 completed work back once its own checks pass.
 
+**Where a lane's worktree actually lives.** Post-v1.0 (`specs/22` M17), every lane and integration
+worktree sits under a per-project directory in the platform's own cache directory
+(`~/Library/Caches` on macOS, `%LOCALAPPDATA%` on Windows, `~/.cache` elsewhere, or
+`$XDG_CACHE_HOME` when set), keyed by a stable hash of the project's own real, resolved path — never
+inside the project tree. Before this, a lane lived under `<project>/.forge/state/worktrees/`, which
+meant any test runner that globs the whole project looking for its own test files could wander into
+a lane's own in-progress copy of them and get confused by code that was never meant to be seen
+running (`06` §6.4). Moving the worktree needed no runner cooperation at all — the alternative
+(teaching every runner FORGE might ever work with its own exclusion pattern) would have broken the
+"runner-agnostic testing is a contract, not a list of supported runners" rule test adoption (below)
+depends on. `forge doctor` still checks for — and can clean up — a worktree left behind under the
+old, in-tree location by a pre-M17 run or a project upgraded mid-run; it is disclosed as a harmless,
+disposable leftover, never something that blocks a project from running.
+
+## Retrying a transient step failure
+
+An agent session can fail for a reason that has nothing to do with the step itself — a dropped
+connection, a provider hiccup — and retrying the identical step is the right response, not an
+escalation. Each compiled step carries a real retry policy (`06` §6.8): how many attempts
+(`maxAttempts`), which failure classes to retry on (`retryOn`, from a five-member set — `transient`,
+`tool-error`, `validation`, `test-failure`, `timeout`), and an exponential backoff with jitter
+between attempts. An agent step authors this directly in its workflow YAML:
+
+```yaml
+retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
+```
+
+(the exact line `refactor.workflow.yaml`/`debug.workflow.yaml`/`quick-fix.workflow.yaml` already
+ship). Left unauthored, an agent step still gets a real default (3 attempts, every retryable class)
+— it is never silently un-retried just because nobody wrote a `retry:` block.
+
+**The never-retry rule.** A step that fails twice with the byte-identical error signature is never
+retried a third time, regardless of how many attempts `maxAttempts` still allows — a repeated,
+unchanging failure is the signature of something retrying cannot fix, and the run escalates instead
+(to a stronger model, a human, or a diagnostician, per the step's own `escalate` policy) rather than
+spending a third identical attempt. A retried step runs in a fresh lane, not the one that failed —
+confirmed directly against this codebase's own engine test suite, which exercises exactly this with
+a scripted adapter failure and asserts the real event sequence (`StepFailed` → `StepRetried` →
+`StepSucceeded`, with `LaneCreated` firing twice for the one step id) rather than merely describing
+it.
+
+**A real, disclosed scope boundary, not a gap this guide papers over.** `retry:` is authorable only
+on an **agent**-kind step today — the workflow schema simply has no such field on a `command`-kind
+step, and a `command` step's own compiled default is `maxAttempts: 1`, i.e. never retried by this
+mechanism at all, even though an ordinary command failure classifies into the identical `tool-error`
+vocabulary an agent step's `retry:` can name. A `command` step still gets its own fresh lane and a
+clean `StepFailed` → `RunFailed` on an ordinary failure — confirmed directly, by running a one-step
+command-kind workflow against a script that fails once and would succeed on a second try: the run
+fails after exactly one attempt, with no `StepRetried` event anywhere in the real event log.
+Retrying a flaky shell command is therefore the workflow author's own job today (a `&&` retry loop
+inside the command itself, or a wrapper script), not something this mechanism does for you outside
+an agent step.
+
 ## Cost, budgets and audit
 
 Every agent session's token usage and (adapter-reported) cost is recorded to a per-run ledger.
@@ -192,6 +245,18 @@ incomplete about what the one before it couldn't guarantee:
   reference snapshot (with the real git commit it was taken at) so a later milestone can ask "did
   this actually help" against a real number instead of memory — the scorecard doesn't judge whether
   a number is good; that's deliberately left to whoever reads it.
+
+**A worked example against FORGE's own build.** This evidence discipline is not a standard FORGE
+holds other projects to while exempting itself. M16, an earlier milestone of FORGE's own
+construction, was believed complete, and was verified piece by piece — but with
+`node scripts/run-tests.mjs run`, never with `pnpm test`'s own coverage flag. Once that gap was
+noticed, `pnpm test` was already failing: `packages/cli/src/bin.ts`, a 6,041-line dispatcher driven
+only by spawned-subprocess tests v8's coverage provider cannot see into, reported 0% line coverage
+against the repository's own 85% per-file floor, and every recent CI run was red. By M16's own exit
+criteria, M16 was not complete — which is the real, undramatic reason the next milestone (M17) opens
+by fixing exactly this before doing anything else, rather than treating it as a footnote. See
+`process/plans/PLAN-M17.md`'s own opening section and `process/GAUNTLET-LOG.md`'s `M17 P2` entry for
+the full account, including the fix.
 
 ## Parity: checking a refactor against a reference
 
@@ -282,6 +347,71 @@ evidence says so plainly rather than implying a wider guarantee.
 See [`getting-started.md`'s walkthrough](getting-started.md) for a real, run-for-real example of all
 of the above on a tiny, shipped fixture — a declaration, a capture, a passing and a refused check,
 and the hunk and prune commands.
+
+## Test adoption: bringing an existing project's tests into FORGE
+
+Everything above assumes FORGE already trusts the shape of a project's test results. A project FORGE
+did not build may run tests through anything — a well-known framework, an in-house runner with its
+own output format, or nothing at all — and the method cannot simply assume a vitest- or
+pytest-shaped answer the way it safely could for a project it scaffolded itself.
+
+- **Detection first, always honestly.** `forge test adopt` inspects a project's own manifests
+  (`package.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`, `pom.xml`/`build.gradle`, `*.csproj`,
+  `Gemfile`, `composer.json`), its `Makefile`, and its CI configuration, across languages and in a
+  monorepo (one proposal per package or layer). When it recognises a runner with confidence, it
+  proposes a structured test command — preferring that runner's richest machine-readable output — as
+  a **staged proposal**, never straight into the live config. When it is not confident, it hands off
+  honestly rather than guessing: an unfamiliar framework, an in-house runner, or no test setup at
+  all are all real, named outcomes, never silently forced into the nearest built-in shape.
+- **The agent, when detection cannot settle it.** `forge test adopt --agent` (or a handoff from the
+  bare command) runs `adopt-tests`: an AI-driven workflow that investigates how a project's tests
+  actually run — its manifests, CI config, Makefiles, scripts, docs, and, for an in-house runner,
+  the runner's own source — runs them for real, including with a deliberately failing test added so
+  it has seen what failure looks like and not only success, and produces either a mapping onto a
+  built-in format or a **translator**: a script, committed to the project, that turns the runner's
+  raw output into FORGE's own canonical `forge-test-report` shape. A project with no test setup at
+  all gets a _proposal_ for a conventional runner for its stack, as a reviewable change — never a
+  dependency silently added on the agent's own authority.
+- **The translator proof — the one thing that keeps any of this honest.** Whether a translator was
+  written by an agent or by a person, it is never trusted on say-so: `13` F-TEST-11's translator
+  proof runs it for real, against the project's real tests, and checks five things — the output is
+  really a schema-valid `forge-test-report`; its pass/fail counts reconcile with the run's own real
+  exit code; a deliberately injected failing test is reported as failing, by its exact name, with no
+  OTHER test's status disturbed relative to a real baseline taken before the probe existed; two runs
+  of the identical translator over identical raw output agree; and the report is never empty once a
+  probe was added. A failing proof is a typed refusal naming which check failed, never a partial
+  pass — and a passing one is itself evidence, pinned to the translator's own content hash and the
+  runner's version, re-checked whenever either changes. One residual limit is disclosed rather than
+  hidden: a translator that always mislabels two tests by their stable NAMES (not in a way the
+  probe's own presence disturbs) produces the identical wrong answer with or without the probe, so
+  this proof cannot see it — closing that fully would mean asking whoever proposes a configuration
+  to also hand-verify a sample of the real suite, which `13` F-TEST-11 does not ask of them.
+- **Why writing and approving a translator cannot be the same act.** `G-TestAdopt`'s own
+  deterministic check needs something to evaluate before a human approves it, and nothing may reach
+  the live `execution.testCommands.<layer>` entry before that approval — so a staged proposal is a
+  genuine third state, sitting between "investigated" and "live," committed to the project the same
+  way a `.forge/parity/` declaration is. `forge test adopt --write` is the promotion act, and it
+  refuses (never a silent no-op) for every real reason short of an actual, recorded `G-TestAdopt`
+  approval.
+- **Why FORGE does not just trust an agent-proposed shell command.** A test-adoption agent session
+  investigates a project by actually running commands in it — which means a hostile or merely
+  careless proposal (`make -f <path to something unrelated>`, say) is a real, live exec surface, not
+  only a text proposal a human reviews after the fact. Every live command such a session runs is
+  vetted, synchronously, before it is ever allowed to execute — the same containment check the final
+  proposed command itself is checked against — so review happens before and during the
+  investigation, not only once at the end. A transport with no way to gate a command before it runs
+  refuses to start this workflow at all, loudly, rather than silently running with a weaker
+  guarantee than the rest of this paragraph claims.
+- **A real, current gap, not papered over.** `13` F-TEST-11's own text says a human-authored
+  translator passes through "the identical proof, record and gate" an agent-authored one does. As
+  shipped today, the translator proof's only real caller is the `--agent` workflow itself — there is
+  no separate CLI command that runs the proof against a translator a person wrote entirely by hand
+  and stages the result without going through `--agent`. A person who wants to ship a translator
+  they wrote themselves today still runs `forge test adopt --agent` (which will find and validate an
+  existing translator, or write its own), or calls the proof as a library function directly if
+  integrating programmatically. See
+  [`getting-started.md`'s walkthrough](getting-started.md#12-bringing-an-existing-projects-tests-into-forge)
+  for a real, run-for-real translator, written by hand, and this gap demonstrated directly.
 
 ## Where the method stops and customization begins
 

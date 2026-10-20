@@ -7,10 +7,15 @@ tool a user configures, without the method, the workflow engine, or the Knowledg
 one.
 
 **Boundary rule (enforced by lint, not just convention):** nothing above `@forge/adapter-kit` may
-reference Claude Code, MCP, subagents, slash commands, or any model name by identifier.
-`packages/cli/src/bin.ts` itself never imports an adapter package directly or names a platform as a
-string literal — it loads adapters dynamically through `@forge/adapter-kit/registry`'s
-`KNOWN_ADAPTER_MODULES`/`loadAdapterFactory`, from a specifier built from configuration.
+reference Claude Code, MCP, subagents, slash commands, or any model name by identifier. The real
+adapter-construction logic (`buildCandidateAdapters`/`buildAdapterForConfig`, used by `forge init`/
+`run`/`resume`/`merge`) lives in `packages/cli/src/commands/dispatch/shared.ts` post-`specs/22` M17
+P2's split of the former monolithic `bin.ts` — and even there, never imports an adapter package
+directly or names a platform as a string literal: it loads adapters dynamically through
+`@forge/adapter-kit/registry`'s `KNOWN_ADAPTER_MODULES`/`loadAdapterFactory`, from a specifier built
+from configuration. (`bin.ts` itself is now a ~60-line entry point with no adapter-kit reference of
+its own left in it at all — this rule was always about the dispatcher's own real logic, which simply
+lives in a different file today than when this guide was first written.)
 
 Two real adapters ship today: `@forge/adapter-claude-code` and `@forge/adapter-generic`.
 
@@ -157,16 +162,17 @@ Be precise about what's wired versus what's real-but-not-yet-reachable from `for
   conformance suite passing against it (scripted-binary fixtures in
   `packages/adapter-generic/test/fixtures/`).
 - **Not yet wired:** `@forge/adapter-kit/registry`'s `KNOWN_ADAPTER_MODULES` — the list
-  `packages/cli/src/bin.ts` uses to auto-detect and construct candidate adapters for `forge init`/
-  `forge run` — lists only `claude-code`. `@forge/adapter-generic` is deliberately not in that list:
-  a `GenericAdapter` needs a real, already-parsed `adapter.yaml` to construct from, and no project
-  template in this workspace ships a default one for the dispatcher to read. This is a disclosed,
-  deliberate gap (`SPEC-QUESTIONS.md` Q184), not an oversight. In concrete terms: **you cannot yet
-  run `forge init --platform my-platform` or configure a generic adapter as `platform.primary`
-  purely through the `forge` CLI.** The package is the real, correct place to build against if
-  you're integrating FORGE with another coding-agent CLI programmatically (construct a
-  `GenericAdapter` directly with a parsed config and pass it wherever a `PlatformAdapter` is
-  expected), while the CLI's own adapter-selection surface catches up in a later milestone.
+  `commands/dispatch/shared.ts`'s own `buildCandidateAdapters`/`buildAdapterForConfig` use to
+  auto-detect and construct candidate adapters for `forge init`/`forge run` — lists only
+  `claude-code`. `@forge/adapter-generic` is deliberately not in that list: a `GenericAdapter` needs
+  a real, already-parsed `adapter.yaml` to construct from, and no project template in this workspace
+  ships a default one for the dispatcher to read. This is a disclosed, deliberate gap
+  (`SPEC-QUESTIONS.md` Q184), not an oversight. In concrete terms: **you cannot yet run
+  `forge init --platform my-platform` or configure a generic adapter as `platform.primary` purely
+  through the `forge` CLI.** The package is the real, correct place to build against if you're
+  integrating FORGE with another coding-agent CLI programmatically (construct a `GenericAdapter`
+  directly with a parsed config and pass it wherever a `PlatformAdapter` is expected), while the
+  CLI's own adapter-selection surface catches up in a later milestone.
 
 ## CodeMachine adapter — deliberately descoped, not a gap
 

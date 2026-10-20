@@ -144,9 +144,20 @@ forge skill validate <id>        # schema, size caps, dead references, script gr
 ```
 
 `skill new`, `skill attach`/`detach`, `skill test` and `skill import` are named in `specs/03` §3.2.8
-and have no CLI wiring yet (`packages/cli/src/bin.ts`'s own doc comment discloses this) — write and
-edit `SKILL.md` files by hand under `skills/` or `.forge/overrides/skills/` and validate with
-`forge skill validate <id>` in the meantime.
+and have no CLI wiring yet (confirmed directly against `preset-skill-mcp.ts`'s own
+`runSkillCommand`, in `packages/cli/src/commands/dispatch/`, which only recognises
+`list`/`validate`) — write and edit `SKILL.md` files by hand under `skills/` or
+`.forge/overrides/skills/` and validate with `forge skill validate <id>` in the meantime.
+
+**A hand-authored script this guide does not cover: a test translator.** A translator script
+(`<layer>.<ext>`, under the project's own `.forge/test-translators/` directory) is also a small,
+project-committed, hand-writable script — but it is not a flavour customisation of FORGE's own
+agents/workflows/skills the way everything else on this page is; it is how an existing project's own
+unfamiliar test runner becomes trustworthy input to FORGE's evidence pipeline. See
+[`getting-started.md`'s walkthrough](getting-started.md#12-bringing-an-existing-projects-tests-into-forge)
+for a real, run-for-real translator written by hand, and
+[`method-guide.md`'s Test adoption section](method-guide.md#test-adoption-bringing-an-existing-projects-tests-into-forge)
+for why it is never trusted without the translator proof.
 
 ## Workflows, gates and frameworks
 
@@ -317,9 +328,9 @@ forge module update <id> <source>
 ```
 
 All three source forms are real and wired today.
-`forge overlay list/remove/update/explain/diff/ doctor/eject` are named in `specs/03` §3.2.8 but
-have no CLI wiring beyond `add` yet — an installed overlay's manifest entry (`.forge/manifest.yaml`)
-is the way to confirm what's installed in the meantime.
+`forge overlay list/remove/update/explain/diff/doctor/eject` are named in `specs/03` §3.2.8 but have
+no CLI wiring beyond `add` yet — an installed overlay's manifest entry (`.forge/manifest.yaml`) is
+the way to confirm what's installed in the meantime.
 
 Installation runs a **capability consent screen** — every requested shell pattern, network host, MCP
 server and tool grant is shown before anything installs, and nothing installs on refusal — plus a
@@ -339,8 +350,13 @@ An extension is only useful if the next person understands it (`specs/19` §19.6
 
 ## What's authoring-relevant but genuinely not wired into the CLI yet
 
-For completeness, gathered in one place (each is a real, disclosed gap — `packages/cli/src/bin.ts`'s
-own top-of-file doc comment is the authoritative, current source of truth):
+For completeness, gathered in one place (each is a real, disclosed gap, confirmed by reading the
+real `packages/cli/src/commands/dispatch/*.ts` area files directly — post-`specs/22` M17 P2, which
+split the former 6,041-line `bin.ts` monolith into those files, `bin.ts` itself is a ~60-line entry
+point with no command-by-command list of its own left to cite for this; the CLI's own generic "not
+wired into this real, deliberately minimal dispatcher yet" fallback message still names `bin.ts`'s
+own doc comment as the place to look, which is itself now a real, disclosed inconsistency in the
+tool's own text):
 
 - `forge agent new`, `forge agent list/show/compile/graph`
 - `forge workflow new`, `forge workflow list/show/compile/graph`
@@ -349,8 +365,16 @@ own top-of-file doc comment is the authoritative, current source of truth):
 - `forge module list/info`
 - `forge preset diff`
 - `forge config list/explain`
-- `forge customize` (the whole command)
+
+`forge customize` is a related but distinct case, worth naming precisely rather than lumping in with
+the above: it IS dispatched (`commands/dispatch/customize-and-compile.ts`) and reaches a real
+function — it is not rejected by the generic "not wired" fallback the way every item above is — but
+that function (`commands/customize.ts`) always throws a typed refusal (`USR-003`), since no real
+interactive-terminal-handoff mechanism exists anywhere in this codebase for the wizard it would need
+to drive. The practical effect is the same (nothing it does succeeds today), but the two are
+different kinds of gap: one is missing argv wiring, the other is wired to a command that honestly
+refuses.
 
 None of these are "coming eventually and unspecified" — each has a fully normative spec in
-`specs/15`/ `specs/19` and real, tested library code behind at least some of them; what's missing is
+`specs/15`/`specs/19` and real, tested library code behind at least some of them; what's missing is
 CLI argv wiring, tracked milestone by milestone in `GAUNTLET-LOG.md`/`SPEC-QUESTIONS.md`.
