@@ -1,9 +1,11 @@
 /**
- * `forge spec <list|show|validate|trace|matrix|orphans|new>` — `03` §3.2.2.
+ * `forge spec <list|show|validate|trace|matrix|orphans|new|re-derive>` — `03` §3.2.2.
  *
  * @see specs/03 §3.2.2
+ * @see specs/09 §9.7
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import * as YAML from 'yaml';
 
 import { ArtifactDocument, writeArtifact } from '@forge/core/artifacts';
 
@@ -13,6 +15,7 @@ import {
   specMatrix,
   specNew,
   specOrphans,
+  specReDerive,
   specShow,
   specTrace,
   specValidate,
@@ -24,6 +27,55 @@ afterEach(cleanupAll);
 
 function ctx(project: TestProject): SpecCommandContext {
   return { paths: project.paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT };
+}
+
+/** A real, schema-valid Story document with a caller-chosen `acceptance`/`tests` shape — written
+ * directly (not via `specNew`'s own empty-array template) so `specReDerive`'s tests can exercise a
+ * real bound AC, a real unbound AC, and a real stale (orphan) test in one fixture. `YAML.stringify`
+ * builds the front matter from a plain object rather than hand-indented YAML text, so a list's own
+ * block-vs-flow indentation is never a source of a test fixture silently failing to parse as
+ * intended. */
+async function writeStory(
+  project: TestProject,
+  id: string,
+  acceptance: readonly { readonly id: string }[],
+  tests: readonly string[],
+): Promise<void> {
+  const frontMatter = {
+    id,
+    type: 'Story',
+    schemaVersion: 1,
+    title: 'A real story',
+    status: 'ready',
+    created: '2026-01-15',
+    updated: '2026-01-15',
+    revision: 1,
+    author: 'po',
+    changelog: [],
+    epic: 'EPIC-001',
+    capability: 'CAP-001',
+    storyType: 'feature',
+    size: 'S',
+    owner_role: 'backend',
+    depends_on: [],
+    blocked_by: [],
+    interfaces: [],
+    data: [],
+    files_expected: ['src/**'],
+    context_refs: [],
+    acceptance: acceptance.map((ac) => ({
+      id: ac.id,
+      given: 'a precondition',
+      when: 'the action happens',
+      then: 'the outcome holds',
+      kind: 'functional',
+    })),
+    tests: [...tests],
+    dod_profile: 'backend-default',
+  };
+  const source = `---\n${YAML.stringify(frontMatter)}---\n\nBody.\n`;
+  const doc = ArtifactDocument.parse(source, `${SPECS_ROOT}/stories/${id.toLowerCase()}.md`);
+  await writeArtifact(project.paths, doc);
 }
 
 describe('specNew', () => {
@@ -156,5 +208,95 @@ describe('specValidate / specTrace / specMatrix / specOrphans', () => {
     expect(result.documents).toHaveLength(1);
     expect(result.documents[0]?.valid).toBe(false);
     expect(result.documents[0]?.errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe('specReDerive (specs/22 M17 P17)', () => {
+  /** One real fixture shared by most cases below: STORY-001 has a bound AC (AC-001-1, proven by a
+   * real test), an unbound AC (AC-001-2, nothing proves it), and a stale test declared in its own
+   * `tests[]` that claims an AC id ("AC-999-9") no story's `acceptance[]` ever declares — the real
+   * "a spec edit removed/renamed the AC this test's name claims" shape `09` §9.7 point 4 describes.
+   * STORY-002 is a second, disjoint story used to prove scoping actually narrows the result. */
+  async function seedTwoStories(project: TestProject): Promise<void> {
+    await writeStory(
+      project,
+      'STORY-001',
+      [{ id: 'AC-001-1' }, { id: 'AC-001-2' }],
+      ['AC-001-1 proves the first thing', 'AC-999-9 names a removed AC'],
+    );
+    // Fully clean: a bound AC with its own real test, so the "disjoint story" case below proves
+    // real isolation rather than coincidentally finding a second, unrelated problem.
+    await writeStory(
+      project,
+      'STORY-002',
+      [{ id: 'AC-002-1' }],
+      ['AC-002-1 proves the second thing'],
+    );
+  }
+
+  it('throws KB-015 for an id that names no real graph node', async () => {
+    const project = await createTestProject();
+    await seedTwoStories(project);
+    await expect(specReDerive(ctx(project), 'STORY-9999')).rejects.toMatchObject({
+      code: 'KB-015',
+    });
+  });
+
+  it('the bare form (no id) finds the stale test and the unbound AC across the whole graph', async () => {
+    const project = await createTestProject();
+    await seedTwoStories(project);
+    const result = await specReDerive(ctx(project));
+    expect(result.scope).toBeUndefined();
+    expect(result.affected).toEqual([]);
+    expect(result.staleTests).toEqual(['AC-999-9 names a removed AC']);
+    expect(result.unboundAcceptanceCriteria).toEqual([{ acId: 'AC-001-2', storyId: 'STORY-001' }]);
+  });
+
+  it('returns empty results for a project with no specs at all', async () => {
+    const project = await createTestProject();
+    const result = await specReDerive(ctx(project));
+    expect(result.staleTests).toEqual([]);
+    expect(result.unboundAcceptanceCriteria).toEqual([]);
+  });
+
+  it('scoped to the owning Story, finds the identical stale test and unbound AC', async () => {
+    const project = await createTestProject();
+    await seedTwoStories(project);
+    const result = await specReDerive(ctx(project), 'STORY-001');
+    expect(result.scope).toBe('STORY-001');
+    expect(result.staleTests).toEqual(['AC-999-9 names a removed AC']);
+    expect(result.unboundAcceptanceCriteria).toEqual([{ acId: 'AC-001-2', storyId: 'STORY-001' }]);
+    // The bound AC and its real test are in the downstream closure; the stale, disconnected test
+    // (no `proves` edge at all — see `staleTestsFor`'s own doc comment) is not, and is found
+    // through the Story's own raw `tests[]` field instead, never through graph traversal.
+    expect(result.affected.map((node) => node.id).sort()).toEqual([
+      'AC-001-1',
+      'AC-001-1 proves the first thing',
+      'AC-001-2',
+    ]);
+  });
+
+  it('scoped to a different, disjoint Story, finds nothing from the first one', async () => {
+    const project = await createTestProject();
+    await seedTwoStories(project);
+    const result = await specReDerive(ctx(project), 'STORY-002');
+    expect(result.scope).toBe('STORY-002');
+    expect(result.staleTests).toEqual([]);
+    expect(result.unboundAcceptanceCriteria).toEqual([]);
+  });
+
+  it('scoped directly to the unbound AC id, reports itself even though it has no downstream closure', async () => {
+    const project = await createTestProject();
+    await seedTwoStories(project);
+    const result = await specReDerive(ctx(project), 'AC-001-2');
+    expect(result.affected).toEqual([]);
+    expect(result.unboundAcceptanceCriteria).toEqual([{ acId: 'AC-001-2', storyId: 'STORY-001' }]);
+  });
+
+  it('scoped directly to the stale test id itself, reports itself as stale', async () => {
+    const project = await createTestProject();
+    await seedTwoStories(project);
+    const result = await specReDerive(ctx(project), 'AC-999-9 names a removed AC');
+    expect(result.staleTests).toEqual(['AC-999-9 names a removed AC']);
   });
 });

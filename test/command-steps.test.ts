@@ -70,15 +70,30 @@ const BIN = path.join(repoRoot, 'packages', 'cli', 'src', 'bin.ts');
  * removing an entry requires wiring the command.
  */
 const KNOWN_UNACCEPTED: Readonly<Record<string, string>> = {
-  'forge adopt inventory --json':
-    'Q213: `forge adopt` is wired nowhere in bin.ts (`17` §17.6 defines `forge adopt [dir] [--scope] [--depth] [--no-verify]`, the whole eight-phase pipeline, and no `inventory` subcommand). Wiring it needs the adopt pipeline context (CARTOGRAPHY/INFERENCE dispatch), which is a product decision, not this piece. Deferred by `P11-TRIAGE.md` §5.',
   // `forge migrate run --phase expand --json` (the `migrate-data` step's own literal command):
   // CLOSED by `specs/22` M17 P18 -- `forge migrate run` is now wired in bin.ts (`commands/migrate/
   // run.ts`); the throwaway project this file probes has no `docs/forge/kb/data/migrations.yaml` at
   // all, so the real command now ACCEPTS this invocation (exit 1, errors: 1, a `problems` entry
   // naming the missing declaration) rather than being rejected as unwired.
-  'forge spec re-derive --json':
-    'Q213: `03` §3.2.2 lists `list|show|validate|trace|matrix|orphans|new` for `forge spec`; `09` §9.7 says only that affected tests are re-derived after a spec change, with no command that does it. Deferred by `P11-TRIAGE.md` §5.',
+  //
+  // `forge adopt inventory --json` (`adopt:inventory-codebase`): CLOSED by `specs/22` M17 P17 --
+  // `forge adopt [dir] [--scope] [--depth] [--no-verify]` is now wired in bin.ts
+  // (`commands/dispatch/adopt.ts`), so this string now parses: `17` §17.6 still defines no
+  // `inventory` subcommand, so "inventory" is read as the `[dir]` positional (a directory to
+  // adopt), which does not exist under the throwaway probe project -- a real, clean `VCS-NOT-A-
+  // REPO`/`VCS-GIT-OPERATION-FAILED` refusal (exit 1, no stack trace), not a crash. ACCEPTED is the
+  // right classification for that, but the underlying workflow step is still a real, separate,
+  // disclosed defect this piece does not fix: `templates/workflows/adopt.workflow.yaml`'s own
+  // `inventory-codebase` step names a form `17` §17.6 never defined, predating the real pipeline
+  // `PLAN-M10.md` P15-P19 built. Left for a future piece to rewrite that step to the real `forge
+  // adopt` form.
+  //
+  // `forge spec re-derive --json` (`replan:re-derive`, the workflow's own last step, run only after
+  // `approve-change`'s own human elicit approves the change -- `09` §9.7 points 1-4, applied):
+  // CLOSED by `specs/22` M17 P17 -- `forge spec re-derive [<id>]` is now wired in bin.ts
+  // (`commands/dispatch/spec.ts`), computing `09` §9.7 point 4's own "affected tests are
+  // re-derived" deterministically from the real `SpecGraph`; against the throwaway probe project
+  // (no specs at all) it exits 0, "nothing needs re-deriving".
 };
 
 interface CommandStep {
@@ -302,7 +317,10 @@ describe('shipped workflow command steps name commands the CLI accepts (P22 / Q2
       'forge deploy --dry-run --rollback-check',
       'forge story verify',
       'forge story verify STORY-1 --phase bogus',
-      'forge spec re-derive --json',
+      // `03` §3.2.2's own real `spec re-derive [<id>]` takes at most one positional.
+      'forge spec re-derive a b --json',
+      // `03` §3.2.1's own real `forge adopt`'s `--depth` is `quick|standard|deep`, nothing else.
+      'forge adopt --depth bogus',
     ]) {
       expect((await ask(bad)).classification, bad).toBe('rejected');
     }
@@ -313,6 +331,13 @@ describe('shipped workflow command steps name commands the CLI accepts (P22 / Q2
       'forge story verify STORY-1 --phase done',
       'forge deploy --dry-run --json',
       'forge deploy --rollback-check --json',
+      // CLOSED by `specs/22` M17 P17: the throwaway probe project has no `docs/forge/specs`/`kb`
+      // at all, so this exits 0, "nothing needs re-deriving" (`KNOWN_UNACCEPTED`'s own comment
+      // above has the full story).
+      'forge spec re-derive --json',
+      // CLOSED by `specs/22` M17 P17: the throwaway probe project is not a git repository at all,
+      // so this is a real, clean `VCS-NOT-A-REPO` refusal (exit 1, no stack trace), not a crash.
+      'forge adopt --json',
     ]) {
       expect((await ask(good)).classification, good).toBe('accepted');
     }

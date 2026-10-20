@@ -14,17 +14,24 @@
  * `NON_FORGE_STEPS` (shared with that file; every one of which is `inline: true`, confirmed here rather
  * than assumed, so the two files' claims about the same workflows cannot quietly diverge).
  *
- * **Unwired today.** Three of the sixteen commands (`forge adopt inventory`, `forge migrate run`,
- * `forge spec re-derive`) are not wired into `bin.ts` at all yet — each is rejected by the real CLI
- * (`test/command-steps.test.ts`'s own `KNOWN_UNACCEPTED`, Q213). That is why the write determination
- * below is by reading source, not by running the command: shelling any of the three for real would
- * only ever prove "the CLI refuses an unrecognised command," never exercise claim enforcement. The
- * three are not equivalent, though: `forge adopt inventory` has a real, named handler function
- * (`writeInventoryReport`, called by `adopt()`'s own full pipeline, `adopt.ts:413`) this piece can
- * read and declare a claim for now, correct today and already in place for whenever a later piece
- * wires the subcommand; `forge migrate run` and `forge spec re-derive` have no handler anywhere in
- * this codebase to read at all (`03` defines no `forge migrate` command; `09` §9.7 names no command
- * that re-derives specs) — nothing to declare until a later piece both wires and implements them.
+ * **Unwired today (UPDATE, `specs/22` M17 P17/P18): no longer true for two of the three.** This
+ * section originally named three of the sixteen commands (`forge adopt inventory`, `forge migrate
+ * run`, `forge spec re-derive`) as not wired into `bin.ts` at all, each rejected by the real CLI
+ * (`test/command-steps.test.ts`'s own `KNOWN_UNACCEPTED`, Q213) — which is why the write
+ * determination below is by reading source, not by running the command. `forge migrate run` (M17
+ * P18) and `forge spec re-derive` (M17 P17, `commands/dispatch/spec.ts`'s own `specReDerive`) are
+ * now both real and wired; `test/command-steps.test.ts`'s own `KNOWN_UNACCEPTED` no longer names
+ * either. `specReDerive` is confirmed, by reading it directly, to be genuinely read-only (it only
+ * builds and queries a `SpecGraph` from `docs/forge/specs`/`kb`, exactly like `specMatrix` below) —
+ * `replan:re-derive`'s own `[]` claim is therefore still correct, now because a real implementation
+ * was checked rather than because none existed yet. Whether `forge migrate run`'s own real apply
+ * path ever writes anything, and whether `migrate:migrate-data`'s `[]` claim is still right for that
+ * reason, was not investigated here — out of this piece's own narrow scope (`forge adopt`/`forge
+ * spec re-derive` only); disclosed rather than assumed. `forge adopt inventory` is still not a real
+ * subcommand `17` §17.6 defines at all (`forge adopt [dir]` itself is wired, but takes no
+ * `inventory` subcommand — `test/command-steps.test.ts`'s own updated `KNOWN_UNACCEPTED` comment has
+ * the full story) and still has only the real, named handler function this file already reads
+ * (`writeInventoryReport`, called by `adopt()`'s own full pipeline, `adopt.ts:413`).
  *
  * **What each step writes**, determined by reading the real command it runs:
  * - `adopt:inventory-codebase` (`forge adopt inventory --json`) — `writeInventoryReport`
@@ -56,10 +63,12 @@
  *   `reports/...` registry-path shorthand -- `resolveDocsRootPrefix` only rewrites an entry that opens
  *   with a full shipped default docs root, so a shorter prefix would pass through unrewritten and never
  *   match the real write (a real bug a gauntlet critic round caught in an earlier version of this).
- * - `migrate:migrate-data` (`forge migrate run --phase expand --json`) and `replan:re-derive`'s approved
- *   branch (`forge spec re-derive --json`) — unwired and unimplemented (see "Unwired today" above):
- *   refused before either could write anything. No `produces` until a later piece wires and implements
- *   the command; this file's own enumeration test would need updating then too.
+ * - `replan:re-derive`'s approved branch (`forge spec re-derive --json`) — now real and wired (see
+ *   "Unwired today" above); confirmed read-only by reading `specReDerive` (`commands/spec.ts`)
+ *   directly, so still no `produces`.
+ * - `migrate:migrate-data` (`forge migrate run --phase expand --json`) — now wired too (M17 P18),
+ *   but whether its own real apply path ever writes a file was not investigated by this piece (see
+ *   "Unwired today" above); still `[]` here, not re-verified.
  * - `verify-stage:check-coverage` (`forge test coverage --json`, no `--rule`) — `runDefaultCoverage`
  *   (`coverage.ts`) only reads `coverage-summary.json`; the ratchet baseline is written only by
  *   `--rule ratchet`, which this step never passes. Read-only; no `produces`.

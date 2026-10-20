@@ -167,3 +167,93 @@ describe('dispatchSpec (specs/22 M17 P2)', () => {
     ).toBe(2);
   });
 });
+
+describe('dispatchSpec — "spec re-derive" (specs/22 M17 P17)', () => {
+  it('exits 0 for the bare form against a project with no specs at all', async () => {
+    const project = await createTestProject();
+    expect(await dispatchSpec(ctx(project, ['spec', 're-derive']))).toBe(0);
+  });
+
+  it('runs the bare form for real under --json, printing one {v:1,...} line', async () => {
+    const project = await createTestProject();
+    const result = await captureLogs(() => dispatchSpec(ctx(project, ['spec', 're-derive'], true)));
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.lines[0] ?? '{}') as {
+      readonly v: number;
+      readonly scope: string | undefined;
+      readonly staleTests: readonly string[];
+      readonly unboundAcceptanceCriteria: readonly unknown[];
+    };
+    expect(parsed.v).toBe(1);
+    expect(parsed.scope).toBeUndefined();
+    expect(parsed.staleTests).toEqual([]);
+    expect(parsed.unboundAcceptanceCriteria).toEqual([]);
+  });
+
+  it('throws KB-015 for a real, unresolvable <id>', async () => {
+    const project = await createTestProject();
+    await expect(
+      dispatchSpec(ctx(project, ['spec', 're-derive', 'STORY-9999'])),
+    ).rejects.toMatchObject({ code: 'KB-015' });
+  });
+
+  it('exits 2 for a real, unexpected extra positional', async () => {
+    const project = await createTestProject();
+    expect(await dispatchSpec(ctx(project, ['spec', 're-derive', 'a', 'b']))).toBe(2);
+  });
+
+  it('exits 1 and reports a real unbound AC once a real Story names one with no bound test', async () => {
+    const project = await createTestProject();
+    const relPath = `${SPECS_ROOT}/stories/story-001.md`;
+    const doc = ArtifactDocument.parse(
+      [
+        '---',
+        'id: STORY-001',
+        'type: Story',
+        'schemaVersion: 1',
+        "title: 'A real story'",
+        'status: ready',
+        'created: 2026-01-15',
+        'updated: 2026-01-15',
+        'revision: 1',
+        'author: po',
+        'changelog: []',
+        'epic: EPIC-001',
+        'capability: CAP-001',
+        'storyType: feature',
+        'size: S',
+        'owner_role: backend',
+        'depends_on: []',
+        'blocked_by: []',
+        'interfaces: []',
+        'data: []',
+        "files_expected: ['src/**']",
+        'context_refs: []',
+        'acceptance:',
+        '  - id: AC-001-1',
+        "    given: 'a precondition'",
+        "    when: 'the action happens'",
+        "    then: 'the outcome holds'",
+        '    kind: functional',
+        'tests: []',
+        'dod_profile: backend-default',
+        '---',
+        '',
+        'Body.',
+        '',
+      ].join('\n'),
+      relPath,
+    );
+    await writeArtifact(project.paths, doc);
+
+    const result = await captureLogs(() => dispatchSpec(ctx(project, ['spec', 're-derive'], true)));
+    expect(result.exitCode).toBe(1);
+    const parsed = JSON.parse(result.lines[0] ?? '{}') as {
+      readonly unboundAcceptanceCriteria: readonly { readonly acId: string }[];
+    };
+    expect(parsed.unboundAcceptanceCriteria).toEqual([{ acId: 'AC-001-1', storyId: 'STORY-001' }]);
+
+    // Scoped to that one Story names the identical finding.
+    expect(await dispatchSpec(ctx(project, ['spec', 're-derive', 'STORY-001']))).toBe(1);
+  });
+});

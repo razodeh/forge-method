@@ -232,9 +232,22 @@ const NO_CANDIDATE_FALLBACK: DetectedCandidate = {
  * proposal record... never straight to the live config"). Never writes anything when detection is
  * not confident -- that is the hand-off to P7's `adopt-tests` workflow, not a piece this function
  * guesses through.
+ *
+ * `scanPaths` (`specs/22` M17 P17, a gauntlet critic finding) is the root `detectTestRunners` reads
+ * manifests/CI config FROM; `paths` is always where the staged proposal is WRITTEN. They default to
+ * the same value — every caller before this one only ever had a single project to both scan and
+ * write for (`forge test adopt`'s own dispatch, `packages/cli/test/commands/loop/test/adopt.test.ts`,
+ * both still call this with one argument, unaffected). A caller adopting a *different* on-disk
+ * repository than the FORGE project it writes reports into (`forge adopt [dir]`, `commands/adopt.ts`)
+ * passes that repository's own `ProjectPaths` as `scanPaths` explicitly, so detection never silently
+ * scans the wrong root and proposes a runner the actually-adopted repository does not even have the
+ * toolchain for.
  */
-export async function runDetectionAndStage(paths: ProjectPaths): Promise<DetectionStageOutcome> {
-  const candidates = await detectTestRunners(paths);
+export async function runDetectionAndStage(
+  paths: ProjectPaths,
+  scanPaths: ProjectPaths = paths,
+): Promise<DetectionStageOutcome> {
+  const candidates = await detectTestRunners(scanPaths);
   const candidate = candidates[0] ?? NO_CANDIDATE_FALLBACK;
   if (!candidate.confident || candidate.command === undefined) {
     return { outcome: 'handoff', candidate };

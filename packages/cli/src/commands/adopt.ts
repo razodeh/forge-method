@@ -20,7 +20,18 @@
  * call `runCartographyPhase`/`runInferencePhase` itself and hand this function the result; a caller
  * with none gets an honest, disclosed empty result rather than a fabricated one, matching `17` §17.1's
  * own "confident fabrication" warning. VERIFICATION (`runVerificationPhase`, `@forge/engine/adopt`)
- * needs no such context — it is wired for real, unconditionally, below.
+ * needs no such context — it is wired for real, unconditionally, below. `specs/22` M17 P17 revisited
+ * this note (`SPEC-QUESTIONS.md`) rather than assuming it still held, and left it as-is: nothing in
+ * P11 (the adapter's own structured-output parsing) or P7 (test adoption, see immediately below)
+ * reduces the cost of constructing an `ExecuteStepContext` from nothing for a single read-only scan,
+ * and this piece's own builder environment has no live model session to wire or test such a path
+ * against regardless.
+ *
+ * **Test-adoption wiring** (`specs/22` M17 P17, `SPEC-QUESTIONS.md`): this piece additionally runs
+ * `forge test adopt`'s own deterministic detection (`loop/test/adopt.ts`'s `runDetectionAndStage`) as
+ * a real step of this pipeline, so an adopted project's real `execution.testCommands` is established,
+ * not left to a separate command a caller must remember to run — see `AdoptRunResult.testAdoption`'s
+ * own doc comment for the full shape and its own disclosed limitation.
  *
  * @see specs/03 §3.2.1
  * @see specs/17
@@ -33,8 +44,8 @@ import {
   pathExists,
   readTextFile,
   writeFileAtomic,
+  ProjectPaths,
   type AbsolutePath,
-  type ProjectPaths,
 } from '@forge/core/fs';
 import { runVerificationPhase } from '@forge/engine/adopt';
 import {
@@ -82,6 +93,12 @@ import { configSchema, type ForgeConfig } from '@forge/schemas/config';
 import * as YAML from 'yaml';
 
 import { CONFIG_REL_PATH } from './config.ts';
+import { DETECTED_LAYER } from './loop/test/detect.ts';
+import {
+  readStagedProposal,
+  runDetectionAndStage,
+  type DetectionStageOutcome,
+} from './loop/test/adopt.ts';
 
 const INVENTORY_REPORT_RELATIVE_PATH = 'reports/adoption/inventory.json';
 
@@ -101,11 +118,21 @@ export interface AdoptOptions {
   readonly dir?: string;
   /** When set, bypasses `17` §17.2 phase 1's own size gate (see `adopt`'s own doc comment on
    * `scopedProposal`) — this piece does not itself implement filtering the walk down to the named
-   * path/module (a real, disclosed scope narrowing, `SPEC-QUESTIONS.md`); a future piece can thread
-   * `scope` into `runSurvey`/`runInventory`'s own file-walk without changing this option's shape. */
+   * path/module (a real, disclosed scope narrowing, surfaced as a real `warnings` entry below, a
+   * gauntlet critic finding, `SPEC-QUESTIONS.md`); a future piece can thread `scope` into
+   * `runSurvey`/`runInventory`'s own file-walk without changing this option's shape. */
   readonly scope?: string;
   readonly depth?: AdoptDepth;
   readonly noVerify?: boolean;
+  /** `03` §3.2's global `--dry-run`: "Plan and print; make no writes, spawn no sessions" (a gauntlet
+   * critic finding, `SPEC-QUESTIONS.md` — the real CLI wiring originally never read this flag at all,
+   * so `forge adopt --dry-run` ran the full real pipeline, including the one-shot `BASELINE` tag `17`
+   * §17.2 phase 8 never recreates or moves once it exists). Every read-only scan/computation still
+   * runs for real (SURVEY, INVENTORY, GAP ANALYSIS, measured facts, the `G-Adopt` gate's own verdict)
+   * so the printed plan is a real preview, not a guess; every write, subprocess spawn (VERIFICATION's
+   * real build/test execution) and session dispatch (CARTOGRAPHY/INFERENCE) is skipped, each with its
+   * own `warnings` entry naming what would have happened. Defaults to `false`. */
+  readonly dryRun?: boolean;
 }
 
 export interface AdoptContext {
@@ -167,6 +194,29 @@ export interface AdoptRunResult {
   readonly gapAnalysis?: GapAnalysisResult;
   readonly confirmation?: ConfirmationFlowResult;
   readonly baseline?: BaselineSnapshot;
+  /** `forge test adopt`'s own real, deterministic detection (`loop/test/adopt.ts`'s
+   * `runDetectionAndStage`), run as part of this pipeline so an adopted project's REAL test
+   * configuration is established, not left to a separate, unconnected command a caller has to
+   * remember to run on their own (`SPEC-QUESTIONS.md`, this piece's own DECISION — "adopted end to
+   * end" includes the project's own `execution.testCommands`, which is exactly what `forge test
+   * adopt` already detects). A confident detection stages a real `.forge/test-adopt/<layer>.
+   * proposal.yaml` proposal; it is never promoted into the live config here — that still needs a
+   * passing translator proof and a human `G-TestAdopt` approval via the standalone `forge test
+   * adopt --write`, exactly as every other staged proposal already requires (`13` F-TEST-11). An
+   * unconfident detection hands off, named in `warnings`, to `forge test adopt --agent`. Set for
+   * every real run (every `depth`, with or without `--no-verify` — detection reads only manifests/
+   * CI config, no sandboxed build or test execution, the identical cheap-and-deterministic class of
+   * work SURVEY/INVENTORY already do); unset only for the size-gated scoped-adoption-proposal
+   * return above, where no real target has been chosen yet to detect anything for.
+   *
+   * Runs against `ctx.paths`, not `options.dir`/the resolved `targetRoot` — identical to every
+   * other report-writing phase in this function (`writeSurveyReport`/`writeInventoryReport`/GAP
+   * ANALYSIS/BASELINE all write to `ctx.paths` regardless of `targetRoot`): a disclosed, bounded
+   * limitation for the (currently untested, and likely rare) case a caller explicitly adopts a
+   * DIFFERENT directory than `ctx.paths`'s own project root — `runDetectionAndStage` has no
+   * separate scan-root/write-root split to thread `targetRoot` through for only this one phase
+   * without the identical change needed everywhere else in this file. */
+  readonly testAdoption?: DetectionStageOutcome;
   /** Real, disclosed limitations of *this particular run* a caller/CLI surface should show, never
    * silently absorbed — e.g. "CARTOGRAPHY/INFERENCE did not run" (see this file's own top-of-file
    * scope note), which a fresh critic round found had real downstream consequences worth surfacing
@@ -377,6 +427,7 @@ export async function adopt(
   const kbRoot = ctx.kbRoot ?? DEFAULT_KB_ROOT;
   const owner = ctx.owner ?? 'adoption';
   const depth = options.depth ?? 'standard';
+  const dryRun = options.dryRun ?? false;
   const targetRoot = options.dir ?? ctx.paths.resolveWithin('.');
 
   const gitProfile = await analyzeGitProfile(targetRoot, { clock: toVcsClock(clock) });
@@ -407,6 +458,18 @@ export async function adopt(
 
   const warnings: string[] = [];
   const deepOptions = { deep: depth === 'deep' };
+  if (options.scope !== undefined) {
+    // A gauntlet critic finding: `--scope` is reachable from the real CLI (M17 P17) and genuinely
+    // bypasses phase 1's own size gate, but this piece does not itself narrow SURVEY/INVENTORY's own
+    // file walk to the named path/module (see `AdoptOptions.scope`'s own doc comment) — disclosed
+    // here, the identical idiom the CARTOGRAPHY/INFERENCE warning below already uses, rather than a
+    // silent no-op a caller could mistake for real scoping.
+    warnings.push(
+      `--scope ${JSON.stringify(options.scope)} only bypasses phase 1's own size gate for this run — ` +
+        "it does not itself narrow SURVEY/INVENTORY's own file walk to that path/module, so the rest " +
+        'of this run still scans the whole repository.',
+    );
+  }
   if (ctx.runCartography === undefined || ctx.runInference === undefined) {
     warnings.push(
       'CARTOGRAPHY/INFERENCE dispatch was not provided for this run (AdoptContext.runCartography/' +
@@ -415,39 +478,110 @@ export async function adopt(
         'satisfied rather than a real confirmation that no unconfirmed high-impact claim exists.',
     );
   }
-
-  const inventory = await runInventory({ rootDir: targetRoot, survey: surveyResult.survey });
-  await writeSurveyReport(ctx.paths, surveyResult);
-  await writeInventoryReport(ctx.paths, inventory);
-
-  const cartography = ctx.runCartography
-    ? await ctx.runCartography(surveyResult.survey, inventory, deepOptions)
-    : EMPTY_CARTOGRAPHY;
-
-  if (depth === 'quick') {
-    return { survey: surveyResult, inventory, cartography, warnings };
+  if (dryRun && (ctx.runCartography !== undefined || ctx.runInference !== undefined)) {
+    warnings.push(
+      '(dry run — CARTOGRAPHY/INFERENCE dispatch was supplied but not invoked: --dry-run spawns no ' +
+        'model sessions.)',
+    );
   }
 
-  const inference = ctx.runInference
-    ? await ctx.runInference(surveyResult.survey, inventory, deepOptions)
-    : EMPTY_INFERENCE;
+  const inventory = await runInventory({ rootDir: targetRoot, survey: surveyResult.survey });
+  if (dryRun) {
+    warnings.push(
+      '(dry run — would have written reports/adoption/survey.json and ' +
+        'reports/adoption/inventory.json; neither was written.)',
+    );
+  } else {
+    await writeSurveyReport(ctx.paths, surveyResult);
+    await writeInventoryReport(ctx.paths, inventory);
+  }
 
-  const verification = options.noVerify
-    ? EMPTY_VERIFICATION
-    : await runVerificationPhase({
-        sourceRoot: targetRoot,
-        survey: surveyResult.survey,
-        inventory,
-        cartographyFindings: cartography.findings,
-        inferenceFindings: inference.findings,
-        clock,
-        env: ctx.env,
-      });
+  // See `AdoptRunResult.testAdoption`'s own doc comment for why this runs against a `targetRoot`-
+  // rooted `ProjectPaths` for the scan but `ctx.paths` for the write, for every depth, with no
+  // `--no-verify` gate: it is deterministic detection, not a build/test run. Skipped wholesale under
+  // `--dry-run` (it writes a real staged-proposal file); skipped when an existing staged proposal for
+  // this layer already carries a passing translator proof, so a confident-but-unproven re-detection
+  // never silently overwrites proven, human-reviewable work with an unproven one (a gauntlet critic
+  // finding: the agent-staged `source: 'agent'` proposal `forge test adopt --agent` produces is real
+  // work a human may already be mid-review-and-approval on).
+  let testAdoption: DetectionStageOutcome | undefined;
+  if (dryRun) {
+    warnings.push(
+      "(dry run — test-command detection/staging was skipped; would have run forge test adopt's " +
+        'own detection against this repository and staged a proposal if confident.)',
+    );
+  } else {
+    const existingProposal = await readStagedProposal(ctx.paths, DETECTED_LAYER);
+    if (existingProposal.outcome === 'found' && existingProposal.record.proof?.ok === true) {
+      warnings.push(
+        `An already-proven staged test-adoption proposal exists for layer "${DETECTED_LAYER}" ` +
+          `(source: ${existingProposal.record.source}) -- re-detection was skipped so it is not ` +
+          'silently overwritten by an unproven one.',
+      );
+    } else {
+      testAdoption = await runDetectionAndStage(ctx.paths, new ProjectPaths(targetRoot));
+      if (testAdoption.outcome === 'handoff') {
+        warnings.push(
+          `No confident test-command detection for this project (${testAdoption.candidate.reason}) -- ` +
+            'run "forge test adopt --agent" to investigate and stage a proposal.',
+        );
+      }
+    }
+  }
 
-  const reconstruction = await writeReconstruction(
-    { paths: ctx.paths, clock, kbRoot },
-    { cartography, inference, verification, dependencyGraph: inventory.dependencyGraph },
-  );
+  const cartography =
+    !dryRun && ctx.runCartography
+      ? await ctx.runCartography(surveyResult.survey, inventory, deepOptions)
+      : EMPTY_CARTOGRAPHY;
+
+  if (depth === 'quick') {
+    return {
+      survey: surveyResult,
+      inventory,
+      cartography,
+      warnings,
+      ...(testAdoption === undefined ? {} : { testAdoption }),
+    };
+  }
+
+  const inference =
+    !dryRun && ctx.runInference
+      ? await ctx.runInference(surveyResult.survey, inventory, deepOptions)
+      : EMPTY_INFERENCE;
+
+  let verification: VerificationResult;
+  if (options.noVerify) {
+    verification = EMPTY_VERIFICATION;
+  } else if (dryRun) {
+    warnings.push(
+      '(dry run — would have run the real, sandboxed build/test verification (a real git clone and ' +
+        'subprocess); no subprocess was spawned.)',
+    );
+    verification = EMPTY_VERIFICATION;
+  } else {
+    verification = await runVerificationPhase({
+      sourceRoot: targetRoot,
+      survey: surveyResult.survey,
+      inventory,
+      cartographyFindings: cartography.findings,
+      inferenceFindings: inference.findings,
+      clock,
+      env: ctx.env,
+    });
+  }
+
+  let reconstruction: ReconstructionResult | undefined;
+  if (dryRun) {
+    warnings.push(
+      '(dry run — would have written the KB reconstruction (architecture/data/delivery/engineering/' +
+        'decisions); nothing was written.)',
+    );
+  } else {
+    reconstruction = await writeReconstruction(
+      { paths: ctx.paths, clock, kbRoot },
+      { cartography, inference, verification, dependencyGraph: inventory.dependencyGraph },
+    );
+  }
 
   const gapAnalysis = analyzeGaps({
     survey: surveyResult.survey,
@@ -457,27 +591,42 @@ export async function adopt(
     verification,
     inferenceRan: ctx.runInference !== undefined,
   });
-  await ensureReportsDir(ctx.paths);
-  await writeFileAtomic(
-    ctx.paths.resolveWithin(GAP_REPORT_RELATIVE_PATH),
-    renderGapsReport(gapAnalysis),
-  );
-  await writeGapArtifacts({ paths: ctx.paths, clock, kbRoot }, owner, gapAnalysis);
+  if (dryRun) {
+    warnings.push(
+      '(dry run — would have written reports/adoption/gaps.md and the real RISK-###/OQ-### gap ' +
+        'artifacts; nothing was written.)',
+    );
+  } else {
+    await ensureReportsDir(ctx.paths);
+    await writeFileAtomic(
+      ctx.paths.resolveWithin(GAP_REPORT_RELATIVE_PATH),
+      renderGapsReport(gapAnalysis),
+    );
+    await writeGapArtifacts({ paths: ctx.paths, clock, kbRoot }, owner, gapAnalysis);
+  }
 
   const claims = toConfirmableClaims(cartography, inference);
-  const confirmation = await runConfirmationFlow(
-    { paths: ctx.paths, clock, kbRoot },
-    owner,
-    claims,
-    ctx.ask ?? DEFAULT_ASK,
-    CONFIRMATION_QUESTION_CAP,
-  );
+  let confirmation: ConfirmationFlowResult | undefined;
+  if (dryRun) {
+    warnings.push(
+      `(dry run — would have run the human-confirmation flow over ${String(claims.length)} real ` +
+        'claim(s); no prompt was shown and no OQ-### was written.)',
+    );
+  } else {
+    confirmation = await runConfirmationFlow(
+      { paths: ctx.paths, clock, kbRoot },
+      owner,
+      claims,
+      ctx.ask ?? DEFAULT_ASK,
+      CONFIRMATION_QUESTION_CAP,
+    );
+  }
 
   const highImpactClaims = claims
     .filter((c) => c.impact === 'high')
     .map((c) => ({
       claim: c,
-      outcome: confirmation.outcomes.find((o) => o.claimId === c.id),
+      outcome: confirmation?.outcomes.find((o) => o.claimId === c.id),
     }));
 
   const tree = await parseKbTree(ctx.paths, kbRoot);
@@ -507,13 +656,23 @@ export async function adopt(
   if (headSha !== undefined) {
     tagExistsNow = await tagExists(targetRoot, BASELINE_TAG_NAME);
     if (!tagExistsNow) {
-      await createAnnotatedTag(
-        targetRoot,
-        BASELINE_TAG_NAME,
-        `FORGE adoption baseline\n\n${JSON.stringify(facts)}`,
-        headSha,
-      );
-      tagExistsNow = true;
+      if (dryRun) {
+        // `17` §17.2 phase 8: a `BASELINE` tag, once it exists, is never recreated or moved — a
+        // one-shot, irreversible write a gauntlet critic found `--dry-run` silently performed for
+        // real. Previewed here (the real `headSha` this run would have tagged), never created.
+        warnings.push(
+          `(dry run — would have created the real, one-shot BASELINE git tag at ${headSha}; no tag ` +
+            'was created.)',
+        );
+      } else {
+        await createAnnotatedTag(
+          targetRoot,
+          BASELINE_TAG_NAME,
+          `FORGE adoption baseline\n\n${JSON.stringify(facts)}`,
+          headSha,
+        );
+        tagExistsNow = true;
+      }
     }
   }
   const baseline: BaselineSnapshot = {
@@ -523,18 +682,30 @@ export async function adopt(
     facts,
     gate,
   };
-  await ensureReportsDir(ctx.paths);
-  await writeFileAtomic(
-    ctx.paths.resolveWithin(BASELINE_REPORT_RELATIVE_PATH),
-    `${JSON.stringify(baseline, null, 2)}\n`,
-  );
+  if (dryRun) {
+    warnings.push(
+      '(dry run — would have written reports/adoption/baseline.json; nothing was written.)',
+    );
+  } else {
+    await ensureReportsDir(ctx.paths);
+    await writeFileAtomic(
+      ctx.paths.resolveWithin(BASELINE_REPORT_RELATIVE_PATH),
+      `${JSON.stringify(baseline, null, 2)}\n`,
+    );
+  }
 
   // `17` §17.4's own brownfield adjustments key off this marker (`markProjectAdopted`'s own doc
   // comment) — set once a full (non-`quick`, non-scoped-proposal) run reaches this point, regardless
   // of whether `G-Adopt` itself passed: "this project went through adoption" is a fact about its
-  // origin, not a quality gate outcome.
-  const adoptedMarkerWarning = await markProjectAdopted(ctx.paths);
-  if (adoptedMarkerWarning !== undefined) warnings.push(adoptedMarkerWarning);
+  // origin, not a quality gate outcome. Skipped under `--dry-run`: it is itself a real config write.
+  if (dryRun) {
+    warnings.push(
+      '(dry run — would have set project.adopted: true in .forge/config.yaml; nothing was written.)',
+    );
+  } else {
+    const adoptedMarkerWarning = await markProjectAdopted(ctx.paths);
+    if (adoptedMarkerWarning !== undefined) warnings.push(adoptedMarkerWarning);
+  }
 
   return {
     survey: surveyResult,
@@ -542,11 +713,12 @@ export async function adopt(
     cartography,
     inference,
     verification,
-    reconstruction,
     gapAnalysis,
-    confirmation,
     baseline,
     warnings,
+    ...(reconstruction === undefined ? {} : { reconstruction }),
+    ...(confirmation === undefined ? {} : { confirmation }),
+    ...(testAdoption === undefined ? {} : { testAdoption }),
   };
 }
 
@@ -587,21 +759,37 @@ export async function baselineDiff(
     throw new ForgeError('USR-003', { feature: 'forge baseline diff (no baseline recorded yet)' });
   }
   const clock = ctx.clock ?? SYSTEM_CLOCK;
+  const dryRun = options.dryRun ?? false;
   const targetRoot = options.dir ?? ctx.paths.resolveWithin('.');
   const gitProfile = await analyzeGitProfile(targetRoot, { clock: toVcsClock(clock) });
   const surveyResult = await runSurvey({ rootDir: targetRoot, gitProfile });
   const inventory = await runInventory({ rootDir: targetRoot, survey: surveyResult.survey });
-  const verification = options.noVerify
-    ? EMPTY_VERIFICATION
-    : await runVerificationPhase({
-        sourceRoot: targetRoot,
-        survey: surveyResult.survey,
-        inventory,
-        cartographyFindings: [],
-        inferenceFindings: [],
-        clock,
-        env: ctx.env,
-      });
+  let verification: VerificationResult;
+  if (options.noVerify) {
+    verification = EMPTY_VERIFICATION;
+  } else if (dryRun) {
+    // `BaselineDiff` (`@forge/kb/adopt`) carries no `warnings` field of its own for this function to
+    // append to — the identical direct-`console.warn` disclosure `readJsonReportIfValid` above
+    // already uses for the same reason (a self-contained data shape this file does not own and does
+    // not widen). `forge baseline diff` is not wired into the real CLI yet (a gauntlet-critic finding
+    // recorded `SPEC-QUESTIONS.md`), so this is reached only by a direct library caller today.
+    // eslint-disable-next-line no-console -- see the comment above.
+    console.warn(
+      '(dry run — would have run the real, sandboxed build/test verification (a real git clone and ' +
+        'subprocess); no subprocess was spawned.)',
+    );
+    verification = EMPTY_VERIFICATION;
+  } else {
+    verification = await runVerificationPhase({
+      sourceRoot: targetRoot,
+      survey: surveyResult.survey,
+      inventory,
+      cartographyFindings: [],
+      inferenceFindings: [],
+      clock,
+      env: ctx.env,
+    });
+  }
   const gapAnalysis = analyzeGaps({
     survey: surveyResult.survey,
     inventory,
@@ -625,6 +813,10 @@ export interface IncrementalReport {
   readonly newComponents: readonly string[];
   readonly newTables: readonly string[];
   readonly gapDeltas: BaselineDiff | undefined;
+  /** `(dry run — would have...)` notices — see `AdoptRunResult.warnings`'s own sibling field; this
+   * form has the identical two write/subprocess call sites (survey+inventory reports, VERIFICATION's
+   * real build/test subprocess) a gauntlet critic found `--dry-run` silently ran for real. */
+  readonly warnings: readonly string[];
 }
 
 function diffNames(
@@ -648,14 +840,23 @@ export async function adoptIncremental(
   options: AdoptOptions = {},
 ): Promise<IncrementalReport> {
   const clock = ctx.clock ?? SYSTEM_CLOCK;
+  const dryRun = options.dryRun ?? false;
   const targetRoot = options.dir ?? ctx.paths.resolveWithin('.');
   const previousInventory = await readInventoryReport(ctx.paths);
+  const warnings: string[] = [];
 
   const gitProfile = await analyzeGitProfile(targetRoot, { clock: toVcsClock(clock) });
   const surveyResult = await runSurvey({ rootDir: targetRoot, gitProfile });
   const inventory = await runInventory({ rootDir: targetRoot, survey: surveyResult.survey });
-  await writeSurveyReport(ctx.paths, surveyResult);
-  await writeInventoryReport(ctx.paths, inventory);
+  if (dryRun) {
+    warnings.push(
+      '(dry run — would have written reports/adoption/survey.json and ' +
+        'reports/adoption/inventory.json; neither was written.)',
+    );
+  } else {
+    await writeSurveyReport(ctx.paths, surveyResult);
+    await writeInventoryReport(ctx.paths, inventory);
+  }
 
   const newRoutes = previousInventory
     ? diffNames(
@@ -680,17 +881,26 @@ export async function adoptIncremental(
   const baseline = await baselineShow(ctx);
   let gapDeltas: BaselineDiff | undefined;
   if (baseline !== undefined) {
-    const verification = options.noVerify
-      ? EMPTY_VERIFICATION
-      : await runVerificationPhase({
-          sourceRoot: targetRoot,
-          survey: surveyResult.survey,
-          inventory,
-          cartographyFindings: [],
-          inferenceFindings: [],
-          clock,
-          env: ctx.env,
-        });
+    let verification: VerificationResult;
+    if (options.noVerify) {
+      verification = EMPTY_VERIFICATION;
+    } else if (dryRun) {
+      warnings.push(
+        '(dry run — would have run the real, sandboxed build/test verification (a real git clone ' +
+          'and subprocess); no subprocess was spawned.)',
+      );
+      verification = EMPTY_VERIFICATION;
+    } else {
+      verification = await runVerificationPhase({
+        sourceRoot: targetRoot,
+        survey: surveyResult.survey,
+        inventory,
+        cartographyFindings: [],
+        inferenceFindings: [],
+        clock,
+        env: ctx.env,
+      });
+    }
     const gapAnalysis = analyzeGaps({
       survey: surveyResult.survey,
       inventory,
@@ -706,5 +916,5 @@ export async function adoptIncremental(
     gapDeltas = diffBaselines(baseline, currentFacts);
   }
 
-  return { newRoutes, newComponents, newTables, gapDeltas };
+  return { newRoutes, newComponents, newTables, gapDeltas, warnings };
 }

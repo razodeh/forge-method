@@ -21,6 +21,7 @@ import {
   specMatrix,
   specNew,
   specOrphans,
+  specReDerive,
   specShow,
   SPEC_ARTIFACT_TYPES,
   specTrace,
@@ -97,6 +98,7 @@ const SPEC_SUBCOMMANDS = [
   'orphans',
   'new',
   'interfaces',
+  're-derive',
 ] as const;
 
 /** Exported for `migrate.ts`'s own `runMigrateRunCommand`. */
@@ -232,6 +234,38 @@ async function runSpecCommand(
             'forge spec orphans: no real orphans.',
     );
     return orphans.length > 0 ? EXIT_CODES.failure : EXIT_CODES.success;
+  }
+  if (sub === 're-derive') {
+    const { positionals: reDerivePositionals } = parseCommandFlags(rest, {});
+    const [id] = reDerivePositionals;
+    if (reDerivePositionals.length > 1) {
+      console.error('forge: "spec re-derive" needs a real <id> (at most one, never two or more).');
+      return EXIT_CODES.usage;
+    }
+    const result = await specReDerive(ctx, id);
+    const hasWork = result.staleTests.length > 0 || result.unboundAcceptanceCriteria.length > 0;
+    if (json) {
+      console.log(JSON.stringify({ v: 1, ...result }));
+    } else if (!hasWork) {
+      console.log(
+        `forge spec re-derive${id === undefined ? '' : ` ${id}`}: nothing needs re-deriving.`,
+      );
+    } else {
+      for (const testName of result.staleTests) {
+        console.error(
+          printable(`stale test (proves no current AC; rewrite or remove it): ${testName}`),
+        );
+      }
+      for (const unbound of result.unboundAcceptanceCriteria) {
+        console.error(
+          printable(
+            `${unbound.acId} (story ${unbound.storyId ?? '?'}) has no bound test -- a new test ` +
+              'needs to be derived for it.',
+          ),
+        );
+      }
+    }
+    return hasWork ? EXIT_CODES.failure : EXIT_CODES.success;
   }
   if (sub === 'new') {
     const { positionals } = parseCommandFlags(rest, {});

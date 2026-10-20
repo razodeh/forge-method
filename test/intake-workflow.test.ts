@@ -678,14 +678,17 @@ describe('the shipped replan workflow, run with --answers', () => {
     expect(result.runState.runStatus).toBe('completed');
   }, 20_000);
 
-  it('an approved change reaches the re-derive command (which needs `forge spec re-derive`, not wired yet: P11 D5)', async () => {
+  it('an approved change reaches the re-derive command, and it really runs and succeeds (specs/22 M17 P17)', async () => {
     const { project, result } = await replan('approve', 'approve');
     expect(result.runState.stepStatuses.get('replan:approve-change')).toBe('succeeded');
+    // CLOSED by `specs/22` M17 P17: `forge spec re-derive --json` is now wired, so the step the
+    // answer selected really runs through to completion — a freshly-`forge init`-scaffolded
+    // project has no Story with an unbound AC or a stale test, so it exits 0.
+    expect(result.runState.stepStatuses.get('replan:re-derive')).toBe('succeeded');
     const log = await readFile(
       path.join(project.dir, '.forge/state/runs', result.runId, 'events.ndjson'),
       'utf8',
     );
-    // Dispatched: the answer selected it. Whether the command exists is another piece's business.
     expect(log).toContain('"stepId":"replan:re-derive"');
     expect(log).toContain('StepStarted');
   }, 20_000);

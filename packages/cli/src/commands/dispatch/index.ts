@@ -38,6 +38,7 @@ import { ProjectPaths } from '@forge/core/fs';
 
 import { parseGlobalFlags } from '../../entry/parse-global-flags.ts';
 import { readOwnPackageVersion } from '../../init/package-root.ts';
+import { dispatchAdopt } from './adopt.ts';
 import { dispatchAdr } from './adr.ts';
 import { dispatchCustomizeAndCompile } from './customize-and-compile.ts';
 import { dispatchDiagram } from './diagram.ts';
@@ -70,6 +71,7 @@ function printVersion(): void {
 const DISPATCHERS: readonly Dispatcher[] = [
   dispatchRunAndGates,
   dispatchLifecycle,
+  dispatchAdopt,
   dispatchTestRun,
   dispatchTestBinding,
   dispatchTestExemptCoverageFlaky,

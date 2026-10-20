@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as YAML from 'yaml';
 
 import { pathExists, readTextFile, writeFileAtomic, ProjectPaths } from '@forge/core/fs';
@@ -29,6 +29,12 @@ import {
   baselineShow,
   type AdoptContext,
 } from '../../src/commands/adopt.ts';
+import { DETECTED_LAYER } from '../../src/commands/loop/test/detect.ts';
+import {
+  readStagedProposal,
+  writeStagedProposal,
+  type StagedProposalRecord,
+} from '../../src/commands/loop/test/adopt.ts';
 
 const dirs: string[] = [];
 
@@ -338,6 +344,25 @@ describe('forge baseline show|diff', () => {
     expect(diff.deltas['dependencyCount']).toBe(0);
     expect(diff.deltas['totalLines']).toBe(0);
   });
+
+  it('baselineDiff --dry-run skips the real build/test verification subprocess too (specs/22 M17 P17, gauntlet critic fix round 2)', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    const ctx = ctxFor(dir);
+    await adopt(ctx, { noVerify: true });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const diff = await baselineDiff(ctx, { dryRun: true });
+      // `seedFixtureRepo`'s own committed `test/index.test.ts` plus `scripts.test: 'true'` would give
+      // a real, non-zero `testCount` if `runVerificationPhase` actually ran -- `0` here is the real,
+      // observable proof that the dry run spawned no subprocess at all, not merely a mocked return.
+      expect(diff.current.testCount).toBe(0);
+      expect(warnSpy.mock.calls.some((call) => String(call[0]).startsWith('(dry run'))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 describe('adoptIncremental — the literal M10 exit test (one new, undocumented route)', () => {
@@ -457,6 +482,159 @@ describe('project.adopted marker — 17 §17.4 / PLAN-M10.md P20', () => {
     expect(config.project.adopted).toBe(true);
   });
 });
+
+describe('adopt --dry-run — a gauntlet critic fix: real writes/subprocess/tag under a dry run (specs/22 M17 P17)', () => {
+  it('makes zero writes, spawns no subprocess, and creates no BASELINE tag', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+
+    const result = await adopt(ctxFor(dir), { dryRun: true });
+
+    expect(result.warnings.some((w) => w.startsWith('(dry run'))).toBe(true);
+    const paths = new ProjectPaths(dir);
+    expect(await pathExistsFor(paths, 'reports/adoption/survey.json')).toBe(false);
+    expect(await pathExistsFor(paths, 'reports/adoption/inventory.json')).toBe(false);
+    expect(await pathExistsFor(paths, 'reports/adoption/gaps.md')).toBe(false);
+    expect(await pathExistsFor(paths, 'reports/adoption/baseline.json')).toBe(false);
+    expect(await pathExistsFor(paths, `.forge/test-adopt/${DETECTED_LAYER}.proposal.yaml`)).toBe(
+      false,
+    );
+    expect(await pathExistsFor(paths, '.forge/config.yaml')).toBe(false);
+
+    const { stdout } = await execa('git', ['tag', '--list', 'BASELINE'], { cwd: dir });
+    expect(stdout.trim()).toBe('');
+
+    // A real, non-dry run afterward still works end to end -- the dry run left nothing partially
+    // written to interfere with it.
+    const real = await adopt(ctxFor(dir), {});
+    expect(await pathExistsFor(paths, 'reports/adoption/baseline.json')).toBe(true);
+    expect(real.baseline?.tag).toBe('BASELINE');
+  });
+
+  it('skips the one-shot BASELINE tag even when the real build/test verification is also skipped by --no-verify', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    const result = await adopt(ctxFor(dir), { dryRun: true, noVerify: true });
+    expect(result.baseline?.tag).toBeUndefined();
+    const { stdout } = await execa('git', ['tag', '--list', 'BASELINE'], { cwd: dir });
+    expect(stdout.trim()).toBe('');
+  });
+
+  it('still returns a real, informational baseline/gate preview (not written to disk)', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    const result = await adopt(ctxFor(dir), { dryRun: true });
+    expect(result.baseline?.gate.conditions).toHaveLength(4);
+    expect(result.gapAnalysis?.findings.length).toBeGreaterThan(0);
+  });
+});
+
+describe('adopt test-adoption hook — already-proven guard, a gauntlet critic fix (specs/22 M17 P17)', () => {
+  const PROVEN_RECORD: StagedProposalRecord = {
+    layer: DETECTED_LAYER,
+    source: 'agent',
+    command: { run: 'npm test', output: { source: 'stdout' }, format: 'tap' },
+    reason: 'staged by the agent workflow, with a passing translator proof.',
+    proof: {
+      ok: true,
+      subjectHash: 'fixture-hash',
+      runnerVersion: '1.0.0',
+      checkedAt: '2026-01-01T00:00:00.000Z',
+    },
+  };
+
+  it('never overwrites an already-proven staged proposal with a fresh, unproven detection', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    const paths = new ProjectPaths(dir);
+    await writeStagedProposal(paths, DETECTED_LAYER, PROVEN_RECORD);
+
+    const result = await adopt(ctxFor(dir), { depth: 'quick', noVerify: true });
+
+    expect(result.testAdoption).toBeUndefined();
+    expect(
+      result.warnings.some((w) => w.includes('already-proven staged test-adoption proposal')),
+    ).toBe(true);
+    const onDisk = await readStagedProposal(paths, DETECTED_LAYER);
+    expect(onDisk).toEqual({ outcome: 'found', record: PROVEN_RECORD });
+  });
+
+  it('still re-detects normally when no staged proposal exists yet', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    const result = await adopt(ctxFor(dir), { depth: 'quick', noVerify: true });
+    expect(result.testAdoption).toBeDefined();
+  });
+
+  it('still re-detects when a staged proposal exists but has not been proven yet', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    const paths = new ProjectPaths(dir);
+    await writeStagedProposal(paths, DETECTED_LAYER, { ...PROVEN_RECORD, proof: undefined });
+    const result = await adopt(ctxFor(dir), { depth: 'quick', noVerify: true });
+    expect(result.testAdoption).toBeDefined();
+  });
+});
+
+describe('adopt test-adoption hook — scans the resolved target root, not ctx.paths, a gauntlet critic fix (specs/22 M17 P17)', () => {
+  it('detects against --dir, not the FORGE project ctx.paths is rooted at', async () => {
+    const forgeProjectDir = await tempRepo(); // no package.json at all
+    const targetDir = await tempRepo();
+    await seedFixtureVitestRepo(targetDir);
+
+    const result = await adopt(
+      { paths: new ProjectPaths(forgeProjectDir), env: process.env },
+      { dir: targetDir, depth: 'quick', noVerify: true },
+    );
+
+    expect(result.testAdoption?.outcome).toBe('staged');
+    // The staged proposal is written to the FORGE project (ctx.paths), not the scanned target.
+    expect(
+      await pathExistsFor(
+        new ProjectPaths(forgeProjectDir),
+        `.forge/test-adopt/${DETECTED_LAYER}.proposal.yaml`,
+      ),
+    ).toBe(true);
+    expect(
+      await pathExistsFor(
+        new ProjectPaths(targetDir),
+        `.forge/test-adopt/${DETECTED_LAYER}.proposal.yaml`,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('adopt --scope disclosure, a gauntlet critic fix (specs/22 M17 P17)', () => {
+  it('discloses that --scope only bypasses the size gate and does not narrow the real file walk', async () => {
+    const dir = await tempRepo();
+    await seedFixtureRepo(dir);
+    const result = await adopt(ctxFor(dir), { scope: 'src/', depth: 'quick', noVerify: true });
+    expect(
+      result.warnings.some((w) => w.includes('--scope') && w.includes('does not itself narrow')),
+    ).toBe(true);
+  });
+});
+
+/** A real fixture whose `package.json` declares `vitest` as a dependency, so `detectTestRunners`
+ * reaches a confident, `'staged'` outcome — distinct from `seedFixtureRepo`'s own deliberately
+ * unrecognised `scripts.test: 'true'`, which exists to exercise the `'handoff'` path instead. */
+async function seedFixtureVitestRepo(dir: string): Promise<void> {
+  await writeFixtureFile(
+    dir,
+    'package.json',
+    JSON.stringify(
+      {
+        name: 'vitest-fixture',
+        version: '1.0.0',
+        scripts: { test: 'vitest run' },
+        devDependencies: { vitest: '^2.0.0' },
+      },
+      null,
+      2,
+    ),
+  );
+  await commitAll(dir, 'initial');
+}
 
 async function pathExistsFor(paths: ProjectPaths, relative: string): Promise<boolean> {
   return pathExists(paths.resolveWithin(relative));

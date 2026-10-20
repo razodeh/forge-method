@@ -156,6 +156,189 @@ export async function specOrphans(ctx: SpecCommandContext): Promise<readonly Orp
   return graph.orphans();
 }
 
+/** Deterministic node-then-id ordering (`QUALITY-BAR.md` R10) — the same two-key sort
+ * `SpecGraph.childrenOf`/`nodes` already apply internally, re-applied here because
+ * `transitiveChildren` below merges several `childrenOf` calls into one set. */
+function compareNodes(a: GraphNode, b: GraphNode): number {
+  if (a.kind !== b.kind) return a.kind < b.kind ? -1 : 1;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * The transitive downstream closure of `rootId`: every node reachable by repeatedly following
+ * `SpecGraph.childrenOf` — `09` §9.4's typed edges read in the "what depends on this" direction
+ * (`STORY --partOf--> EPIC`, so `childrenOf(EPIC)` is every `STORY` of it; `AC --belongsTo--> STORY`,
+ * so `childrenOf(STORY)` is every `AC`; `TEST --proves--> AC`, so `childrenOf(AC)` is every `TEST`).
+ * Changing an EPIC therefore affects its STORYs, which affects their ACs, which affects their TESTs —
+ * exactly `09` §9.7 point 2's "which artifacts are affected (computed from the graph)", applied
+ * downward from one changed artifact. `rootId` itself is never included (a caller already knows it
+ * changed; this answers what else did).
+ */
+function transitiveChildren(graph: SpecGraph, rootId: string): readonly GraphNode[] {
+  const visited = new Map<string, GraphNode>();
+  let frontier: readonly string[] = [rootId];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const nodeId of frontier) {
+      for (const child of graph.childrenOf(nodeId)) {
+        if (!visited.has(child.id)) {
+          visited.set(child.id, child);
+          next.push(child.id);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return [...visited.values()].sort(compareNodes);
+}
+
+/** One AC `specReDerive` found with no TEST proving it — `storyId` is `undefined` only for the
+ * structurally-impossible case `SpecGraph.parentsOf` returns no parent for an AC node at all (every
+ * real AC node is only ever created alongside its own `belongsTo` edge, `build.ts`'s own single pass
+ * over `acClaimants`); kept optional rather than asserted non-null so a future, genuinely orphaned AC
+ * node shape change fails a type check here instead of a runtime crash. */
+export interface ReDeriveUnboundAcceptanceCriterion {
+  readonly acId: string;
+  readonly storyId: string | undefined;
+}
+
+export interface SpecReDeriveResult {
+  /** The artifact id `specReDerive` was asked about, or `undefined` for the whole-graph bare form. */
+  readonly scope: string | undefined;
+  /** `scope`'s own transitive downstream closure (empty, and meaningless, for the bare form — every
+   * node is trivially "affected" by the whole graph, so this is only populated when `scope` is set). */
+  readonly affected: readonly GraphNode[];
+  /** TEST ids within scope that `SpecGraph.orphans()` already marks as proving no AC — a spec edit
+   * removed or renamed the AC the test's name once claimed. These need rewriting or deleting. */
+  readonly staleTests: readonly string[];
+  /** AC ids within scope with no TEST node pointing at them at all — a new or reworded AC with
+   * nothing proving it yet. These need a new test derived. */
+  readonly unboundAcceptanceCriteria: readonly ReDeriveUnboundAcceptanceCriterion[];
+}
+
+/** Every TEST id `SpecGraph.orphans()` marks as proving no AC. */
+function orphanTestNames(graph: SpecGraph): ReadonlySet<string> {
+  return new Set(
+    graph
+      .orphans()
+      .filter((orphan) => orphan.kind === 'TEST')
+      .map((orphan) => orphan.id),
+  );
+}
+
+/**
+ * The real, disclosed reason `staleTests` cannot be computed from `SpecGraph` traversal alone: an
+ * orphan TEST (one proving no AC) has, by construction, no `proves` edge at all — `build.ts` only
+ * ever adds that edge when exactly one claimed AC id resolves — so it has no INCOMING edge either,
+ * and is therefore unreachable from anywhere via `childrenOf`/`transitiveChildren`, including from
+ * the very Story that declared it in its own `tests[]` array. The only way to attribute a stale test
+ * to a Story in scope is to read that Story's own raw `tests[]` field directly off its document and
+ * cross-check each name against the real orphan set, which is what this does. `storyIds` of
+ * `undefined` means every Story (the bare, whole-graph form); `extraTestId` additionally checks `id`
+ * itself when a caller named a TEST node directly (a Story's own closure never includes it, for the
+ * identical structural reason).
+ */
+function staleTestsFor(
+  docs: readonly ArtifactDocument[],
+  orphanNames: ReadonlySet<string>,
+  storyIds: ReadonlySet<string> | undefined,
+  extraTestId: string | undefined,
+): readonly string[] {
+  const found = new Set<string>();
+  if (extraTestId !== undefined && orphanNames.has(extraTestId)) found.add(extraTestId);
+  for (const doc of docs) {
+    const fm = doc.frontMatter as Readonly<Record<string, unknown>>;
+    const storyId = typeof fm['id'] === 'string' ? fm['id'] : undefined;
+    if (fm['type'] !== 'Story' || storyId === undefined) continue;
+    if (storyIds !== undefined && !storyIds.has(storyId)) continue;
+    const tests = Array.isArray(fm['tests']) ? fm['tests'] : [];
+    for (const test of tests) {
+      if (typeof test === 'string' && orphanNames.has(test)) found.add(test);
+    }
+  }
+  return [...found].sort();
+}
+
+/** AC nodes among `acNodes` with no TEST node pointing at them at all. */
+function unboundAcceptanceCriteriaFor(
+  graph: SpecGraph,
+  acNodes: readonly GraphNode[],
+): readonly ReDeriveUnboundAcceptanceCriterion[] {
+  return acNodes
+    .filter((node) => graph.childrenOf(node.id).length === 0)
+    .map((node) => ({ acId: node.id, storyId: graph.parentsOf(node.id)[0]?.id }));
+}
+
+/**
+ * `forge spec re-derive [<id>]` (`03` §3.2.2, post-v1.0 `specs/22` M17; wired by M17 P17,
+ * `SPEC-QUESTIONS.md` Q213) — the deterministic half of `09` §9.7 point 4's "affected tests are
+ * re-derived": once a spec artifact is edited (its own `revision`/`changelog` bumped, `09` §9.7
+ * point 4's own normative text; `ArtifactDocument.bumpRevision` is the real mechanism, already used
+ * by `forge adr accept/reject/supersede`), this computes exactly which existing tests are now stale
+ * and which acceptance criteria have nothing proving them — the same `SpecGraph` `trace`/`matrix`/
+ * `orphans` already build, composed rather than duplicated.
+ *
+ * With `id`, both lists are scoped to `id` itself plus its own transitive downstream closure
+ * (`transitiveChildren`) — re-deriving after editing one Story reports only that Story's own ACs/
+ * tests, not the whole project. Without `id` (`03` §3.2.2's own bare `re-derive` row), both cover
+ * the whole graph.
+ *
+ * **What this does not do, and why** (disclosed, not silently narrowed): it does not itself bump any
+ * artifact's `revision`/`changelog` (`09` §9.7 points 1-3 — a change proposal and its human approval —
+ * are `forge plan replan`'s own job, already wired, upstream of this command) or mark an AC
+ * `superseded` (no schema field for that exists in `acceptanceCriterionSchema` today — inventing one
+ * is a schema change this piece's own narrow "wire the command" mandate does not license). Most
+ * importantly, it does not write test CODE: turning "this AC has no test" into a real, passing test
+ * is the `sdet` agent's own job (`09` §9.5), an LLM dispatch this command does not make — identical in
+ * kind to `../adopt.ts`'s own disclosed CARTOGRAPHY/INFERENCE scope note. This command answers WHICH
+ * tests need deriving, deterministically and for real; deriving them is separate, later work.
+ *
+ * @throws {ForgeError} `KB-015` if `id` is given and names no real graph node (the identical code
+ * `specShow` already throws for the same "a user-typed id that names nothing" reason).
+ * @see specs/09 §9.4
+ * @see specs/09 §9.7
+ */
+export async function specReDerive(
+  ctx: SpecCommandContext,
+  id?: string,
+): Promise<SpecReDeriveResult> {
+  const docs = await loadGraphDocs(ctx);
+  const graph = SpecGraph.build(docs);
+  const orphanNames = orphanTestNames(graph);
+
+  if (id === undefined) {
+    return {
+      scope: undefined,
+      affected: [],
+      staleTests: staleTestsFor(docs, orphanNames, undefined, undefined),
+      unboundAcceptanceCriteria: unboundAcceptanceCriteriaFor(
+        graph,
+        graph.nodes().filter((node) => node.kind === 'AC'),
+      ),
+    };
+  }
+
+  const rootNode = graph.nodes().find((node) => node.id === id);
+  if (rootNode === undefined) {
+    throw new ForgeError('KB-015', { id });
+  }
+  const affected = transitiveChildren(graph, id);
+  const scopeNodes = [rootNode, ...affected];
+  const storyIds = new Set(
+    scopeNodes.filter((node) => node.kind === 'STORY').map((node) => node.id),
+  );
+
+  return {
+    scope: id,
+    affected,
+    staleTests: staleTestsFor(docs, orphanNames, storyIds, id),
+    unboundAcceptanceCriteria: unboundAcceptanceCriteriaFor(
+      graph,
+      scopeNodes.filter((node) => node.kind === 'AC'),
+    ),
+  };
+}
+
 /** The `ArtifactTypeId`s `docs/forge/specs/**` actually holds (`03` §3.2.2's own `forge spec new
  * <type>` domain) — a real subset of the full 27-type registry, distinct from `@forge/templates`'
  * own `TemplateArtifactTypeId` (all 27: every registered type has a template, but not every type
