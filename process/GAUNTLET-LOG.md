@@ -24072,3 +24072,123 @@ P14) missing from that same exemption list (fixed directly by the orchestrator a
 (the already-tracked P9/P10 interaction defect, unrelated to this piece, confirmed again).
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q335`.
+
+## M17 P17
+
+Wires `forge adopt`/`forge adopt --incremental`/`forge adopt --report` and `forge spec re-derive`
+into the real CLI dispatcher — both previously library-only, reachable only from in-process library
+calls or (for `adopt`) a direct test harness, never from the shipped command line. `specReDerive`,
+`transitiveChildren`, `staleTestsFor`, and `unboundAcceptanceCriteriaFor` are new library functions
+in `commands/spec.ts`; `dispatchAdopt`/`dispatchSpec`'s `re-derive` branch are the new dispatch glue.
+
+**Two independent critics, each in their own worktree, found 3 real defects between them in one
+round, one of them BLOCKING — the most severe single-round critic haul since M16 P14's fixed-point
+bug.** Critic1 (focused on the CLI-surface contract — global flags, `--dir`/`--scope`, dispatch-
+level wiring) found the BLOCKING issue: `forge adopt --dry-run` ran the real pipeline anyway — real
+file writes, a real `npm test` subprocess spawn, and a PERMANENT `BASELINE` git tag created, with
+`dispatchAdopt`/`adopt()` never reading `ctx.flags.dryRun` anywhere despite `specs/03`'s own
+global-flag table promising `--dry-run` is available on every command and makes no writes/spawns no
+sessions. Per `specs/17` §17.2 phase 8, that tag is never recreated or moved once it exists — a user
+merely previewing adoption, trusting the documented contract, permanently burns their one clean-
+baseline shot. The builder's own round-1 precedent claim ("only workflow-dispatching commands check
+`dryRun`") didn't hold even on its own terms (`forge kb sync` also skips it); critic1 identified the
+real distinguishing factor as one-shot/irreversible writes (a permanent tag, a real subprocess) vs.
+cheap/rebuildable ones, which `adopt`'s own writes are squarely the former of.
+
+Critic2 (focused on incremental-adoption idempotency and the new test-adoption hook from a
+different angle) found a MAJOR, independently real bug in the SAME new call site critic1 also hit
+from a different angle (not a duplicate — two distinct defects in one function): a plain `forge
+adopt` re-run unconditionally called `runDetectionAndStage(ctx.paths)`, silently overwriting an
+already-proven staged test-adoption proposal (`source: 'agent'` + a real passing `proof.ok: true`)
+back to `source: 'detected'` with no proof at all — destroying a user's already-verified test-
+adoption work on every subsequent plain re-run, live-proved and mutation-tested. Critic1
+independently found a SECOND, distinct bug in the identical function: test-adoption detection scans
+`ctx.paths`, never the resolved `targetRoot` — `detectTestRunners`/`runDetectionAndStage` had no
+parametrized root at all. The builder's own doc comment claiming this mirrored how SURVEY/INVENTORY
+already split `targetRoot` (scan) from `ctx.paths` (write) was itself inaccurate, per critic1's own
+direct read of those phases; this hook had no such split, it scanned the wrong root entirely. Repro:
+a Go-rooted `ctx.paths` adopting a disjoint Python `targetRoot` (via `--dir`) staged a `go test`
+proposal for a project with no Go toolchain at all — and critic1 confirmed this is first-class,
+documented CLI surface (`forge adopt [dir]`), not a hand-built edge case. Critic1 also found a MINOR
+(`--scope`, newly reachable from the real CLI via this piece, remains a pure no-op beyond bypassing
+the size gate, undisclosed).
+
+**Fix round 1 (all 4 consolidated, deduplicated across both critics)**: real `dryRun` threaded
+through every write/subprocess-spawn/tag-creation call site in both `adopt()` and
+`adoptIncremental()` (survey/inventory report writes, the test-adoption staged-proposal write,
+`runVerificationPhase`'s real subprocess, `writeReconstruction`, the gap-report write,
+`runConfirmationFlow`, the one-shot `createAnnotatedTag`, the baseline-report write,
+`markProjectAdopted`), each skip disclosed via a `(dry run — would have...)` warning naming exactly
+what was skipped — read-only computation (SURVEY/INVENTORY scan, gap analysis, measured facts) still
+runs for real, so the preview is genuine, not a stub; a guard reading the existing staged proposal
+before re-detecting, skipping entirely when it already carries `proof.ok === true`, with a named
+warning instead of a silent overwrite; `runDetectionAndStage` gained an optional `scanPaths`
+parameter (default `= paths`, so every existing P6/P7 single-argument caller is byte-identically
+unaffected — confirmed by both critics independently, one via a direct read of the default-parameter
+equivalence, the other via a live 99-test battery); `adopt()` now calls it with the real resolved
+`targetRoot` as the scan root while still writing to `ctx.paths`; a `--scope` disclosure warning
+matching the existing CARTOGRAPHY/INFERENCE idiom. Both critics independently re-verified round 1 by
+re-running their OWN original exploits as live code against the fixed commit, not by reading the
+diff: critic1 confirmed zero writes/no subprocess/no tag under `--dry-run` (both the full and
+`--incremental` paths) while `result.baseline`/`gapAnalysis` stayed genuinely populated; confirmed
+the wrong-root fix via the exact Go/Python repro (ecosystem now correctly resolves to the target);
+confirmed the `--scope` warning wording. Critic2 confirmed the overwrite guard via a byte-exact
+on-disk comparison (not just parsed fields) plus 3 new edge cases (nothing staged still re-detects;
+staged-but-unproven still gets overwritten, proving the guard isn't overly broad; a cross-check
+against critic1's own `scanPaths` fix showing the two compose correctly with no interaction bug) and
+a self-mutation test proving the trusted test would genuinely catch a regression.
+
+**Critic1's own fresh BLOCKING-level sweep during round-2 verification — not asked for — found one
+more, smaller gap the round-1 fix missed**: `baselineDiff()`, a sibling function sharing the
+identical `AdoptOptions` type, checked `options.noVerify` but never `options.dryRun`, so it still
+spawned a real VERIFICATION subprocess (a real git-clone-into-sandbox + build/test run) when called
+with `{ dryRun: true }` — confirmed live (seeded a real baseline, called it, got a real non-zero
+`testCount` instead of the zero a skipped verification should produce). Not live-exploitable through
+the shipped CLI today (`forge baseline diff` is deliberately not wired — see DECISION below), but a
+real correctness gap in code this very round touched, and this round's own two new `baselineDiff`
+tests never exercised `dryRun`, so it went untested — exactly the kind of landmine a future piece
+wiring `forge baseline diff` would otherwise walk into, assuming (reasonably, by then) that
+`AdoptOptions.dryRun` was already handled everywhere it's accepted. Fixed in a second, separately-
+committed round: gated `runVerificationPhase` behind `dryRun` there too, falling back to
+`EMPTY_VERIFICATION`; since `BaselineDiff` (a `@forge/kb/adopt` type this file does not own) carries
+no `warnings` field to append to, used the same direct `console.warn` disclosure
+`readJsonReportIfValid` already establishes elsewhere in this file for the identical situation (a
+self-contained data shape with nowhere to carry a message), with the choice and its reasoning
+disclosed in a code comment rather than silently reshaping a public type for a function with no real
+caller yet. New test added alongside the two pre-existing `baselineDiff` tests (left untouched),
+using the same real, observable signal (`testCount === 0`, which only happens if the real subprocess
+never ran) critic1's own live repro used — not a mocked return. Mutation-tested: forcing `dryRun` to
+always resolve `false` made the new test fail with the exact wrong value (`testCount: 1`) critic1
+found live. Independently re-verified by the orchestrator directly (read the real diff line by line,
+re-ran the specific new test for real via the repo's own `scripts/run-tests.mjs` runner, confirmed
+`tsc --noEmit`/lint/boundaries all clean) rather than a third critic round, given the fix's narrow,
+mechanical, single-function scope with a clear, already-live-tested repro in hand.
+
+**DECISION 1** — `forge baseline diff`/`forge baseline show` remain deliberately unwired into the
+real CLI by this piece (library-level only); the gap above is real but currently unreachable through
+any shipped command, named explicitly for whichever future piece wires it.
+
+**DECISION 2** — `specReDerive`'s pre-existing structural gap (silently returns "nothing needs
+re-deriving" for 6 of `specs/09` §9.4's 11 edge types the graph doesn't build, from M1 P14/Q31) was
+correctly left out of this round's fix list and NOT reopened — a pre-existing, already-disclosed
+limitation, not a regression this piece introduced. Both critics independently confirmed this is the
+correct scoping and did not re-litigate it.
+
+**Both critics independently converged on several of the builder's own round-1 DECISIONs as
+correct**, each re-verified via real, not merely re-read, testing: CARTOGRAPHY/INFERENCE non-wiring
+(matches every sibling phase's own existing pattern); `ask` defaulting to `'unknown'` (currently dead
+code in practice since neither phase populates claims yet, but structurally correct); the orphan-test
+cross-check (critic1 tested a harder, Epic-scoped fixture than critic2's own); `baseline show`/`diff`
+read-only correctness; `specReDerive` never writing. A self-caught naming-rule violation (4 of the
+builder's own new `describe()` titles folded extra prose inside the `(specs/22 M17 P17)` citation
+marker, the same mistake class flagged repeatedly across M16/M17) was found and fixed by the builder
+itself via the repo-wide root-enumerator sweep, independently sanity-checked by critic1 as cosmetic-
+only with zero coverage impact (4 `describe` lines changed, 0 `it` bodies, same test counts before
+and after).
+
+Full battery, both critics' sides, independently re-run multiple times across both rounds: 195+
+adopt-related tests, the 699-strong root-enumerator sweep (`workflows`/`gates`/`output-contract-
+known-gaps`/`spec-cli-examples`), direct `tsc --noEmit` (bypassing turbo's cache per the standing
+typecheck-methodology lesson), lint, and boundaries all clean on every pass.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q338`.

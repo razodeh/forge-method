@@ -30229,3 +30229,45 @@ prune`, `test binding --hunks`) were NOT touched — out of scope for this check
 way.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P17`.
+
+## Q338
+
+M17 P17 wires `forge adopt`/`forge adopt --incremental`/`forge adopt --report` and `forge spec
+re-derive` into the real CLI dispatcher (both were library-only before this piece). Two independent
+critics found 3 real defects in one round between them: a BLOCKING `--dry-run` gap (the real
+pipeline ran anyway under `--dry-run` — real writes, a real subprocess, a permanent `BASELINE` git
+tag, despite `specs/03`'s own global-flag table promising no writes/no spawns), and two distinct
+MAJOR bugs in the same new test-adoption hook (an unconditional re-detect silently overwrote an
+already-proven staged proposal; detection scanned `ctx.paths` instead of the resolved `targetRoot`,
+misdetecting the wrong project's test runner entirely when `--dir` differs from cwd) plus one MINOR
+(`--scope`, newly CLI-reachable via this piece, is a silent no-op beyond bypassing the size gate).
+
+**DECISION** — all 4 fixed in round 1: real `dryRun` threaded through every write/subprocess/tag
+call site in `adopt()`/`adoptIncremental()` with a `(dry run — ...)` disclosure per skipped site
+(read-only computation still runs, so the preview is genuine); a guard against re-detecting over an
+already-proven (`proof.ok === true`) staged proposal; `runDetectionAndStage` gained an optional
+`scanPaths` parameter (default `= paths`, so every existing P6/P7 caller is unaffected) and `adopt()`
+now passes the real `targetRoot`; a `--scope` disclosure warning matching the CARTOGRAPHY/INFERENCE
+idiom. Both critics independently re-ran their own original exploits as live code against the fix
+(not diff review) and confirmed all 4 genuinely closed, including 3 new edge cases (nothing-staged,
+staged-but-unproven, a cross-check between the two test-adoption fixes) and 2 self-mutation tests
+proving the trusted tests would catch a real regression.
+
+**DECISION** — `specReDerive`'s pre-existing gap (6 of `specs/09` §9.4's 11 edge types silently
+produce "nothing to re-derive," from M1 P14/Q31) is NOT a regression this piece introduced and was
+correctly left out of the fix list; both critics confirmed this scoping.
+
+**DECISION** — a 5th, smaller defect found by critic1's own fresh sweep during round-2 verification
+(`baselineDiff()`, sharing `AdoptOptions` with `adopt()`/`adoptIncremental()`, never read
+`options.dryRun` and still ran a real verification subprocess under `{dryRun:true}`) was fixed in a
+second, separately-committed round — gated behind `dryRun`, disclosed via a direct `console.warn`
+(the function's own return type carries no `warnings` field to append to, matching an existing
+precedent elsewhere in the same file for the identical situation) rather than widening a public type
+with no real caller yet. Not live-exploitable through the shipped CLI today — `forge baseline diff`/
+`forge baseline show` remain deliberately unwired by this piece — but a real gap in code this round
+touched, closed before it becomes a landmine for whichever future piece wires that command.
+Independently re-verified directly by the orchestrator (real diff read, the new test re-run for
+real, typecheck/lint/boundaries all clean) rather than a third critic round, given the fix's narrow,
+mechanical, single-function scope.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P17`.
