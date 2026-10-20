@@ -30112,3 +30112,19 @@ principle inject a bare, shadow-triggering tool name for a future caller — con
 today does; named for future awareness, not a current gap.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P7`.
+
+## Q334 — M17, orchestrator direct fix: 4 pre-existing stray-file gaps in `test/workspace-floor.test.ts`
+
+**Context.** Found while landing M17 P2: `test/workspace-floor.test.ts`'s own stray-file check
+failed on main at `a3398c2` (before P2 touched anything, confirmed by direct reproduction) --
+`IGNORED_PATHS` never registered 4 real, legitimate child-process/worker-thread fixtures two
+already-landed pieces introduced: `packages/cli/test/commands/loop/test/fixtures/
+proof-sigkill-child.ts` (M17 P6, `067352a`) and `packages/cli/test/commands/parity/fixtures/
+crashing-no-handler-worker.ts`/`crashing-normalize-worker.ts`/`isolation-signal-harness.ts` (M17
+P14 round 2, `840310b`). Found and correctly diagnosed by P2's own builder as pre-existing and out
+of its scope (confirmed via `git merge-base --is-ancestor`), not something P2 introduced.
+
+**DECISION** — fixed directly by the orchestrator: 4 new `IGNORED_PATHS` entries added, each
+matching the established "real child process/worker thread, never imported, never run as a vitest
+suite, unrecognised by `TEST_FILE`'s naming heuristic" shape every sibling entry in this set already
+uses. Confirmed `test/workspace-floor.test.ts` 18/18. `pnpm lint`/prettier clean.

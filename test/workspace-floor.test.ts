@@ -221,6 +221,27 @@ const IGNORED_PATHS = new Set([
   // "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming heuristic"
   // shape `fixtures.ts` immediately above already establishes, for the identical reason.
   'packages/cli/test/commands/parity/http-fixtures.ts',
+  // `packages/cli/test/commands/loop/test/fixtures/proof-sigkill-child.ts` (`specs/22` M17 P6): the
+  // real `runTranslatorProof` fixture child `proof-sigkill.test.ts` spawns via `node
+  // --experimental-strip-types` and `SIGKILL`s -- the identical "real child process, never imported,
+  // never run as a vitest suite, unrecognised by `TEST_FILE`'s naming heuristic" shape
+  // `binding-check-child.ts`/`hunk-mutation-check-child.ts` above already establish, for the
+  // identical reason.
+  'packages/cli/test/commands/loop/test/fixtures/proof-sigkill-child.ts',
+  // `packages/cli/test/commands/parity/fixtures/crashing-no-handler-worker.ts` and
+  // `.../crashing-normalize-worker.ts` (`specs/22` M17 P14): real worker-thread fixtures
+  // `normalize-budget.test.ts` loads BY PATH (a `workerUrl` test seam), never imported by any
+  // `*.test.ts` file and never run as a vitest suite themselves -- the identical "real child
+  // process/thread, unrecognised by `TEST_FILE`'s naming heuristic" shape every sigkill-child entry
+  // in this set already establishes, for the identical reason.
+  'packages/cli/test/commands/parity/fixtures/crashing-no-handler-worker.ts',
+  'packages/cli/test/commands/parity/fixtures/crashing-normalize-worker.ts',
+  // `packages/cli/test/commands/parity/fixtures/isolation-signal-harness.ts` (`specs/22` M17 P14): a
+  // standalone child-process harness `candidate-isolation.test.ts` spawns to receive a real signal on
+  // a SEPARATE process from the test runner's own -- the identical "real child process, never
+  // imported, never run as a vitest suite" shape the sigkill-child entries above already establish,
+  // for the identical reason.
+  'packages/cli/test/commands/parity/fixtures/isolation-signal-harness.ts',
 ]);
 
 /**
