@@ -24192,3 +24192,77 @@ known-gaps`/`spec-cli-examples`), direct `tsc --noEmit` (bypassing turbo's cache
 typecheck-methodology lesson), lint, and boundaries all clean on every pass.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q338`.
+
+## M17 P20
+
+Documentation-only piece: bringing an existing project's tests into FORGE (`forge test adopt`, the
+agent workflow, the translator proof, writing a translator by hand), trunk configuration, landing a
+run, retries, worktree location, Windows support status, and correcting the record on M16's own
+status. Added to 4 existing doc files (`docs/method-guide.md`, `docs/getting-started.md`,
+`docs/authoring-guide.md`, `docs/adapter-guide.md`); no product code touched, confirmed by both
+critics via `git diff` stat.
+
+**Gauntlet mechanism, per the M16 P16 precedent**: literal re-execution of every documented command
+in genuinely fresh scratch directories, not automated tests — a docs piece's review is not a weaker
+review than a code piece's. The builder ran every example twice (once while writing, once again
+after final edits, to catch any drift); both critics independently re-ran everything a THIRD and
+FOURTH time in their own separate, genuinely fresh scratch directories, one taking a verification
+lens (re-running exactly what was claimed, character-by-character output diffs) and the other an
+adversarial lens (harder cases the builder never tried).
+
+**Critic2's adversarial pass surfaced the single strongest result of this piece**: a non-`main` real
+git trunk (`git init -b trunk-line`), carried all the way through a real `forge init` and a real
+`forge parity check --trusted @trunk --json` — not just the `config get/set` surface the builder
+itself had checked. The real trunk name was correctly written, read back, and resolved by the parity
+check (which failed only for the ordinary "no declarations captured yet" reason, never the old
+M16-P16-era hardcoded-`refs/heads/main` failure). Traced the real code path
+(`resolveTrunkForTrustedFlag` reads config, never a literal; `detectRealTrunkBranch` reads git's own
+real symbolic-ref) and grepped the whole `packages/cli`/`packages/engine` tree for any remaining
+hardcoded `'main'` outside schema defaults/comments — none found. **This confirms M16 P16's own
+disclosed trunk-hardcoding defect is genuinely, fully fixed end to end** (by the real M17 P9 fix the
+new docs cite), not merely mitigated at the one surface the builder happened to test.
+
+Critic2 also independently proved BOTH halves of the new retry-asymmetry claim with real evidence,
+not structural inference alone: agent-kind steps genuinely retry (the real, shipped `run-engine.
+test.ts` retry-wiring suite, 4/4, asserting a real `StepRetried` event) and command-kind steps
+genuinely never do (a real `forge run` against a fail-once-then-succeed script, confirmed via the
+run's own real `events.ndjson` showing `StepFailed -> RunFailed` with zero `StepRetried` anywhere).
+
+Critic1's verification pass independently re-ran every single example the builder's report claimed,
+byte-for-byte, in fresh scratch dirs under its own scratchpad (not reusing the builder's or critic2's)
+— every JSON block, every refusal message, every event sequence, every `forge doctor` line matched
+exactly. Also independently re-confirmed all 4 of the builder's disclosed product limitations by
+reading the real cited source directly (not trusting the builder's prose): `runTranslatorProof`'s
+only production call site really is `adopt-agent.ts`; `commandStepSchema` really has no `retry` field
+at all, confirmed `.strict()`; the CLI's own shipped fallback message really still self-cites `bin.
+ts`'s now-empty doc comment, confirmed live via `forge --help`; all 3 Windows gaps confirmed exact and
+current against the real source (`ENV-007`, `shell.ts`'s win32-skipped descendant kill — confirmed by
+a repo-wide grep finding zero `taskkill` anywhere, `ci.yml`'s real 45-minute ceiling comment).
+
+**One MINOR finding (critic2), fixed directly**: two of the new doc passages quoted the real CLI
+fallback message (`commands/dispatch/index.ts`) in scare-quotes as `"not wired into this dispatcher
+yet"`; the real message reads `"not wired into this real, deliberately minimal dispatcher yet"` — two
+words silently dropped while presented as an exact quote. The substantive claim underneath (the
+fallback still self-cites `bin.ts`'s now command-list-less doc comment) was already confirmed
+precisely true by both critics independently; this was a quotation-precision nit, not a substantive
+inaccuracy. Fixed directly, re-verified clean with `prettier --check`, committed separately.
+
+**Both critics independently confirmed a clean prettier-reflow sweep** (a previously-seen defect
+class from M16 P16, where `proseWrap: always` inserts a stray space into a long inline-code token
+manually wrapped mid-token) — the builder's own 3 in-flight fixes for this were confirmed complete,
+nothing missed.
+
+**Four genuine product limitations found while writing and disclosed, not fixed (correctly out of
+scope for a docs-only piece)**, each independently re-confirmed against real source by both critics:
+(1) no CLI-wired path exists for a human-authored translator to get a real, recorded proof outside
+`forge test adopt --agent` — confirmed exhaustive (every real flag combination of both `forge test
+adopt` and `forge adopt` checked, no bypass found) by critic2 specifically hunting for a
+counter-example; (2) `command`-kind workflow steps structurally cannot retry at all, by design (no
+`retry:` field on that step kind's own schema); (3) the CLI's own shipped fallback message is itself
+stale, still pointing at `bin.ts`'s doc comment for a command list that file no longer carries since
+M17 P2's dispatch split — a real, live inconsistency in the tool's own user-facing text today, not
+merely a docs problem; (4) three confirmed-still-real Windows gaps (`ENV-007`'s outright refusal,
+`shell.ts`'s win32-skipped descendant-process kill, CI's own 45-minute Windows-job ceiling) — `P16`
+(Windows CI) remains deliberately not landed this milestone.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q339`.

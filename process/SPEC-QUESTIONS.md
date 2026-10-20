@@ -30271,3 +30271,42 @@ real, typecheck/lint/boundaries all clean) rather than a third critic round, giv
 mechanical, single-function scope.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P17`.
+
+## Q339
+
+M17 P20 is a documentation-only piece covering 7 mandate topics: bringing an existing project's
+tests into FORGE (`forge test adopt`, the agent workflow, the translator proof, writing a translator
+by hand), trunk configuration, landing a run, retries, worktree location, Windows support status,
+and correcting the record on M16's own completion status. Added to `docs/method-guide.md`, `docs/
+getting-started.md`, `docs/authoring-guide.md`, `docs/adapter-guide.md` — no product code touched,
+confirmed by both critics via `git diff` stat.
+
+Per the M16 P16 precedent, this piece's own gauntlet is literal re-execution of every documented
+command in genuinely fresh scratch directories, run independently by the builder (twice) and both
+critics (each a third time, in their own separate fresh dirs) — not automated tests, and not a
+weaker review than a code piece's.
+
+**DECISION** — critic2's adversarial pass (a non-`main` real git trunk carried through a real `forge
+init` and a real `forge parity check --trusted @trunk`, not just the `config get/set` surface the
+builder itself checked) confirms M16 P16's own disclosed trunk-hardcoding defect is genuinely, fully
+fixed end to end by the real M17 P9 fix — not merely mitigated at one surface. Both critics
+independently proved the new retry-asymmetry claim's two halves with real evidence (agent-kind steps
+genuinely retry per the real shipped retry-wiring test suite; command-kind steps genuinely never do,
+confirmed live via a real run's own event log).
+
+**DECISION** — 4 genuine product limitations found while writing were disclosed in the docs
+themselves rather than fixed (correctly out of scope for a docs-only piece), each independently
+re-confirmed against real source by both critics: no CLI-wired path for a human-authored translator's
+proof outside `--agent` (confirmed exhaustive, no bypass exists across every real flag combination);
+`command`-kind workflow steps cannot retry at all by schema design; the CLI's own shipped fallback
+message is itself stale, still self-citing `bin.ts`'s now command-list-less doc comment since M17
+P2's dispatch split — a real, live inconsistency in the tool's own user-facing text today; three
+confirmed-current Windows gaps (`ENV-007`, the win32-skipped descendant kill, CI's 45-minute job
+ceiling) — P16 (Windows CI) remains deliberately not landed this milestone.
+
+**DECISION** — 1 MINOR finding (critic2): two new doc passages quoted the real CLI fallback message
+in scare-quotes with 2 words silently dropped from the real text. Fixed directly (the substantive
+claim underneath was already confirmed precisely true by both critics independently) — a quotation-
+precision correction, not a substantive one.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P20`.
