@@ -30203,3 +30203,29 @@ passing tests in a worktree proves the code is correct, never that it is committ
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P2` (no separate entry; this is a correction to that
 same piece's own landing, not a new finding).
+
+## Q337 — M17, orchestrator direct fix: `specs/03`'s own "not wired yet" annotations were stale
+for 3 commands that had already been wired
+
+**Context.** Found while reviewing P17's own work (which wires `forge spec re-derive`):
+`specs/03-cli-and-installer.md`'s §3.2.2/§3.2.5 rows for `forge spec re-derive`, `forge test
+adopt`, and `forge migrate run` all still carried a "(post-v1.0... not wired yet)" parenthetical,
+even though all three are now real, landed commands (`forge test adopt`: M17 P6/P7; `forge migrate
+run`: M17 P18; `forge spec re-derive`: M17 P17, this same piece). `forge test adopt`'s own row was
+doubly stale: beyond the "not wired" clause, its documented signature was missing P7's own real
+`--check-proof <layer>`/`--run <runId>` flags entirely. Verified each command's real current
+behaviour directly against its own source (`packages/cli/src/commands/migrate/run.ts`,
+`dispatch/migrate.ts`'s own exit-code mapping; P7's own landed `adopt.ts`/`adopt-agent.ts`) before
+updating the prose, not just deleting the stale clause.
+
+**DECISION** — fixed directly by the orchestrator: all 3 rows updated to name the real landing
+piece instead of "not wired yet" (`forge test adopt`'s row additionally gained the 2 missing real
+flags and their behaviour); every corresponding pin in `test/spec-cli-examples.test.ts` (both the
+`expectBlock`/`expectLines` row-level pins and the separate `expectPinned` substring pins) updated
+to match byte-for-byte. Confirmed `test/spec-cli-examples.test.ts` 581/581 (no pin count change —
+each fix updated an existing pin's text, added none). `pnpm lint`/prettier clean. The 4 remaining
+"not wired yet" M16-era annotations in the same test file (`parity capture`/`check`, `evidence
+prune`, `test binding --hunks`) were NOT touched — out of scope for this check, unverified either
+way.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P17`.

@@ -6297,9 +6297,9 @@ describe('pinned sentences (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313, PLAN-M17.m
     ]);
   });
 
-  it('M17 specs/03 §3.2.2: forge spec re-derive is now a named subcommand, citing Q213', () => {
+  it('M17 specs/03 §3.2.2: forge spec re-derive is now a named subcommand, wired by P17', () => {
     expectLines(spec03_322(), [
-      '| `forge spec <sub>` | `list`, `show <id>`, `validate`, `trace <id>`, `matrix`, `orphans`, `new <type>`, `re-derive` (post-v1.0, `specs/22` M17; not wired yet — `09` §9.7 point 4, `Q213`) |',
+      '| `forge spec <sub>` | `list`, `show <id>`, `validate`, `trace <id>`, `matrix`, `orphans`, `new <type>`, `re-derive` (post-v1.0, `specs/22` M17 P17; `09` §9.7 point 4) |',
     ]);
   });
 
@@ -6308,14 +6308,14 @@ describe('pinned sentences (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313, PLAN-M17.m
       '| `forge test <sub>` | `plan`, `generate`, `run`, `report`, `flaky`, `coverage`, `binding`, `exempt`, `adopt` (post-v1.0, `specs/22` M17) |',
     ]);
     expectPinned(spec03_325(), [
-      "(Post-v1.0, `specs/22` M17; not wired yet.) Detects, or hands off to the agent-run `adopt-tests` workflow for, a project's test runner per layer (`13` F-TEST-11): inspects manifests, CI configuration and build files; writes a structured `execution.testCommands` entry preferring the runner's richest machine-readable format to a STAGED proposal record, `.forge/test-adopt/<layer>.proposal.yaml`, never straight to `.forge/config.yaml`.",
-      "`--write`, run alone, is the separate PROMOTION step: it copies a layer's staged proposal into the live `.forge/config.yaml`, which it refuses (typed, not a silent no-op) until that proposal's translator proof has passed and a human has approved it at `G-TestAdopt` (`10`).",
+      "(Post-v1.0, `specs/22` M17 P6/P7.) Detects, or hands off to the agent-run `adopt-tests` workflow for, a project's test runner per layer (`13` F-TEST-11): inspects manifests, CI configuration and build files; writes a structured `execution.testCommands` entry preferring the runner's richest machine-readable format to a STAGED proposal record, `.forge/test-adopt/<layer>.proposal.yaml`, never straight to `.forge/config.yaml`.",
+      "`--write [--run <runId>]`, run alone, is the separate PROMOTION step: it copies a layer's staged proposal into the live `.forge/config.yaml`, which it refuses (typed, not a silent no-op) until that proposal's translator proof has passed and a human has approved it at `G-TestAdopt` (`10`); `--run` scopes the approval lookup to one run (defaulting to the project's own last dispatched run), the same convention `forge gate approve`'s own `--run` already uses.",
     ]);
   });
 
   it('M17 specs/03 §3.2.5: forge migrate run applies not-yet-applied migrations.yaml entries by phase', () => {
     expectPinned(spec03_325(), [
-      "(Post-v1.0, `specs/22` M17; not wired yet — disclosed since `Q213`/`Q202`.) Applies every not-yet-applied entry of `docs/forge/kb/data/migrations.yaml` (`09` §9.7 point 4, the `model-data` brief's own shape) whose `phase` matches the given value, in the file's own apply order, honouring each entry's `after`/`expands` dependency: for each, runs the migration script or backfill routine the entry's own owning ADR named (built by the `expand`/`contract` workflow step that precedes this command in the `migrate` workflow), recording which entries this invocation applied so a repeat invocation is a no-op for them (the scripts themselves are also required to be independently idempotent, `12` F-DATA-6).",
+      "(Post-v1.0, `specs/22` M17 P18.) Applies every not-yet-applied entry of `docs/forge/kb/data/migrations.yaml` (`09` §9.7 point 4, the `model-data` brief's own shape) whose `phase` matches the given value, in the file's own apply order, honouring each entry's `after`/`expands` dependency: for each, runs the migration script or backfill routine the entry's own owning ADR named (built by the `expand`/`contract` workflow step that precedes this command in the `migrate` workflow), recording which entries this invocation applied so a repeat invocation is a no-op for them (the scripts themselves are also required to be independently idempotent, `12` F-DATA-6).",
     ]);
   });
 
@@ -6455,11 +6455,12 @@ describe("pin-test gaps closed to block granularity (specs/22 M17 P19) (PLAN-M17
     ]);
   });
 
-  it('M17 specs/03 §3.2.5 `forge test adopt` row block: the row, --write promotion, --agent and what it prints', () => {
+  it('M17 specs/03 §3.2.5 `forge test adopt` row block: the row, --write promotion, --agent, --check-proof and what it prints', () => {
     expectBlock(spec03(), [
-      "| `forge test adopt [--write] [--agent] [--json]` | (Post-v1.0, `specs/22` M17; not wired yet.) Detects, or hands off to the agent-run `adopt-tests` workflow for, a project's test runner per layer (`13` F-TEST-11): inspects manifests, CI configuration and build files; writes a structured `execution.testCommands` entry preferring the runner's richest machine-readable format to a STAGED proposal record, `.forge/test-adopt/<layer>.proposal.yaml`, never straight to `.forge/config.yaml`.",
-      "`--write`, run alone, is the separate PROMOTION step: it copies a layer's staged proposal into the live `.forge/config.yaml`, which it refuses (typed, not a silent no-op) until that proposal's translator proof has passed and a human has approved it at `G-TestAdopt` (`10`).",
-      '`--agent` requests the `adopt-tests` workflow directly rather than only on an unrecognised runner.',
+      "| `forge test adopt [--write [--run <runId>]] [--agent] [--check-proof <layer>] [--json]` | (Post-v1.0, `specs/22` M17 P6/P7.) Detects, or hands off to the agent-run `adopt-tests` workflow for, a project's test runner per layer (`13` F-TEST-11): inspects manifests, CI configuration and build files; writes a structured `execution.testCommands` entry preferring the runner's richest machine-readable format to a STAGED proposal record, `.forge/test-adopt/<layer>.proposal.yaml`, never straight to `.forge/config.yaml`.",
+      "`--write [--run <runId>]`, run alone, is the separate PROMOTION step: it copies a layer's staged proposal into the live `.forge/config.yaml`, which it refuses (typed, not a silent no-op) until that proposal's translator proof has passed and a human has approved it at `G-TestAdopt` (`10`); `--run` scopes the approval lookup to one run (defaulting to the project's own last dispatched run), the same convention `forge gate approve`'s own `--run` already uses.",
+      '`--agent` runs the `adopt-tests` workflow directly, investigating and proving a translator for real, rather than only proposing on an unrecognised runner.',
+      "`--check-proof <layer>` is `G-TestAdopt.gate.yaml`'s own deterministic check command, re-verifying the staged proof's own freshness.",
       'Prints what it detected or proposed, the translator-proof result where one ran, and, for `--write`, the promotion outcome.',
       '|',
     ]);
@@ -6467,7 +6468,7 @@ describe("pin-test gaps closed to block granularity (specs/22 M17 P19) (PLAN-M17
 
   it('M17 specs/03 §3.2.5 `forge migrate run` row block: the row, --migration, the exit codes and the --json envelope', () => {
     expectBlock(spec03(), [
-      "| `forge migrate run --phase <expand\\|migrate\\|contract> [--migration <id>] [--json]` | (Post-v1.0, `specs/22` M17; not wired yet — disclosed since `Q213`/`Q202`.) Applies every not-yet-applied entry of `docs/forge/kb/data/migrations.yaml` (`09` §9.7 point 4, the `model-data` brief's own shape) whose `phase` matches the given value, in the file's own apply order, honouring each entry's `after`/`expands` dependency: for each, runs the migration script or backfill routine the entry's own owning ADR named (built by the `expand`/`contract` workflow step that precedes this command in the `migrate` workflow), recording which entries this invocation applied so a repeat invocation is a no-op for them (the scripts themselves are also required to be independently idempotent, `12` F-DATA-6).",
+      "| `forge migrate run --phase <expand\\|migrate\\|contract> [--migration <id>] [--json]` | (Post-v1.0, `specs/22` M17 P18.) Applies every not-yet-applied entry of `docs/forge/kb/data/migrations.yaml` (`09` §9.7 point 4, the `model-data` brief's own shape) whose `phase` matches the given value, in the file's own apply order, honouring each entry's `after`/`expands` dependency: for each, runs the migration script or backfill routine the entry's own owning ADR named (built by the `expand`/`contract` workflow step that precedes this command in the `migrate` workflow), recording which entries this invocation applied so a repeat invocation is a no-op for them (the scripts themselves are also required to be independently idempotent, `12` F-DATA-6).",
       '`--migration <id>` restricts the run to one named entry rather than every entry of the given phase.',
       'Exit 0 only when every entry it attempted applied cleanly; 1 when one failed or could not be found; 2 on a usage error (an unknown `--phase` value, or `--migration` naming an id `migrations.yaml` does not have).',
       '`--json` prints `{"v":1,"phase":"<the --phase value>","applied":["id",...],"failed":0,"errors":0,"problems"?}`, the same `errors`/`problems` convention `forge test run`\'s own envelope uses (`09` §9.5).',
