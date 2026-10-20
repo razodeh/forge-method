@@ -1,0 +1,15 @@
+id: G-TestAdopt
+name: Test adoption gate
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: test-adoption:approved
+      run: 'forge test adopt --check-proof unit --json'
+      parser: forge-json
+      failOn: 'unapproved > 0'
+  advisory: []
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1

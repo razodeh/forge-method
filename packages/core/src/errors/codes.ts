@@ -3693,6 +3693,75 @@ export const ERROR_CODES = {
     remedy:
       "Choose a probe path that does not already exist in the project's own tree, then retry.",
   },
+  // `specs/22` M17 P7 (`13` F-TEST-11): `adopt-agent.ts`'s own `runAdoptTestsAgent` passes
+  // `callerConfinesWrites: true` to `assembleAgentSession` rather than a lane claim (this piece's own
+  // doc comment: every write here is additive, never a mutation of pre-existing source, matching P6's
+  // own `proof.ts` precedent for why no worktree is needed) -- so nothing enforces the claim for it.
+  // This is what DOES: `SessionResult.changedFiles` is checked against the one allowed prefix
+  // (`.forge/test-translators/`) after every round, and a session that wrote anywhere else is refused
+  // loudly rather than silently accepted (`QUALITY-BAR.md` R12).
+  'RUN-159': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { paths: string }) =>
+      `the adopt-tests agent session wrote outside its allowed claim (${show(d.paths)}): only ` +
+      '.forge/test-translators/** or docs/forge/reports/handoffs.md may be written during ' +
+      'investigation.',
+    remedy:
+      "Edit the test-architect agent's brief so it writes only the translator script, under " +
+      '.forge/test-translators/<layer>.<ext>, and its HandoffRecord, then retry.',
+  },
+  // `specs/22` M17 P7 (`13` F-TEST-11): the structured JSON `runAdoptTestsAgent` asks the test-architect
+  // session for (`ADOPT_TESTS_OUTPUT_SCHEMA`) is validated against a real zod schema before anything
+  // downstream (`runTranslatorProof`, `writeStagedProposal`) ever reads it (`QUALITY-BAR.md` R1: an
+  // agent's own structured output is `unknown` until validated, never trusted on its word). A session
+  // that reports something that does not parse -- a missing `command`/`probe`, a `command` that is only
+  // the legacy bare-string form a human-authored proposal may use but an agent-authored one may not,
+  // malformed JSON in the output channel the adapter already decoded -- ends the round immediately
+  // rather than being retried: there is nothing a same-shaped retry would fix about a response this
+  // malformed, and silently defaulting the missing fields would mean inventing a command FORGE never
+  // actually proposed.
+  'RUN-160': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { detail: string }) =>
+      `the test-architect session's structured response was not a usable adopt-tests proposal: ${show(d.detail)}.`,
+    remedy:
+      "Edit the adopt-tests brief so the session's structured output always carries a real " +
+      '"command" and "probe" (or "noTestsFound" with a proposed command and an ADR summary), then retry.',
+  },
+  // `specs/22` M17 P7, added after a fresh critic round found a real, live-reproduced exploit: the
+  // structured `command.run`/`.translate`/`.scope`/`.filter` the session reports is executed for real
+  // (`runTranslatorProof` -> `runStructuredTestLayer` -> `runShellCommand`), up to three times, with
+  // NOTHING checking it against `ADOPT_TESTS_EXEC_PATTERNS` -- the exec grant only ever gated the
+  // session's own IN-TURN tool calls, never this separate, automatic execution of whatever string
+  // the model's own JSON response names. A session that writes nothing at all via tool-use and simply
+  // REPORTS a malicious `command.run` reached a real shell, unsandboxed, with no relation to the
+  // grant at all -- proven live: a path outside the project root was written for real. `adopt-agent
+  // .ts`'s own `vetProposedTestCommand` now re-vets every one of those four fields, independently,
+  // against that exact allowlist (`vetProposedCommand`, `confined-command.ts` -- denylist, shell-
+  // operator/expansion refusal, grant membership, and per-word path-containment) before
+  // `runTranslatorProof` ever runs any of them; this is what it raises when one fails.
+  'RUN-161': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { field: string; command: string; reason: string }) =>
+      `the proposed test command's "${show(d.field)}" field (${show(d.command)}) was refused: ${show(d.reason)}.`,
+    remedy:
+      'Edit the adopt-tests brief so the proposed command stays within the granted, conventional ' +
+      'test-invocation forms and the project root, then retry.',
+  },
+  'RUN-162': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { adapterId: string }) =>
+      `the adopt-tests agent session needs a real, per-call gate on its own live exec, which ` +
+      `"${show(d.adapterId)}" cannot provide in its current configuration.`,
+    remedy:
+      'Set a transport that supports a real per-call exec gate (Claude Code: unset "transport" or ' +
+      'set it to "sdk" in platform.adapterConfig["claude-code"], and make sure the SDK package ' +
+      'resolves), then retry.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

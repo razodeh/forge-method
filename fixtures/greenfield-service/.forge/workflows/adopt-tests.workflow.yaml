@@ -1,0 +1,55 @@
+# forge:generated v=0.0.0 hash=c445744e6fa1e20e30aa378a75a1724506e725bdcd23449e21da41d7409ae554 — edits will be overwritten; use overrides/
+id: adopt-tests
+name: Adopt tests
+version: 1.0.0
+description: >-
+  Investigates how a project's tests actually run, proposes (or writes) a configuration, proves it
+  deterministically (13 F-TEST-11) and gates promotion on human approval (G-TestAdopt). `forge test
+  adopt` (bare, on an unconfident hand-off, or on `--agent`) drives this directly, ad hoc -- the same
+  "a real, already-built mechanism exists; call it directly" treatment `forge debug`/`review`/`panel`
+  get (`commands/loop/ad-hoc-step.ts`) -- because the bounded, named-failing-check retry loop this
+  piece's own mandate asks for (specs/22 M17 P7) is `commands/loop/test/adopt-agent.ts`'s own job, not
+  expressible as a plain step DAG with no cycles. This file is the real, validated, documented shape
+  of that work (every step kind, agent, brief and gate it names is real), but `forge run adopt-tests`
+  cannot actually commit a translator -- OR EVEN STAGE A PROPOSAL AT ALL -- the way `forge test adopt
+  --agent` does: `.forge/` sits in NEVER_WRITABLE_GLOBS (`@forge/engine/rca/fix-scan.ts`, `20`
+  §20.2/§20.5) for every generically-dispatched agent step's own write claim, whatever its own
+  `produces` says, and `.forge/test-adopt/<layer>.proposal.yaml` (the staged-proposal record itself,
+  `adopt.ts`) sits under that exact same prefix, so the `propose` step below, run the ordinary way the
+  compiled engine runs any other agent step, could not write a translator NOR stage a proposal for a
+  later `--write` to promote -- not merely run less-hardened (the "a real but less hardened path" gap
+  `debug.workflow.yaml`/`debugSymptom` models does not go this far; that one still writes real files,
+  just without the bounded retry). `forge test adopt --agent` bypasses this floor entirely
+  (`assembleAgentSession` with `callerConfinesWrites: true`, never routed through the compiled
+  engine's own claim enforcement) and is the only path that can ever really write one; this step's
+  own real, reachable job through the compiled engine is investigation and a HandoffRecord, never
+  the translator or the staged proposal itself.
+levels: [L1, L2, L3, L4]
+inputs:
+  - name: layer
+    type: string
+    required: false
+steps:
+  - id: propose
+    kind: agent
+    agent: test-architect
+    brief: briefs/adopt-tests.md
+    # `test-architect`'s own registered output (`modules/fm-core/agents/test-architect.agent.yaml`'s
+    # `outputs: [{type: HandoffRecord, ...}]`), the identical `subtype` convention
+    # `plan-stage.workflow.yaml`'s own `write-test-plan` step already uses -- declared here (not only
+    # `produces`) so an authoring role's claim is forced `strict` at every autonomy level (`06` §6.7,
+    # `test/authoring-roles-write.test.ts`'s own P15 invariant), never only at the levels `produces`
+    # alone would be. Disclosed gap: `adopt-agent.ts`'s own hardened `--agent` path does not write one
+    # yet (its own real outcome record is `StagedProposalRecord`, not a HandoffRecord) -- real only for
+    # `forge run adopt-tests`'s own, less-hardened dispatch of this same step. `.forge/test-
+    # translators/**` is deliberately NOT in `produces` here -- this file's own doc comment (above)
+    # explains why no `produces` entry could ever make that write real through this dispatch path.
+    outputs: [{ type: HandoffRecord, subtype: adopt-tests-proposal }]
+    produces: ['docs/forge/reports/handoffs.md']
+    retry: { maxAttempts: 3, retryOn: [test-failure] }
+    limits: { maxTurns: 30, wallClockMs: 900000, maxCostUsd: 3.0 }
+
+  - id: verify-proof
+    kind: gate
+    gate: G-TestAdopt
+    dependsOn: [propose]

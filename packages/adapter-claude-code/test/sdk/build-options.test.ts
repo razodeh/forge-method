@@ -198,3 +198,111 @@ describe('buildSdkOptions', () => {
     expect(options.strictMcpConfig).toBeUndefined();
   });
 });
+
+/** The third, required `CanUseTool` argument this suite never cares about the CONTENTS of, but must
+ * supply something real for -- minimal, satisfying only the fields the real, installed `.d.ts`
+ * actually requires (`signal`/`toolUseID`/`requestId`). */
+function canUseToolOptions(): Parameters<
+  NonNullable<ReturnType<typeof buildSdkOptions>['canUseTool']>
+>[2] {
+  return { signal: new AbortController().signal, toolUseID: 'tool-use-1', requestId: 'request-1' };
+}
+
+describe('buildSdkOptions: canUseTool (SessionRequest.vetExecCommand wiring) (specs/22 M17 P7) (critic round 5)', () => {
+  it('is omitted entirely from Options when req.vetExecCommand is unset -- strictly additive, no change for every caller before this round', () => {
+    const options = buildSdkOptions(baseRequest(), claudeCodeAdapterConfigSchema.parse({}));
+    expect(options.canUseTool).toBeUndefined();
+  });
+
+  it('denies a Bash call with the real vetExecCommand reason when the gate refuses', async () => {
+    const options = buildSdkOptions(
+      baseRequest({
+        vetExecCommand: () =>
+          Promise.resolve({
+            allowed: false,
+            reason: 'refused: reaches outside the sandboxed root',
+          }),
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const result = await options.canUseTool?.(
+      'Bash',
+      { command: 'make -f /tmp/evil.mk pwn' },
+      canUseToolOptions(),
+    );
+    expect(result).toEqual({
+      behavior: 'deny',
+      message: 'refused: reaches outside the sandboxed root',
+    });
+  });
+
+  it('allows a Bash call when the gate allows it', async () => {
+    const options = buildSdkOptions(
+      baseRequest({ vetExecCommand: () => Promise.resolve({ allowed: true }) }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const result = await options.canUseTool?.(
+      'Bash',
+      { command: 'node --test' },
+      canUseToolOptions(),
+    );
+    expect(result).toEqual({ behavior: 'allow' });
+  });
+
+  it('allows a non-Bash tool call immediately, without ever calling vetExecCommand at all', async () => {
+    let calls = 0;
+    const options = buildSdkOptions(
+      baseRequest({
+        vetExecCommand: () => {
+          calls += 1;
+          return Promise.resolve({ allowed: false, reason: 'should never be reached' });
+        },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const result = await options.canUseTool?.(
+      'Read',
+      { path: 'src/index.ts' },
+      canUseToolOptions(),
+    );
+    expect(result).toEqual({ behavior: 'allow' });
+    expect(calls).toBe(0);
+  });
+
+  it('denies (never allows) a Bash call whose own "command" is not a real string -- fail closed on an unexpected shape, matching isExecAllowed/vetProposedCommand\'s own convention everywhere else (specs/22 M17 P7, critic round 5: this branch used to fail OPEN)', async () => {
+    let calls = 0;
+    const options = buildSdkOptions(
+      baseRequest({
+        vetExecCommand: () => {
+          calls += 1;
+          return Promise.resolve({ allowed: true });
+        },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const missingCommand = await options.canUseTool?.('Bash', {}, canUseToolOptions());
+    const numericCommand = await options.canUseTool?.(
+      'Bash',
+      { command: 1234 },
+      canUseToolOptions(),
+    );
+    expect(missingCommand).toMatchObject({ behavior: 'deny' });
+    expect(numericCommand).toMatchObject({ behavior: 'deny' });
+    // Never even reached the real gate for a shape it cannot vet at all.
+    expect(calls).toBe(0);
+  });
+
+  it('never resolves to null for any input this suite exercises -- the real SDK\'s own doc comment warns a stray null blocks the tool "indefinitely"', async () => {
+    const options = buildSdkOptions(
+      baseRequest({ vetExecCommand: () => Promise.resolve({ allowed: false, reason: 'x' }) }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const opts = canUseToolOptions();
+    const results = await Promise.all([
+      options.canUseTool?.('Bash', { command: 'node --test' }, opts),
+      options.canUseTool?.('Bash', {}, opts),
+      options.canUseTool?.('Read', { path: 'x' }, opts),
+    ]);
+    for (const result of results) expect(result).not.toBeNull();
+  });
+});

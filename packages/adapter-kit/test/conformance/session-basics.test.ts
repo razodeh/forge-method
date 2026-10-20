@@ -50,6 +50,7 @@ const CAPABILITIES: AdapterCapabilities = {
   skills: 'none',
   toolProxy: false,
   turnLimitEnforcement: true,
+  execCommandGating: true,
 };
 
 function minimalAdapter(overrides: Partial<PlatformAdapter>): PlatformAdapter {

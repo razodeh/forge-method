@@ -124,3 +124,89 @@ describe('FakeSessionScript.writeFiles', () => {
     expect(events.some((event) => event.type === 'tool.result' && !event.ok)).toBe(true);
   });
 });
+
+/** `SessionRequest.vetExecCommand` (`specs/22` M17 P7, critic round 4): the one way a fake-adapter-
+ * backed test can exercise a caller's own per-call exec gate at all, since the real property it
+ * models (Claude Code's own SDK `canUseTool`, wired by `@forge/adapter-claude-code`'s own
+ * `build-options.ts`) lives in a real adapter this package deliberately never runs. Disclosed in
+ * `fake-adapter.ts`'s own `ScriptPhaseContext.vetExecCommand` doc comment: this proves the FAKE
+ * consults the callback correctly, never that the real SDK does. */
+describe('FakeSessionScript.execAttempts + SessionRequest.vetExecCommand', () => {
+  it('a scripted exec attempt that matches the tool grant but fails vetExecCommand is still refused', async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'exec', { execAttempts: ['make -f /tmp/evil.mk pwn'] });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(
+      baseRequest({
+        cwd,
+        prompt: 'exec',
+        tools: { read: true, write: true, exec: ['make *'], network: 'none' },
+        // Matches the grant pattern (`make *`) but is refused by the gate anyway -- the exact
+        // "pattern cannot express this verb, without this dangerous flag" gap `isExecAllowed` alone
+        // cannot close (`adopt-tests-grant.test.ts`'s own identical live repro).
+        vetExecCommand: (command: string) =>
+          Promise.resolve(
+            command.includes('-f /tmp/')
+              ? { allowed: false, reason: 'refused: reaches outside the sandboxed root' }
+              : { allowed: true },
+          ),
+      }),
+    );
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+
+    const execResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'exec:0',
+    );
+    expect(execResult).toMatchObject({ ok: false });
+  });
+
+  it('a scripted exec attempt that matches the tool grant AND passes vetExecCommand is allowed', async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'exec', { execAttempts: ['make test'] });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(
+      baseRequest({
+        cwd,
+        prompt: 'exec',
+        tools: { read: true, write: true, exec: ['make *'], network: 'none' },
+        vetExecCommand: (command: string) =>
+          Promise.resolve(
+            command.includes('-f /tmp/')
+              ? { allowed: false, reason: 'refused' }
+              : { allowed: true },
+          ),
+      }),
+    );
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+
+    const execResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'exec:0',
+    );
+    expect(execResult).toMatchObject({ ok: true });
+  });
+
+  it('with no vetExecCommand at all (every caller before critic round 4), behaviour is unchanged: grant membership alone decides', async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'exec', { execAttempts: ['make -f /tmp/evil.mk pwn'] });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(
+      baseRequest({
+        cwd,
+        prompt: 'exec',
+        tools: { read: true, write: true, exec: ['make *'], network: 'none' },
+      }),
+    );
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+
+    const execResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'exec:0',
+    );
+    // Allowed here ONLY because this test's own grant is deliberately loose and no gate is set --
+    // documenting the pre-round-4 status quo this file's own doc comment contrasts against, not
+    // endorsing the command.
+    expect(execResult).toMatchObject({ ok: true });
+  });
+});

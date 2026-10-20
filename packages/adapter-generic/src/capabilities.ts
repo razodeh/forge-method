@@ -132,5 +132,10 @@ export function genericCapabilities(config: AdapterYamlConfig): AdapterCapabilit
     // arg can be *passed* to the binary via `when`, but whether that real external tool actually
     // enforces it is entirely outside this adapter's own knowledge or control). Honestly `false`.
     turnLimitEnforcement: false,
+    // `specs/22` M17 P7, critic round 5: this adapter has no per-tool-call permission concept at all
+    // (`07` §7.5 — it invokes one external binary per its own config, never brokers individual live
+    // tool calls the way Claude Code's SDK `canUseTool` does), so `SessionRequest.vetExecCommand`, if a
+    // caller ever set one, could not be honoured here regardless. Honestly `false`.
+    execCommandGating: false,
   };
 }

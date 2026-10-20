@@ -132,6 +132,7 @@ describe('genericCapabilities: fixed, disclosed generic defaults for fields 07 Â
     expect(capabilities.skills).toBe('none');
     expect(capabilities.toolProxy).toBe(false);
     expect(capabilities.turnLimitEnforcement).toBe(false);
+    expect(capabilities.execCommandGating).toBe(false);
     expect(capabilities.permissionModes).toEqual([
       'manual',
       'accept-edits',

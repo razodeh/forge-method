@@ -33,6 +33,7 @@ function capabilities(overrides: Partial<AdapterCapabilities> = {}): AdapterCapa
     skills: 'none',
     toolProxy: false,
     turnLimitEnforcement: true,
+    execCommandGating: true,
     ...overrides,
   };
 }

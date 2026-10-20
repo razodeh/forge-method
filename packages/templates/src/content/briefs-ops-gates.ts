@@ -9,6 +9,7 @@
  * The keys of this batch (exactly these, no others):
  *   - reverse-derive-specs
  *   - adoption-gap-analysis
+ *   - adopt-tests
  *   - plan-migration
  *   - migration-expand
  *   - migration-contract
@@ -35,6 +36,7 @@
 export const OPS_AND_GATE_BRIEFS: Readonly<Record<string, string>> = {
   'reverse-derive-specs': 'templates/briefs/reverse-derive-specs.md',
   'adoption-gap-analysis': 'templates/briefs/adoption-gap-analysis.md',
+  'adopt-tests': 'templates/briefs/adopt-tests.md',
   'plan-migration': 'templates/briefs/plan-migration.md',
   'migration-expand': 'templates/briefs/migration-expand.md',
   'migration-contract': 'templates/briefs/migration-contract.md',

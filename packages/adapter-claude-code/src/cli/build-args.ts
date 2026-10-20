@@ -2,6 +2,16 @@
  * `buildCliArgs` — `07` §7.3's own mapping table, CLI column, confirmed against the real, installed
  * CLI's own `--help` text field-for-field (not assumed from the spec's prose alone).
  *
+ * **`SessionRequest.vetExecCommand` has no equivalent here at all (`specs/22` M17 P7, critic round
+ * 4).** `build-options.ts`'s own `buildCanUseTool` wires it into the SDK transport's real
+ * `Options.canUseTool`; the real, installed CLI's own `--help` text names no analogous per-call,
+ * in-process permission hook this argv-building function could wire into (the CLI binary runs as its
+ * own subprocess, `spawn.ts`, with no in-process callback surface at all). A session that falls back
+ * to this transport (the SDK's own documented fallback, `config.ts`'s own doc comment — the common
+ * case is the SDK package failing to resolve) gets no live, per-call exec gate regardless of whether
+ * a caller set `vetExecCommand`: a real, disclosed gap, not a silent one, carried here rather than
+ * invented an unconfirmed workaround for.
+ *
  * @see specs/07 §7.3
  * @see SPEC-QUESTIONS.md Q114
  * @see PLAN-M7.md P2

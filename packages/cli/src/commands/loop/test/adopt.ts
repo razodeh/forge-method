@@ -10,39 +10,39 @@
  * `execution.testCommands.<layer>` entry before that approval -- so a THIRD state (this file's own
  * staged record) sits between "investigated" and "live".
  *
- * **Why `--write` can never actually promote in THIS build.** `forge gate approve <id>` (`@forge/
- * engine/gates`' own `approveGate`) takes an already-loaded `GateDocument` -- there is structurally no
- * way to approve a gate whose own file does not exist. `G-TestAdopt.gate.yaml` is P7's surface
- * (`process/plans/PLAN-M17.md` P7), not built by this piece, so no approval for it can ever exist yet
- * -- `runPromotion` refuses at exactly that point (`'gate-not-available'`), honestly, rather than
- * writing speculative merge-into-`.forge/config.yaml` logic this build has no way to reach or test
- * (`QUALITY-BAR.md` R7). This IS the hand-off point `process/plans/PLAN-M17.md` P6 asks this piece to
- * build, not a gap in it -- P7 wires the real approval query and the final merge once its own gate
- * file exists, reusing `readStagedProposal`/`PromotionResult` as they stand.
- *
- * **`'gate-not-available'` is correct but not, today, what a real `forge test adopt --write` actually
- * hits.** A fresh critic round confirmed this precisely: `runDetectionAndStage` -- the only path that
- * ever stages a real record through the live CLI today -- never attaches a `proof` to what it writes
- * (`proof.ts`'s own doc comment: a probe is a mandatory input the deterministic detector cannot
- * author on its own), so `runPromotion` always finds `staged.proof === undefined` first and refuses
- * at `'proof-not-passing'` instead. `'gate-not-available'` is real and correctly reachable -- a
- * staged record WITH a recorded, passing proof genuinely reaches it (this file's own tests construct
- * exactly that record directly, and P7's `adopt-tests` workflow is expected to produce one for real)
- * -- it is simply not what fires for the one real caller this piece's own CLI wiring has today.
+ * **The P7 hand-off, closed.** `G-TestAdopt.gate.yaml` now exists (`templates/checks/G-TestAdopt.gate.yaml`,
+ * `specs/22` M17 P7), scheduled by `templates/workflows/adopt-tests.workflow.yaml`'s own `kind: gate`
+ * step (`10` §10.3 rule 8). `runPromotion` now really can reach `'promoted'`: it re-runs the identical
+ * deterministic check the gate's own `test-adoption:approved` check shells out to
+ * ({@link checkTestAdoptionApproved}, in-process rather than via a second `forge` subprocess -- this
+ * function's own job is deciding whether to merge, not re-producing `forge gate check`'s own report/
+ * telemetry audit trail, which a human who wants it still gets by running `forge gate check
+ * G-TestAdopt`/`forge gate approve G-TestAdopt` themselves, the normative way `10` §10.3 rule 6
+ * already requires approval to happen), then asks whether a human has actually recorded that approval
+ * for the given run (`isGateApprovedForRun`, reading the real `GateApproved`/`GateRejected` events
+ * `@forge/telemetry/events` already persists -- the identical source `gate-commands.ts`'s own
+ * `recordedWaivers` reads for waivers). Only once both are true does it merge the staged command into
+ * the live `.forge/config.yaml` (`mergeStagedCommandIntoConfig`) -- never through `configSet`
+ * (`../../config.ts`), which forces every `execution.testCommands.<layer>` value through
+ * `testCommandValue`'s own "never YAML-parsed" bare-string path and cannot write the structured form
+ * a P7 proposal actually is.
  *
  * @see specs/10 rule 8 (`G-TestAdopt`)
  * @see specs/13 F-TEST-11
  * @see specs/22 M17 P6
+ * @see specs/22 M17 P7
  */
 import { ForgeError } from '@forge/core/errors';
-import { pathExists, readTextFile, writeFileAtomic } from '@forge/core/fs';
+import { listDirSorted, pathExists, readTextFile, writeFileAtomic } from '@forge/core/fs';
 import type { AbsolutePath, ProjectPaths } from '@forge/core/fs';
-import { testCommandEntrySchema, type TestCommandEntry } from '@forge/schemas/config';
+import { configSchema, testCommandEntrySchema, type TestCommandEntry } from '@forge/schemas/config';
+import { readEvents } from '@forge/telemetry/events';
 import * as YAML from 'yaml';
 import { z } from 'zod';
 
+import { CONFIG_REL_PATH, readConfig } from '../../config.ts';
 import { DETECTED_LAYER, detectTestRunners, type DetectedCandidate } from './detect.ts';
-import type { ProofCheckNumber } from './proof.ts';
+import { computeProofSubjectHash, type ProofCheckNumber } from './proof.ts';
 
 const PROPOSAL_ROOT = '.forge/test-adopt';
 
@@ -254,15 +254,247 @@ export async function runDetectionAndStage(paths: ProjectPaths): Promise<Detecti
 export type PromotionResult =
   | { readonly outcome: 'no-staged-proposal'; readonly layer: string }
   | { readonly outcome: 'proof-not-passing'; readonly layer: string; readonly detail: string }
-  | { readonly outcome: 'gate-not-available'; readonly layer: string };
+  | { readonly outcome: 'gate-not-available'; readonly layer: string }
+  | { readonly outcome: 'not-approved'; readonly layer: string }
+  | { readonly outcome: 'promoted'; readonly layer: string };
+
+/** Every real `execution.testCommands.<layer>` key `G-TestAdopt`'s own `kind: gate` step may reach --
+ * `detect.ts`'s own `DETECTED_LAYER` ('unit') today, but this piece never hardcodes that: `--check-
+ * proof <layer>` and `runPromotion` both take a real layer argument. */
+export interface TestAdoptionApprovalResult {
+  readonly v: 1;
+  readonly layer: string;
+  /** `0`/`1`, never a `boolean` -- `G-TestAdopt.gate.yaml`'s own `failOn: 'unapproved > 0'`
+   * (`evaluate.ts`'s `SUPPORTED_PARSERS`) reads a real JSON number off this command's own stdout, the
+   * identical shape every other shipped gate's own `failOn` field already reads (`test/gates.test.ts`'s
+   * own `PASSING_OUTPUT`/`FAILING_OUTPUT`). */
+  readonly unapproved: 0 | 1;
+  readonly detail: string;
+}
+
+const TRANSLATOR_DIR_REL_PATH = '.forge/test-translators';
+
+/** The real, current content of `<layer>`'s own translator script, re-read off disk at check time --
+ * never the content a PAST proof run happened to see. There is no dedicated path field anywhere in
+ * `StagedProposalRecord` (`13` F-TEST-11's own fixed shape; this piece reuses it rather than widening
+ * it): the translator always lands at exactly `.forge/test-translators/<layer>.<ext>`
+ * (`adopt-agent.ts`'s own `TRANSLATOR_CLAIM_PREFIX`), so the one unknown -- `<ext>` -- is resolved by
+ * listing the directory and matching the layer's own prefix, never by storing the path redundantly.
+ * `undefined` when none exists, or when more than one does (ambiguous -- `checkTestAdoptionApproved`
+ * treats either as "cannot re-verify," never as a guess at which one is current). */
+async function currentTranslatorContent(
+  paths: ProjectPaths,
+  layer: string,
+): Promise<string | undefined> {
+  const dir = paths.resolveWithin(TRANSLATOR_DIR_REL_PATH);
+  if (!(await pathExists(dir))) return undefined;
+  const entries = await listDirSorted(dir);
+  const matches = entries.filter((name) => name.startsWith(`${layer}.`));
+  if (matches.length !== 1) return undefined;
+  const only = matches[0];
+  return only === undefined
+    ? undefined
+    : readTextFile(paths.resolveWithin(`${TRANSLATOR_DIR_REL_PATH}/${only}`));
+}
+
+/**
+ * `G-TestAdopt.gate.yaml`'s own `test-adoption:approved` deterministic check (`10` §10.3 rule 8,
+ * `specs/22` M17 P7) -- the EXACT same logic `forge test adopt --check-proof <layer> --json`
+ * (`bin.ts`) runs for that gate's own `run:` command, exported here so `runPromotion` can ask the
+ * identical question in-process rather than shelling a second `forge` subprocess for its own,
+ * narrower purpose (deciding whether `--write` may proceed, not producing a gate report).
+ *
+ * Passes (`unapproved: 0`) only when: a staged proposal exists for `layer`; it carries a RECORDED,
+ * PASSING translator proof; and that proof is still CURRENT -- its own `subjectHash` matches the
+ * proposal's current canonical form (`computeProofSubjectHash`, `proof.ts`), re-derived from the
+ * translator's own REAL, CURRENT file content when one is declared, never the content a past run
+ * happened to see (`10` §10.3 rule 8's own "no older than the translator's own current content
+ * hash").
+ *
+ * **Disclosed, not solved** (the same honest-limitation discipline `proof.ts`'s own doc comment
+ * already models): the OTHER half of that same spec sentence -- "and the detected runner's own
+ * current version" -- is not independently re-derived here. `proof.ts`'s own `TranslatorProofInput
+ * .runnerVersion` doc comment is explicit that the version is caller-supplied, never derived by the
+ * proof harness itself ("this keeps the harness a pure function of its real inputs, with no opinion
+ * of its own about how a runner's version is obtained"); re-deriving it at check time would mean
+ * guessing a `--version` invocation for an arbitrary runner, which no schema field here names a
+ * convention for. A translator or proposal edited since the proof was taken is still caught (the
+ * subject-hash half); a runner silently upgraded in place, with nothing else changed, is not.
+ *
+ * @see specs/10 rule 8
+ * @see specs/13 F-TEST-11
+ * @see specs/22 M17 P7
+ */
+export async function checkTestAdoptionApproved(
+  paths: ProjectPaths,
+  layer: string,
+): Promise<TestAdoptionApprovalResult> {
+  const staged = await loadStagedProposalOrThrow(paths, layer);
+  return evaluateTestAdoptionApproval(staged, paths, layer);
+}
+
+/**
+ * `checkTestAdoptionApproved`'s own real logic, factored out so a caller that has ALREADY loaded the
+ * staged record (`runPromotion`, below) can ask the identical question without reading
+ * `.forge/test-adopt/<layer>.proposal.yaml` a second time.
+ *
+ * **Why the second read mattered (a fresh critic round's own live repro).** `runPromotion` used to
+ * read the staged record once itself, then call `checkTestAdoptionApproved` (which reads it AGAIN,
+ * independently) to decide whether to proceed, and finally merge the FIRST read's own `command` --
+ * three real reads of the identical file, with real work between them and no locking. A concurrent
+ * rewrite of the staged file between the first and second read let the approval decision and the
+ * merged command disagree: `--write` could promote a DIFFERENT command than the one its own check
+ * had just verified. Reading once, here, and threading that SAME in-memory record through both the
+ * evaluation and the merge closes it -- there is no longer a second or third read of this file for
+ * `runPromotion` to race against at all.
+ */
+async function evaluateTestAdoptionApproval(
+  staged: StagedProposalRecord | undefined,
+  paths: ProjectPaths,
+  layer: string,
+): Promise<TestAdoptionApprovalResult> {
+  if (staged === undefined) {
+    return { v: 1, layer, unapproved: 1, detail: `no staged proposal exists for "${layer}".` };
+  }
+  if (staged.proof === undefined) {
+    return {
+      v: 1,
+      layer,
+      unapproved: 1,
+      detail: "no translator proof has been recorded for this layer's staged proposal yet.",
+    };
+  }
+  if (!staged.proof.ok) {
+    return {
+      v: 1,
+      layer,
+      unapproved: 1,
+      detail: `the recorded translator proof failed check ${String(staged.proof.failedCheck)}: ${staged.proof.reason}`,
+    };
+  }
+  const needsTranslator =
+    typeof staged.command !== 'string' && staged.command.translate !== undefined;
+  const translatorContent = needsTranslator
+    ? await currentTranslatorContent(paths, layer)
+    : undefined;
+  if (needsTranslator && translatorContent === undefined) {
+    return {
+      v: 1,
+      layer,
+      unapproved: 1,
+      detail:
+        "the staged proposal declares a translator, but this layer's own translator script is " +
+        'missing (or ambiguous: more than one file) under .forge/test-translators/, so the ' +
+        "recorded proof's freshness cannot be re-verified.",
+    };
+  }
+  // `runTranslatorProof` (`proof.ts`) only ever accepts a STRUCTURED command -- a staged record whose
+  // own `proof.ok` is `true` (the only way this line is reached, both returns above it already
+  // handled `proof === undefined`/`!proof.ok`) can only have gotten there by actually passing that
+  // proof, which cannot happen for the legacy bare-string form. The type system cannot see that
+  // invariant across `writeStagedProposal`'s own real callers, so it is named here instead.
+  const currentHash = computeProofSubjectHash(
+    staged.command as Exclude<TestCommandEntry, string>,
+    translatorContent,
+  );
+  if (currentHash !== staged.proof.subjectHash) {
+    return {
+      v: 1,
+      layer,
+      unapproved: 1,
+      detail:
+        'the recorded translator proof is stale: the proposal or its translator changed since ' +
+        'the proof was taken.',
+    };
+  }
+  return {
+    v: 1,
+    layer,
+    unapproved: 0,
+    detail: 'the recorded translator proof passed and is current.',
+  };
+}
+
+/** Whether a human has recorded approval of `gateId` in `runId`'s own real event log
+ * (`@forge/telemetry/events`) -- the identical source `gate-commands.ts`'s own `recordedWaivers`
+ * reads for waivers, read here for approvals instead. A LATER `GateRejected` for the same gate
+ * supersedes an earlier `GateApproved` (events are read in their real append order, so the last one
+ * this function sees wins) -- approval is never sticky past an explicit later rejection. */
+async function isGateApprovedForRun(
+  projectRoot: string,
+  runId: string,
+  gateId: string,
+): Promise<boolean> {
+  let approved = false;
+  for await (const event of readEvents(projectRoot, runId)) {
+    if (event.type !== 'GateApproved' && event.type !== 'GateRejected') continue;
+    const payload = event.payload;
+    if (typeof payload !== 'object' || payload === null) continue;
+    if ((payload as Readonly<Record<string, unknown>>)['gateId'] !== gateId) continue;
+    approved = event.type === 'GateApproved';
+  }
+  return approved;
+}
+
+/** `staged.command`, merged into the LIVE `.forge/config.yaml` at `execution.testCommands.<layer>` --
+ * never through `configSet` (`../../config.ts`), whose own `testCommandValue` forces every
+ * `execution.testCommands.<layer>` value through its "never YAML-parsed, always the bare-string
+ * form" path (`configSet`'s own doc comment: "the value as written... `true`, `123` and `a: b` would
+ * parse into other types" is about avoiding an ACCIDENTAL type change, not about ever accepting the
+ * real, intentional structured form). Re-validates the WHOLE config against `configSchema` before
+ * writing, the identical discipline `configSet` itself already applies, so a merge that would
+ * produce an invalid config is refused (`CFG-001`) rather than written. */
+async function mergeStagedCommandIntoConfig(
+  paths: ProjectPaths,
+  layer: string,
+  command: TestCommandEntry,
+): Promise<void> {
+  const config = await readConfig(paths);
+  const merged = {
+    ...config,
+    execution: {
+      ...config.execution,
+      testCommands: { ...config.execution.testCommands, [layer]: command },
+    },
+  };
+  const result = configSchema.safeParse(merged);
+  if (!result.success) {
+    throw new ForgeError('CFG-001', { path: CONFIG_REL_PATH, line: 0 });
+  }
+  await writeFileAtomic(paths.resolveWithin(CONFIG_REL_PATH), YAML.stringify(result.data));
+}
+
+/** `--write`'s own promotion context: where this project's gates live, its real root (for the real
+ * event log `isGateApprovedForRun` reads), and how to resolve the run whose own `G-TestAdopt`
+ * approval is being asked about (`forge test adopt --write --run <runId>`, mirroring `forge gate
+ * approve <id> --run <runId>`'s identical convention -- approval is always run-scoped, never a
+ * standalone, global record).
+ *
+ * `resolveRunId` is a THUNK, not a plain `runId` string, called only once `runPromotion` actually
+ * needs one -- `no-staged-proposal`/`proof-not-passing`/`gate-not-available` are all real, reachable
+ * refusals for a project that has never run anything at all (bin.ts's own `resolveDispatchRunId`
+ * throws `RUN-048` when `--run` is omitted and no `last-run.json` exists yet), and a fresh critic
+ * round confirmed directly that resolving it eagerly made every ONE of those three refusals fail
+ * with `RUN-048` instead of their own real, named reason on a project with no prior run at all. */
+export interface PromotionContext {
+  readonly checksRoot: string;
+  readonly projectRoot: string;
+  readonly resolveRunId: () => Promise<string>;
+}
 
 /**
  * `--write`'s own promotion check (`13` F-TEST-11): refuses, typed, for every real reason short of
- * an actual `G-TestAdopt` approval -- which this build cannot produce at all (this file's own doc
- * comment). Never a silent no-op and never promotes: there is no `'promoted'` branch in
- * {@link PromotionResult} because this function cannot reach one yet.
+ * an actual, recorded `G-TestAdopt` approval, and -- now that `G-TestAdopt.gate.yaml` exists
+ * (`specs/22` M17 P7) -- really promotes once one exists. Never a silent no-op: `'promoted'` is the
+ * one outcome that writes anything at all, and it is reached only after BOTH the deterministic check
+ * ({@link checkTestAdoptionApproved}) and a real recorded human approval ({@link isGateApprovedForRun})
+ * agree.
  */
-export async function runPromotion(paths: ProjectPaths, layer: string): Promise<PromotionResult> {
+export async function runPromotion(
+  paths: ProjectPaths,
+  layer: string,
+  context: PromotionContext,
+): Promise<PromotionResult> {
   const staged = await loadStagedProposalOrThrow(paths, layer);
   if (staged === undefined) return { outcome: 'no-staged-proposal', layer };
   if (staged.proof === undefined) {
@@ -279,5 +511,23 @@ export async function runPromotion(paths: ProjectPaths, layer: string): Promise<
       detail: `the recorded translator proof failed check ${String(staged.proof.failedCheck)}: ${staged.proof.reason}`,
     };
   }
-  return { outcome: 'gate-not-available', layer };
+  const gatePath = paths.resolveWithin(`${context.checksRoot}/G-TestAdopt.gate.yaml`);
+  if (!(await pathExists(gatePath))) {
+    return { outcome: 'gate-not-available', layer };
+  }
+  // The SAME `staged` this function already read, above -- never a second read of the staged-proposal
+  // file (`evaluateTestAdoptionApproval`'s own doc comment has the full critic finding this closes).
+  const check = await evaluateTestAdoptionApproval(staged, paths, layer);
+  if (check.unapproved === 1) {
+    return { outcome: 'proof-not-passing', layer, detail: check.detail };
+  }
+  const runId = await context.resolveRunId();
+  const approved = await isGateApprovedForRun(context.projectRoot, runId, 'G-TestAdopt');
+  if (!approved) {
+    return { outcome: 'not-approved', layer };
+  }
+  // The identical `staged.command` the check above just verified -- never re-read, so the merge can
+  // never disagree with what was actually checked.
+  await mergeStagedCommandIntoConfig(paths, layer, staged.command);
+  return { outcome: 'promoted', layer };
 }

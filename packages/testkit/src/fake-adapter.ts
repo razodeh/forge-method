@@ -157,6 +157,12 @@ const DEFAULT_CAPABILITIES: AdapterCapabilities = {
   // Genuinely backed up, not a degraded default: `runScriptPhases`'s own `maxTurns` handling below
   // really does truncate at the granted limit and really does report `reason: 'limit'` when it does.
   turnLimitEnforcement: true,
+  // Genuinely backed up, not a degraded default (`specs/22` M17 P7, critic round 5):
+  // `runScriptPhases`'s own `execAttempts` handling really does consult `ctx.vetExecCommand` (this
+  // file's own `ScriptPhaseContext.vetExecCommand` doc comment) when a caller sets one. A test that
+  // needs to exercise the "no real gate" refusal path overrides this via the existing
+  // `capabilityOverrides` constructor argument, the identical mechanism every other flag here uses.
+  execCommandGating: true,
 };
 
 const DEFAULT_SCRIPT: FakeSessionScript = {
@@ -202,6 +208,12 @@ interface ScriptPhaseContext {
   readonly tools: ToolGrant;
   readonly abortSignal: AbortSignal;
   readonly limits: SessionLimits;
+  /** `SessionRequest.vetExecCommand` (`specs/22` M17 P7, critic round 4), threaded through so a
+   * scripted `execAttempts` entry is checked against it too, not only `isExecAllowed(ctx.tools, ...)`
+   * — without this, no fake-adapter-backed test could ever exercise a real caller's own gate at all
+   * (the real property this type exists to prove lives in Claude Code's own SDK, `canUseTool`, which
+   * this fake does not run). `undefined` when the request carries none. */
+  readonly vetExecCommand: SessionRequest['vetExecCommand'];
 }
 
 interface ScriptPhaseOutcome {
@@ -670,7 +682,15 @@ export class FakePlatformAdapter implements PlatformAdapter {
     for (const [index, command] of (script.execAttempts ?? []).entries()) {
       if (yield* bailIfAborted()) return outcome('aborted');
       const id = `exec:${String(index)}`;
-      const allowed = isExecAllowed(ctx.tools, command) && this.caps.bash;
+      // `ctx.vetExecCommand` (`SessionRequest.vetExecCommand`, `specs/22` M17 P7, critic round 4):
+      // consulted IN ADDITION to the grant-pattern check below, mirroring the real property a real
+      // adapter's own `canUseTool` wiring is meant to add on top of its native `allowedTools`
+      // matching -- the one way a fake-adapter-backed test can exercise a caller's own gate at all
+      // (this type's own doc comment on `fake-adapter.ts`'s `ScriptPhaseContext` has the fuller
+      // reasoning for why this is not, and cannot be, proof that the REAL SDK invokes it the same way).
+      const vetted =
+        ctx.vetExecCommand === undefined ? true : (await ctx.vetExecCommand(command)).allowed;
+      const allowed = isExecAllowed(ctx.tools, command) && this.caps.bash && vetted;
       yield { type: 'tool.call', id, name: 'exec', input: { command } };
       yield { type: 'tool.result', id, ok: allowed, summary: command };
     }
@@ -722,6 +742,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
       tools: request.tools,
       abortSignal: request.abortSignal,
       limits: request.limits,
+      vetExecCommand: request.vetExecCommand,
     });
 
     if (outcome.endedEarly !== undefined) {
@@ -837,6 +858,10 @@ export class FakePlatformAdapter implements PlatformAdapter {
       tools: rememberedContext.tools,
       abortSignal: request.abortSignal,
       limits: request.limits,
+      // `RememberedSessionContext` does not carry `vetExecCommand` (this file's own doc comment on
+      // that type) -- a resumed session has no caller-supplied gate to re-apply here. No real caller
+      // resumes an adopt-tests session today, so this is not a live gap this round needs to close.
+      vetExecCommand: undefined,
     });
     const finalText = leadingTextParts.join('') + outcome.finalText;
 

@@ -23,6 +23,7 @@ export type {
   SkillProvisioning,
 } from './provisioning.ts';
 export type {
+  ExecCommandVerdict,
   ResumeRequest,
   SessionAttachment,
   SessionHandle,

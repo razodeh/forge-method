@@ -7,12 +7,63 @@
  * @see SPEC-QUESTIONS.md Q115
  * @see PLAN-M7.md P3
  */
-import type { Options } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
 import type { SessionRequest } from '@forge/adapter-kit';
 
 import type { ClaudeCodeAdapterConfig } from '../config.ts';
 import type { McpSessionExtras } from '../mcp.ts';
 import { mapPermissionModeForSdk, mapToolGrantToAllowedTools } from '../tool-grant.ts';
+
+/**
+ * `req.vetExecCommand` (`specs/22` M17 P7, critic round 4), wired into the SDK's own real
+ * `Options.canUseTool` — confirmed directly against the installed `.d.ts`: `CanUseTool = (toolName,
+ * input, options) => Promise<PermissionResult | null>`, "Called before each tool execution to
+ * determine if it should be allowed." `undefined` when `req` carries no gate (every caller before
+ * this round): returns `undefined` so `buildSdkOptions` omits `canUseTool` entirely, leaving the
+ * adapter's own prior, native `allowedTools`-only behaviour completely unchanged.
+ *
+ * Only `'Bash'` calls are ever routed through the gate — `req.vetExecCommand`'s own contract is a
+ * plain command string, which only `BashInput.command` (confirmed against the real, installed
+ * `sdk-tools.d.ts`: `tool: "Bash"`, `BashInput.command: string`) supplies; every other tool name
+ * resolves `{behavior: 'allow'}` immediately, deferring entirely to whatever `allowedTools`/
+ * `permissionMode` would otherwise have decided for it — this callback only ever NARROWS a Bash
+ * decision, never widens one (it has no `'ask'`-shaped escape hatch of its own: a refusal is always a
+ * real `{behavior: 'deny', message}`, never `null`, which the real SDK's own doc comment warns blocks
+ * the tool "indefinitely" if returned by mistake).
+ *
+ * A `Bash` call whose own `input.command` is somehow not a string is DENIED, not allowed (`specs/22`
+ * M17 P7, critic round 5) — fail closed on anything unexpected, matching `isExecAllowed`/
+ * `vetProposedCommand`'s own convention everywhere else in this codebase, never a quiet pass-through
+ * for a shape this function cannot actually vet. Near-unreachable in practice (the real SDK's own
+ * `BashInput.command: string` already guarantees this for a genuine `Bash` call), which is exactly
+ * why failing closed costs nothing real: there is no legitimate case this branch is meant to let
+ * through.
+ *
+ * **Disclosed, not assumed closed** (this file's own doc comment on `SessionRequest.vetExecCommand`
+ * has the fuller reasoning): whether the real SDK actually INVOKES this callback for a `Bash` call
+ * that also matches an `allowedTools` rule — as opposed to that rule resolving the call before the
+ * callback is ever consulted — rests on this type's own plain "called before each tool execution"
+ * doc comment, not on a live, confirmed API call. No permission-mode or `allowedTools` change is made
+ * here to force the issue either way: this is a strictly additive wiring of a documented SDK field,
+ * nothing about the adapter's existing, already-shipped behaviour for every caller that leaves this
+ * field unset.
+ */
+function buildCanUseTool(req: SessionRequest): CanUseTool | undefined {
+  const vetExecCommand = req.vetExecCommand;
+  if (vetExecCommand === undefined) return undefined;
+  return async (toolName, input) => {
+    if (toolName !== 'Bash') return { behavior: 'allow' };
+    const command = input['command'];
+    if (typeof command !== 'string') {
+      return {
+        behavior: 'deny',
+        message: 'refused: this Bash call carries no real "command" string to vet at all.',
+      };
+    }
+    const verdict = await vetExecCommand(command);
+    return verdict.allowed ? { behavior: 'allow' } : { behavior: 'deny', message: verdict.reason };
+  };
+}
 
 export function buildSdkOptions(
   req: SessionRequest,
@@ -20,6 +71,7 @@ export function buildSdkOptions(
   resumeSessionId?: string,
   mcp?: McpSessionExtras,
 ): Options {
+  const canUseTool = buildCanUseTool(req);
   const options: Options = {
     cwd: req.cwd,
     model: req.model,
@@ -36,6 +88,9 @@ export function buildSdkOptions(
     allowedTools: [...mapToolGrantToAllowedTools(req.tools), ...(mcp?.allowedTools ?? [])],
     permissionMode: mapPermissionModeForSdk(req.permissionMode),
     includePartialMessages: true,
+    // `buildCanUseTool` (above) returns `undefined` when `req.vetExecCommand` is unset, so this
+    // spread adds nothing at all for every caller before critic round 4 -- strictly additive.
+    ...(canUseTool === undefined ? {} : { canUseTool }),
     // `07` §7.3's own mapping table names `--bare` for the CLI transport; the SDK has no literal
     // `bare` field at all (confirmed: no such field exists in the real `Options` type). Its own real,
     // documented isolation control is `settingSources: []` -- "Pass `[]` to disable filesystem

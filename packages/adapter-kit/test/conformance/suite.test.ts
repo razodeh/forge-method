@@ -254,6 +254,7 @@ class StubAdapter implements PlatformAdapter {
       skills: 'inline',
       toolProxy: false,
       turnLimitEnforcement: true,
+      execCommandGating: true,
     });
   }
 

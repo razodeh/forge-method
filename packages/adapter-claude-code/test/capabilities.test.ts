@@ -47,6 +47,11 @@ describe('staticCapabilities', () => {
     expect(staticCapabilities([], 'sdk').turnLimitEnforcement).toBe(true);
     expect(staticCapabilities([], 'cli').turnLimitEnforcement).toBe(false);
   });
+
+  it('execCommandGating is true for sdk and false for cli -- the identical transport asymmetry as turnLimitEnforcement, for the identical reason (specs/22 M17 P7, critic round 5): buildCanUseTool only ever reaches the sdk transport', () => {
+    expect(staticCapabilities([], 'sdk').execCommandGating).toBe(true);
+    expect(staticCapabilities([], 'cli').execCommandGating).toBe(false);
+  });
 });
 
 describe('confirmedCapabilities', () => {
@@ -69,5 +74,10 @@ describe('confirmedCapabilities', () => {
   it('still reports turnLimitEnforcement per-transport once confirmed', () => {
     expect(confirmedCapabilities([], 'sdk').turnLimitEnforcement).toBe(true);
     expect(confirmedCapabilities([], 'cli').turnLimitEnforcement).toBe(false);
+  });
+
+  it('still reports execCommandGating per-transport once confirmed', () => {
+    expect(confirmedCapabilities([], 'sdk').execCommandGating).toBe(true);
+    expect(confirmedCapabilities([], 'cli').execCommandGating).toBe(false);
   });
 });

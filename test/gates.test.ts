@@ -33,8 +33,8 @@ const templatesPackageRoot = path.join(repoRoot, 'packages', 'templates');
 interface RawGateFile {
   readonly id: string;
   readonly name: string;
-  // Absent for the workflow-scoped `G-Parity` (`10` §10.3 rule 8: "`phase` is optional in a gate
-  // document") -- every one of the ten lifecycle gates still carries one.
+  // Absent for the workflow-scoped `G-Parity`/`G-TestAdopt` (`10` §10.3 rule 8: "`phase` is optional
+  // in a gate document") -- every one of the ten lifecycle gates still carries one.
   readonly phase?: string;
   readonly autonomyOverride: string | null;
   readonly checks: {
@@ -86,7 +86,7 @@ describe('the 10 built-in gates (10 §10.3) all parse and are structurally well-
     },
   );
 
-  it("GATE_INDEX names exactly the ten lifecycle gates 10 §10.3's own catalogue table lists plus the workflow-scoped G-Parity (10 §10.3 rule 8), no more and no fewer", () => {
+  it("GATE_INDEX names exactly the ten lifecycle gates 10 §10.3's own catalogue table lists plus the workflow-scoped G-Parity and G-TestAdopt (10 §10.3 rule 8, G-TestAdopt added specs/22 M17 P7), no more and no fewer", () => {
     expect(ALL_GATE_IDS.sort()).toEqual(
       [
         'G-Problem',
@@ -100,6 +100,7 @@ describe('the 10 built-in gates (10 §10.3) all parse and are structurally well-
         'G-Deliver',
         'G-Operate',
         'G-Parity',
+        'G-TestAdopt',
       ].sort(),
     );
   });
@@ -195,6 +196,8 @@ const PASSING_OUTPUT = JSON.stringify({
   incomplete: 0,
   // `G-Parity.gate.yaml`'s own `behavior:parity` check (`specs/22` M16 P9): `failOn: 'failing > 0'`.
   failing: 0,
+  // `G-TestAdopt.gate.yaml`'s own `test-adoption:approved` check (`specs/22` M17 P7): `failOn: 'unapproved > 0'`.
+  unapproved: 0,
 });
 /** The same fields, every one at a value that trips its `failOn`. */
 const FAILING_OUTPUT = JSON.stringify({
@@ -209,6 +212,7 @@ const FAILING_OUTPUT = JSON.stringify({
   coverage: 0,
   incomplete: 1,
   failing: 1,
+  unapproved: 1,
 });
 
 describe('every gate round-trips through the real evaluateGate (M5 P14)', () => {

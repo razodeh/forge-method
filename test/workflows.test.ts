@@ -144,11 +144,12 @@ describe('the 20 built-in workflows (10 §10.5) all parse and compile cleanly', 
     });
   });
 
-  it("WORKFLOW_INDEX names exactly the 20 ids 10 §10.5's own table lists, no more and no fewer", () => {
+  it("WORKFLOW_INDEX names exactly the 20 ids 10 §10.5's own table lists, plus the workflow-scoped adopt-tests (10 §10.3 rule 8, specs/22 M17 P7, the identical carve-out G-TestAdopt's own gate test already has for G-Parity), no more and no fewer", () => {
     const ids = Object.keys(WORKFLOW_INDEX).sort();
     expect(ids).toEqual(
       [
         'adopt',
+        'adopt-tests',
         'build-stage',
         'debug',
         'define-product',
@@ -359,7 +360,7 @@ onComplete:
     ]);
   });
 
-  it("every workflow references a gate id from 10 §10.3's own ten lifecycle gates, plus the workflow-scoped G-Parity (10 §10.3 rule 8), where it names one at all", () => {
+  it("every workflow references a gate id from 10 §10.3's own ten lifecycle gates, plus the workflow-scoped G-Parity and G-TestAdopt (10 §10.3 rule 8), where it names one at all", () => {
     const knownGates = new Set([
       'G-Problem',
       'G-Product',
@@ -372,6 +373,10 @@ onComplete:
       'G-Deliver',
       'G-Operate',
       'G-Parity',
+      // `specs/22` M17 P7 (`10` §10.3 rule 8): the second workflow-scoped gate to have a file,
+      // scheduled only by `adopt-tests.workflow.yaml`'s own `kind: gate` step, never from a phase
+      // transition — the identical carve-out `G-Parity` already has above.
+      'G-TestAdopt',
     ]);
     for (const id of Object.keys(WORKFLOW_INDEX) as WorkflowId[]) {
       const parsed = parseWorkflow(readWorkflowSource(id));

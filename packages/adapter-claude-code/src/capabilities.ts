@@ -75,6 +75,12 @@ export function staticCapabilities(
     // `SPEC-QUESTIONS.md` Q114) is not a remote-environment unknown that could vary by install; the sdk
     // transport's own `Options.maxTurns` genuinely enforces it, live-confirmed in the same record.
     turnLimitEnforcement: transport === 'sdk',
+    // `specs/22` M17 P7, critic round 5: the identical transport asymmetry as `turnLimitEnforcement`
+    // above, for the identical reason -- fixed by this adapter's own construction (`build-options.ts`'s
+    // own `buildCanUseTool` only ever reaches the sdk transport's real `Options.canUseTool`; the cli
+    // transport has no equivalent hook at all, `build-args.ts`'s own doc comment), never a
+    // remote-environment unknown.
+    execCommandGating: transport === 'sdk',
   };
 }
 

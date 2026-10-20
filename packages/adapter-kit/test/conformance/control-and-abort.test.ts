@@ -49,6 +49,7 @@ const CAPABILITIES: AdapterCapabilities = {
   skills: 'none',
   toolProxy: false,
   turnLimitEnforcement: true,
+  execCommandGating: true,
 };
 
 describe('checkC5Abort — stream closes cleanly with no session.ended event', () => {

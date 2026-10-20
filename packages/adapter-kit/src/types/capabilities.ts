@@ -39,4 +39,16 @@ export interface AdapterCapabilities {
    * same "a real, disclosed capability gap, not silently claimed" discipline this interface's own
    * `structuredOutput`/`sessionResume` fields already establish. */
   readonly turnLimitEnforcement: boolean;
+  /** Whether a real, per-call gate on live, in-turn Bash-type tool use is actually active for this
+   * adapter in its CURRENT configuration — `SessionRequest.vetExecCommand`, when a caller sets it, is
+   * genuinely consulted before a live command executes, never merely accepted and silently ignored.
+   * A real, disclosed capability asymmetry (`specs/22` M17 P7, critic round 5), mirroring
+   * `turnLimitEnforcement`'s own "transport-asymmetric, honestly reported" discipline:
+   * `@forge/adapter-claude-code`'s own CLI transport has no equivalent to Claude Code's SDK
+   * `canUseTool` hook at all (`build-args.ts`'s own doc comment); its SDK transport does, confirmed
+   * directly against the real, installed `.d.ts`. `forge test adopt --agent` refuses outright
+   * (`RUN-162`) rather than run when this is `false`: a live-exec safety guarantee with no real gate
+   * behind it is not a guarantee, and a silent, best-effort fallback could be missed the way a mere
+   * warning can be. */
+  readonly execCommandGating: boolean;
 }

@@ -24,6 +24,13 @@ export interface SessionAttachment {
   readonly role: 'input' | 'reference';
 }
 
+/** `SessionRequest.vetExecCommand`'s own result (`specs/22` M17 P7, critic round 4) — `allowed: false`
+ * carries a human-readable `reason` the adapter may surface back to the model (e.g. as a Claude Code
+ * `PermissionResult.deny.message`) so a refused attempt is a stated refusal, not a silent hang or an
+ * opaque failure. */
+export type ExecCommandVerdict =
+  { readonly allowed: true } | { readonly allowed: false; readonly reason: string };
+
 export interface SessionRequest {
   readonly runId: string;
   readonly stepId: string;
@@ -45,6 +52,43 @@ export interface SessionRequest {
   readonly outputSchema?: JSONSchema;
   readonly attachments?: readonly SessionAttachment[];
   readonly abortSignal: AbortSignal;
+  /**
+   * An optional, per-call gate on the session's own LIVE, in-turn exec tool use — called with the
+   * real command string a live Bash-type tool call is about to run, BEFORE the adapter lets it
+   * execute (`specs/22` M17 P7, critic round 4). `undefined` when the caller has no such gate (every
+   * existing caller before this round): the adapter falls back to its own native tool-grant mapping
+   * alone, exactly as before — this field is purely additive, never a replacement for `tools`.
+   *
+   * **Why this exists at all.** `tools` (`ToolGrant`) only ever reaches a real adapter's own coarse,
+   * native allow-list mechanism (Claude Code: `allowedTools`, pattern-matched against the command
+   * STRING alone) — confirmed directly (`tool-grant.ts`'s own pre-existing doc comment) to do nothing
+   * about where a matched command's own real reach extends: `cwd` governs a subprocess's own
+   * STARTING directory, never a sandbox boundary, so an allowed pattern like `make *` still lets
+   * `make -f /tmp/evil.mk pwn` through to a real shell with no containment at all. This callback is
+   * the one real, per-call seam (Claude Code's own SDK `canUseTool`, confirmed against the real,
+   * installed `.d.ts`: "Called before each tool execution to determine if it should be allowed")
+   * that receives the actual command text for every live attempt, not only the final one a session
+   * might separately report in structured output — `adopt-agent.ts`'s own `vetProposedTestCommand`
+   * already re-vets THAT one; this is its live-tool-use sibling.
+   *
+   * **Scope.** Project-neutral by design — a plain `(command) => Promise<ExecCommandVerdict>`, not a
+   * `ToolGrant`/root pair, so this type never needs to know HOW a caller derived its verdict
+   * (`vetProposedCommand`, or any other mechanism a future caller might use) and no adapter needs to
+   * import anything beyond this one function shape.
+   *
+   * **Known gap, disclosed rather than assumed closed.** Only the SDK transport
+   * (`@forge/adapter-claude-code`'s `buildSdkOptions`) can honour this at all — Claude Code's CLI
+   * transport (`spawn.ts`) has no documented equivalent hook; a session running on that transport
+   * (the SDK's own fallback, `config.ts`'s own doc comment) gets no live per-call gate regardless of
+   * whether this field is set. Whether the SDK's own `canUseTool` is actually INVOKED for a command
+   * that also matches an `allowedTools` rule — as opposed to that rule resolving the decision before
+   * the callback is ever consulted — is NOT independently, empirically verified here (confirmed only
+   * against the type's own doc comment, "called before each tool execution," not against a real,
+   * live API call): a caller relying on this field for its ONLY exec defence, with no other layer
+   * backing it, is relying on a claim this type's own author could not fully verify without a real,
+   * costly API call.
+   */
+  readonly vetExecCommand?: (command: string) => Promise<ExecCommandVerdict>;
 }
 
 export interface ResumeRequest {

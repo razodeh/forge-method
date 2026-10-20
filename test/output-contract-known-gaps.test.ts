@@ -31,7 +31,8 @@
  * `file_ownership` is enforced nowhere at run time (only `forge agent validate`'s overlap check reads it), so
  * an agent whose ownership omits the output path was never blocked by that, and under `strict` claim
  * enforcement the output is no longer reverted either. The steps are pinned below as
- * `OWNERSHIP_ONLY_STEPS` (9 when P14 landed; 32 once P15 let their agents write, because the P15 roles own
+ * `OWNERSHIP_ONLY_STEPS` (9 when P14 landed; 32 once P15 let their agents write, 33 once specs/22 M17 P7
+ * added `adopt-tests:propose` to the same shape, because the P15 roles own
  * a narrower territory than the registry paths their steps declare: the same fact, now for the steps that
  * used to be blocked earlier); their outputs are asserted to lie inside their claim (definition level here;
  * concrete registry paths of every type through the real claim matcher in
@@ -54,7 +55,7 @@
  * @see PLAN-M13.md P7, P11, P15
  * @see SPEC-QUESTIONS.md Q208, Q209, Q220
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -163,6 +164,11 @@ const OWNERSHIP_ONLY_STEPS: readonly string[] = [
   'shape-solution:select-stack',
   'migrate:plan-migration',
   'build-stage:freeze-contracts',
+  // specs/22 M17 P7: test-architect's own `parallel_safety.file_ownership`
+  // ('docs/forge/kb/engineering/testing/**') does not cover HandoffRecord's registry path
+  // ('docs/forge/reports/handoffs.md') -- the identical shape `plan-stage:write-test-plan` above
+  // already has for the same agent and the same output type.
+  'adopt-tests:propose',
 ];
 
 /** Steps whose agent is a run-time template: cannot be classified from the workflow alone. */
@@ -513,24 +519,15 @@ describe('M17 Phase A: surfaces specs/22 M17 names that are not yet built (specs
     expect(bin).not.toMatch(/case 'adopt':\s*{\s*\/\/ test adopt/);
   });
 
-  it('3. the `adopt-tests` workflow template does not exist yet', () => {
-    expect(
-      existsSync(
-        path.join(repoRootAbs, 'packages/templates/templates/workflows/adopt-tests.workflow.yaml'),
-      ),
-    ).toBe(false);
-    expect(
-      existsSync(path.join(repoRootAbs, 'packages/templates/templates/briefs/adopt-tests.md')),
-    ).toBe(false);
-  });
+  // 3. CLOSED by specs/22 M17 P7: `packages/templates/templates/workflows/adopt-tests.workflow.yaml`
+  // and `packages/templates/templates/briefs/adopt-tests.md` both now exist (`test/workflows.test.ts`'s
+  // own registry tests cover them) -- this file's own standing rule ("the day a piece builds one of
+  // them, the matching test fails until the pin is updated on purpose") is why this entry moved from
+  // an `it()` to a comment rather than simply being deleted.
 
-  it('4. the `G-TestAdopt` gate template does not exist yet', () => {
-    expect(
-      existsSync(
-        path.join(repoRootAbs, 'packages/templates/templates/checks/G-TestAdopt.gate.yaml'),
-      ),
-    ).toBe(false);
-  });
+  // 4. CLOSED by specs/22 M17 P7: `packages/templates/templates/checks/G-TestAdopt.gate.yaml` now
+  // exists (`test/gates.test.ts`'s own registry tests cover it) -- the identical "moved to a comment,
+  // not deleted" rule as item 3 above.
 
   // 5. (specs/22 M17 P18, #14) CLOSED: `forge migrate run` is wired in bin.ts
   // (`commands/migrate/run.ts`) and removed from `test/command-steps.test.ts`'s own

@@ -232,10 +232,15 @@ import { gateValidateAll, workflowValidateAll } from './commands/workflow.ts';
 import { templateValidateAll } from './commands/template.ts';
 import { test as runTestRefusal } from './commands/loop/test.ts';
 import {
+  checkTestAdoptionApproved,
   runDetectionAndStage,
   runPromotion,
   type PromotionResult,
 } from './commands/loop/test/adopt.ts';
+import {
+  runAdoptTestsAgent,
+  type AdoptTestsAgentResult,
+} from './commands/loop/test/adopt-agent.ts';
 import { DETECTED_LAYER } from './commands/loop/test/detect.ts';
 import {
   runBindingCheck,
@@ -2799,9 +2804,8 @@ async function runTestFlakyCommand(paths: ProjectPaths, json: boolean): Promise<
     : 0;
 }
 
-/** Human-readable text for a {@link PromotionResult} -- `--write` always refuses in this build
- * (`adopt.ts`'s own doc comment has the full reasoning: `G-TestAdopt` has no gate file yet, so no
- * approval for it can exist), but each refusal names a different, real reason. */
+/** Human-readable text for a {@link PromotionResult} -- `specs/22` M17 P7 closed the hand-off
+ * `adopt.ts`'s own doc comment used to describe here: `'promoted'` is real now. */
 function describePromotionResult(result: PromotionResult): string {
   if (result.outcome === 'no-staged-proposal') {
     return `forge test adopt --write: no staged proposal exists for "${result.layer}" -- run "forge test adopt" first.`;
@@ -2809,41 +2813,123 @@ function describePromotionResult(result: PromotionResult): string {
   if (result.outcome === 'proof-not-passing') {
     return `forge test adopt --write: ${result.detail}`;
   }
+  if (result.outcome === 'gate-not-available') {
+    return (
+      `forge test adopt --write: "${result.layer}"'s staged proposal has a passing translator proof, ` +
+      'but this project has no G-TestAdopt.gate.yaml yet -- run "forge module update" (or re-run ' +
+      '"forge init") to pick it up, then retry.'
+    );
+  }
+  if (result.outcome === 'not-approved') {
+    return (
+      `forge test adopt --write: "${result.layer}"'s staged proposal has a passing, current translator ` +
+      'proof, but no human has approved it at G-TestAdopt yet -- run "forge gate check G-TestAdopt ' +
+      '--run <runId>" to see it, then "forge gate approve G-TestAdopt --run <runId>", then retry.'
+    );
+  }
+  return `forge test adopt --write: "${result.layer}" promoted -- execution.testCommands.${result.layer} now reflects the approved proposal.`;
+}
+
+/** Human-readable text for an {@link AdoptTestsAgentResult} (`forge test adopt --agent`,
+ * `specs/22` M17 P7). Every outcome names the real `runId` the session ran under -- neither this
+ * command nor `dispatchAgentStep`'s own ad hoc callers write a `last-run.json` pointer
+ * (`review.ts`'s own doc comment has the fuller reasoning), so a human approving or promoting this
+ * exact session's own result needs to be given the id to pass as `--run` themselves. */
+function describeAdoptTestsAgentResult(result: AdoptTestsAgentResult): string {
+  if (result.outcome === 'staged') {
+    const runId = result.runId;
+    return (
+      `forge test adopt --agent: staged a proposal for "${result.layer}" after ${String(result.rounds)} ` +
+      `round(s) -- the translator proof passed. Run "forge gate check G-TestAdopt --run ${runId}", ` +
+      `then "forge gate approve G-TestAdopt --run ${runId}", then "forge test adopt --write --run ${runId}".`
+    );
+  }
+  if (result.outcome === 'no-test-setup') {
+    return (
+      `forge test adopt --agent: no test setup was found for "${result.layer}" -- a conventional ` +
+      `runner is proposed and an ADR was written at ${result.adrPath}. Review it, adopt the runner for ` +
+      'real, then re-run "forge test adopt --agent" once real tests exist.'
+    );
+  }
   return (
-    `forge test adopt --write: "${result.layer}"'s staged proposal has a passing translator proof, ` +
-    'but the G-TestAdopt gate it still needs human approval at is not available in this build ' +
-    '(specs/22 M17 P7) -- nothing was written to .forge/config.yaml.'
+    `forge test adopt --agent: exhausted ${String(result.rounds)} round(s) for "${result.layer}" -- the ` +
+    `translator proof last failed check ${String(result.failedCheck)}: ${result.reason}`
   );
 }
 
-/** `forge test adopt [--write] [--agent] [--json]` (`03` §3.2.5, `13` F-TEST-11, `specs/22` M17 P6).
- * `--agent` is a real, named, not-yet-built feature (`adopt-tests`, P7) -- refused loudly (`USR-003`),
- * the same discipline `runTestRefusal` already applies to `test plan`/`generate`/`report`, rather
- * than silently falling through to plain detection. `--write` always promotes to a refusal; see
- * {@link describePromotionResult}. Bare `forge test adopt` runs deterministic detection and stages
- * (or hands off) its one proposal (`detect.ts`'s own `DETECTED_LAYER`, the only layer this piece's
- * detector ever targets). */
+/** `forge test adopt [--write [--run <runId>]] [--agent] [--check-proof <layer>] [--json]`
+ * (`03` §3.2.5, `13` F-TEST-11, `specs/22` M17 P6/P7).
+ *
+ * `--check-proof <layer>` is `G-TestAdopt.gate.yaml`'s own `test-adoption:approved` check command --
+ * the exact, real `forge <sub> --json` invocation that gate's own `run:` field names (`test/gates.test.ts`'s
+ * own "every deterministic check names a real forge <sub> command" rule), always JSON (a gate check
+ * command has no human-readable mode to fall back to). Exits `EXIT_CODES.success`/`failure` (never
+ * `gateFailed` -- `runOutcomeExitCode`'s own doc comment above: that code is `forge gate check`'s own
+ * aggregate verdict, reported by `forge gate`, never by an individual deterministic check command run
+ * directly; `gate-fail-closed.test.ts`/`gate-family-coverage.test.ts` enforce "every shipped check
+ * exits 0 or 1" across every real gate, this one included) -- `unapproved` itself, not the process exit
+ * code, is what `failOn: 'unapproved > 0'` reads to decide the GATE's own pass/fail.
+ *
+ * `--agent` drives `runAdoptTestsAgent` directly (`adopt-agent.ts`'s own doc comment: the identical
+ * "a real, already-built mechanism exists; call it directly" precedent `forge debug`/`review`/`panel`
+ * already set), never through a synthetic in-process workflow run.
+ *
+ * `--write [--run <runId>]` is the promotion check (`runPromotion`); `--run` defaults to the
+ * project's own last dispatched run the identical way `forge gate approve`'s own `--run` already
+ * does (`resolveDispatchRunId`) -- which is never the run `--agent` itself produced, since that ad
+ * hoc dispatch writes no `last-run.json` pointer (`describeAdoptTestsAgentResult`'s own doc comment)
+ * -- so a human who just ran `--agent` passes its own printed `runId` explicitly.
+ *
+ * Bare `forge test adopt` runs deterministic detection and stages (or hands off) its one proposal
+ * (`detect.ts`'s own `DETECTED_LAYER`, the only layer this piece's detector ever targets). */
 async function runTestAdoptCommand(
   paths: ProjectPaths,
-  write: boolean,
-  agent: boolean,
+  projectRoot: string,
+  options: {
+    readonly write: boolean;
+    readonly agent: boolean;
+    readonly checkProofLayer: string | undefined;
+    readonly runId: string | undefined;
+  },
   json: boolean,
 ): Promise<number> {
-  if (agent) {
-    throw new ForgeError('USR-003', { feature: 'forge test adopt --agent (specs/22 M17 P7)' });
+  if (options.checkProofLayer !== undefined) {
+    const result = await checkTestAdoptionApproved(paths, options.checkProofLayer);
+    console.log(JSON.stringify(result));
+    return result.unapproved === 0 ? EXIT_CODES.success : EXIT_CODES.failure;
   }
-  if (write) {
-    const result = await runPromotion(paths, DETECTED_LAYER);
+  if (options.agent) {
+    const loopDeps = await buildLoopDepsForProject(paths, projectRoot);
+    const runResult = await runAdoptTestsAgent({ ...loopDeps, kbRoot: KB_ROOT });
+    // `runId`/`rounds`/`failedCheck`/`reason` are FORGE's own computed values, not live-model text --
+    // only `reason` (the agent's own free-text explanation threaded through `writeStagedProposal`'s
+    // own `reason` field) is live-agent output, so this is `sanitizeDeep`d the identical way
+    // `review`/`panel`/`debug` already are.
+    const result = sanitizeDeep(runResult);
+    if (json) {
+      console.log(JSON.stringify({ v: 1, result }));
+    } else {
+      console.log(describeAdoptTestsAgentResult(result));
+    }
+    return result.outcome === 'exhausted' ? 1 : 0;
+  }
+  if (options.write) {
+    const result = await runPromotion(paths, DETECTED_LAYER, {
+      checksRoot: CHECKS_ROOT,
+      projectRoot,
+      // Resolved lazily (`PromotionContext.resolveRunId`'s own doc comment): a project with no
+      // staged proposal, or one with no recorded proof yet, must refuse with ITS OWN real reason --
+      // never `RUN-048` ("no prior run at all") for want of a `--run` this call never needed.
+      resolveRunId: () => resolveDispatchRunId(paths, options.runId),
+    });
     if (json) {
       console.log(JSON.stringify({ v: 1, ...result }));
+    } else if (result.outcome === 'promoted') {
+      console.log(describePromotionResult(result));
     } else {
       console.error(describePromotionResult(result));
     }
-    // Every real `PromotionResult` outcome today is a refusal (this file's own doc comment on
-    // `describePromotionResult`) -- `1`, unconditionally, rather than a comparison against an
-    // `'promoted'` literal `PromotionResult` cannot yet produce (which `pnpm typecheck` would reject
-    // as comparing against a value outside the union).
-    return 1;
+    return result.outcome === 'promoted' ? 0 : 1;
   }
   const result = await runDetectionAndStage(paths);
   if (json) {
@@ -5832,18 +5918,32 @@ async function main(): Promise<number> {
     );
   }
   if (command === 'test' && sub === 'adopt') {
-    // `specs/22` M17 P6 (`03` §3.2.5 row, `13` F-TEST-11): exactly the three documented flags, no
-    // layer positional at all -- this piece's own deterministic detector only ever targets one layer
+    // `specs/22` M17 P6/P7 (`03` §3.2.5 row, `13` F-TEST-11): no layer positional at all -- this
+    // piece's own deterministic detector and agent workflow both only ever target one layer
     // (`detect.ts`'s `DETECTED_LAYER`), so there is nothing else for a positional to select yet.
-    const { flags: adoptFlags, positionals } = parseCommandFlags(rest, {
+    // `--check-proof <layer>` is `G-TestAdopt.gate.yaml`'s own `run:` command (`adopt.ts`'s own
+    // `checkTestAdoptionApproved`); `--run <runId>` scopes `--write`'s own approval lookup to one
+    // run, the identical convention `forge gate approve`'s own `--run` already uses.
+    const {
+      flags: adoptFlags,
+      values: adoptValues,
+      positionals,
+    } = parseCommandFlags(rest, {
       '--write': false,
       '--agent': false,
+      '--check-proof': true,
+      '--run': true,
     });
     assertNoArgs(positionals);
     return runTestAdoptCommand(
       paths,
-      adoptFlags.has('--write'),
-      adoptFlags.has('--agent'),
+      projectRoot,
+      {
+        write: adoptFlags.has('--write'),
+        agent: adoptFlags.has('--agent'),
+        checkProofLayer: adoptValues.get('--check-proof'),
+        runId: adoptValues.get('--run'),
+      },
       flags.json,
     );
   }

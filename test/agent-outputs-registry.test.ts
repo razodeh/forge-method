@@ -580,7 +580,8 @@ describe('a gate lists as evidence what the steps before it produce (P18, E3)', 
   it('enumerates the gate steps for real', () => {
     // M16 P9 adds three: refactor's preflight-parity and verify-parity (both naming G-Parity, so two
     // runs of the same workflow/gate pair) and migrate's verify-parity (one more), 15 -> 18.
-    expect(runs.length).toBe(18);
+    // specs/22 M17 P7 adds one more: adopt-tests:verify-proof (G-TestAdopt), 18 -> 19.
+    expect(runs.length).toBe(19);
   });
 
   it('G-Problem lists no artifact that a step after the gate writes: its evidence is the discover steps output', () => {

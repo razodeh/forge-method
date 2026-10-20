@@ -58,6 +58,9 @@ const SAMPLE_DETAILS = {
   adapterId: 'generic',
   index: 0,
   path: '.forge/config.yaml',
+  // `RUN-159` (`specs/22` M17 P7): the real, comma-joined list of paths an adopt-tests session wrote
+  // outside its allowed claim.
+  paths: 'notes.txt',
   root: '/repo',
   operation: 'write',
   line: 12,
@@ -537,6 +540,39 @@ describe('every declared code renders end to end', () => {
     expect(error.message).toContain('injected-failure probe');
     expect(error.message).not.toContain('append-only');
     expect(error.remedy).toContain('probe path');
+  });
+
+  it('RUN-159 names the real out-of-claim paths the adopt-tests session wrote (specs/22 M17 P7)', () => {
+    const error = new ForgeError('RUN-159', { paths: 'notes.txt, src/index.ts' });
+    expect(error.message).toContain('notes.txt, src/index.ts');
+    expect(error.message).toContain('.forge/test-translators/');
+    expect(error.remedy).toContain('test-architect');
+  });
+
+  it('RUN-160 names the real reason a structured adopt-tests proposal was unusable (specs/22 M17 P7)', () => {
+    const error = new ForgeError('RUN-160', { detail: 'no "command" field was present' });
+    expect(error.message).toContain('no "command" field was present');
+    expect(error.message).toContain('structured response');
+    expect(error.remedy).toContain('command');
+  });
+
+  it('RUN-161 names the real field, command and refusal reason for a proposed test command the vet refused (specs/22 M17 P7)', () => {
+    const error = new ForgeError('RUN-161', {
+      field: 'run',
+      command: 'node -e "evil()"',
+      reason: '"node" is not the program any matching exec pattern names',
+    });
+    expect(error.message).toContain('"run"');
+    expect(error.message).toContain('node -e "evil()"');
+    expect(error.message).toContain('is not the program any matching exec pattern names');
+    expect(error.remedy).toContain('conventional');
+  });
+
+  it('RUN-162 names the real adapter id when it cannot provide a real per-call exec gate (specs/22 M17 P7, critic round 5)', () => {
+    const error = new ForgeError('RUN-162', { adapterId: 'generic' });
+    expect(error.message).toContain('"generic"');
+    expect(error.message).toContain('per-call gate');
+    expect(error.remedy).toContain('sdk');
   });
 
   it('RUN-109 degrades to <missing> rather than crashing for an idWidth no real registry entry ever has (PLAN-M14.md P8, critic round 2)', () => {

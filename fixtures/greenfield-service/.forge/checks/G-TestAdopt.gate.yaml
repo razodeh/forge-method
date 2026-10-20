@@ -1,0 +1,16 @@
+# forge:generated v=0.0.0 hash=7e88e57d536d98b9aa398352c78ec565391225340035249171e66637318ae4ce — edits will be overwritten; use overrides/
+id: G-TestAdopt
+name: Test adoption gate
+autonomyOverride: null
+checks:
+  deterministic:
+    - id: test-adoption:approved
+      run: 'forge test adopt --check-proof unit --json'
+      parser: forge-json
+      failOn: 'unapproved > 0'
+  advisory: []
+openQuestionsPolicy: block
+approval:
+  required: true
+  roles: [human]
+  quorum: 1

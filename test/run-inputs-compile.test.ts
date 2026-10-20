@@ -232,6 +232,8 @@ const RUNS: Readonly<
   Record<string, { readonly flags: readonly string[]; readonly needs?: readonly string[] }>
 > = {
   adopt: { flags: [] },
+  // `layer` is `required: false` (specs/22 M17 P7) -- plans with no flags at all, the same as `adopt`.
+  'adopt-tests': { flags: [] },
   'build-stage': { flags: ['--stage', 'STAGE-1'], needs: ['stageId'] },
   'contract-test-cycle': { flags: ['--input', 'interfaceName=Billing'], needs: ['interfaceName'] },
   debug: { flags: ['--input', 'defectId=DEF-001'], needs: ['defectId'] },
@@ -259,7 +261,7 @@ describe('every shipped workflow compiles under the context `forge run` builds',
   it('the table names exactly the workflows that ship (a new one must be decided here)', async () => {
     const shipped = (await shippedWorkflowFiles()).map(workflowId).sort();
     expect(Object.keys(RUNS).sort()).toEqual(shipped);
-    expect(shipped).toHaveLength(22);
+    expect(shipped).toHaveLength(23);
   });
 
   it.each(Object.entries(RUNS))(

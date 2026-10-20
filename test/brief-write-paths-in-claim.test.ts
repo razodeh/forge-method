@@ -723,6 +723,17 @@ const EXEMPT: readonly {
       "the ADR's text states where the id names the script will live so the plan is concrete, but the " +
       'expand step builds it there later (migration-expand.md) -- plan-migration never writes it itself',
   },
+  {
+    step: 'adopt-tests:propose',
+    path: '.forge/test-translators/x.x',
+    sentence: /Otherwise,\s+write\s+the\s+parsing\s+logic\s+yourself/,
+    why:
+      'the brief is shared by both forge test adopt --agent (adopt-agent.ts, which really writes it, ' +
+      "bypassing claim enforcement entirely) and this workflow's own generic kind: agent dispatch " +
+      '(forge run adopt-tests), which cannot: .forge/ is in NEVER_WRITABLE_GLOBS for every agent ' +
+      "step's claim regardless of what produces says (20 §20.2/§20.5, fix-scan.ts) -- exempted here " +
+      'only for this generic-dispatch reading of the same shared brief',
+  },
 ];
 
 /**

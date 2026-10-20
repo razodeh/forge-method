@@ -88,6 +88,7 @@ export {
   type LandLaneResult,
   type ResolvedLaneChecks,
 } from './integrate.ts';
+export { ADOPT_TESTS_EXEC_PATTERNS, grantWithAdoptTestsExec } from './adopt-tests-grant.ts';
 export {
   AGENT_RUN_LAYERS,
   checkTestCommand,
@@ -123,6 +124,7 @@ export {
   runConfinedCommand,
   scrubbedEnvironment,
   STORED_COMMAND_LIMITS,
+  vetProposedCommand,
   vetStoredCommand,
   type CommandRefusal,
   type CommandRefusalReason,

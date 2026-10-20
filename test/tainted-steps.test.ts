@@ -76,8 +76,8 @@ function taintedStepsOf(workflowId: string, source: string): readonly string[] {
 }
 
 describe('exactly the five steps tainted across every shipped workflow (PLAN-M14.md P27)', () => {
-  it('has a floor against a vacuous pass: 20 shipped workflows, at least one genuinely tainted', () => {
-    expect(Object.keys(WORKFLOW_INDEX).length).toBe(20);
+  it('has a floor against a vacuous pass: 21 shipped workflows (specs/22 M17 P7 added the workflow-scoped adopt-tests), at least one genuinely tainted', () => {
+    expect(Object.keys(WORKFLOW_INDEX).length).toBe(21);
     expect(EXPECTED_TAINTED_STEPS.length).toBeGreaterThan(0);
   });
 
