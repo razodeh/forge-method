@@ -97,6 +97,20 @@ export default defineConfig({
         '**/*.d.ts',
         '**/*.{test,spec}.?(c|m)[jt]s?(x)',
         'scripts/run-tests.mjs',
+        // `specs/22` M17 P2 ("CI green: bin.ts coverage, and the whole suite as the bar"): the
+        // identical "thin CLI wrapper" shape the `scripts/*.mjs` entries just below already
+        // establish. `bin.ts` was reduced from a 6,041-line monolith to a ~56-line process-level
+        // wrapper (read `process.argv`, await the real dispatcher, set `process.exitCode`) — every
+        // real decision (`main()`'s own command-dispatch chain, every flag parser, every command's
+        // own output rendering) moved, unchanged, into `commands/dispatch/*.ts`, which v8 coverage
+        // CAN see run in-process and which `test/commands/dispatch/dispatch-chain.test.ts` and the
+        // ordinary per-area test files cover. Every one of `bin.ts`'s own three remaining real lines
+        // is proven by the `packages/cli/test/bin*.test.ts` real-subprocess suite (hundreds of real
+        // `forge ...` invocations) — but those run `bin.ts` only as a SPAWNED child process, the
+        // identical gap `scripts/bench.mjs`'s own exclusion below documents in full: v8 coverage in
+        // the parent (test-runner) process cannot see into a child process's execution at all,
+        // regardless of how thoroughly that child's own behaviour is exercised and asserted against.
+        'packages/cli/src/bin.ts',
         // Thin CLI wrappers: file IO and a process exit code, nothing else. Their decision logic
         // lives in `scripts/lib/`, which is covered, and a subprocess test in the corresponding
         // *.test.ts (scripts/ratchet.test.ts; tools/eslint-plugin-forge-boundaries/test/

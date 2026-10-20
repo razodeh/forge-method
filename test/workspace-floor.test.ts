@@ -123,6 +123,13 @@ const IGNORED_PATHS = new Set([
   // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real
   // `runInit`-produced project fixture scaffolding for `test/commands/upgrade/*.test.ts`.
   'packages/cli/test/commands/upgrade/helpers.ts',
+  // `packages/cli/test/commands/dispatch/dispatch-test-helpers.ts` (`specs/22` M17 P2): the
+  // identical shape as `packages/cli/test/commands/helpers.ts` above, one directory over — shared
+  // real `captureLogs`/`createConfiguredProject` fixture scaffolding (plus a re-export of
+  // `../helpers.ts`'s own bare project and constants) imported by most `test/commands/
+  // dispatch/*.test.ts` files, for the identical reason unrecognised by `TEST_FILE`'s naming
+  // heuristic.
+  'packages/cli/test/commands/dispatch/dispatch-test-helpers.ts',
   // `packages/cli/bin/` (PLAN-M6.md C9): the real `forge` CLI's own launcher, `bin/forge.mjs` — a
   // thin process-spawn wrapper (the identical shape `scripts/run-tests.mjs` already establishes at
   // the repo root), deliberately outside `src/` since it is not itself covered code (nothing calls
