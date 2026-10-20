@@ -30043,3 +30043,72 @@ ADR is concrete, is read as the plan-migration step itself writing
 own exact sentence and `why`. Confirmed `test/brief-write-paths-in-claim.test.ts` 18/18 (both the
 default and `RELOCATED` layouts, plus the "stale exemption" check confirming both new entries were
 actually matched). `pnpm typecheck`/lint/prettier clean.
+
+## Q333 — M17 P7: AI-driven test adoption — a 5-round gauntlet finding and closing a real,
+exploitable live-exec vulnerability the first three rounds did not
+
+**Context.** `forge test adopt --agent` (the `adopt-tests` workflow, agent role `test-architect`)
+is the one piece this milestone that runs an AI agent session directly against a project whose test
+setup is, by construction, not yet understood or trusted — investigating real test commands,
+running them for real, and ultimately writing a translator script once P6's `runTranslatorProof`
+vouches for it. Every other agent-driven workflow in this codebase runs inside an isolated lane
+worktree with the whole-file write-claim enforced generically; this piece's own mandate (run tests
+live, iteratively, during investigation) made that generic path structurally unusable (`.forge/**`
+is unconditionally in `NEVER_WRITABLE_GLOBS` for every `kind: agent` step, so the generic dispatch
+can't even stage a proposal, let alone commit a translator) — forcing a bespoke dispatch path with
+its own, from-scratch safety model.
+
+**DECISION 1 (round 2, both critics)** — the model's own self-reported final command executed
+completely unsandboxed; fixed by vetting it (`vetProposedTestCommand`/`RUN-161`) against the same
+containment check (`vetProposedCommand`/`vetPath`) the codebase already trusts elsewhere. Also
+closed in the same round: `find*`'s `-exec`/`-delete` escape (dropped); `RUN-159`'s false-positive
+on a project's own pre-existing dirty `.forge/` state (`forge init` never commits its scaffold —
+closed with a pre-session dirty-tree baseline); the shared brief's own HandoffRecord instruction
+being forbidden by the agent path's narrower claim (widened); stale translator debris across
+retried rounds making a later, genuinely-passing proposal read as "ambiguous" (cleaned up); a
+TOCTOU double-read in `runPromotion` letting the live config get a stale, unverified command
+(closed to a single read, reused for both the approval check and the merge).
+
+**DECISION 2 (round 3) — REVERSED by DECISION 3, recorded for the real history, not erased.** Gave
+the agent session real lane/worktree isolation for its whole investigation/exec phase, reasoning
+this would contain any live command's own side effects the way every other agent role is contained.
+**This reasoning was wrong, confirmed by a dedicated investigation (not either critic) directly
+against the real adapter source**: a session's `cwd` is only ever a subprocess's own starting
+directory — nothing in this codebase (or, per the installed SDK's own type surface, enabled by this
+codebase) sandboxes a live command's actual filesystem reach. `make -f /tmp/evil.mk pwn` and the
+other round-2 exploits remained fully live-exploitable through round 3's entire tenure as the
+stated fix; this codebase's own pre-existing `tool-grant.ts` doc comment had already disclosed the
+same limit in different words, unnoticed until this round made it load-bearing.
+
+**DECISION 3 (round 4) — the real fix: the SDK's own `Options.canUseTool`.** A second dedicated
+investigation found a genuine, previously-unused, synchronous, per-call, command-string-visible
+pre-execution veto gate in the real installed SDK, confirmed not wired up anywhere in this
+codebase. Wired so every live `Bash`-type tool call — not only the final self-reported command —
+routes through the identical `vetProposedCommand` containment check. **Independently re-confirmed
+by BOTH critics, each reading the SDK's own real runtime source directly (not the builder's
+description of it, not each other's)**, that this gate genuinely fires for FORGE's own real
+configuration: neither of the SDK's two documented shadow conditions (`permissionMode:
+'bypassPermissions'`; a bare, unparenthesized allow-rule) ever applies to how this codebase
+configures either. Both critics then re-ran the original round-2 exploit strings (plus a critic-
+constructed `../`-traversal variant) directly against the new, real gate — all refused. Lane
+isolation (decision 2) was kept, not removed — its write-confinement property was never in dispute,
+only its exec-confinement claim was; it now stands as defense-in-depth alongside the real gate.
+
+**DECISION 4 (round 5) — the one gap both critics' final rounds converged on.** The CLI transport
+(this adapter's fallback when the SDK package fails to resolve, or when a project explicitly pins
+`transport: 'cli'`) has no equivalent hook at all — a separate subprocess with no in-process
+callback surface, impossible to close at this layer. Rather than leave this disclosed-but-silent, a
+new `AdapterCapabilities.execCommandGating` field (honestly reported per adapter) lets
+`runAdoptTestsAgent` hard-refuse (`RUN-162`) before anything else happens, on any transport lacking
+a real per-call gate — a refusal, deliberately, not a warning that could be missed. Also closed:
+a critic-found permanent test-coverage gap for the `canUseTool` wiring itself, and a fail-open edge
+case (a non-string command) flipped to fail-closed for consistency with this codebase's convention.
+
+**Disclosed, not fixed, genuinely out of reach at this layer**: `runnerVersion` freshness is not
+independently re-derived — only the translator/command subject-hash half of specs/10 rule 8 is; no
+schema convention exists for deriving a runner's own live version, and P6's `proof.ts` already
+treats it as caller-supplied. A generic `grant.extra` passthrough in `tool-grant.ts` could in
+principle inject a bare, shadow-triggering tool name for a future caller — confirmed nothing live
+today does; named for future awareness, not a current gap.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P7`.
