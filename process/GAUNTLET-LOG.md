@@ -24601,3 +24601,47 @@ translator-proof function directly, confirmed `{ok: true}`) — a separate, out-
 decision (whether to widen a frozen v1 schema), not touched here.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q346`.
+
+## M17 P21 (live-run fix 6) — a brief-wording clarification, not a security fix; two critics, same minor note
+
+**What prompted it.** The SAME bespoke-runner fixture (`fixture2-bespoke-runner`) Q346's own fix
+already unblocked went on to hit a DIFFERENT real mistake on a later live retry: the agent proposed
+`run` as a shell pipe joining the raw runner invocation to the self-contained translator (`node
+runner.js | node .forge/test-translators/unit.js`) — a shape `vetProposedCommand` already, correctly,
+refuses outright (confirmed again this round: shell-operator/hard-denylist checks run over the WHOLE
+raw command string, unconditionally, before any pattern match — `confined-command.ts`'s `syntaxOf`,
+called first inside `vetProposedCommand`). The security boundary was never in question; the problem
+was the brief (the prompt text a live agent actually reads) never told the model this shape is wrong,
+so it kept proposing it and burning rounds. The builder rewrote
+`packages/templates/templates/briefs/adopt-tests.md` with an explicit rule, a concrete negative
+worked example, and strengthened Do-not/Acceptance-criteria bullets, and regenerated the matching
+`fixtures/greenfield-service/.forge/` snapshot. Confirmed via one real, live round-trip that the
+targeted mistake stopped recurring before this was ever sent to critics.
+
+**Two independent critics, each in their own worktree (`fix6-critic1`, `fix6-critic2`), approached
+this from different angles and both returned ship-as-is.** Critic 1 re-read the whole brief file for
+internal contradictions, independently recomputed the fixture's `forge:generated` header hash against
+the real template body and confirmed it is genuinely regenerated (not a stale hand-copy), and ran the
+real scoped battery directly rather than trusting the commit message (`greenfield-fixture-generated.
+test.ts` 7/7, `spec-cli-examples.test.ts` 581/581, `pnpm typecheck`/`lint`/`prettier --check` all
+clean). Critic 2 cross-checked the brief's own factual claims against the real enforcement code
+rather than just the prose: confirmed `SHELL_OPERATOR_PATTERN` (`adapter-kit/src/grants/exec.ts:56`)
+is byte-identical to what the brief now quotes, confirmed `vetProposedCommand` really does run this
+check before any grant-pattern match (`confined-command.ts:991-992` before line 1025), and confirmed
+`run`/`translate`/`scope`/`filter` are ALL vetted through the identical path
+(`adopt-agent.ts`'s `vetProposedTestCommand`) — so the brief's claims are accurate, not just
+plausible-sounding. Neither critic found a security gap; both independently judged a second live
+round-trip unnecessary given the brief's wording doesn't gate the real safety boundary (the code does,
+regardless of what the prose says) — it only reduces wasted rounds — and the mistake's actual fix was
+already confirmed live once.
+
+**One finding, reached independently by BOTH critics — minor, non-blocking, not fixed here.** The new
+warning paragraph and negative example name only `run`/`translate`, not `scope`/`filter`, even though
+all four fields are vetted through the identical `SHELL_OPERATOR_PATTERN` check. Real risk is low
+(scope/filter are short filter-token templates, not full invocations, so a model composing a shell
+pipe there is a less natural mistake than for `run`), and the pre-existing brief text already covers
+all four fields generically elsewhere — left as a future, optional prose-completeness pass, not a
+defect of its own.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q346` (this fix continues that same entry's own brief; it
+did not surface a new disclosed defect of its own).
