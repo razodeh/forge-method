@@ -30614,4 +30614,6 @@ relies on to confine what a live agent session can do — this is folded into th
 gate alongside Q340/Q341/P16, not left as a lower-priority loose end. A dedicated piece should be
 opened to pursue it with the same structure P7 originally used.
 
-**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
+**Gauntlet:** see `GAUNTLET-LOG.md` once the dedicated follow-up piece lands (not yet built as of
+this entry — this records the disclosure, per the owner's own "every disclosed defect fixed first"
+standing instruction, same as Q314/Q317/Q340/Q341 before their own follow-up pieces landed).
