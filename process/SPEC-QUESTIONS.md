@@ -30393,3 +30393,38 @@ scope): all 8 relevant files (736 tests), direct `tsc --noEmit`, `pnpm lint` all
 landing commit.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
+
+## Q343
+
+M17 P21's own live run found a second, real, distinct defect in `forge test adopt --agent`'s round-
+retry mechanism: a real, billed session completed, but its structured response failed root-level
+schema validation and that propagated straight out of the entire multi-round retry loop with zero
+retry — even though the identical loop already retries correctly on a failing translator proof.
+
+**DECISION** — fixed: both real `RUN-160` throw sites (a malformed/unparseable structured response;
+an out-of-claim translator path) now get a real retry with feedback, bounded by the existing
+`round === maxRounds` check. A third throw site, a genuine `RUN-161` security command-vetting
+refusal, deliberately stays a hard, non-retryable failure — every live Bash call during a round
+already goes through the identical vetting check, and feeding a security refusal's own detail into
+another round's prompt would hand a round-by-round oracle against a security boundary to a session
+investigating a potentially adversarial target, matching this codebase's own P7-era threat model.
+
+**DECISION** — both critics independently confirmed the core fix correct (one via a stress test of
+the security judgment call itself, including verifying the "equivalent live feedback" claim's real
+factual basis; the other via two novel scenarios the builder hadn't tried — repeated failures and
+mixed failure kinds across rounds — plus a real mutation test). Two real precision gaps found and
+fixed in a second round: the original doc-comment justification for the non-retryable security
+refusal overclaimed (structurally false for the command's `scope`/`filter` fields, whose template
+placeholders are never run live with real values) — reworded to scope the claim accurately and name
+the real decision rationale (the oracle risk) rather than an unconditional guarantee; and a third,
+pre-existing `RUN-160` throw site (an internal-invariant fallback) was safe only by lexical position,
+not semantic distinction — given a bidirectional cross-referencing comment rather than a new code,
+so a future refactor can't silently relocate it into retry-eligible territory.
+
+**DECISION** — one real MAJOR, process-level (not logic-level) issue, the same class caught twice
+before this milestone (Q342, and this same live run's own Python-detector fix): a new `describe()`
+title was missing this project's required `(specs/22 M17 P<n>)` tag, confirmed newly introduced and
+not caught by the builder's own narrower battery. Fixed (renamed), re-verified against the full
+root-enumerator sweep.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.

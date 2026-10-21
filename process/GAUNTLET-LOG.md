@@ -24328,3 +24328,74 @@ relevant files (736 tests) plus direct `tsc --noEmit`/`pnpm lint` on the final l
 clean.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q342`.
+
+## M17 P21 (live-run fix 3)
+
+Found live, mid-way through M17 P21's own live run: `forge test adopt --agent` against a genuinely
+bespoke, in-house test runner spawned a real, billed `opus`-model test-architect session (confirmed
+via a real `.forge/state/runs/adopt-tests-<ts>/steps/.../context.json`), but the whole command
+failed outright on round 1 of what should have been a bounded multi-round retry: the agent's
+structured response failed root-level schema validation (`RUN-160`), and that exception propagated
+straight out of the entire `runAdoptTestsAgent` function with zero retry — even though the identical
+round loop, a few lines later, already retries correctly with real feedback when a translator PROOF
+fails. Real spend wasted, no chance for the agent to self-correct, despite the exact feedback
+mechanism it would have needed already existing for a different failure class.
+
+**Root cause**: the round `for` loop wrapped each round in `try { ... } finally { removeLaneWorktree
+}`, with no `catch` clause at all. `parseProposalResponse`'s own root-level `RUN-160` throw (the
+agent's structured output didn't parse as a valid proposal shape at all) propagated out of the whole
+function, past the loop, unretried.
+
+**Fixed**: both real `RUN-160` throw sites (`parseProposalResponse`'s malformed-response check,
+`assertTranslatorPathWithinClaim`'s out-of-claim-path check) now get a real retry with feedback,
+bounded by the existing `round === maxRounds` check. `AdoptTestsAgentResult`'s `'exhausted'` outcome
+became a proper discriminated union on `cause: 'proof-failed' | 'invalid-response'`, so the one real
+downstream consumer (`describeAdoptTestsAgentResult`) narrows correctly. A third `RUN-160` throw
+site — a genuine `RUN-161` security command-vetting refusal — was deliberately left as a hard,
+non-retryable failure: every live Bash call during a round already goes through the identical
+vetting check via `createLiveExecGate`, and feeding a security refusal's own detail into another
+round's prompt would hand a round-by-round oracle against a security boundary to a session
+investigating a potentially adversarial target (an unfamiliar runner script), matching this
+codebase's own P7-era threat model. A pre-existing, already-correct precedent for this exact failure
+class was found and cited (`packages/engine/src/rca/loop.ts`'s own `structuredOrUndefined`/
+`callSession`, which already treats a malformed/failed session as absent rather than crashing) —
+confirming this was a real inconsistency with established codebase convention, not a novel design
+question.
+
+**Two independent critics, each in their own worktree, found no BLOCKING issue but real, worth-
+fixing precision gaps.** Critic1 (security-judgment-call lens): verified the factual core of the
+"equivalent live feedback" justification is true (`createLiveExecGate` and the final
+`vetProposedTestCommand` call the identical `vetProposedCommand`/grant/root), agreed with the final
+decision to keep the security refusal non-retryable (the asymmetric-oracle risk is real, and a human
+still gets full visibility via the refusal's own remedy text) — but found the ORIGINAL doc-comment
+language overclaimed: it is structurally FALSE for the command's `scope`/`filter` fields, whose
+template placeholders (`{files}`/`{name}`/`{name:regex}`) the brief tells the agent to name, never
+to literally run live with real values substituted, so those two fields get no live rehearsal at
+all before the final check. Also found a real but non-blocking scope-leak risk: a THIRD, pre-
+existing `RUN-160` throw site (an "unreachable by construction" internal-invariant fallback,
+predating this fix) is currently safe only because it sits lexically outside the new catch, not
+because anything semantically distinguishes it from the two retry-worthy sites.
+
+Critic2 (correctness/regression lens): reproduced the original bug on the pre-fix commit first,
+then independently constructed two scenarios the builder hadn't tried — two malformed responses in
+a row on a 3-round budget, and the two failure KINDS (proof-failed, invalid-response) mixed across
+rounds in both orders — confirming both compose correctly with no cross-contamination between the
+`RoundFeedback` union's branches. Mutation-tested the core fix by reverting and restoring the new
+catch. Found the SAME class of naming-rule violation this milestone has now caught three separate
+times (Q342, this session's own fix2 round, and here): one new `describe()` title was missing the
+required `(specs/22 M17 P<n>)` tag, confirmed newly introduced (clean on the pre-fix base, failing
+specifically on this block afterward) — not caught by the builder's own narrower battery, which
+hadn't included the root-enumerator sweep.
+
+**All three findings fixed in a second round**: the naming-rule violation renamed to the correct
+tagged form, re-verified against the full root-enumerator sweep; both doc comments (in `adopt-
+agent.ts` and `codes.ts`'s `RUN-161` entry) rewritten to scope the "equivalent feedback" claim
+precisely to the literal `run` field and explicitly disclose the `scope`/`filter` gap, reframing the
+real reason for the hard-stop as the oracle risk rather than an unconditional guarantee; the two
+`RUN-160` sites given a bidirectional cross-referencing comment rather than a new error code, so a
+future refactor relocating the internal-invariant assertion will see the retry catch's own
+assumption before silently breaking it. Independently re-verified by the orchestrator directly (not
+a third critic round, given the fix's narrow, already-test-backed scope): all 8 relevant files
+(1321 tests) plus direct `tsc --noEmit`/`pnpm lint` all clean on the final landing commit.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q343`.
