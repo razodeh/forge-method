@@ -24266,3 +24266,65 @@ merely a docs problem; (4) three confirmed-still-real Windows gaps (`ENV-007`'s 
 (Windows CI) remains deliberately not landed this milestone.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q339`.
+
+## M17 P21 (live-run fix 1)
+
+Found live, in the middle of M17 P21's own live run (real agents, real spend, 3 fresh fixture
+projects): the first fixture (an ordinary Node project with a confident `node --test` detection)
+could not get past `forge test adopt --write` at all. `runPromotion`/`evaluateTestAdoptionApproval`
+(`packages/cli/src/commands/loop/test/adopt.ts`) refused unconditionally on `staged.proof ===
+undefined` — but a bare, deterministic detection structurally never produces a translator proof
+(`StagedProposalRecord`'s own doc comment: "a probe is a mandatory input this detector cannot author
+on its own"). `specs/13` F-TEST-11 is explicit the translator proof exists to gate "ANY format that
+is NOT one of F-TEST-7 point 2's built-ins" — it was never meant to apply to a confident built-in
+detection (Vitest/pytest/`node --test`/Jest/Mocha) at all. This meant `--write` could never promote
+the single most common, ordinary real-world case — confirmed live, reproduced on a fresh fixture
+before any fix: `{"outcome":"proof-not-passing","detail":"no translator proof has been recorded for
+this layer's staged proposal yet."}`.
+
+**Fixed**: both functions now skip the proof-presence refusal specifically when `staged.source ===
+'detected'` AND the staged command does not itself declare a translator (`declaresTranslator`, a new
+shared helper also used to de-duplicate a pre-existing `needsTranslator` computation further down the
+same function). Every other reachable state — no staged proposal, a failed/stale proof regardless of
+source, or an agent/human-authored proposal with no proof at all — still refuses exactly as before;
+human approval at `G-TestAdopt` is still required for every source, `'detected'` included (only the
+deterministic proof-presence check is bypassed, never the human-approval requirement).
+
+**Two independent critics, each in their own worktree.** Critic1 (security/trust-boundary lens):
+constructed real adversarial repros (hand-crafted staged-proposal files for `'agent'`/`'human'`
+sources with no proof, and a `'detected'` source with an explicit failing proof) and confirmed every
+one still refuses, both via direct function calls and via the real CLI against a real `forge
+init`-created fixture; confirmed the gate's own real deterministic check (`forge test adopt
+--check-proof unit --json`) genuinely flips to `unapproved: 0` live, while `--write` still correctly
+reaches `not-approved` until a real human approval exists — the human gate was never bypassed. Found
+one real but then-latent MINOR: the bypass was keyed on `source === 'detected'` alone, with no
+structural coupling to whether a translator was actually declared — unreachable today (zero of
+`detect.ts`'s 7 static detectors ever set `translate`) but not enforced against a future detector
+change (`detect.ts`'s own doc comment already names real expansion targets — Rust, .NET, Ruby, Maven/
+Gradle — that could plausibly need a translator while remaining a deterministic, `'detected'`-sourced
+match).
+
+Critic2 (correctness/regression lens): reproduced the ORIGINAL bug first, on the commit before the
+fix, to confirm the real starting point; then mutation-tested the fix itself by reverting just its own
+condition and confirming the original bug came back byte-for-byte, reverting again to confirm the fix
+restores it — proving the fix, not something else, is causally responsible. Verified the fix is not
+runner-specific by running the full real chain (`init` → `test adopt` → `--check-proof` →
+`gate approve` → `--write`) against a SECOND, independent ecosystem (a fresh pytest fixture, not just
+the node-test one the builder tested) — both promoted cleanly, with the real `.forge/config.yaml`
+content confirmed by direct read. **Found a real MAJOR, process-level, not logic-level**: the fix's
+own first test commit added a `describe()` title missing the required parenthesized `(specs/22 M17
+P21)` form, breaking `test/spec-cli-examples.test.ts`'s own M17 naming-rule check — 100% reproducible,
+never caught by the builder's own narrower 3-file battery, which didn't include that root enumerator.
+
+**Both findings fixed in a second round, independently re-verified by the orchestrator directly**
+(not a third critic round, given the small, targeted, already-test-backed scope): the naming-rule
+violation renamed to the correct parenthesized form, confirmed via the specific check plus the full
+flagged root-enumerator sweep (`test/command-steps.test.ts`, `test/command-steps-in-claim.test.ts`,
+`test/workspace-floor.test.ts`, `test/spec-cli-examples.test.ts`); the hardening added a
+`declaresTranslator` helper requiring BOTH `source === 'detected'` AND no declared translator before
+the bypass fires, with a dedicated new test proving a hand-constructed `'detected'`-sourced record
+that DOES declare a translator still correctly refuses. Orchestrator independently re-ran all 8
+relevant files (736 tests) plus direct `tsc --noEmit`/`pnpm lint` on the final landing commit — all
+clean.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q342`.

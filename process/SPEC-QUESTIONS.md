@@ -30354,3 +30354,42 @@ reason (blocks a clean real-matrix signal; found only because real CI finally ra
 **Gauntlet:** see `GAUNTLET-LOG.md` once P16's own fix piece lands (not yet built as of this entry —
 this records the disclosure, per the owner's own "every disclosed defect fixed first" standing
 instruction, same as Q314/Q317 before their own follow-up pieces landed).
+
+## Q342
+
+Found live, mid-way through M17 P21's own live run (the owner's explicit "Start the live run. From
+m17" authorization, 2026-10-21): `forge test adopt --write` could never promote the single most
+common, ordinary case — a confident, built-in-format test-runner detection (Vitest/pytest/`node
+--test`/Jest/Mocha). `runPromotion`/`evaluateTestAdoptionApproval` refused unconditionally whenever a
+staged proposal had no recorded translator proof, but a bare deterministic detection structurally
+never produces one (there is no translator involved for a built-in format at all). `specs/13`
+F-TEST-11 is explicit the translator proof exists only to gate non-built-in formats. Reproduced live
+on the first live-run fixture before any fix existed.
+
+**DECISION** — fixed: both functions now skip the proof-presence refusal when `staged.source ===
+'detected'` AND the staged command does not itself declare a translator (a new `declaresTranslator`
+helper, hardened beyond `source` alone per a critic's own finding that a future detector could in
+principle add translator support while keeping `source: 'detected'`). Every other reachable state —
+no staged proposal, a failed/stale proof regardless of source, or any agent/human-authored proposal
+with no proof — still refuses exactly as before; human approval at `G-TestAdopt` remains required for
+every source, `'detected'` included.
+
+**DECISION** — 2 independent critics each confirmed the fix via real, independent methods: critic1
+(hand-crafted adversarial staged-proposal attacks against every other source/proof-state, live CLI
+confirmation that the gate's own deterministic check genuinely flips while human approval remains a
+real, unbypassed requirement) and critic2 (reproduced the original bug first on the pre-fix commit,
+then mutation-tested the fix itself by reverting and restoring its own condition, then confirmed the
+fix is not runner-specific by running the full real chain against a second, independent ecosystem —
+pytest, not just the node-test case the builder tested). Both confirmed no regression to the
+intentional refusal cases this mechanism exists to enforce.
+
+**DECISION** — critic2 also found a real MAJOR, process-level (not logic-level) issue: the fix's own
+first test commit added a `describe()` title missing this project's own required `(specs/22 M17
+P21)` parenthesized form, breaking `test/spec-cli-examples.test.ts`'s own naming-rule check — never
+caught by the builder's own narrower battery, which hadn't included that root enumerator. Fixed
+(renamed), re-verified against the full flagged root-enumerator sweep. Independently re-verified by
+the orchestrator directly (not a third critic round, given the fix's narrow, already-test-backed
+scope): all 8 relevant files (736 tests), direct `tsc --noEmit`, `pnpm lint` all clean on the final
+landing commit.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
