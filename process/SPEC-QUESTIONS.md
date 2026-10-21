@@ -30490,3 +30490,47 @@ round-2 critic (own hand-written probe, a different fixture and branch, reaching
 no-test-setup outcome with a real ADR written) — none repeating the schema-level rejection.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
+
+## Q346
+
+M17 P21's own live run found a fifth, real defect — the structurally deepest found in this live
+run, since it made one of P21's own three named test scenarios ("an in-house runner with a bespoke
+output format") permanently unsuccessful regardless of investigation quality. `vetProposedTestCommand`
+holds a proposed command's `run` field to the same restrictive allowlist used for live tool-use
+(deliberate, correct P7-era security design) — but a genuinely bespoke runner's own raw invocation
+can never match that fixed allowlist, and the shipped brief never told the agent the one
+vetting-compliant pattern that does: a self-contained translator script, invoking the real runner
+internally, registered as `run` directly.
+
+**DECISION** — fixed: the brief (`adopt-tests.md`) rewritten into three explicit, mutually exclusive
+cases, with a worked example; a stale doc comment that had wrongly framed this exact gap as an
+already-disclosed, intended limitation corrected.
+
+**DECISION** — a second, distinct bug found while verifying the first (`declaresTranslator()` only
+recognised a `translate`-field translator, never one registered as `run` directly, which would have
+made a correctly-fixed brief produce a proposal that stages successfully and then permanently fails
+`G-TestAdopt`'s own re-verification as stale) was fixed in the same piece. That second fix's own
+first attempt (a bare substring check) was itself found wrong by a critic — a real false positive on
+conventional commands merely referencing the translator path as an argument — and fixed again by
+anchoring to the real `ADOPT_TESTS_EXEC_PATTERNS` prefixes directly, requiring a genuine `startsWith`
+match.
+
+**DECISION** — independently confirmed end to end across three separate real, live, billed
+round-trip attempts (the builder's own, plus two fully independent critic attempts spanning a second
+Node fixture and a distinct Python/line-JSON ecosystem), all three confirming the structural fix
+holds (`RUN-161` never fired in any attempt) regardless of each attempt's own separate, unrelated
+outcome. Two critics' security review of the brief rewrite found no exploitable gap.
+
+**DECISION** — one critic found a real, previously-undisclosed MAJOR: a generated fixture
+(`fixtures/greenfield-service/.forge/`) embeds a snapshot of this exact brief the project's own test
+suite documents as "must not go stale," which had already drifted — not only from this piece, but
+across 47 other files from unrelated prior pieces, undetected because the drift-check test never
+compares a generated file's own body text. Regenerated the whole snapshot via the documented
+procedure, re-verified against every test referencing it.
+
+**DECISION** — disclosed, not fixed: `forge-test-report` v1's schema has no field for a failure's
+own error message text — an unrelated, pre-existing gap that would affect any translator for any
+runner reporting per-test messages, confirmed to be the one remaining real obstacle in one of the
+three live attempts via a zero-cost replay check, left for a separate product/spec decision.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.

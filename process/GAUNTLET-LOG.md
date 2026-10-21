@@ -24513,3 +24513,91 @@ with a real ADR written). All three real attempts succeeded or failed for expect
 reasons; none repeated the schema-level rejection.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q345`.
+
+## M17 P21 (live-run fix 5) — the structurally deepest fix of this live run
+
+Found live, mid-way through P21's own live run: against a project with a genuinely bespoke,
+in-house test runner (the exact scenario this whole milestone's live run exists to validate), the
+agent's structured response correctly validated (confirming the prior output-schema fix works), but
+the whole command then failed hard — the proposed `command.run` (the runner's own raw invocation)
+matched none of the allowed exec patterns.
+
+**Root cause, structural, not a vetting bug**: `reporter.ts`'s real execution model runs
+`command.run` first (the real, raw invocation) and `command.translate`, when present, as a genuinely
+SEPARATE later step reformatting `run`'s own captured output. `vetProposedTestCommand` holds `run`
+to the identical restrictive `ADOPT_TESTS_EXEC_PATTERNS` allowlist used for live tool-use —
+deliberate, P7-era security design, confirmed accurate via its own doc comment, not itself a defect.
+That allowlist is a fixed set of well-known framework invocations plus specifically a script under
+`.forge/test-translators/`. A genuinely bespoke runner's own raw invocation can therefore never
+match it directly; the only vetting-compliant path was always for the agent to write a
+self-contained translator script that invokes the real runner internally and reformats its output,
+registering that script's own path as `run` directly. The shipped brief never told the agent this
+specific, structurally-required pattern, so the real live agent proposed the non-compliant raw-`run`
+shape instead — meaning this one of P21's own three named test scenarios could never succeed,
+regardless of how well any agent investigated.
+
+**The fix**: rewrote `packages/templates/templates/briefs/adopt-tests.md` into three explicit,
+mutually exclusive cases (conventional run + built-in format; conventional run + separate
+`translate`, the pre-existing, still-correct case; bespoke run → a self-contained translator
+registered as `run` directly, never paired with a separate `translate`), with a concrete worked
+example. Also corrected a stale doc comment in `adopt-tests-grant.ts` that had wrongly framed this
+exact gap as an already-disclosed, intended limitation (the brief's own old point 3, "say so in your
+reason and stop," was presented as the answer — it never was).
+
+**A second, distinct bug found and fixed while verifying the first**: `declaresTranslator()` only
+recognised a translator declared via the separate `translate` field, never one registered as `run`
+directly — so a correctly-fixed brief would have produced a proposal that stages successfully and
+then permanently fails `G-TestAdopt`'s own re-verification as "stale," forever, with nothing ever
+having changed. Without this second fix, fixing the brief alone would have traded one permanent
+failure for another.
+
+**That second fix's own first attempt was itself found wrong by a critic round, and fixed again.**
+A bare substring check (`run.includes('.forge/test-translators/')`) was live-reproduced as a real
+false positive: several OTHER granted exec patterns (`make *`, `rake *`, every bare
+`<framework>*`) are unconstrained trailing wildcards, so a genuinely conventional command that
+merely passes the translator directory as an ARGUMENT (a real `--exclude=.forge/test-translators/**`
+flag, a realistic thing a project might need) was wrongly flagged as declaring a translator —
+reopening the exact permanent-"stale" failure mode via a different trigger. Fixed by deriving the
+real anchor prefixes directly from `ADOPT_TESTS_EXEC_PATTERNS` itself (never a second, hand-kept
+list that could drift from it) and requiring `run` to genuinely START WITH one of them, mirroring
+the identical anchor the live vet itself already enforces.
+
+**Independently confirmed end to end, across THREE separate real, live, billed round-trip attempts
+against three separately-constructed bespoke-runner fixtures, spanning two different ecosystems and
+wire formats**: one (the builder's own first attempt) reached a real, valid structured response
+every round but exhausted its round budget on an unrelated, narrow `forge-test-report` schema gap
+(no field for a failure's own error message — disclosed separately below, not touched here) —
+confirmed the structural fix held across all 3 of its own rounds (no `RUN-161` fired once); one (a
+critic's own, fully independent attempt, same Node ecosystem but a different bespoke runner) reached
+a clean, passing `"staged"` outcome in round 2; one (a second critic's own, fully independent
+attempt, a genuinely different ecosystem — Python, line-delimited JSON) also reached a clean,
+passing `"staged"` outcome in round 2. `RUN-161` did not fire in any of the three real attempts.
+
+**Two independent critics, each in their own worktree, did a security-focused review of the brief
+rewrite itself** (the brief steers a real, live agent's behavior going forward) and found no
+exploitable gap: the worked example uses the safe argv-array `child_process.execFileSync` form,
+never shell-string interpolation; confirmed directly in `confined-command.ts` that shell-operator and
+hard-denylist checks run over the whole raw command string before any pattern match is attempted, so
+a crafted "safe-prefix plus malicious suffix" command still gets refused regardless; confirmed
+nothing in the new text implies any translator location other than the one safe, already-vetted
+path. One critic also found a real, previously-undisclosed MAJOR: a generated fixture
+(`fixtures/greenfield-service/.forge/`) embeds a full copy of this exact brief as a `forge:generated`
+snapshot the project's own test suite documents as "must not go stale" — confirmed it matched the
+shipped template byte-for-byte before this piece and diverged after, and confirmed the project's own
+drift-check test does not catch body-text drift at all (only structural facts). Regenerating it
+surfaced that it had ALREADY drifted across 47 other files from unrelated prior pieces that forgot
+to regenerate it — fixed by regenerating the whole snapshot via the documented procedure rather than
+hand-patching only the one file this piece touched, re-verified against every test referencing the
+fixture (250+ tests across `test/greenfield-fixture-generated.test.ts`, `test/skeleton-gate.test.ts`,
+`test/kb-rules.test.ts`, several `packages/kb/test/*` files, `test/tainted-steps.test.ts`), confirming
+nothing downstream broke from pulling in the unrelated drift.
+
+**Disclosed, not fixed, by design**: `forge-test-report` v1's schema has no field for a failure's own
+error message text — not caused by this fix and not specific to the bespoke-runner case (it would
+bite any hand- or agent-written translator for any runner that reports per-test error messages);
+proved to be the ONE remaining real obstacle on the builder's own live attempt via a zero-cost
+replay (stripped the one offending field from a retained real lane's output by hand, re-ran the real
+translator-proof function directly, confirmed `{ok: true}`) — a separate, out-of-scope product/spec
+decision (whether to widen a frozen v1 schema), not touched here.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q346`.
