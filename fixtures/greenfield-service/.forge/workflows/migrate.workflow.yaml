@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=e0f366940db3e66ad4270d49821aa64c2ae696258d2449f343562f0c6eee807f — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=d8f707fc3a40db6b732691f5d0ac9fbfd6df5d5d1dc58e95481d2abcd79d8351 — edits will be overwritten; use overrides/
 id: migrate
 name: Migrate
 version: 1.0.0
@@ -38,6 +38,10 @@ steps:
     produces: ['**', '!@protected']
     # Same reason as plan-migration above (20 §20.5 point 6, SPEC-QUESTIONS.md Q232 decision 15).
     taint: external
+    # Characterise-then-change (specs/22 M17 P10, #8): builds the additive half against "the readers and
+    # writers inventory" the plan ADR names, over whatever change set that ADR declares -- a real
+    # migration's own scope, not the 20-turn default's implicit assumption of a small one.
+    limits: { maxTurns: 45, wallClockMs: 1200000, maxCostUsd: 4.0 }
 
   - id: migrate-data
     kind: command
@@ -54,6 +58,10 @@ steps:
     produces: ['**', '!@protected']
     # Same reason as plan-migration above (20 §20.5 point 6, SPEC-QUESTIONS.md Q232 decision 15).
     taint: external
+    # Characterise-then-change (specs/22 M17 P10, #8): the brief's own job is "find every remaining
+    # reference to the old structure" across the whole repository before removing it -- the most
+    # read-heavy of this workflow's two agent steps, past the 20-turn default's fit by even more than expand.
+    limits: { maxTurns: 50, wallClockMs: 1500000, maxCostUsd: 4.5 }
 
   - id: verify-migration
     kind: command

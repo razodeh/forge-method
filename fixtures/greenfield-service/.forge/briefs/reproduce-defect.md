@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=95558aa65cbca3cf28c1d307e1e24696799143ff93b6c41d8135642c2ec5fc06 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=b8b9178f38f95ac007c05e109ee1daba9314336a26deada300b0275d29c6d35d — edits will be overwritten; use overrides/ -->
 Turn a reported defect into a deterministic, minimal reproduction before anyone tries to fix it.
 This is a hard gate: no fix may be attempted until a reproduction exists. The next step writes the
 failing test from what you record here, so what you record is its specification.
@@ -36,9 +36,12 @@ any supporting file in its `evidence`. Record:
 - the lowest layer at which it fails and the narrowest scope you found;
 - whether it fails every time, and the environment it was run in.
 
-If a command alone cannot express the reproduction, add a small script and list its path in
-`evidence`; put it under `docs/forge/reports/defects/` beside the Defect records, named after the
-defect id. Do not put a reproduction only in your final message; the next session cannot see it.
+If a command alone cannot express the reproduction, add a small artifact and list its path in
+`evidence`. A script goes under `docs/forge/reports/defects/` beside the Defect records, named after
+the defect id. A test is either given a `.test.`/`.spec.` extension or put under a `test`, `tests`,
+`__tests__` or `e2e` directory, named with the defect id either way — either way lies inside this
+step's own claim; the defect id in the name alone, with neither shape, does not. Do not put a
+reproduction only in your final message; the next session cannot see it.
 
 ### Acceptance
 

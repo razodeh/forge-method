@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=b517f879e639a29a852e756a395f0e5c9146d686336892e51917de4fd0fe6135 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=62a3b23a76673340de566343ef605c1b6b1038cb31b87afea77770e6af1e6b02 — edits will be overwritten; use overrides/ -->
 Measure the stage against its performance and reliability requirements and file every miss as a
 defect. Measure first; do not tune. A later step fixes what you file, and `G-Stable` will not pass
 while a Sev1 or Sev2 defect is open.
@@ -17,13 +17,13 @@ For each performance NFR, run or design the benchmark that its own statement des
 load, data volume, percentile and environment. If a benchmark exists, use it rather than writing an
 easier one. If your grant does not let you run a benchmark, give the exact command and the
 conditions, mark it not run, and list that NFR as unmeasured in your final summary. An NFR you could
-not measure is not a Defect and must not disappear: record it as an `OpenQuestion` with status
-`open`, naming the NFR and the exact command to run, so `G-Stable`'s open-questions policy keeps the
-gate closed until someone measures it (raise it with `FORGE_ASK:` if you cannot write that
-register), and list it in your final summary too. Record the method with the result: hardware or
-environment, data size, warm-up, run count and the seed, so the result reproduces. Where a target is
-missed, find where the time or resource goes (profile, flame graph, query plans, allocation) before
-naming a cause.
+not measure is not a Defect and must not disappear: record it as an `OpenQuestion` — an object,
+never a plain string, with `id` (`OQ-` and three digits), `question` and `status` (`open`) — naming
+the NFR and the exact command to run, so `G-Stable`'s open-questions policy keeps the gate closed
+until someone measures it (raise it with `FORGE_ASK:` if you cannot write that register), and list
+it in your final summary too. Record the method with the result: hardware or environment, data size,
+warm-up, run count and the seed, so the result reproduces. Where a target is missed, find where the
+time or resource goes (profile, flame graph, query plans, allocation) before naming a cause.
 
 Then check reliability against the failure modes the architecture states for each boundary:
 

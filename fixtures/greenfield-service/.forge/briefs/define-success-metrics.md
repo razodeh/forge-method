@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=68f1d6f5377ed9611d061c7e24037e4ce7f6d21282ce670973540678a541a049 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=ef36cf9809ab90fcbf9fcde981d1f8388243bb5d207cf46a10674b465a5c5f5c — edits will be overwritten; use overrides/ -->
 Define how this product's success will be measured, and turn the quality targets those measures
 imply into verifiable non-functional requirements. The `G-Problem` gate fails if there is no
 measurable success metric, so at least one metric must have a numeric target and a way to collect
@@ -52,9 +52,10 @@ it.
 - Every NFR has a numeric target and a verification method, so a check for numeric NFR targets
   passes at the product gate.
 - Every metric traces to a problem or user need in `problem.md` or `users.md`, cited by entry id.
-- A number you chose yourself, rather than read from the inputs, is recorded as an `Assumption` (low
-  confidence, with `validate_by`). The metric or NFR statement says "proposed target", and an NFR
-  built on it stays at `status: draft`.
+- A number you chose yourself, rather than read from the inputs, is recorded as an `Assumption` — an
+  object, never a plain string, with `id` (`ASM-` and three digits), `text`, `confidence` (always
+  `low`) and `validate_by`. The metric or NFR statement says "proposed target", and an NFR built on
+  it stays at `status: draft`.
 - If no reasonable basis for a number exists, raise the question with the human instead of guessing.
 
 ### Do not

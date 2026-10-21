@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=8f15fe56cc7cd8c99f5952094ffe7fe38c228cb2ef30604dfbfce76138fd7ef3 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=48e160168c48d45ed4bc2df1ed97c1caae0bcd9a41e4450f35080bf54bd1db8b — edits will be overwritten; use overrides/ -->
 Build the additive half of the migration exactly as the migration plan ADR specifies. When you are
 done, the old structure still works, the new structure exists next to it, and the data migration
 step that follows can populate it. Nothing that the currently deployed code depends on may go away
@@ -26,10 +26,14 @@ Code and tests in the lane, limited to the change set in the ADR (request any ot
 - Whatever lets old and new coexist: dual writes, or reads that fall back from new to old, behind
   the switch the ADR names.
 - The migration script or backfill routine that the data migration step
-  (`forge migrate run --phase expand`) runs. Build it at the path and with the arguments the ADR
-  names for the data migration, so a runner can execute it non-interactively, and state in the
-  change how it reports completion. It is idempotent (a second run changes nothing), resumable after
-  a crash, batched and throttled.
+  (`forge migrate run --phase expand`, `03` §3.2.5) runs. The path is fixed, not yours to choose:
+  `docs/forge/migrations/<id>.mjs`, where `<id>` is exactly the `id` of this ADR's own
+  `expand`-phase `migrations.yaml` entry (the plan ADR's "Declarations the gate reads" section names
+  it). A plain Node script, run non-interactively as `node docs/forge/migrations/<id>.mjs` with no
+  arguments: exit 0 means it applied cleanly, any other exit (or a timeout) means it did not, so
+  state in the change how it reports its own progress and completion through its own exit code and
+  output, never through an argument or a return value `forge migrate run` could read. It is
+  idempotent (a second run changes nothing), resumable after a crash, batched and throttled.
 - A down migration where one is possible, and an explicit flag on the migration where it is not.
 - Tests: the existing suite unchanged, which is what shows backward compatibility; the ADR's
   verification oracle (differential or round-trip between old and new representation); the script

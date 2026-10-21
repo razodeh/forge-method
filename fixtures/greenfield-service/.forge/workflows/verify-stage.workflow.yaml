@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=320e8e13023d5d6d42b2fb47e3572b58c8770e00a6355be9aec853e2dff44f57 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=0cbe615b351c8dfe5d94f370672a130cc359f42b4887bb4a568af4895beb64a4 — edits will be overwritten; use overrides/
 id: verify-stage
 name: Verify Stage
 version: 1.0.0
@@ -8,6 +8,10 @@ steps:
   - id: run-tests
     kind: command
     run: 'forge test run --json'
+    # `forge test run` (no `--rule`) owns `test-results.json` and, whenever a layer was configured and the
+    # run's own collection was clean, `flaky.json` (`packages/cli/src/commands/loop/test/{run,flaky}.ts`,
+    # `PLAN-M14.md` P2). Both are tracked reports its lane writes, not project code.
+    produces: ['docs/forge/reports/test-results.json', 'docs/forge/reports/flaky.json']
 
   - id: check-coverage
     kind: command

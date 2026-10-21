@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=24c5fce2256811587e8ab15379e4c36cb4b6ede4771a959d842906bc08ebf0aa — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=49f1133205561af8eaab55b0f601d147ab674e9cc7adcdb1cb0e86a770cb98d6 — edits will be overwritten; use overrides/ -->
 Design and write the contract for one cross-boundary interaction, the one named by this run's
 `interfaceName` input. That input is not one of this step's declared inputs, so if the interface's
 name is not in your context, ask with `FORGE_ASK:` rather than choosing one. Once it merges it is
@@ -36,6 +36,16 @@ the YAML record carry the id, title and a reference to it. The contract states:
 - Security: authentication, authorisation and any sensitive fields.
 - Examples: at least one valid example per operation and one per documented error, which the tests
   can validate.
+
+### Declarations the gate reads
+
+Write or update `docs/forge/kb/architecture/version-skew.yaml` so this contract's id is declared
+there too, alongside every other id already declared. `G-Integration`'s `version:skew` check
+(`forge spec validate --rule version-skew`) reads that file, not this contract. Add or update this
+id's entry under `contracts`: `current` (this contract's version) and one `consumers` entry per
+consumer this run adds or moves, `{name, version}`. Only raise `policy.max_skew` when the versioning
+decision above needs a wider window, with the ADR that justifies it. `freeze-contracts.md` shows the
+full shape, including the `none_reason` a still-empty `contracts` needs.
 
 ### Acceptance
 

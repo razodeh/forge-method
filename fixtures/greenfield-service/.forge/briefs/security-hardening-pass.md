@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=494041658331a443359e65b982dd8303aaefde703fde03bfa8af7f18138e36db — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=eaffec125346add356ff84bb0d38fb926c80cb98c2e2753e7ebe2555445be451 — edits will be overwritten; use overrides/ -->
 Review what this stage actually built against the threats the project said it must resist, and file
 every gap as a defect. You are the adversary here: for each finding state the exploit path, not just
 the risk category. A later step fixes what you file, and `G-Stable` will not pass while a Sev1 or
@@ -30,8 +30,9 @@ code against it rather than against a generic list. Cover, where they apply to t
 For each threat class say what you checked and how. A class with no finding needs one line in your
 final summary saying what was examined, so absence of a defect is distinguishable from absence of a
 review. A class you could not examine (no access to run or read what is needed) is recorded as an
-`OpenQuestion` with status `open` naming what is missing, so the stage cannot pass on an unexamined
-threat; raise it with `FORGE_ASK:` if you cannot write that register.
+`OpenQuestion` — an object, never a plain string, with `id` (`OQ-` and three digits), `question` and
+`status` (`open`) — naming what is missing, so the stage cannot pass on an unexamined threat; raise
+it with `FORGE_ASK:` if you cannot write that register.
 
 ### Produce
 

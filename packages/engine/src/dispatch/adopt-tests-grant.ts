@@ -87,13 +87,21 @@
  * trust that turned out not to extend to an attacker-supplied `-f <path>` naming a DIFFERENT recipe
  * entirely, which is exactly what the third critic round above found and lane isolation, not a
  * narrower pattern, actually closes; (3) `.forge/test-translators/<ext>` invocations (one per
- * interpreter) for `command.translate` itself — safe because that directory is where
- * `copyTranslatorIntoProject` (`adopt-agent.ts`) only ever copies ONE validated file FROM, by name,
- * once a round's proof has passed; nothing a live command plants under it inside a round's own
- * disposable lane ever reaches the real project on that basis alone. A genuinely unconventional
- * in-house runner this list still does not name is the one real, disclosed residual gap: the brief's
- * own point 3 already tells the agent to say so in its `reason` rather than silently substitute
- * something else, the identical hand-off `detect.ts` gives a human for the same shape of gap.
+ * interpreter) — safe because that directory is where `copyTranslatorIntoProject` (`adopt-agent.ts`)
+ * only ever copies ONE validated file FROM, by name, once a round's proof has passed; nothing a live
+ * command plants under it inside a round's own disposable lane ever reaches the real project on that
+ * basis alone. These patterns are NOT reserved for `command.translate` alone (`vetProposedTestCommand`
+ * checks `run`/`translate`/`scope`/`filter` against this exact same list, with no field-specific
+ * carve-out) — which is also the real answer for a genuinely unconventional in-house runner, corrected
+ * after a real live run (M17 P21) found this paragraph's own earlier claim wrong in practice: that
+ * runner's own raw invocation structurally can never match any pattern here, so disclosing the gap in
+ * `reason` and stopping (what this paragraph used to say the brief's point 3 asks for) is not actually
+ * the designed path and made one of P21's three named test scenarios impossible to pass regardless of
+ * investigation quality. The real, vetting-compliant path is a translator that invokes the real runner
+ * ITSELF, internally, and is registered as `command.run` directly — `.forge/test-translators/<ext>` was
+ * always wide enough to express this (`run` is checked against the identical list `translate` is), the
+ * brief simply never told the agent to use it that way until P21's fix (`briefs/adopt-tests.md`'s own
+ * "Produce the configuration" section now states this, with a worked example).
  */
 import type { ToolGrant } from '@forge/adapter-kit';
 

@@ -378,6 +378,83 @@ describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adopti
     expect(result).toMatchObject({ v: 1, layer: 'unit', unapproved: 0 });
     expect(result.detail).toContain('current');
   });
+
+  describe('declaresTranslator() -- anchored to the exact ADOPT_TESTS_EXEC_PATTERNS prefix, never a bare substring (specs/22 M17 P21) (a critic-round fix)', () => {
+    it('unapproved=0 for a CONVENTIONAL command that merely passes the translator directory as an ARGUMENT -- never flagged as "declares a translator" (the false positive a critic round found: a bare run.includes(".forge/test-translators/") check would wrongly treat this as needing re-verification against a translator file that was never written at all, permanently failing as "missing")', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      const command: StructuredTestCommand = {
+        run: 'npx vitest run --reporter=json --exclude=.forge/test-translators/**',
+        output: { source: 'stdout' },
+        format: 'vitest-json',
+      };
+      await writeStagedProposal(paths, 'unit', {
+        ...AGENT_RECORD,
+        command,
+        proof: {
+          ok: true,
+          subjectHash: computeProofSubjectHash(command),
+          runnerVersion: '1.0.0',
+          checkedAt: '2026-01-01T00:00:00.000Z',
+        },
+      });
+      const result = await checkTestAdoptionApproved(paths, 'unit');
+      expect(result).toMatchObject({ v: 1, layer: 'unit', unapproved: 0 });
+      expect(result.detail).toContain('current');
+    });
+
+    it('unapproved=0 for the REAL self-contained-translator-as-"run" shape, re-verified against the translator\'s own current, real content on disk (the true positive the anchor must still catch)', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      const translatorContent =
+        'process.stdout.write(JSON.stringify({forgeTestReport:1,tests:[]}));\n';
+      await mkdir(path.join(dir, '.forge', 'test-translators'), { recursive: true });
+      await writeFile(path.join(dir, '.forge', 'test-translators', 'unit.js'), translatorContent);
+      const command: StructuredTestCommand = {
+        run: 'node .forge/test-translators/unit.js',
+        output: { source: 'stdout' },
+        format: 'forge-json',
+      };
+      await writeStagedProposal(paths, 'unit', {
+        ...AGENT_RECORD,
+        command,
+        proof: {
+          ok: true,
+          // The REAL hash basis a passing proof for this shape actually records: the translator's
+          // own bytes, never the command's canonical JSON (`runTranslatorProof`'s own call, M17 P21).
+          subjectHash: computeProofSubjectHash(command, translatorContent),
+          runnerVersion: '1.0.0',
+          checkedAt: '2026-01-01T00:00:00.000Z',
+        },
+      });
+      const result = await checkTestAdoptionApproved(paths, 'unit');
+      expect(result).toMatchObject({ v: 1, layer: 'unit', unapproved: 0 });
+      expect(result.detail).toContain('current');
+    });
+
+    it('unapproved=1, "missing", when the self-contained-translator-as-"run" shape is staged but the translator script is not actually on disk', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      const command: StructuredTestCommand = {
+        run: 'node .forge/test-translators/unit.js',
+        output: { source: 'stdout' },
+        format: 'forge-json',
+      };
+      await writeStagedProposal(paths, 'unit', {
+        ...AGENT_RECORD,
+        command,
+        proof: {
+          ok: true,
+          subjectHash: computeProofSubjectHash(command, 'whatever was hashed at proof time'),
+          runnerVersion: '1.0.0',
+          checkedAt: '2026-01-01T00:00:00.000Z',
+        },
+      });
+      const result = await checkTestAdoptionApproved(paths, 'unit');
+      expect(result.unapproved).toBe(1);
+      expect(result.detail).toContain('missing');
+    });
+  });
 });
 
 describe('runPromotion -- the full staged-proposal lifecycle, now that G-TestAdopt is real (specs/22 M17 P7)', () => {

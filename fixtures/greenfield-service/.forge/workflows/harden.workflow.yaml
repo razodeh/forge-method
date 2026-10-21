@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=e24d35159208d0648b10fc44a2ad08a46da4aa398ca06060cb4bc849d26748ff — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=f9a85018e112742b703f7f30504ff167f1ee7b6b496cbc1ed9454a7971b84519 — edits will be overwritten; use overrides/
 id: harden
 name: Harden
 version: 1.0.0
@@ -71,6 +71,11 @@ steps:
     # The project, less what a project-wide step may never write (`06` §6.7, P36): CI and hook configuration, manifests and test-runner
     # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The findings name no paths.
     produces: ['**', '!@protected']
+    # Characterise-then-change (specs/22 M17 P10, #8): the same fix-defect.md brief as debug:fix and
+    # quick-fix:fix, but "every finding, one at a time in severity order" inside ONE agent turn -- a
+    # whole hardening pass's worth of diagnose-then-change cycles, not one defect's. The largest bump
+    # of this piece's audit for exactly that reason.
+    limits: { maxTurns: 60, wallClockMs: 1800000, maxCostUsd: 6.0 }
 
   - id: stable-gate
     kind: gate

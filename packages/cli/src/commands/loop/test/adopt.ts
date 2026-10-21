@@ -35,6 +35,7 @@
 import { ForgeError } from '@forge/core/errors';
 import { listDirSorted, pathExists, readTextFile, writeFileAtomic } from '@forge/core/fs';
 import type { AbsolutePath, ProjectPaths } from '@forge/core/fs';
+import { ADOPT_TESTS_EXEC_PATTERNS } from '@forge/engine/dispatch';
 import { configSchema, testCommandEntrySchema, type TestCommandEntry } from '@forge/schemas/config';
 import { readEvents } from '@forge/telemetry/events';
 import * as YAML from 'yaml';
@@ -285,25 +286,64 @@ export interface TestAdoptionApprovalResult {
   readonly detail: string;
 }
 
-/** Whether `command` declares a translator script (`13` F-TEST-11's own structured
- * `execution.testCommands.<layer>.translate` field) -- the ONE thing the translator proof actually
- * exists to gate ("the one path by which ANY format that is not one of F-TEST-7 point 2's
- * built-ins ... is ever trusted"). Factored out so the `'detected'`-source proof bypass below
- * (`evaluateTestAdoptionApproval`/`runPromotion`) can require this is `false` as well as `source ===
- * 'detected'`, rather than trusting `source` alone -- a fresh critic round's own hardening: `source
- * === 'detected'` is only EVER written by `runDetectionAndStage` today, and that function's seven
- * static detectors (`detect.ts`) never set `translate`, so the two conditions happen to coincide in
- * every build that exists right now. But `detect.ts`'s own doc comment already names real expansion
- * targets (Rust, .NET, Ruby, Maven/Gradle) that could legitimately need a translator while still
- * being a deterministic, non-agent detection; if a future change proposed one of those under
+const TRANSLATOR_DIR_REL_PATH = '.forge/test-translators';
+
+/** The exact anchor prefixes a self-contained-translator-as-`run` is ever allowed to start with --
+ * derived from `ADOPT_TESTS_EXEC_PATTERNS` itself (`@forge/engine/dispatch`), never a second,
+ * hand-kept list that could drift from it. Each of that list's `<interpreter> .forge/test-
+ * translators/*` entries is a literal prefix plus one trailing `*` (`matchesExecPattern`'s own "a
+ * trailing * is a prefix match and nothing else" contract, `adopt-tests-grant.ts`'s own doc
+ * comment) -- stripping that one trailing character recovers the exact string `vetProposedTestCommand`
+ * already required `run` to START WITH for this shape to have been accepted at all. A critic round
+ * (M17 P21) found this file's own FIRST attempt at this check -- `run.includes('.forge/test-
+ * translators/')`, a bare substring test -- genuinely wrong: several OTHER granted patterns
+ * (`make *`, `rake *`, every bare `<framework>*` pattern) are unconstrained trailing wildcards, so a
+ * real, conventional command that merely PASSES the translator directory as an argument (a real
+ * `--exclude=.forge/test-translators/**` flag, say) was wrongly flagged as "declares a translator" --
+ * reopening the exact permanent-"stale"-at-`G-TestAdopt` failure mode this function exists to close,
+ * just via a different trigger (`adopt.test.ts`'s own regression test reproduces this directly).
+ * Anchoring to START-WITH, the identical anchor the real vet already enforces, closes it: no
+ * conventional pattern's own anchor text can ever start with one of these prefixes (`node
+ * --test*`/`npx vitest*`/etc. all start with their OWN verb, never with another interpreter
+ * immediately followed by this exact directory), so a command that starts with one of these prefixes
+ * can only be a genuine self-contained-translator-as-`run`. */
+const TRANSLATOR_RUN_PREFIXES: readonly string[] = ADOPT_TESTS_EXEC_PATTERNS.filter((pattern) =>
+  pattern.includes(`${TRANSLATOR_DIR_REL_PATH}/`),
+).map((pattern) => pattern.slice(0, -1));
+
+/** Whether `command` declares a translator script -- EITHER `13` F-TEST-11's own structured
+ * `execution.testCommands.<layer>.translate` field (a conventional `run` whose raw output still
+ * needs reformatting), OR `command.run` ITSELF starting with one of `TRANSLATOR_RUN_PREFIXES` (M17
+ * P21: the self-contained-translator-as-`run` shape a genuinely bespoke, non-conventional runner
+ * needs -- `briefs/adopt-tests.md`'s own "Produce the configuration" worked example). This is the
+ * ONE thing the translator proof actually exists to gate ("the one path by which ANY format that is
+ * not one of F-TEST-7 point 2's built-ins ... is ever trusted"), and `runTranslatorProof`'s own
+ * `computeProofSubjectHash` call (`adopt-agent.ts`) already hashes the REAL translator bytes for
+ * BOTH shapes alike, whenever a `translatorPath` was given at all -- so this function checking only
+ * `.translate` (its pre-M17-P21 shape) made `evaluateTestAdoptionApproval`, below, recompute a
+ * bespoke-runner proposal's subject hash from the command's own canonical JSON instead of the
+ * translator's real bytes, which could never match the hash the proof actually recorded: a real,
+ * reproduced live-run finding, not a hypothetical -- every self-contained-translator-as-`run`
+ * proposal would stage successfully (the proof passes) and then permanently fail `G-TestAdopt`'s own
+ * re-verification as "stale," forever, with nothing ever having changed. Factored out so the
+ * `'detected'`-source proof bypass below (`evaluateTestAdoptionApproval`/`runPromotion`) can require
+ * this is `false` as well as `source === 'detected'`, rather than trusting `source` alone -- a fresh
+ * critic round's own hardening: `source === 'detected'` is only EVER written by
+ * `runDetectionAndStage` today, and that function's seven static detectors (`detect.ts`) never set
+ * `translate` or a translator-shaped `run`, so the two conditions happen to coincide in every build
+ * that exists right now. But `detect.ts`'s own doc comment already names real expansion targets
+ * (Rust, .NET, Ruby, Maven/Gradle) that could legitimately need a translator while still being a
+ * deterministic, non-agent detection; if a future change proposed one of those under
  * `source: 'detected'` and this function only checked `source`, the bypass would silently reopen the
  * exact unproven-translator hole this mechanism exists to close. Requiring BOTH makes the exemption
  * safe by construction, not by the `source` convention being maintained correctly forever. */
 function declaresTranslator(command: TestCommandEntry): boolean {
-  return typeof command !== 'string' && command.translate !== undefined;
+  if (typeof command === 'string') return false;
+  return (
+    command.translate !== undefined ||
+    TRANSLATOR_RUN_PREFIXES.some((prefix) => command.run.startsWith(prefix))
+  );
 }
-
-const TRANSLATOR_DIR_REL_PATH = '.forge/test-translators';
 
 /** The real, current content of `<layer>`'s own translator script, re-read off disk at check time --
  * never the content a PAST proof run happened to see. There is no dedicated path field anywhere in

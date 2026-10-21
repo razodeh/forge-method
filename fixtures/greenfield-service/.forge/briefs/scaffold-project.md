@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=182c3d2a9ae43eb74094c2549b538de863dc43b216bcaee214d798a195ad120e — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=37ec877a0cc2dddd94ab0c71af19e6f403079d201468968dcccd5fc4072bd5ee — edits will be overwritten; use overrides/ -->
 Generate the real project scaffold from the repository, layout and stack decisions already made,
 ending in a smoke path that builds and tests from a clean clone. `G-Foundation` will check exactly
 this: a clean build, a reproducible install, a CI skeleton, and a working test command.
@@ -51,13 +51,15 @@ not add for that reason. Every KB document below is a KB entry in its section, e
   merge).
 - `engineering/dod-profiles.yaml` and `engineering/definition-of-done.md`. The YAML has a top-level
   `profiles:` map; each profile (`backend-default` at least, plus any other a story type here needs)
-  has a `ready` list and a `done` list. A plain string in either list is a condition expression,
-  never a shell command. Use exactly these `ready` entries for `backend-default`:
-  `story.acceptance.length > 0`, `story.files_expected.length > 0`,
-  `{ check: spec:story-refs-resolve }` and `{ check: spec:no-blocking-open-questions }`. Each `done`
-  entry is a `{ check: <id> }` such as `build:typecheck`, `build:lint`, `test:unit --scope story`,
-  and each id is mapped to its task-runner command in `delivery/build.md`. A malformed file makes
-  every ready story fail the readiness gate.
+  has a `ready` list, a `verify` list and a `done` list. A plain string in any of the three is a
+  condition expression, never a shell command. Use exactly these `ready` entries for
+  `backend-default`: `story.acceptance.length > 0`, `story.files_expected.length > 0`,
+  `{ check: spec:story-refs-resolve }` and `{ check: spec:no-blocking-open-questions }`. `verify` is
+  what the story itself can already show (`forge story verify` runs it at self-verify) and `done` is
+  what only review and the merge can show (run at commit and in the merge queue); each entry in
+  either is a `{ check: <id> }` such as `build:typecheck`, `build:lint`, `test:unit --scope story`
+  (`verify`) or `review:blocking-findings == 0` (`done`), and each id is mapped to its task-runner
+  command in `delivery/build.md`. A malformed file makes every ready story fail the readiness gate.
 - `src/` and `tests/` per the layout and the testing conventions in `engineering/standards.md`,
   environment `config/`, `scripts/` (including `scripts/dev-setup`), the local dependencies
   integration tests need (a compose file or the ecosystem equivalent), and observability bootstrap
@@ -83,7 +85,7 @@ Give in your closing message the exact commands that should prove each item.
 - The smoke path contains no unfinished markers, no stub returns and no hard-coded responses
   standing in for real behaviour.
 - The commands listed in `delivery/build.md` match the task runner, name for name.
-- `engineering/dod-profiles.yaml` parses, and every `done` check id has a command in
+- `engineering/dod-profiles.yaml` parses, and every `verify` and `done` check id has a command in
   `delivery/build.md`.
 
 ### Do not

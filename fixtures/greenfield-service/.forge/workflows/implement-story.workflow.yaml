@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=5bbc55ddb55805c61070923eb13edb11c585ade89ecc54a0a7b5aff5443c8368 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=d30c0e44e19da8d08e478207a056e6db2bd8003342ad35153c71ff6015d8006d — edits will be overwritten; use overrides/
 id: implement-story
 name: Implement a single story
 version: 1.0.0
@@ -60,6 +60,10 @@ steps:
     # The story's own file claim, as `green`'s (P36): the brief refactors "your own change, still inside the story's file claim",
     # and says test files are not the refactorer's to change.
     produces: ['{{run.filesExpected}}', '!{{run.testPaths}}']
+    # Characterise-then-change (specs/22 M17 P10, #8): scoped to this story's own lane diff, narrower than
+    # refactor.workflow.yaml's refactor-code, but still "improve the structure of what you just wrote"
+    # with the guarding tests kept green between moves -- past the 20-turn default's fit.
+    limits: { maxTurns: 35, wallClockMs: 900000, maxCostUsd: 3.0 }
 
   - id: self-verify
     kind: command
@@ -71,9 +75,27 @@ steps:
     agent: reviewer
     mode: swarm-review
     perspectives: [design, security, testing, performance]
+    # specs/22 M15 P9: who runs the automatic fix session on a blocked verdict -- the same implementer
+    # role plan/green/refactor/document already run as, never the reviewer itself (10 §10.6's own
+    # reviewer/implementer separation; CFG-501 refuses a reviewer approving, and here fixing, its own
+    # authored change).
+    fixAgent: '{{ownerRole}}'
     dependsOn: [self-verify]
     inputs: ['diff:lane', 'artifact:Story({{storyId}})']
     outputs: [{ type: ReviewReport }]
+    # specs/22 M15 P9: a blocked round now runs its own automatic fix-and-re-review loop (bounded by
+    # execution.criticRounds, RUN-113 on exhaustion) INSIDE this one step's own lane, before this step
+    # ever ends -- the fix session's own changes land in this SAME lane, so the claim below also carries
+    # the story's own file claim (identical to green/refactor/document's own), not only the ReviewReport
+    # the mode itself already implies. A gate that found nothing to fix writes no production change here
+    # at all, so this widened claim is a no-op for the common, unblocked case.
+    produces: ['{{run.filesExpected}}', '!{{run.testPaths}}']
+    # A merged `blocked` verdict that survives every configured round fails this step with RUN-113
+    # (18 §18.7, specs/22 M15 P9) classified `policy`, not `validation` -- so `retryOn: [validation]`
+    # below never retries an exhausted loop (the same diff would fail the same way). `execution.
+    # criticRounds` not configured at all (an older project) means zero automatic rounds: the FIRST
+    # blocked verdict fails immediately with the pre-existing RUN-108, byte-identical to this step's own
+    # behaviour before P9.
     retry: { maxAttempts: 2, retryOn: [validation] }
     onFailure: escalate
 
@@ -87,15 +109,68 @@ steps:
     # them", says a home outside `files_expected` is a `FORGE_REQUEST_CHANGE`, not a write, and says not to change tests.
     produces: ['{{run.filesExpected}}', '!{{run.testPaths}}']
 
+  # 09 §9.8 (PLAN-M14.md P1/P25, Q232 decision 13): `done` is what only review and the merge can show, so it
+  # runs here, after review and document, not at self-verify -- the lane commit runs `done`.
+  - id: done-check
+    kind: command
+    run: 'forge story verify {{storyId}} --phase done --json'
+    dependsOn: [document]
+
+  # specs/22 M15 P7: assembles and commits a real EvidenceBundle for this story -- binding evidence,
+  # test results, coverage delta, every ReviewReport verdict, gate outcomes, exemptions in force, and
+  # real cost. `produces` names the exact file `forge story evidence` writes (EvidenceBundle's own
+  # registered path template, `reports/evidence/{id}-{story}.md`, rooted under the real configured
+  # `paths.reports` -- `docs/forge/reports` by default) so the bundle lands inside this story's own
+  # claim, not reverted by claim enforcement on commit. Spelled out in full (`docs/forge/reports/...`),
+  # not the bare `reports/...` registry-path shorthand: `resolveStepClaim`'s own `resolveDocsRootPrefix`
+  # (`packages/engine/src/dispatch/outputs.ts`) only rewrites a `produces` entry that OPENS WITH a full
+  # shipped default docs root (`docs/forge/reports`, matched at a path-segment boundary) to the
+  # project's own configured one -- a bare `reports/...` prefix matches none of those roots and passes
+  # through completely unrewritten, which is an entirely different, nonexistent path at both the
+  # default config and any configured one. Caught by a gauntlet critic round: under the bare form the
+  # real write (`docs/forge/reports/evidence/...`) never matched the compiled claim, so `strict` policy
+  # reverted the freshly-committed bundle on every real run.
+  - id: evidence
+    kind: command
+    run: 'forge story evidence {{storyId}} --json'
+    dependsOn: [done-check]
+    produces: ['docs/forge/reports/evidence/*-{{storyId}}.md']
+
   - id: commit
     kind: checkpoint
-    dependsOn: [document]
+    dependsOn: [evidence]
 
   - id: merge
     kind: merge
     over: 'storyId'
     dependsOn: [commit]
-    policy: { conflict: agent, preChecks: fast, postChecks: full }
+    # specs/22 M15 P14's own real live run found `preChecks: fast` structurally incompatible with this
+    # workflow's own stacked lane chain, reproduced twice: "fast" runs the declared test layers against
+    # EACH landing lane's own isolated worktree before any of them merge (PLAN-M13.md P38) -- but `plan`
+    # has no test files yet (`red` has not run), and `red` has the test FILE but not yet the
+    # implementation it imports (`green` has not run) -- both are the TDD cycle's own intended,
+    # structural incompleteness, not a real regression "fast" should ever have caught.
+    #
+    # Removing `preChecks` alone was NOT sufficient, confirmed by a second, later real live run:
+    # `postChecks: full` runs the identical layers, against the integration tree, once per lane AS IT
+    # LANDS (the same `PLAN-M13.md` P38 per-lane timing, just a different worktree) -- not once after the
+    # WHOLE chain has landed, which this comment originally, incorrectly assumed. `red`'s own lane still
+    # hits the identical wall one step later: a real `unit` command run right after `red` lands fails
+    # exactly like "fast" did --
+    #   FAIL  src/classify-order-priority.test.js
+    #   Error: Cannot find module './classify-order-priority.js' imported from .../story.test.js
+    # -- because `green` has not landed yet either way. `skipChecks: [red]` is the real fix: that one
+    # lane's checks (both pre and post) are skipped entirely, never partially (which real-execution
+    # layers would fail is project/config-dependent -- a TypeScript project's `typecheck` fails on the
+    # same unresolved import `unit` does, and whether `lint` does depends on whether an import-resolution
+    # rule is configured, so no smaller, always-safe subset exists to keep instead). Safe because `red`'s
+    # own write claim is already narrowly bounded (`produces: ['{{run.testPaths}}']` only, `RUN-104`
+    # reverts anything else), and because the SAME `postChecks: full` set runs again, unskipped, the very
+    # next lane down (`green`) -- a real defect in `red`'s own file still surfaces there, attributed one
+    # lane later rather than at the lane that introduced it. `build-stage.workflow.yaml`'s own merge has
+    # the identical fix for the identical reason -- its own `generate-tests`/`implement` fanout pair is
+    # the same red/green shape, one real lane per story, not a single already-complete unit.
+    policy: { conflict: agent, postChecks: full, skipChecks: [red] }
 
 onFailure:
   default: escalate

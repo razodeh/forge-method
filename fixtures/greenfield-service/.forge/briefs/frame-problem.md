@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=27eb1666629f2bb84d4a7f22e4df466399d2ee298ba72a7ddad48db39f471e39 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=20b61aaf98da09f3c3f7ad1185dcbf9183d8c1283d27eda36c92d71d9b2db8f0 — edits will be overwritten; use overrides/ -->
 Synthesize the discovery sessions into a written problem framing: who is affected, what hurts, how
 much, what already exists, and what is in and out of scope. Every downstream product decision will
 trace to a claim you record here, so each claim needs a source or an explicit "assumption,
@@ -24,10 +24,11 @@ unvalidated" label.
 - A short competitive and alternatives scan inside `problem.md`: what people use today, including
   doing nothing, and why it falls short. Label anything not sourced from your inputs as an
   assumption.
-- Risks you found, as `Risk` entries in `kb/risks.md`, each with `statement`, likelihood, impact,
-  mitigation and owner.
-- One `Assumption` entry per unvalidated claim about users, the market, or feasibility, each with
-  `confidence` and `validate_by`.
+- Risks you found, as `Risk` entries in `kb/risks.md` — each an object, never a plain string, with
+  `id` (`RISK-` and three digits), `statement`, `likelihood`, `impact`, `mitigation` and `owner`.
+- One `Assumption` entry per unvalidated claim about users, the market, or feasibility — each is an
+  object, never a plain string, with `id` (`ASM-` and three digits), `text`, `confidence` (`low`,
+  `medium` or `high`) and `validate_by`.
 
 ### Acceptance criteria
 
@@ -47,8 +48,9 @@ These map to the `G-Problem` checks that run after the next step.
   `Assumption` entry.
 - A question the sessions left open is either answered from the inputs, recorded as an `Assumption`
   with `validate_by`, or, only if discovery cannot be approved without its answer, recorded as an
-  `OpenQuestion` in `kb/open-questions.md`. An open `OpenQuestion` blocks the `G-Problem` approval,
-  so do not use it for things that can be validated later.
+  `OpenQuestion` in `kb/open-questions.md` — an object, never a plain string, with `id` (`OQ-` and
+  three digits), `question` and `status` (`open`). An open `OpenQuestion` blocks the `G-Problem`
+  approval, so do not use it for things that can be validated later.
 
 ### Do not
 

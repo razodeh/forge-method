@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=47db2c57cb68780c42f869d487699dfaf7e873e6579e3333121c8b94a048174b — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=a48afa07ecb3da7adbdb8fdfbb1305227938452022fd0a9f965eb60dcb5312a8 — edits will be overwritten; use overrides/ -->
 Establish, from evidence, whether each non-functional requirement that applies to this stage is met.
 The test and coverage steps before you check what the acceptance criteria say; you check what the
 NFRs say, which those often do not. Then `G-Verify` and the traceability check follow.
@@ -40,6 +40,9 @@ step, and the output check reads the subtype from the `delivered` line). Use the
   written.
 - `acceptance_for_receiver`: the exact commands that reproduce each measurement.
 - `constraints_for_receiver` and `assumptions`: measurement conditions others must keep or check.
+  `constraints_for_receiver` is a plain array of strings. `assumptions` is NOT: each entry is an
+  object with `id` (`ASM-` and three digits), `text`, `confidence` (`low`, `medium` or `high`) and
+  `validate_by`. Leave `assumptions` empty if you have none to record.
 
 ### Acceptance
 

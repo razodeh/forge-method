@@ -1,5 +1,5 @@
 ---
-# forge:generated v=0.0.0 hash=d5b4866b4704edb96b60abe3f5b3900b44b4c25953206b89c43d661865b818c8 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=8ab32be2e9b71a585094c09f91f86028d9843316228c7a1cbed261ed29d0588b — edits will be overwritten; use overrides/
 id: ADR-0001
 type: ADR
 schemaVersion: 1
@@ -21,6 +21,7 @@ superseded_by: null
 related: []
 diagrams: []
 framework: '<the decision framework used, if any>'
+sources: []
 ---
 
 ## Context

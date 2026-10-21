@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=815322eb8e5c5674ec6b1345956b9ddc9de5e13946b653ddb855679d37466989 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=c7a45eab0eff1d24d567710475a7bce8704d83a84cc16f34e2af35514ccc75c2 — edits will be overwritten; use overrides/ -->
 Write the test plan for this stage (`stageId`; if your context does not state it, ask the human, and
 never infer it): for every acceptance criterion of every story, the test that will prove it, at what
 layer, with what oracle, and run by what command. The plan feeds the run-plan derivation that
@@ -23,7 +23,10 @@ follows and the stage-plan review, and the test author will implement from it.
   `delivered` is `subtype: test-plan`, and the second names the plan. In the record,
   `constraints_for_receiver` lists environment and data requirements, and `acceptance_for_receiver`
   lists the checks the test author must meet, including the non-AC tests below as required
-  additional tests.
+  additional tests. Record any unresolved question in `open_questions` (a plain array of strings)
+  and any assumption you made in `assumptions` — NOT plain strings: each entry is an object with
+  `id` (`ASM-` and three digits), `text`, `confidence` (`low`, `medium` or `high`) and
+  `validate_by`. Leave `assumptions` empty if you have none to record.
 - If the project has no test strategy yet, create the strategy document (`engineering/testing.md`, a
   KB entry): the pyramid shape and a budget for each layer, and which command runs each layer. Use
   the commands the scaffold provides (`test:unit`, `test:integration`, `test:contract`, `test:e2e`,
@@ -67,7 +70,8 @@ command that runs it. Then:
 - Every stage NFR with a numeric target has a test or monitor that can fail at that number.
 - Nothing in the plan requires an environment the scaffold and pipeline do not provide. Raise any
   gap with the platform role; if it must stop stories from becoming ready, record it as an
-  `OpenQuestion`, knowing that any open one blocks readiness for every story until resolved.
+  `OpenQuestion` — an object, never a plain string, with `id` (`OQ-` and three digits), `question`
+  and `status` (`open`) — knowing that any open one blocks readiness for every story until resolved.
 
 ### Do not
 

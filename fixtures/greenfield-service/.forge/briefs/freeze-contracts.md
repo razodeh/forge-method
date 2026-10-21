@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=5af42202b578f683d74d98f5d13911bd5d57fd8760029fe806366a44e71bf28d — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=1e67ad57b5bfc7161096ad91fa44b935fbabcaac011a930f624a891d4414c3d1 — edits will be overwritten; use overrides/ -->
 Every story in this stage is about to be built in its own lane, in parallel, and no lane can see
 another lane's in-flight work. Your job is to write down, before any of that starts, every seam the
 lanes share, so each implementer imports a contract instead of inventing one. After this step and
@@ -40,6 +40,27 @@ kinds a stage can share:
 
 Where the stack can generate code from a contract, name the generator and its output location in the
 contract, so implementers import the generated types and never re-declare them.
+
+### Declarations the gate reads
+
+Write or update `docs/forge/kb/architecture/version-skew.yaml` so EVERY valid contract is declared:
+every one you freeze here, every one already frozen. Keep it current at every level, not only L4 —
+`version:skew` only gates at L4, but a project's level can rise, so a declaration started there
+would already be behind. A YAML mapping: `policy.max_skew` (versions behind current still allowed
+side by side), `contracts`, an `INT-###` id to `{current, supported?, consumers}` — `current` its
+version, `supported` ascending, ending at `current`, `consumers` a `{name, version}` list.
+`contracts: {}` needs a `none_reason` sentence; MISSING always fails. Self-attested, unverified:
+
+```yaml
+policy:
+  max_skew: 1
+contracts:
+  INT-001:
+    current: 2
+    supported: [1, 2]
+    consumers:
+      - { name: fm-web, version: 2 }
+```
 
 ### Acceptance
 

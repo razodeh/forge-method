@@ -29,23 +29,79 @@ configuration. Treat this as an investigation with evidence, not a form to fill 
    the project as it stands, and once with a single, deliberately failing test you add yourself (in
    the runner's own idiom, placed somewhere its own discovery will find it) — removed again before
    you finish. You must see a real failure before you can claim your parsing of one is correct; a
-   configuration proposed from only a passing run is not acceptable.
-3. Only the commands a real test-adoption investigation plausibly needs are available to you (see
-   your own granted tool list) — conventional invocations across ecosystems, plus read-only search.
-   If the project's own test command needs something outside that list, say so in your reason
-   instead of silently substituting a different command you were not asked to run.
+   configuration proposed from only a passing run is not acceptable. When the runner's own real
+   invocation is not already one of your granted patterns (point 3, and "Produce the configuration"
+   below), you cannot run it directly even at this investigation stage — write the translator first,
+   then run and observe THAT, since it is the real command you will ultimately propose.
+3. Only the commands a real test-adoption investigation plausibly needs are available to you, live
+   (see your own granted tool list) — conventional invocations across ecosystems, plus read-only
+   search. This is not a narrower courtesy for investigation alone: your FINAL proposed `run` (and
+   `translate`/`scope`/`filter`, whenever you give them) are re-checked against this identical list
+   before FORGE ever executes them for real, unattended, on every future test run — a command
+   refused live is refused in your final report too, and vice versa. When the project's real test
+   command is not already one of these conventional shapes (a genuinely bespoke, in-house runner,
+   most commonly), that is not a gap to disclose in `reason` and stop at — see "Produce the
+   configuration" below for the one shape that lets you propose a working command for it anyway.
+   Reserve disclosing a gap in `reason` for what genuinely has no such path, such as a runner that
+   supports neither a single-file nor a single-test invocation at all (the `scope`/`filter` case
+   below).
 
 ### Produce the configuration
 
-- If the runner's own output already fits one of FORGE's built-in formats (`junit-xml`, `tap`,
-  `forge-json`, `vitest-json`, `jest-json`, `go-test-json`), propose that directly — no translator
-  needed.
-- Otherwise, write the parsing logic yourself: a translator script, committed to the project at
-  exactly `.forge/test-translators/<layer>.<ext>` (Node by default, or the project's own language
-  when that reads its native output more naturally), that prints `forge-json` (`forge-test-report`)
-  on stdout or to the `{output}` path your proposed command names. This is the ONLY file you may
-  write. Do not edit, move or delete anything else, and do not run `git add`, `git commit` or any
-  command that is not one of your granted test/investigation invocations.
+Two genuinely different shapes, depending on whether the runner's own real invocation is already one
+of your granted conventional patterns (`pytest`, `go test`, `npm test`, and so on — point 3, above)
+or not. Telling them apart correctly matters: proposing the wrong shape for a bespoke runner cannot
+ever pass, no matter how good the investigation behind it was.
+
+- **Conventional invocation, conventional output.** If the runner's own real invocation is already
+  one of your granted patterns AND its output already fits one of FORGE's built-in formats
+  (`junit-xml`, `tap`, `forge-json`, `vitest-json`, `jest-json`, `go-test-json`), propose `run` as
+  that invocation directly — no translator needed.
+- **Conventional invocation, unfamiliar output.** If the runner's own real invocation is already one
+  of your granted patterns but its output does not fit a built-in format, propose `run` as that same
+  real invocation, and write a translator script, committed to the project at exactly
+  `.forge/test-translators/<layer>.<ext>` (Node by default, or the project's own language when that
+  reads the output more naturally), that reads the raw output `run` produced — from stdout, or from
+  the `{output}` path your proposed command names — and prints `forge-json` (`forge-test-report`) in
+  its place. Propose it as a SEPARATE `translate` field alongside `run`: `run` still executes the
+  real invocation first; `translate` only reformats what it produced.
+- **Bespoke invocation (an in-house runner with no conventional entrypoint).** If the runner's own
+  real invocation is NOT already one of your granted patterns — a hand-rolled `node runner.js`, a
+  one-off shell script, and so on — you can never propose that raw invocation as `run` directly: it
+  will always be refused, regardless of how well you investigated it, because FORGE never
+  re-executes an unreviewed command unattended. The only move that can pass is to write a translator
+  script, committed to the project at exactly `.forge/test-translators/<layer>.<ext>`, that is
+  SELF-CONTAINED: it invokes the real runner itself, internally, using that script's own language's
+  real process-spawning facility (Node's `child_process`, Python's `subprocess`, Ruby's `Open3`,
+  PHP's `proc_open`, and so on), reads the real runner's real raw output, and prints `forge-json`
+  (`forge-test-report`) in its place — on stdout, or to the `{output}` path your proposed command
+  names. Propose THAT script's own path as `run` directly. Do NOT also declare a separate
+  `translate` field in this case: there is no raw, conventional `run` left for it to post-process —
+  the translator already is `run`, and it is the only thing that ever invokes the real runner.
+
+  **Worked example.** Say `package.json` has `"scripts": { "test": "node runner.js" }`, and
+  `runner.js` is a small, in-house script with no published framework behind it, printing lines such
+  as `PASS src/foo.test.js::adds numbers` and `FAIL src/bar.test.js::handles empty input` to stdout.
+  `node runner.js` matches none of your granted patterns, so it can never be `run`. Instead, write
+  `.forge/test-translators/unit.js`, something like:
+
+  ```js
+  const { execFileSync } = require('node:child_process');
+  const raw = execFileSync('node', ['runner.js'], { encoding: 'utf8' });
+  // ... parse `raw` into forge-json's own report shape ...
+  process.stdout.write(JSON.stringify(report));
+  ```
+
+  and then propose
+  `command: { "run": "node .forge/test-translators/unit.js", "output": { "source": "stdout" }, "format": "forge-json" }`
+  with `translatorPath: ".forge/test-translators/unit.js"` and no `translate` field at all. This is
+  also why you cannot run the raw `node runner.js` directly even during investigation (point 2,
+  above): write the wrapper first, then run and observe THAT script, the same real command you go on
+  to propose.
+
+- Either way, the translator you write (one per round, at most) is the ONLY file you may write. Do
+  not edit, move or delete anything else, and do not run `git add`, `git commit` or any command that
+  is not one of your granted test/investigation invocations.
 - Name `scope`/`filter` templates when the runner genuinely supports running one file or one named
   test (`{files}`/`{name}`/`{name:regex}`); state plainly, in your reason, which of the two (if any)
   the runner does not support — never invent a template the runner cannot actually honour.
@@ -71,7 +127,9 @@ Report your findings as the structured result this session asks for — never on
   — `command` is the exact `run`/`output`/`format` (and `translate`/`scope`/`filter` where real) you
   propose; `translatorPath` is present only when you wrote a translator; `runnerVersion` is the real
   version you observed (e.g. from the runner's own `--version`); `reason` states the evidence for
-  everything above, in your own words.
+  everything above, in your own words. `translate` is only ever present alongside a `run` that is
+  itself a conventional, already-granted invocation — never alongside a `run` that is your own
+  translator script (see "Produce the configuration" above).
 - `{ "noTestsFound": true, "command": {...}, "adrSummary": "...", "reason": "..." }` — for a project
   with no test setup: `command` is the conventional runner you propose, `adrSummary` is the ADR body
   described above.
@@ -93,6 +151,8 @@ forever.
   nowhere else changed.
 - `scope`/`filter` are named only when the runner genuinely supports them; you said plainly when it
   does not.
+- When the runner's own invocation is not already one of your granted patterns, `run` is the
+  self-contained translator's own path, with no separate `translate` field alongside it.
 - A no-test-setup project gets a proposal and an ADR summary, never an installed dependency.
 
 ### Do not
@@ -100,5 +160,8 @@ forever.
 - Do not propose a command you have not personally run.
 - Do not claim a `scope`/`filter` template the runner cannot really honour.
 - Do not write, move or delete anything outside `.forge/test-translators/<layer>.<ext>`.
+- Do not propose `run` as the runner's raw invocation when it is not already one of your granted
+  patterns, and do not pair a self-contained translator `run` with a separate `translate` field —
+  neither shape can pass ("Produce the configuration" above).
 - Do not install a dependency, change a lockfile, or write a test of your own into the project when
   there is no test setup — report the proposal, never apply it yourself.

@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=96ce2c92c46f6b23b01355c1ca43da597d58780b2196da6e5e9f864fee0bf124 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=fe94fad220e20800656043b183b921fdedbf9f2b5c5539fcf8832c306bb89b78 — edits will be overwritten; use overrides/ -->
 Produce the threat model for the designed system: a STRIDE pass over every component boundary, with
 a data-flow view and trust boundaries, where each threat ends in a mitigation and a test that would
 prove it.
@@ -30,8 +30,9 @@ prove it.
 - The authentication and authorization approach was chosen with the stack. Review it here and record
   its threats. Write an `ADR` (category `security`) only for a decision that is still open, such as
   the authorization model or secrets handling, and only when a real alternative exists.
-- A `Risk` entry (in `kb/risks.md`, with an owner) for every residual risk that is not reduced to
-  low.
+- A `Risk` entry (in `kb/risks.md`) for every residual risk that is not reduced to low — an object,
+  never a plain string, with `id` (`RISK-` and three digits), `statement`, `likelihood`, `impact`,
+  `mitigation` and `owner`.
 
 ### Depth
 

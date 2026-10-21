@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=99684b1dcd4905b5e8dcfd02fbd4fc1677af3edced022da697af7b3917688db2 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=29227b085d8884a094d30f75dc629551d88e5a3cf71998efea9a5785d201e54c — edits will be overwritten; use overrides/ -->
 Write the UX spec: for every user-facing capability, the flow a user takes, the information
 architecture around it, and the full set of states each screen can be in. Every user-facing
 capability must have a flow map and a state inventory before implementation starts.
@@ -40,7 +40,9 @@ In the handoff record, `delivered` lists the spec path, `constraints_for_receive
 decisions that bind the architecture (real-time updates, offline use, session handling), which the
 architecture step reads, and `open_questions` lists what you could not decide. The handoff's
 `open_questions` list does not block a gate; an `OpenQuestion` entry in the KB does, so create one
-only for a question the product cannot be approved without.
+only for a question the product cannot be approved without. That KB entry is an object, never a
+plain string, with `id` (`OQ-` and three digits), `question` and `status` (`open`) — a different
+shape from the handoff's own plain-string `open_questions` list above, despite the shared name.
 
 ### Acceptance criteria
 

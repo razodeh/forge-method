@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=512085ba3f3f1d76f8394d88d941f17c8012a8e8e7cd5d3411ba210aa0dba8b0 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=6d6e2eea5343a4df9c0d05a5f2e593ad661359761a9fd439f594dc75ce3b6e5c — edits will be overwritten; use overrides/ -->
 Seed the project glossary with the domain terms the idea and constraints already use, so every later
 artifact starts from one shared vocabulary. This is a seed: define only what the inputs support, and
 record every meaning you had to infer as an assumption.
@@ -19,8 +19,8 @@ record every meaning you had to infer as an assumption.
   item is `kind: human` with a `ref` naming the elicitation answer or constraint file the terms came
   from.
 - One `Assumption` entry (in `kb/assumptions.md`) for each definition that you inferred instead of
-  reading. Each carries `text`, `confidence` (low, medium or high) and `validate_by`, stating who or
-  what can confirm the meaning.
+  reading. Each is an object, never a plain string, with `id` (`ASM-` and three digits), `text`,
+  `confidence` (low, medium or high) and `validate_by`, stating who or what can confirm the meaning.
 
 ### How to choose terms
 

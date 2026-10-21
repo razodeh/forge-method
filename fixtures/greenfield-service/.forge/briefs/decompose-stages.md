@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=665bbb5720ad7cba4926039ea50a51d748281acec4eeded1ff6732e791cfbe80 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=fbd56b8ba7c65067e0c4217e60c5fa8b65d327cb6e1f36a1bf2273ca8effdf50 — edits will be overwritten; use overrides/ -->
 Decompose the product into stages: an ordered set of increments, each independently deployable and
 demonstrable, that together deliver the Capabilities. Each later planning step works inside one
 stage, so the boundaries you draw here are the ones the whole delivery follows.
@@ -29,7 +29,10 @@ stage, so the boundaries you draw here are the ones the whole delivery follows.
   `step: decompose-stages → review-stages`) that registers the plan. The entry has no `subtype` key,
   so the first string in `delivered` is `subtype: stage-plan` (`step` names the next node and does
   not carry the subtype) and the second is the stage plan path. Put your open questions in
-  `open_questions`, and the sizing assumptions in `assumptions`.
+  `open_questions` (a plain array of strings), and the sizing assumptions in `assumptions` — NOT
+  plain strings: each entry is an object with `id` (`ASM-` and three digits), `text`, `confidence`
+  (`low`, `medium` or `high`) and `validate_by`. Leave `assumptions` empty if you have none to
+  record.
 - Update each non-`wont` capability's `stage` field to the id of the stage that includes it, bump
   its `revision` and add a `changelog` entry. Leave `wont` capabilities as they are
   (`stage: deferred`).

@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=c432efa8c0ab27d956f66678ce4bdcefd0fe2c9ad5b072a7255653ff2b69f24b — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=52c4768149a6fb24840efdced2a57ce8137ffbd8a28fd9763c6107b14c54dbed — edits will be overwritten; use overrides/ -->
 A refactor changes structure and nothing else. Before anyone touches code, write down what "nothing
 else" means for this goal, so the refactoring step can be held to it and the test run afterward can
 prove it.
@@ -29,6 +29,11 @@ in its fields:
   be. Prefer the existing suite. Where behaviour is critical, name a differential check that runs
   the old and new code on the same inputs.
 - `open_questions` and `assumptions`: anything about intent you could not establish.
+  `open_questions` is a plain array of strings. `assumptions` is NOT: each entry is an object with
+  `id` (`ASM-` and three digits), `text`, `confidence` (`low`, `medium` or `high`) and
+  `validate_by`. This is the only field in the handoff shaped as an object — every other field here,
+  including `open_questions`, is a plain array of strings. Leave `assumptions` empty if you have
+  none to record.
 
 ### Acceptance
 

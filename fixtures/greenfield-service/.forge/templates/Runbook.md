@@ -1,5 +1,5 @@
 ---
-# forge:generated v=0.0.0 hash=8ed5429e5cc8b973e5dfe9bdb8f4bdace8bd4c9d3e94ce7487593fef31adefb8 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=e9d188328af5c413f1c8e032d24ac6550ba7bd7f81dce48413c066869917fe3a — edits will be overwritten; use overrides/
 id: RUN-001
 type: Runbook
 schemaVersion: 1
@@ -15,6 +15,7 @@ immediate_mitigation: '<the first thing to do to limit damage>'
 diagnosis_steps: []
 escalation: '<who to page, and when>'
 post_incident_actions: []
+sources: []
 ---
 
 <Anything else an on-call responder needs before running this runbook under pressure.>

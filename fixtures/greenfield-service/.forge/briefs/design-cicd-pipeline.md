@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=ea29b0149705af7bd30ee4888aa6aa5fec1d823c6cc26b609fd12ffdeb36b104 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=bbf89699f64a0d43434f288da32e7d9ff681ded54812ae2fde540023d984e63a — edits will be overwritten; use overrides/ -->
 Decide the platform and the stage graph that carries this stage's changes from a pull request to
 production, and record the decision. The stages after you (`deploy`, `smoke-test`, rehearsed
 rollback, then `G-Deliver`) all run against what you specify here.
@@ -50,6 +50,12 @@ State each of these explicitly in the ADR; each is checkable.
 - Pipeline credentials use short-lived federated identity where the platform supports it; no
   long-lived static keys. Secrets are referenced by name, never written into the ADR or a file.
 - Every stage writes machine-readable results under `docs/forge/reports/` so gates read the verdict.
+- The deploy-dry-run stage and the rollback-rehearsal stage each write their own evidence with
+  `forge deploy record dry-run --env <ENV-id> --sha <commit> --ran-at <instant>` and
+  `forge deploy record rollback --env <ENV-id> --from-sha --to-sha --rehearsed-at --health-url --health-status --health-checked-at`
+  — never a hand-authored file, since the command validates before writing — and commit the record
+  under `docs/forge/reports/deployments/`, which `forge deploy --dry-run` /
+  `forge deploy --rollback-check` (`G-Deliver`) then read back.
 - Reversibility, blast radius and a revisit trigger are filled in.
 
 ### Do not

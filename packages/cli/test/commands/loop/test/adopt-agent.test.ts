@@ -192,6 +192,116 @@ describe('runAdoptTestsAgent -- a passing proof on the first round (specs/22 M17
   });
 });
 
+describe('runAdoptTestsAgent -- a genuinely bespoke in-house runner can only be proposed as a self-contained translator registered as "run" (specs/22 M17 P21) (live-run fix 5)', () => {
+  it('a translator that itself invokes the real (non-conventional) runner, registered as command.run with NO separate "translate" field, passes vetting and stages -- the real live-run defect this fix closes', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: [
+        'investigated package.json: "scripts.test" is "node runner.js", a bespoke, in-house ' +
+          'runner with no conventional entrypoint. Wrote a self-contained translator that invokes ' +
+          'it internally and reformats its output; registering the translator itself as "run".',
+      ],
+      // The translator's OWN content: in a real session this really does spawn the real,
+      // non-conventional `node runner.js` via `child_process` and reformat its output -- simplified
+      // here (as every other translator-content fixture in this file already is) to print the
+      // canonical report directly, since this test's own subject is the COMMAND SHAPE
+      // (`run` alone, no `translate`), not the translator's own internal parsing logic. Unlike this
+      // file's OTHER translator-content fixtures (which pair a static, always-failing translate with
+      // a SEPARATE, REAL `run` whose own real exit code is what check 2 reconciles against), here the
+      // translator IS `run` -- it is this process's own exit code check 2 reads, so it must set one
+      // consistent with what it reports, the same obligation a real translator that wraps a real
+      // runner's own non-zero failure exit already has.
+      writeFiles: [
+        {
+          relativePath: '.forge/test-translators/unit.js',
+          content:
+            "process.stdout.write(JSON.stringify({forgeTestReport:1,tests:[{name:'PROBE deliberately fails',status:'fail'}]}));\nprocess.exitCode = 1;\n",
+        },
+      ],
+      structured: {
+        command: {
+          // The translator's own path, registered as "run" DIRECTLY -- no "translate" field at
+          // all. This is the one vetting-compliant shape for a runner whose own raw invocation
+          // (`node runner.js`) matches no `ADOPT_TESTS_EXEC_PATTERNS` entry; `briefs/adopt-tests.md`
+          // ("Produce the configuration") now says so explicitly, with a worked example.
+          run: 'node .forge/test-translators/unit.js',
+          output: { source: 'stdout' },
+          format: 'forge-json',
+        },
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        translatorPath: '.forge/test-translators/unit.js',
+        runnerVersion: '1.0.0',
+        reason:
+          '"node runner.js" matches no granted pattern, so the translator that wraps it is "run" itself.',
+      },
+    });
+
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    expect(result.outcome).toBe('staged');
+    if (result.outcome !== 'staged') throw new Error('unreachable');
+    expect(result.record.proof?.ok).toBe(true);
+
+    const check = await checkTestAdoptionApproved(project.paths, 'unit');
+    expect(check).toMatchObject({ unapproved: 0 });
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('the raw, non-conventional runner invocation itself is STILL refused as "run" even when paired with a separate "translate" -- the exact broken shape the real live run proposed before this fix', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['proposing the runner’s own raw invocation directly, plus a separate translator'],
+      // The translator genuinely exists in the lane (so this round fails at the real vet, `RUN-161`
+      // on "run", never earlier at the translatorPath read) -- its own content is irrelevant, since
+      // vetting refuses "run" before this file is ever read for real.
+      writeFiles: [
+        {
+          relativePath: '.forge/test-translators/unit.js',
+          content: 'process.stdout.write(JSON.stringify({forgeTestReport:1,tests:[]}));\n',
+        },
+      ],
+      structured: {
+        command: {
+          // The real live-run defect's own exact shape: the bespoke runner's raw command as "run",
+          // with the translator relegated to a separate "translate" field. Matches no
+          // `ADOPT_TESTS_EXEC_PATTERNS` entry and can never pass, regardless of the translator.
+          run: 'node runner.js',
+          output: { source: 'stdout' },
+          format: 'forge-json',
+          translate: 'node .forge/test-translators/unit.js',
+        },
+        probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
+        translatorPath: '.forge/test-translators/unit.js',
+        runnerVersion: '1.0.0',
+        reason: 'the broken, pre-fix shape: a raw bespoke "run" paired with a separate "translate"',
+      },
+    });
+
+    await expect(
+      runAdoptTestsAgent(deps(project, adapter), {
+        layer: 'unit',
+        clock: fixedClock(),
+        createTempPath: makeCreateTempPath(dir),
+      }),
+    ).rejects.toMatchObject({ code: 'RUN-161', details: { field: 'run' } });
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
 describe('runAdoptTestsAgent -- the real SessionRequest actually carries ADOPT_TESTS_OUTPUT_SCHEMA (specs/22 M17 P21)', () => {
   it('wires the exact exported schema object into SessionRequest.outputSchema -- not a second, independently-defined one that could drift from it', async () => {
     const dir = await tempDir();

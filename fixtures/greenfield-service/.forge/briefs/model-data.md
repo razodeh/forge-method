@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=914f9603edb40a6141a01ffc01293e85c3c9146770098ef24a1634d8c3fdc0c9 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=932deb4aaecfda30a1fa7769625ff53ef0f730ab17f545ef017611a70d426790 — edits will be overwritten; use overrides/ -->
 Design the logical data model that the chosen architecture and the capabilities require, and analyse
 how the data will be read and written, so that the technology step can select a product against real
 access patterns instead of guesses.
@@ -43,6 +43,27 @@ access patterns instead of guesses.
    graph, time-series, search), chosen from the access patterns and consistency needs, with the
    score table. Choose a category, not a product; `select-tech-stack` picks the product inside it.
    If a constraint already mandates a store, record it as the decision and do not re-score.
+
+### Declarations the gate reads
+
+Write `docs/forge/kb/data/migrations.yaml`: a separate, machine-readable file from the prose
+`data/migrations.md` strategy above. `G-Integration`'s `migration:order` check
+(`forge spec validate --rule migration-order-violations`) reads it, not the prose. It is a
+`migrations` list, in apply order, each entry `{id, phase, release, after?, expands?}`: `phase` is
+`expand`, `migrate` or `contract`; `release` the release that ships it; `after` (optional) the ids
+it must follow; `expands` (required on a `migrate` or `contract`) the id of the `expand` migration
+it belongs to, whose `contract` entry must ship in a later release than that `expand` and than every
+`migrate` of it (the destructive change is always a separate, later release, `12` F-DATA-6, `14`
+§14.4 rule 3). No migration is planned at this step, so write `migrations: []` with a `none_reason`
+sentence saying so:
+
+```yaml
+migrations: []
+none_reason: no migrations planned yet; migrate:plan-migration appends them against an ADR
+```
+
+A later `migrate` run appends its own ADR's phases to this same file (`plan-migration.md`); this
+step only establishes it.
 
 ### Acceptance criteria
 

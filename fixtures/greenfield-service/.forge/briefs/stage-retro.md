@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=b2a23b720b803984a8b6e4a05caf38497df6b49f46571191d2e61248993422c8 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=2a9d6bd8e310bb68a0b4f30cdb530c46809dfeb964b94e1e2e4bbad61ea64db9 — edits will be overwritten; use overrides/ -->
 The stage has just completed. Write the retrospective that feeds the next stage: what the data shows
 happened, what to change, and who owns each change. This retro is mandatory because it is the only
 mechanism by which the process improves itself.
@@ -37,7 +37,9 @@ Frame, Diverge, Converge, Decisions, Non-decisions, Actions and KB write-back.
 - Decisions and actions each have an owner role and a concrete change: a workflow tweak, a standards
   update, an overlay change, a new check, a story to add. An observation with no owner is not an
   action; either assign it or list it under non-decisions with the reason.
-- Record the risks you saw that were never owned, as proposed `Risk` entries.
+- Record the risks you saw that were never owned, as proposed `Risk` entries — each an object, never
+  a plain string, with `id` (`RISK-` and three digits), `statement`, `likelihood`, `impact`,
+  `mitigation` and `owner`.
 - KB write-back lists what should change in `engineering/ways-of-working.md` and any other KB page,
   and states these as proposals where you do not own the page.
 

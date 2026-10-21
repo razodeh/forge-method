@@ -1,18 +1,38 @@
 ---
-# forge:generated v=0.0.0 hash=7a182be864b67f4d70757f39d888235b84bc40dbdc1e589610c94f61960c2b00 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=9fff9a85740a62259124748428e97c9449fec2d24653713bdfdce79e0536a4c3 — edits will be overwritten; use overrides/
 id: EVID-001
 type: EvidenceBundle
 schemaVersion: 1
 title: '<the story this evidence bundle covers>'
-status: assembled
+status: recorded
 created: 2026-01-15
 updated: 2026-01-15
 revision: 1
 author: engine
 changelog: []
+story: '<the story id this bundle covers, e.g. STORY-014>'
+verify:
+  phase: done
+  passed: true
+  errors: 0
+  checks:
+    - check: "<the DoD check this story's own done phase ran>"
+      status: pass
+      message: '<what the check found>'
+coverage:
+  acCoveragePercent: 100
+  ratchetRegressions: 0
+bindingEvidence: []
+reviews:
+  - id: REVIEW-001
+    verdict: clear
+gates: []
+exemptions: []
+cost:
+  totalUsd: 0
+  estimated: true
+assembledAt: '2026-01-15T00:00:00.000Z'
 ---
 
-<Nothing further yet: this type carries no field-level shape beyond the base front matter above
-until `PLAN-M15.md` P7 assembles one for real (binding evidence, test results, coverage delta, every
-`ReviewReport` verdict, gate outcomes, exemptions in force, and real cost) — see `SPEC-QUESTIONS.md`
-Q280's Decision 3 for why this is deferred rather than guessed here.>
+<Nothing further: every real finding lives in the front matter above, not the body — this artifact
+exists to summarize the story's own already-committed evidence, not to restate it.>

@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=2b352ebd6cc76a6d66fd04caff008457929b9ca49d5adfd305dd5d33a031035d — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=27f91d5940e8871dd3dafa23d1ec9721523d44842a7c6d0c0fd957f02784ad75 — edits will be overwritten; use overrides/ -->
 Turn the constraints the human stated during intake into the four constraint entries of the project
 KB, so every later brief that reads `constraints/**` finds them. You record what the human said, in
 the human's terms; you do not add constraints, soften them, or decide what they imply for the
@@ -40,7 +40,10 @@ design.
   in `delivered` is `subtype: constraints-captured`, which is how the output check and a reader
   recognise the record. It is followed by one string per file written, in the form
   `path: N constraints, M unknown`. Every answer that was "unknown" also goes in `open_questions`,
-  one per question.
+  one per question. Leave `assumptions` empty unless you inferred something rather than asking; if
+  you did, each entry is an object, never a plain string, with `id` (`ASM-` and three digits),
+  `text`, `confidence` (`low`, `medium` or `high` — a different, three-value scale from the
+  constraint `confidence` above, which never uses `medium`) and `validate_by`.
 
 ### Acceptance criteria
 

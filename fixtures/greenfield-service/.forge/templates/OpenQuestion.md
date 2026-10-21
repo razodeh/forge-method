@@ -1,8 +1,9 @@
 ---
-# forge:generated v=0.0.0 hash=1b7dea7878c03ce8e0b8dea0d7952909891e4f529647a51bcb9c968b480ae325 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=f315ecd4cc9e3c1d2a3321a0835d203bdeefefd547bc76a8f0604801c9467c82 — edits will be overwritten; use overrides/
 id: OQ-001
 question: '<the unanswered question>'
 status: open
+sources: []
 ---
 
 <A one-off entry stub: copy this front-matter block into `kb/open-questions.md` to register a new

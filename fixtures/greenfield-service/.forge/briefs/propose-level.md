@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=77214ac9f7062c331d7759b992e858c589bd8a57f27ca4edbb075a72aa76aae8 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=67b2452afc70532e27e2f9945193d9ce6cb3955ca01c3673fdcfbeba3c3b25a1 — edits will be overwritten; use overrides/ -->
 Propose the scale level (L0 to L4) for this project, with reasoning a human can accept or override
 in one read. The next step, `confirm-level`, shows the human this whole handoff entry -- every field
 you write below, not only the reasoning -- before asking them to confirm or change the level, so
@@ -53,8 +53,10 @@ One `HandoffRecord` entry (subtype `level-proposal`) with `from: analyst`, `to: 
 `delivered` is `subtype: level-proposal`, which is how the output check and a reader recognise the
 record (`step` names the next node and does not carry the subtype). The second string is the
 proposed level and the one-paragraph reasoning, followed by one string per signal in the form
-`signal: value (source)`. Every unknown signal goes in `open_questions`, and every signal you
-inferred rather than read goes in `assumptions` with its confidence and how to validate it.
+`signal: value (source)`. Every unknown signal goes in `open_questions` (a plain array of strings),
+and every signal you inferred rather than read goes in `assumptions` as an object (NOT a plain
+string) with `id` (`ASM-` and three digits), `text`, `confidence` (`low`, `medium` or `high`) and
+`validate_by`. Leave `assumptions` empty if every signal was read rather than inferred.
 
 ### Acceptance criteria
 

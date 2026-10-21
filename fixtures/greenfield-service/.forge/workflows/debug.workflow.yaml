@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=cbea9335b7191799f17c41b04bfcb945f1b502fa34314a7a34ce3623a7f78b04 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=7629b559a8e219563f4d2ffd1c99bac04bde886a4032103c6f39a9dfbd272419 — edits will be overwritten; use overrides/
 id: debug
 name: Debug
 version: 1.0.0
@@ -19,9 +19,14 @@ steps:
     brief: briefs/run-rca-framework.md
     inputs: ['artifact:Defect({{defectId}})']
     outputs: [{ type: RCA }]
-    # The Defect's "Reproduction" section, which the brief has the step edit. The reproduction artifact itself (a test or a
-    # script) is put wherever the agent chooses: the brief names no location, so it is not claimed here (Q216).
-    produces: ['docs/forge/reports/defects/**']
+    # The Defect's "Reproduction" section, which the brief has the step edit, plus the reproduction artifact
+    # itself: the brief names a defect-scoped test glob, not a fixed path (`SPEC-QUESTIONS.md` Q232 decision 5,
+    # Q216), using the real extensions `isTestPath` (`@forge/engine/dispatch`) accepts for a `.test.`/`.spec.`
+    # file (its own regex also accepts a few unused combinations, e.g. `.cjsx`, no real toolchain here emits).
+    produces:
+      - 'docs/forge/reports/defects/**'
+      - '**/*{{defectId}}*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}'
+      - '**/{test,tests,__tests__,e2e}/**/*{{defectId}}*'
     limits: { maxTurns: 45 }
 
   - id: fix
@@ -33,6 +38,11 @@ steps:
     # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The defect names no paths.
     produces: ['**', '!@protected']
     retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
+    # Characterise-then-change (specs/22 M17 P10, #8): "Read the diagnosis, then confirm the
+    # reproduction fails now. Only then change code" -- run-rca's own diagnosis is already in hand
+    # (its own 45-turn override, above), but fix still reads the code the diagnosis names, writes the
+    # change, and runs the reproduction before and after. Past the 20-turn default's fit.
+    limits: { maxTurns: 35, wallClockMs: 900000, maxCostUsd: 3.0 }
 
   # A Defect has no Story, so `forge story verify` (a story's DoD profile, 10 §10.6) does not apply here. This runs
   # the project's test layers: the whole suite, including any regression test written in this loop, must be green.
@@ -43,6 +53,10 @@ steps:
     kind: command
     run: 'forge test run --json'
     dependsOn: [fix]
+    # `forge test run` (no `--rule`) owns `test-results.json` and, whenever a layer was configured and the
+    # run's own collection was clean, `flaky.json` (`packages/cli/src/commands/loop/test/{run,flaky}.ts`,
+    # `PLAN-M14.md` P2). Both are tracked reports its lane writes, not project code.
+    produces: ['docs/forge/reports/test-results.json', 'docs/forge/reports/flaky.json']
 
   - id: record
     kind: command

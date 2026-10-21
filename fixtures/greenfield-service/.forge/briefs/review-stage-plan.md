@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=33a04dbc9a5713550d6307a38015dabebed092dd97400a733f1e75c1ee611fee — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=455269b912a6fb5c84762c9a84271d648561ebf3b80c99b313cbe148fb1175f8 — edits will be overwritten; use overrides/ -->
 Review the stage plan from the delivery side: is the sequencing realistic against the capacity of
 the team and agent lanes, and are the dependencies and risks accounted for? You are the second
 reader of the plan, and you own sequencing, so a plan that cannot be delivered in the order it
@@ -32,15 +32,17 @@ states must not pass through you unnoticed.
 
 ### What to produce
 
-- A `Risk` entry (in `kb/risks.md`) for each sequencing, capacity or dependency risk you found, with
-  likelihood, impact, mitigation and owner.
+- A `Risk` entry (in `kb/risks.md`) for each sequencing, capacity or dependency risk you found — an
+  object, never a plain string, with `id` (`RISK-` and three digits), `statement`, `likelihood`,
+  `impact`, `mitigation` and `owner`.
 - One `HandoffRecord` entry in the handoff register `docs/forge/reports/handoffs.md` (subtype
   `stage-plan-review`, `from: em`, `to: pm`, `step: review-stages → plan-stage`) that records the
   verdict. There is no `subtype` key, so the first string in `delivered` is
   `subtype: stage-plan-review`, the second is `verdict: pass` or `verdict: changes-required`,
   followed by one line per check with its result and evidence. Each required change goes in
   `constraints_for_receiver`, ordered by severity, and unresolved questions go in `open_questions`.
-  Add your own entry and leave every other entry in the register as it is.
+  Leave `assumptions` empty; this review has none of its own to record. Add your own entry and leave
+  every other entry in the register as it is.
 - Your closing message repeats the verdict and the required changes. Nothing after this step reads
   the verdict automatically, so on `changes-required` say so plainly and ask the human to send the
   plan back to `decompose-stages` before stage planning starts.

@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=5032bce2418f4e81e5d051c6e2d19ab8cf3888bb7fc10ef0e39791061729dd58 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=ccd31054fb0fe903b1df376fabc4082607f1c59a164604db744d13600d3480dd — edits will be overwritten; use overrides/
 id: refactor
 name: Refactor
 version: 1.0.0
@@ -22,6 +22,10 @@ steps:
     brief: briefs/state-refactor-invariants.md
     dependsOn: [preflight-parity]
     outputs: [{ type: HandoffRecord, subtype: refactor-invariants }]
+    # Characterise-then-change (specs/22 M17 P10, #8): "Read the code in scope before writing anything"
+    # -- the brief's own first rule -- over a scope this step itself is the one naming, not yet bounded.
+    # The 20-turn/600s/$2 placeholder fits a narrow, generative step; this one reads first.
+    limits: { maxTurns: 35, wallClockMs: 900000, maxCostUsd: 3.0 }
 
   - id: refactor-code
     kind: agent
@@ -32,6 +36,12 @@ steps:
     # config, credentials, `.env*`, editor and agent-tool config, the project's document roots. The goal names no paths.
     produces: ['**', '!@protected']
     retry: { maxAttempts: 3, retryOn: [transient, test-failure] }
+    # Characterise-then-change (specs/22 M17 P10, #8): the brief's own first rule is "first add
+    # characterisation tests that pin its current behaviour, then refactor" over the handoff's whole
+    # scope, in small steps with a guarding test run between each -- the 20-turn/600s default this step
+    # inherited until now fits a narrow, single-file edit, not a mechanical-move sequence over a scope
+    # an architect step just finished characterising.
+    limits: { maxTurns: 60, wallClockMs: 1800000, maxCostUsd: 5.0 }
 
   - id: verify-invariants
     kind: command

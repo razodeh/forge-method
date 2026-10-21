@@ -1,4 +1,4 @@
-# forge:generated v=0.0.0 hash=e8657ed633efb25252b3b7b16541fd39451c8ae5cc7b54db9b6e5c9a8f267165 — edits will be overwritten; use overrides/
+# forge:generated v=0.0.0 hash=ab1c11174a93548616cafe085fe2042a5e887045d8f072049b452d52fc527534 — edits will be overwritten; use overrides/
 id: build-stage
 name: Implement a stage
 version: 1.0.0
@@ -43,11 +43,14 @@ steps:
       - type: InterfaceContract
         cardinality: many
     # A contract whose notation is not YAML (protobuf, GraphQL SDL, TypeScript types) sits beside its YAML
-    # record in the same directory (Q216).
+    # record in the same directory (Q216). `version-skew.yaml` is the version-skew declaration
+    # `G-Integration`'s `version:skew` check reads (PLAN-M14.md P21, briefs/freeze-contracts.md
+    # "Declarations the gate reads"): every contract this step freezes is declared there too.
     produces:
       - 'docs/forge/specs/interfaces/*.proto'
       - 'docs/forge/specs/interfaces/*.graphql'
       - 'docs/forge/specs/interfaces/*.ts'
+      - 'docs/forge/kb/architecture/version-skew.yaml'
     gateEvidence: [G-Design]
 
   - id: contracts-gate
@@ -118,14 +121,59 @@ steps:
       agent: reviewer
       mode: swarm-review
       perspectives: [design, security, testing, performance]
+      # specs/22 M15 P9: the same implementer role `implement` above already runs as, never the reviewer
+      # itself (10 §10.6's own reviewer/implementer separation) -- the bounded critic loop's own automatic
+      # fix session on a blocked verdict.
+      fixAgent: '{{item.owner_role}}'
       inputs: ['diff:lane', 'artifact:Story({{item.id}})']
       outputs: [{ type: ReviewReport }]
+      # specs/22 M15 P9: a blocked round now runs its own automatic fix-and-re-review loop (bounded by
+      # execution.criticRounds, RUN-113 on exhaustion) INSIDE this one step's own lane before it ever ends
+      # -- the fix session's own changes land in this SAME lane, so the claim below also carries the
+      # story's own file claim (identical to `implement` above), not only the ReviewReport the mode itself
+      # already implies.
+      produces: ['{{item.files_expected}}', '!{{item.test_paths}}']
+      # A merged `blocked` verdict that survives every configured round fails this step with RUN-113
+      # (PLAN-M14.md P14, specs/22 M15 P9, SPEC-QUESTIONS.md Q232 decision 7); it declares no `retry` of
+      # its own, so an exhausted loop escalates the same way any other unretried step failure here does.
+      # `execution.criticRounds` not configured at all (an older project) means zero automatic rounds: the
+      # FIRST blocked verdict fails immediately with the pre-existing RUN-108, byte-identical to this
+      # step's own behaviour before P9.
 
   - id: merge
     kind: merge
     over: 'stage.stories'
     dependsOn: ['review:{{item.id}}']
-    policy: { conflict: agent, preChecks: fast, postChecks: full }
+    # specs/22 M15 P14's own real live run found `preChecks: fast` structurally incompatible with this
+    # workflow's own per-story lane shape (reproduced against `implement-story.workflow.yaml`'s own
+    # identical pattern, which this fanout mirrors one story at a time): `merge`'s own landing scope
+    # here reaches back through `review:{{item.id}}` to `implement:{{item.id}}` to
+    # `generate-tests:{{item.id}}` (`PLAN-M13.md` P19's own `mergeLandingScope`), and "fast" runs the
+    # declared test layers against EACH of those lanes' own isolated worktree individually
+    # (`PLAN-M13.md` P38) -- but `generate-tests`'s own lane has the test file with no implementation
+    # for it to import yet (`implement` has not run), the TDD cycle's own intended, structural
+    # incompleteness, not a real regression "fast" should ever have caught.
+    #
+    # Removing `preChecks` alone was NOT sufficient, confirmed by a second, later real live run against
+    # `implement-story.workflow.yaml`'s own identical pattern: `postChecks: full` runs the identical
+    # layers, against the integration tree, once per lane AS IT LANDS (the same `PLAN-M13.md` P38
+    # per-lane timing, just a different worktree) -- not once after every story's lanes have landed,
+    # which this comment originally, incorrectly assumed. `generate-tests`'s own lane still hits the
+    # identical wall one step later: a real `unit` command run right after it lands fails exactly like
+    # "fast" did (`Cannot find module` on the not-yet-written implementation), because `implement` has
+    # not landed yet either way. `skipChecks: [generate-tests]` is the real fix: that one fanout's own
+    # lane, every expanded item of it, skips checks entirely, never partially (which real-execution
+    # layers would fail is project/config-dependent, so no smaller, always-safe subset exists to keep
+    # instead). Matched by colon-segment membership (`skipsChecksFor`, `@forge/engine/dispatch`), not a
+    # fixed prefix: driven as a stage, the real compiled id is `build-stage:generate-tests:STORY-001`,
+    # where `generate-tests` is a middle segment, never a prefix -- a first version of this fix matched
+    # only an `<entry>:` prefix and a real test run proved it silently matched nothing. Safe because
+    # `generate-tests`'s own write claim is already narrowly bounded (`produces: ['{{item.test_paths}}']`
+    # only, `RUN-104` reverts anything else), and because the SAME `postChecks: full` set runs again,
+    # unskipped, the very next lane down (`implement`) -- a real defect in `generate-tests`'s own file
+    # still surfaces there, attributed one lane later rather than at the lane that introduced it.
+    # `implement-story.workflow.yaml`'s own merge has the identical fix for the identical reason.
+    policy: { conflict: agent, postChecks: full, skipChecks: [generate-tests] }
 
   - id: verify
     kind: gate
@@ -141,13 +189,27 @@ onFailure:
   default: block
   escalations:
     - when: 'failures.test-failure > 2'
-      # Nothing compiles or runs `onFailure` yet (compilePlan). When it does, this step writes an RCA record and,
-      # if none exists for the failure, the Defect it names (Q216).
+      # Nothing compiles or runs `onFailure` yet (compilePlan). When it does, this step writes an RCA record,
+      # if none exists for the failure the Defect it names (Q216), and a reproduction test under the same
+      # defect-scoped test glob shape `debug:run-rca`/`quick-fix:reproduce` claim. No `defectId` is available
+      # at this point (an escalation, not a per-defect run), so `DEF-*` stands for any defect id: a
+      # prefix-scoped claim, not one narrowed to the failure this escalation actually ran for
+      # (`SPEC-QUESTIONS.md` Q232 decision 5, Q216). `enforceClaim` matches by path shape alone, with no
+      # concept of "a new file vs. an existing one" (true of every step's claim, not special to this one) --
+      # so this same prefix also covers REWRITING an already-committed regression test for a different,
+      # unrelated (possibly already-closed) defect, not only authoring a new one; only `rca.md`'s own advisory
+      # "never edit the story's own tests" stands against that, not the claim itself. Confirmed dormant today
+      # for the same reason the prefix itself is harmless today: `onFailure` is not compiled or dispatched by
+      # anything yet. `packages/cli/test/commands/run/rca-reproduction.test.ts` demonstrates this directly.
       do:
         kind: agent
         agent: diagnostician
         brief: briefs/rca.md
-        produces: ['docs/forge/sessions/rca/RCA-*.md', 'docs/forge/reports/defects/DEF-*.md']
+        produces:
+          - 'docs/forge/sessions/rca/RCA-*.md'
+          - 'docs/forge/reports/defects/DEF-*.md'
+          - '**/*DEF-*.{test,spec}.{js,jsx,ts,tsx,cjs,mjs,cts,mts}'
+          - '**/{test,tests,__tests__,e2e}/**/*DEF-*'
 
 onComplete:
   - kind: agent
