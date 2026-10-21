@@ -27,12 +27,18 @@ configuration. Treat this as an investigation with evidence, not a form to fill 
 2. Run the command you are about to propose, for real, in your own granted lane, and read its real
    stdout, any report file it writes, and its real exit code. Do this at least twice: once against
    the project as it stands, and once with a single, deliberately failing test you add yourself (in
-   the runner's own idiom, placed somewhere its own discovery will find it) — removed again before
-   you finish. You must see a real failure before you can claim your parsing of one is correct; a
-   configuration proposed from only a passing run is not acceptable. When the runner's own real
-   invocation is not already one of your granted patterns (point 3, and "Produce the configuration"
-   below), you cannot run it directly even at this investigation stage — write the translator first,
-   then run and observe THAT, since it is the real command you will ultimately propose.
+   the runner's own idiom, placed at a BRAND-NEW path its own discovery will find — never appended
+   to, or replacing any part of, a file that already existed) — removed again before you finish. You
+   must see a real failure before you can claim your parsing of one is correct; a configuration
+   proposed from only a passing run is not acceptable. Report this exact path and content as your
+   final `probe` (the bullet under "Produce the configuration" below) — never a different one you
+   did not personally watch run, and never the project's own pre-existing file even if editing it
+   felt like the natural place for this check: FORGE replays this exact probe later, for real, in
+   the real project tree, and a brand-new path is the one thing that keeps that replay from ever
+   overwriting something real (see that bullet for why). When the runner's own real invocation is
+   not already one of your granted patterns (point 3, and "Produce the configuration" below), you
+   cannot run it directly even at this investigation stage — write the translator first, then run
+   and observe THAT, since it is the real command you will ultimately propose.
 3. Only the commands a real test-adoption investigation plausibly needs are available to you, live
    (see your own granted tool list) — conventional invocations across ecosystems, plus read-only
    search. This is not a narrower courtesy for investigation alone: your FINAL proposed `run` (and
@@ -135,7 +141,21 @@ shell operator), never in the command text you report.
   the runner does not support — never invent a template the runner cannot actually honour.
 - Describe the injected-failure probe you used: its exact file path, its exact content (so FORGE can
   recreate it for the deterministic proof), the exact test name the report must carry it under, and
-  — only if this format attributes files at all — the exact file it must be reported under.
+  — only if this format attributes files at all — the exact file it must be reported under. The
+  `path` you report here is a BRAND-NEW path, the same one step 2 already had you use for the live
+  check itself — one that did not already exist anywhere in the project before you created it, and
+  never a file that was already there (not even one you considered editing-then-reverting instead).
+  Before you pick it, confirm it is actually free: you already listed the project's own files
+  earlier in your investigation, or can with a granted read-only command, so check rather than
+  assume. FORGE recreates this exact probe later by writing your reported `content` to your reported
+  `path` directly in the real project tree, not a copy, to independently re-confirm the failure;
+  writing that over a real, pre-existing file would silently destroy its real content, so FORGE
+  refuses outright rather than risk it (`RUN-158`) — a real mistake, not a hypothetical one:
+  reporting the project's one existing spec file as the probe, because editing it felt like the
+  natural place for this check, has already happened and is refused every time, however carefully it
+  was reverted afterward. A sibling file in whatever directory the runner's own discovery already
+  scans (the Worked Example above shows one such layout) satisfies "somewhere its own discovery will
+  find it" just as well as an existing file would, without the risk.
 
 ### When there is no test setup at all
 
@@ -175,6 +195,9 @@ forever.
 - Every claim about how the tests run is backed by something you actually read or actually ran —
   never inferred from a file's name alone.
 - You have personally seen the proposed command fail (the injected probe) as well as pass.
+- The `probe.path` you report is a brand-new path you created and confirmed was free beforehand —
+  never a file that already existed anywhere in the project, however natural editing one might have
+  felt.
 - The translator, if you wrote one, lives at exactly `.forge/test-translators/<layer>.<ext>` and
   nowhere else changed.
 - `scope`/`filter` are named only when the runner genuinely supports them; you said plainly when it
@@ -189,7 +212,9 @@ forever.
 
 - Do not propose a command you have not personally run.
 - Do not claim a `scope`/`filter` template the runner cannot really honour.
-- Do not write, move or delete anything outside `.forge/test-translators/<layer>.<ext>`.
+- Do not write, move or delete anything outside `.forge/test-translators/<layer>.<ext>`, except the
+  one brand-new probe file step 2 already has you create, observe, and remove again before you
+  finish — never an edit to a file that already existed (same section).
 - Do not propose `run` as the runner's raw invocation when it is not already one of your granted
   patterns, and do not pair a self-contained translator `run` with a separate `translate` field —
   neither shape can pass ("Produce the configuration" above).
