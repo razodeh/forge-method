@@ -1,4 +1,4 @@
-<!-- forge:generated v=0.0.0 hash=07d37806008c49289bf2cc3ab3d14c35a825ff21d8e5ca1b1bea14079debf474 — edits will be overwritten; use overrides/ -->
+<!-- forge:generated v=0.0.0 hash=3936f45db6333fff57428e350642013d62dc49e1de5f10c52377937df86fb2a8 — edits will be overwritten; use overrides/ -->
 Work out how this project's tests actually run, prove it, and report a configuration — never a
 guess, and never a value you have not personally watched run. FORGE does not trust anything you
 report: every claim below is re-checked deterministically (the translator proof, `13` F-TEST-11)
@@ -54,6 +54,14 @@ of your granted conventional patterns (`pytest`, `go test`, `npm test`, and so o
 or not. Telling them apart correctly matters: proposing the wrong shape for a bespoke runner cannot
 ever pass, no matter how good the investigation behind it was.
 
+Whichever shape applies, `run` and `translate` (when you give one) are each a single, plain program
+invocation — never a shell pipeline, a chained sequence, or anything else built from more than one
+command joined together. `;`/`&`/`|`/`` ` ``/`<`/`>`/`$(...)`/a newline anywhere in either string
+refuses it outright, unconditionally, no matter what is on either side of it — FORGE checks the
+literal text, not what the shell would do with it. If connecting two commands' own output feels like
+the natural shape, that connection belongs INSIDE a script's own code (a real function call, not a
+shell operator), never in the command text you report.
+
 - **Conventional invocation, conventional output.** If the runner's own real invocation is already
   one of your granted patterns AND its output already fits one of FORGE's built-in formats
   (`junit-xml`, `tap`, `forge-json`, `vitest-json`, `jest-json`, `go-test-json`), propose `run` as
@@ -74,11 +82,13 @@ ever pass, no matter how good the investigation behind it was.
   script, committed to the project at exactly `.forge/test-translators/<layer>.<ext>`, that is
   SELF-CONTAINED: it invokes the real runner itself, internally, using that script's own language's
   real process-spawning facility (Node's `child_process`, Python's `subprocess`, Ruby's `Open3`,
-  PHP's `proc_open`, and so on), reads the real runner's real raw output, and prints `forge-json`
-  (`forge-test-report`) in its place — on stdout, or to the `{output}` path your proposed command
-  names. Propose THAT script's own path as `run` directly. Do NOT also declare a separate
-  `translate` field in this case: there is no raw, conventional `run` left for it to post-process —
-  the translator already is `run`, and it is the only thing that ever invokes the real runner.
+  PHP's `proc_open`, and so on) — a real function call made FROM INSIDE the script's own code, never
+  a shell pipe in the command text you register — reads the real runner's real raw output, and
+  prints `forge-json` (`forge-test-report`) in its place — on stdout, or to the `{output}` path your
+  proposed command names. Propose THAT script's own path as `run` directly. Do NOT also declare a
+  separate `translate` field in this case: there is no raw, conventional `run` left for it to
+  post-process — the translator already is `run`, and it is the only thing that ever invokes the
+  real runner.
 
   **Worked example.** Say `package.json` has `"scripts": { "test": "node runner.js" }`, and
   `runner.js` is a small, in-house script with no published framework behind it, printing lines such
@@ -99,6 +109,24 @@ ever pass, no matter how good the investigation behind it was.
   also why you cannot run the raw `node runner.js` directly even during investigation (point 2,
   above): write the wrapper first, then run and observe THAT script, the same real command you go on
   to propose.
+
+  **What this is NOT — a real mistake, not a hypothetical one.** Do NOT propose `run` as a shell
+  PIPE joining the raw invocation to the translator, however natural that may look:
+
+  ```
+  run: "node runner.js | node .forge/test-translators/unit.js"
+  ```
+
+  This is refused outright, every time, regardless of what sits on either side of the `|`: FORGE's
+  own vet refuses ANY `;`/`&`/`|`/`` ` ``/`<`/`>`/`$(`/newline anywhere in the registered `run` TEXT
+  ITSELF, unconditionally, before it ever asks whether either side alone would otherwise be allowed
+  — a plain character check on the whole string, not a parse of what the pipe would do. "The
+  translator invokes the real runner internally" means exactly that: a spawn call written INSIDE the
+  translator SCRIPT's own source code (the `execFileSync` line in the worked example above) — never
+  a shell operator in the command text FORGE itself re-executes. If you find yourself writing a `|`,
+  `&&`, backtick, or `$(...)` anywhere in the `run` you are about to report, you have the wrong
+  shape: move whatever is on the piped-from side into a real function call inside the translator
+  script instead, and register only the translator's own bare path as `run`.
 
 - Either way, the translator you write (one per round, at most) is the ONLY file you may write. Do
   not edit, move or delete anything else, and do not run `git add`, `git commit` or any command that
@@ -154,6 +182,8 @@ forever.
   does not.
 - When the runner's own invocation is not already one of your granted patterns, `run` is the
   self-contained translator's own path, with no separate `translate` field alongside it.
+- Neither `run` nor `translate` is ever a shell pipe or any other chained/composed command — each is
+  one plain program invocation.
 - A no-test-setup project gets a proposal and an ADR summary, never an installed dependency.
 
 ### Do not
@@ -164,5 +194,9 @@ forever.
 - Do not propose `run` as the runner's raw invocation when it is not already one of your granted
   patterns, and do not pair a self-contained translator `run` with a separate `translate` field —
   neither shape can pass ("Produce the configuration" above).
+- Do not propose `run` as a shell pipe, or any other use of `;`/`&`/`|`/`` ` ``/`<`/`>`/`$(...)`,
+  joining the raw invocation to the translator (or anything else) — refused unconditionally,
+  whatever sits on either side of the operator. Put the real runner's invocation inside the
+  translator script's own code instead ("Produce the configuration" above).
 - Do not install a dependency, change a lockfile, or write a test of your own into the project when
   there is no test setup — report the proposal, never apply it yourself.
