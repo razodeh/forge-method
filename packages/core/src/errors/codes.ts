@@ -3717,10 +3717,18 @@ export const ERROR_CODES = {
   // agent's own structured output is `unknown` until validated, never trusted on its word). A session
   // that reports something that does not parse -- a missing `command`/`probe`, a `command` that is only
   // the legacy bare-string form a human-authored proposal may use but an agent-authored one may not,
-  // malformed JSON in the output channel the adapter already decoded -- ends the round immediately
-  // rather than being retried: there is nothing a same-shaped retry would fix about a response this
-  // malformed, and silently defaulting the missing fields would mean inventing a command FORGE never
-  // actually proposed.
+  // malformed JSON in the output channel the adapter already decoded, or a `translatorPath` outside
+  // its one allowed destination prefix (`assertTranslatorPathWithinClaim`) -- feeds the real validation
+  // detail back into the NEXT round's own prompt and retries, bounded, the identical "name exactly what
+  // was wrong" idiom `runAdoptTestsAgent` already used for a failing translator proof (M17 P21, a live-
+  // run fix: a real session ran to completion and was discarded on a round-1 RUN-160 with zero chance
+  // to self-correct, even though the retry-with-feedback machinery already existed for a different
+  // failure class). The ORIGINAL reasoning recorded here -- "there is nothing a same-shaped retry would
+  // fix" -- is still correct for a BLIND retry with no feedback; it never actually argued against a
+  // retry that names the real cause, which is what this is. Never silently defaults a missing field
+  // either way: a round that keeps failing to parse exhausts the same bound (`AdoptTestsAgentResult`'s
+  // `'exhausted'` outcome, `cause: 'invalid-response'`) rather than inventing a command FORGE never
+  // actually proposed, or looping unboundedly.
   'RUN-160': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,
@@ -3742,6 +3750,23 @@ export const ERROR_CODES = {
   // against that exact allowlist (`vetProposedCommand`, `confined-command.ts` -- denylist, shell-
   // operator/expansion refusal, grant membership, and per-word path-containment) before
   // `runTranslatorProof` ever runs any of them; this is what it raises when one fails.
+  //
+  // Deliberately NOT given the same round-retry-with-feedback `RUN-160` gets (M17 P21, a live-run
+  // fix, decided alongside it): this is the one FINAL backstop the design's own doc comment already
+  // says "never trust the reported command enough to run it" about, and the refusal detail would
+  // hand a round-by-round oracle -- exactly what was refused and why, against a security boundary --
+  // to a session whose own investigation target (an unfamiliar, agent-read test runner script) this
+  // codebase's own P7 threat model already treats as potentially adversarial. A cooperative agent
+  // already gets equivalent real-time feedback for the literal `run` command it typically tests live
+  // before reporting it (every LIVE Bash call during the round goes through this identical check,
+  // `createLiveExecGate`) -- though nothing enforces byte-identity between that live command and the
+  // final report, and this is NOT true at all for `scope`/`filter`: their own `{output}`/`{files}`/
+  // `{name}`/`{name:regex}` template placeholders are things the brief asks the agent to NAME, never
+  // to literally run live with real values substituted, so those two fields get no live rehearsal
+  // whatsoever before this final vet. A human reviewing this refusal keeps full, real visibility via
+  // this error's own message/remedy regardless -- the real reason this stays a hard stop is the
+  // round-by-round oracle risk above, not a claim that a cooperative agent can never be surprised by
+  // it.
   'RUN-161': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,

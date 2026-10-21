@@ -301,9 +301,15 @@ function describeAdoptTestsAgentResult(result: AdoptTestsAgentResult): string {
       'real, then re-run "forge test adopt --agent" once real tests exist.'
     );
   }
+  if (result.cause === 'proof-failed') {
+    return (
+      `forge test adopt --agent: exhausted ${String(result.rounds)} round(s) for "${result.layer}" -- the ` +
+      `translator proof last failed check ${String(result.failedCheck)}: ${result.reason}`
+    );
+  }
   return (
     `forge test adopt --agent: exhausted ${String(result.rounds)} round(s) for "${result.layer}" -- the ` +
-    `translator proof last failed check ${String(result.failedCheck)}: ${result.reason}`
+    `session's structured response was never usable: ${result.reason}`
   );
 }
 

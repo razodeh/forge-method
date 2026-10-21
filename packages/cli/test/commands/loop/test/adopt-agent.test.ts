@@ -289,6 +289,8 @@ describe('runAdoptTestsAgent -- stops after the bound and discloses the last fai
 
     expect(result.outcome).toBe('exhausted');
     if (result.outcome !== 'exhausted') throw new Error('unreachable');
+    expect(result.cause).toBe('proof-failed');
+    if (result.cause !== 'proof-failed') throw new Error('unreachable');
     expect(result.rounds).toBe(3);
     expect(result.failedCheck).toBe(3);
     expect(result.reason).toContain('never matches');
@@ -399,57 +401,118 @@ describe('runAdoptTestsAgent -- a stray write during investigation never reaches
   });
 });
 
-describe('runAdoptTestsAgent -- refuses a structured response that is not a usable proposal (specs/22 M17 P7)', () => {
-  it('throws RUN-160 when "command" is missing entirely', async () => {
+describe('runAdoptTestsAgent -- a structured response that is not a usable proposal is retried with feedback, not an immediate failure (specs/22 M17 P7) (M17 P21 live-run fix)', () => {
+  it('round 1 reports no "command" at all; round 2 gets the real parse-failure feedback and succeeds with a valid proposal', async () => {
     const dir = await tempDir();
     const project = await projectWithTestArchitect();
     const adapter = new FakePlatformAdapter();
-    adapter.script(() => true, {
-      text: ['a reply with no real structured proposal'],
-      structured: { reason: 'I looked, but did not report a real command' },
-    });
-
-    await expect(
-      runAdoptTestsAgent(deps(project, adapter), {
-        layer: 'unit',
-        clock: fixedClock(),
-        createTempPath: makeCreateTempPath(dir),
-      }),
-    ).rejects.toMatchObject({ code: 'RUN-160' });
-
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  it('throws RUN-160 when "command" is the legacy bare-string form (an agent-authored proposal may not use it)', async () => {
-    const dir = await tempDir();
-    const project = await projectWithTestArchitect();
-    const adapter = new FakePlatformAdapter();
-    adapter.script(() => true, {
-      text: ['a bare-string command'],
+    const requests: SessionRequest[] = [];
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return request.stepId.includes(':round-1');
+      },
+      {
+        text: ['a reply with no real structured proposal'],
+        structured: { reason: 'I looked, but did not report a real command' },
+      },
+    );
+    adapter.script((request) => request.stepId.includes(':round-2'), {
+      text: ['round 2: a real proposal, after reading the parse failure'],
       structured: {
-        command: 'pnpm test',
-        probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
-        runnerVersion: '1.0.0',
-        reason: 'a bare string, which an agent proposal may not use',
+        command: NODE_TEST_COMMAND,
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        runnerVersion: process.version,
+        reason: 'round 2: a real command, after round 1 never parsed at all',
       },
     });
 
-    await expect(
-      runAdoptTestsAgent(deps(project, adapter), {
-        layer: 'unit',
-        clock: fixedClock(),
-        createTempPath: makeCreateTempPath(dir),
-      }),
-    ).rejects.toMatchObject({ code: 'RUN-160' });
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    // This is the exact live defect (M17 P21): round 1's own RUN-160 used to end the WHOLE command
+    // outright, with zero chance for round 2 to ever run. It now stages for real, same as a round
+    // that fixed a failing proof instead.
+    expect(result.outcome).toBe('staged');
+    if (result.outcome !== 'staged') throw new Error('unreachable');
+    expect(result.rounds).toBe(2);
+
+    // Round 2's own real, assembled prompt carries round 1's own real parse-failure feedback -- not
+    // reconstructed independently, the actual text the session was sent.
+    expect(requests).toHaveLength(2);
+    const round2System = requests[1]?.systemPrompt.text ?? '';
+    expect(round2System).toContain('round 2');
+    expect(round2System).toContain('structured response was not usable');
+    // The real validation detail `parseProposalResponse` raises for a root-level union mismatch --
+    // the EXACT text the live M17 P21 defect's own observed `RUN-160` carried ("(root): Invalid
+    // input."), not a hand-picked substring of the agent's own (unparsed, never read) free text.
+    expect(round2System).toContain('(root): Invalid input');
 
     await rm(dir, { recursive: true, force: true });
   });
 
-  it('throws RUN-160 when "translatorPath" does not start with .forge/test-translators/ -- never copies some other in-lane file over a real project path (critic round 3)', async () => {
+  it('round 1 reports the legacy bare-string "command" form; round 2 fixes it and succeeds, with the feedback in round 2\'s own prompt', async () => {
     const dir = await tempDir();
     const project = await projectWithTestArchitect();
     const adapter = new FakePlatformAdapter();
-    adapter.script(() => true, {
+    const requests: SessionRequest[] = [];
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return request.stepId.includes(':round-1');
+      },
+      {
+        text: ['a bare-string command'],
+        structured: {
+          command: 'pnpm test',
+          probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
+          runnerVersion: '1.0.0',
+          reason: 'a bare string, which an agent proposal may not use',
+        },
+      },
+    );
+    adapter.script((request) => request.stepId.includes(':round-2'), {
+      text: ['round 2: the structured form, after reading the parse failure'],
+      structured: {
+        command: NODE_TEST_COMMAND,
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        runnerVersion: process.version,
+        reason: 'round 2: the structured form this time',
+      },
+    });
+
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    expect(result.outcome).toBe('staged');
+    if (result.outcome !== 'staged') throw new Error('unreachable');
+    expect(result.rounds).toBe(2);
+
+    const round2System = requests[1]?.systemPrompt.text ?? '';
+    expect(round2System).toContain('legacy bare-string form');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('a "translatorPath" outside .forge/test-translators/ is retried too (never copies some other in-lane file over a real project path, critic round 3) -- round 2 fixes the path and succeeds', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    adapter.script((request) => request.stepId.includes(':round-1'), {
       text: ['naming an out-of-claim translatorPath'],
       writeFiles: [{ relativePath: 'package.json', content: '{"poisoned": true}\n' }],
       structured: {
@@ -466,18 +529,91 @@ describe('runAdoptTestsAgent -- refuses a structured response that is not a usab
         reason: 'wrong path, on purpose',
       },
     });
+    adapter.script((request) => request.stepId.includes(':round-2'), {
+      text: ['round 2: the real translator, at the real claim path'],
+      writeFiles: [
+        {
+          relativePath: '.forge/test-translators/unit.js',
+          content:
+            "process.stdout.write(JSON.stringify({forgeTestReport:1,tests:[{name:'PROBE deliberately fails',status:'fail'}]}));\n",
+        },
+      ],
+      structured: {
+        command: {
+          run: 'node --test',
+          output: { source: 'stdout' },
+          format: 'forge-json',
+          translate: 'node .forge/test-translators/unit.js',
+        },
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        translatorPath: '.forge/test-translators/unit.js',
+        runnerVersion: process.version,
+        reason: 'round 2: the real claim-prefixed path',
+      },
+    });
 
-    await expect(
-      runAdoptTestsAgent(deps(project, adapter), {
-        layer: 'unit',
-        clock: fixedClock(),
-        createTempPath: makeCreateTempPath(dir),
-      }),
-    ).rejects.toMatchObject({ code: 'RUN-160' });
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+    expect(result.outcome).toBe('staged');
+    if (result.outcome !== 'staged') throw new Error('unreachable');
+    expect(result.rounds).toBe(2);
 
-    // Never copied: the real project's own package.json (there was none to begin with) stays absent.
+    // Round 1's own out-of-claim proposal was never copied, even though round 2 later succeeded.
     const { pathExists } = await import('@forge/core/fs');
     expect(await pathExists(project.paths.resolveWithin('package.json'))).toBe(false);
+    expect(await pathExists(project.paths.resolveWithin('.forge/test-translators/unit.js'))).toBe(
+      true,
+    );
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('runAdoptTestsAgent -- a structured response that is NEVER usable, round after round, exhausts the same bound a failing proof already has (specs/22 M17 P7) (M17 P21 live-run fix)', () => {
+  it('exhausts 3 rounds (default), never a 4th, when "command" is missing every round -- a typed result, never an uncaught RUN-160', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    let calls = 0;
+    adapter.script(
+      () => {
+        calls += 1;
+        return true;
+      },
+      {
+        text: ['a reply with no real structured proposal'],
+        structured: { reason: 'I looked, but did not report a real command' },
+      },
+    );
+
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    expect(result.outcome).toBe('exhausted');
+    if (result.outcome !== 'exhausted') throw new Error('unreachable');
+    expect(result.cause).toBe('invalid-response');
+    if (result.cause !== 'invalid-response') throw new Error('unreachable');
+    expect(result.rounds).toBe(3);
+    // The real validation detail, the identical text the live M17 P21 defect's own observed
+    // `RUN-160` carried verbatim ("(root): Invalid input.") -- proving this exhaustion is driven by
+    // the SAME real zod failure the live run hit, not a different, friendlier stand-in.
+    expect(result.reason).toContain('(root): Invalid input');
+    expect(calls).toBe(3); // bounded -- never a 4th session, the identical bound a failing proof has
+
+    // Nothing is staged for a fully-exhausted round, the identical guarantee a failing-proof
+    // exhaustion already has.
+    const onDisk = await readStagedProposal(project.paths, 'unit');
+    expect(onDisk.outcome).toBe('missing');
 
     await rm(dir, { recursive: true, force: true });
   });
@@ -546,6 +682,50 @@ describe('runAdoptTestsAgent -- a malicious proposed command never reaches a rea
         createTempPath: makeCreateTempPath(dir),
       }),
     ).rejects.toMatchObject({ code: 'RUN-161' });
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('a RUN-161 vet refusal is NEVER retried, unlike a RUN-160 parse/claim failure (M17 P21: the deliberate split) -- ends the whole command on round 1 of 3, no round 2 ever starts', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    let calls = 0;
+    adapter.script(
+      () => {
+        calls += 1;
+        // Always reports the SAME vet-refused command, every round it would otherwise be asked for --
+        // if this were retried the way RUN-160 now is, 3 rounds would run before exhausting; it must
+        // not even reach round 2.
+        return true;
+      },
+      {
+        text: ['always the same refused command'],
+        structured: {
+          command: {
+            run: 'make -f /tmp/evil.mk pwn',
+            output: { source: 'stdout' },
+            format: 'tap',
+          },
+          probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
+          runnerVersion: '1.0.0',
+          reason: 'always the same refused command, on purpose',
+        },
+      },
+    );
+
+    await expect(
+      runAdoptTestsAgent(deps(project, adapter), {
+        layer: 'unit',
+        maxRounds: 3,
+        clock: fixedClock(),
+        createTempPath: makeCreateTempPath(dir),
+      }),
+    ).rejects.toMatchObject({ code: 'RUN-161' });
+
+    // A hard stop on round 1, not a retry: exactly one session ever ran, even though 3 rounds were
+    // available and the identical failure would have run all 3 had this been a RUN-160.
+    expect(calls).toBe(1);
 
     await rm(dir, { recursive: true, force: true });
   });
@@ -709,6 +889,60 @@ describe('runAdoptTestsAgent -- refuses upfront on a transport with no real per-
 
     // Never even reached the point of starting a session -- a real refusal, not a mid-session abort.
     expect(sessionStarted).toBe(false);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('runAdoptTestsAgent -- a genuine infrastructure failure still propagates immediately, never swallowed as "the agent had a bad day" (specs/22 M17 P7) (M17 P21 live-run fix)', () => {
+  it('a real adapter failure in startSession (not a parsed-response problem at all) rejects with the SAME error, on round 1, with no retry', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['this script is never reached'],
+      structured: {
+        command: NODE_TEST_COMMAND,
+        probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
+        runnerVersion: process.version,
+        reason: 'never reached',
+      },
+    });
+
+    // A genuine infrastructure-shaped failure -- a real bug or outage in the adapter itself, nothing
+    // to do with the quality of any agent's structured response -- modelled the same way this suite's
+    // own pre-existing `capturing`/`spying` adapters already wrap a real `FakePlatformAdapter`. This
+    // is NOT a `ForgeError` at all, let alone a `RUN-160`: the new round-loop `catch`
+    // (`adopt-agent.ts`) must re-throw it unrecognised, not relabel it as a retry-worthy agent
+    // response.
+    let calls = 0;
+    const brokenInfra = new Error(
+      'ECONNRESET: a real adapter/transport failure, not an agent problem',
+    );
+    const faulty: PlatformAdapter = {
+      id: adapter.id,
+      displayName: adapter.displayName,
+      capabilities: () => adapter.capabilities(),
+      preflight: () => adapter.preflight(),
+      listModels: () => adapter.listModels(),
+      startSession: () => {
+        calls += 1;
+        throw brokenInfra;
+      },
+      resumeSession: (sessionId, req) => adapter.resumeSession(sessionId, req),
+    };
+
+    await expect(
+      runAdoptTestsAgent(deps(project, faulty), {
+        layer: 'unit',
+        maxRounds: 3,
+        clock: fixedClock(),
+        createTempPath: makeCreateTempPath(dir),
+      }),
+    ).rejects.toBe(brokenInfra);
+
+    // Not swallowed into a retry either: exactly one attempt, even though 3 rounds were available.
+    expect(calls).toBe(1);
 
     await rm(dir, { recursive: true, force: true });
   });

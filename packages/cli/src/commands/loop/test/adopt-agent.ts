@@ -162,6 +162,39 @@
  * else in this codebase. Recorded here, not deleted, so a reader does not wonder whether this
  * reversal was ever actually examined.
  *
+ * **A malformed response gets the same retry-with-feedback a failing proof already had; a security
+ * refusal still does not (M17 P21, a real live-run defect, not a critic round).** A real, billed
+ * `opus` test-architect session ran to completion against a genuinely novel, bespoke test runner and
+ * reported a structured response that failed `parseProposalResponse`'s own root-level validation —
+ * and the WHOLE command failed outright on round 1 of what was supposed to be a bounded, 3-round
+ * retry loop, with zero chance for the agent to see what was wrong and try again, even though the
+ * identical feedback machinery already existed for a failing translator proof (above). Fixed by
+ * catching `parseProposalResponse`'s and `assertTranslatorPathWithinClaim`'s own `RUN-160` inside
+ * the round loop and feeding the real validation detail into the next round's prompt — the SAME
+ * `RoundFeedback` idiom, bounded by the identical `round === maxRounds` check (see `runAdoptTestsAgent`'s
+ * own round loop). Deliberately does NOT extend to `vetProposedTestCommand`'s own `RUN-161`: that
+ * check is this design's one FINAL backstop on a session's own reported command against a real
+ * security boundary (critic round 2's live-reproduced exploit, above), and feeding back exactly what
+ * was refused and why would hand a round-by-round oracle to a session whose own investigation
+ * target — an unfamiliar runner script — this codebase's own threat model already treats as
+ * potentially adversarial; a cooperative agent already gets the identical live feedback, through
+ * `createLiveExecGate` on every in-turn Bash call, for the literal `command.run` it typically tests
+ * before ever reporting it — the ONE field this loop's own brief asks the agent to actually EXECUTE
+ * during investigation, so round 3's own `vetProposedCommand` has a real chance to see and refuse it
+ * live before the final report ever does. This is NOT true, and is not claimed to be true, for
+ * `command.scope`/`.filter`: the brief's own `{output}`/`{files}`/`{name}`/`{name:regex}` template
+ * placeholders (`vetProposedTestCommand`'s own doc comment) are things the agent is told to NAME in
+ * its final report, never to literally run live with real values substituted — so a FINAL report's
+ * `scope`/`filter` text can genuinely differ from anything actually Bash-run during the round, with no
+ * live rehearsal of it at all, let alone a byte-identical one. Nothing here enforces that identity; a
+ * human reviewing a `RUN-161` refusal (its own remedy text, below) retains full, real visibility into
+ * exactly what was refused and why regardless. The asymmetric-oracle risk a round-retry would create
+ * is the real reason this stays a hard stop, not a claim that a cooperative agent can never be
+ * genuinely surprised by this refusal. Also deliberately narrow: the new `catch` matches on `RUN-160`
+ * specifically, not on "anything thrown inside the round," so a genuine FORGE bug or infra failure
+ * elsewhere in the round (`assembleAgentSession`, the adapter, `createLaneWorktree`, …) still
+ * propagates immediately rather than being silently relabelled as the agent having a bad day.
+ *
  * @see specs/13 F-TEST-11
  * @see specs/22 M17 P6 (`proof.ts`, `adopt.ts` — the staged-proposal lifecycle this plugs into)
  * @see specs/22 M17 P7
@@ -173,6 +206,7 @@ import {
   FORGE_RUN_ID,
   FORGE_STEP_ID,
   SYSTEM_CLOCK,
+  isForgeError,
   readTextFile,
 } from '@forge/core';
 import { listDirSorted, pathExists, writeFileAtomic, ProjectPaths } from '@forge/core/fs';
@@ -219,7 +253,14 @@ const TRANSLATOR_CLAIM_PREFIX = '.forge/test-translators/';
  * comment, "What the agent reports..."): with no write-claim refusal inside the lane any more, a
  * session naming some OTHER real in-lane file (`package.json`, its own `src/index.ts`, ...) as
  * `translatorPath` would otherwise have this function copy that file's real content over an unrelated
- * real path in the live project the moment the round's proof happens to pass. */
+ * real path in the live project the moment the round's proof happens to pass.
+ *
+ * A round that throws this is retried with feedback, not ended outright (M17 P21 — see
+ * `RoundFeedback`/`runAdoptTestsAgent`'s own round loop): the required prefix is a disclosed,
+ * unconditional structural rule (`briefs/adopt-tests.md` already names it), never a hidden security
+ * boundary a hostile prompt could use feedback to probe past — the check itself never relaxes no
+ * matter how many rounds run, so telling a confused-but-cooperative agent what it got wrong cannot
+ * weaken it. */
 function assertTranslatorPathWithinClaim(translatorPath: string): void {
   if (translatorPath.startsWith(TRANSLATOR_CLAIM_PREFIX)) return;
   throw new ForgeError('RUN-160', {
@@ -343,7 +384,23 @@ export type AdoptTestsAgentResult =
       readonly outcome: 'exhausted';
       readonly layer: string;
       readonly rounds: number;
+      /** A translator proof that kept failing the SAME named check, through every round. */
+      readonly cause: 'proof-failed';
       readonly failedCheck: ProofCheckNumber;
+      readonly reason: string;
+      readonly runId: string;
+    }
+  | {
+      readonly outcome: 'exhausted';
+      readonly layer: string;
+      readonly rounds: number;
+      /** A structured response that kept failing to parse or validate at all (M17 P21) —
+       * `parseProposalResponse`'s or `assertTranslatorPathWithinClaim`'s own `RUN-160`, fed back as
+       * real feedback each round the identical way a failing proof's own named check already is.
+       * Never `vetProposedTestCommand`/`RUN-161`: that refusal stays a hard, non-retryable throw, so
+       * it can never surface as an `'exhausted'` cause — see `runAdoptTestsAgent`'s own round loop
+       * doc comment for the security reasoning. */
+      readonly cause: 'invalid-response';
       readonly reason: string;
       readonly runId: string;
     }
@@ -355,30 +412,60 @@ export type AdoptTestsAgentResult =
       readonly runId: string;
     };
 
+/** One round's own retry-worthy feedback, folded into the NEXT round's own prompt
+ * (`buildRoundTaskText`) — real, trusted FORGE-produced feedback either way, never untrusted model
+ * content, so neither branch needs fencing (`20` §20.5).
+ *
+ * `'proof-failed'` is the original case (`13` F-TEST-11): a real `TranslatorProofResult` that ran for
+ * real and failed a named check. `'invalid-response'` is new (M17 P21, a live-run fix): the round's
+ * own structured response never even reached a proof — it failed `parseProposalResponse`'s or
+ * `assertTranslatorPathWithinClaim`'s own validation (`RUN-160`) — but the SAME "name exactly what
+ * was wrong, then let the agent try again" idiom applies: the agent produced *something*, just not
+ * the right shape, and the validation detail is directly actionable. Deliberately excludes a
+ * `vetProposedTestCommand`/`RUN-161` refusal — see `runAdoptTestsAgent`'s own round loop doc comment
+ * for why that one is never turned into feedback at all. */
+type RoundFeedback =
+  | {
+      readonly kind: 'proof-failed';
+      readonly failedCheck: ProofCheckNumber;
+      readonly reason: string;
+    }
+  | { readonly kind: 'invalid-response'; readonly reason: string };
+
 /** One round's own task text: the real, shipped brief (`briefs/adopt-tests.md`, read off the
  * project's own materialized copy, `resolveContentReference`) plus, from round 2 on, the PREVIOUS
- * round's own named failing check — real, trusted feedback FORGE itself produced (`runTranslatorProof`),
- * never untrusted model content, so it needs no fencing (`20` §20.5). */
+ * round's own {@link RoundFeedback}. */
 async function buildRoundTaskText(
   paths: ProjectPaths,
   layer: string,
   round: number,
   maxRounds: number,
-  feedback: { readonly failedCheck: ProofCheckNumber; readonly reason: string } | undefined,
+  feedback: RoundFeedback | undefined,
 ): Promise<string> {
   const brief = await resolveContentReference(paths, 'briefs/adopt-tests.md');
   const kickoff = `Investigate and propose a test configuration for the "${layer}" layer. This is round ${String(round)} of ${String(maxRounds)}.`;
   const feedbackText =
     feedback === undefined
       ? ''
-      : `\n\nThe previous round's translator proof failed check ${String(feedback.failedCheck)}: ${feedback.reason}\nRevise the actual cause this names, then report again.`;
+      : feedback.kind === 'proof-failed'
+        ? `\n\nThe previous round's translator proof failed check ${String(feedback.failedCheck)}: ${feedback.reason}\nRevise the actual cause this names, then report again.`
+        : `\n\nThe previous round's structured response was not usable: ${feedback.reason}\nReport a response that matches the required JSON shape exactly (a real "command" and "probe", or "noTestsFound" with a proposed command and an ADR summary), then try again.`;
   return `${kickoff}${feedbackText}\n\n${brief}`;
 }
 
 /** Validates `structured` (`QUALITY-BAR.md` R1: `unknown` until validated) and refuses (`RUN-160`)
  * when it is not a usable proposal at all — including the one shape `testCommandEntrySchema` accepts
  * but an agent-authored proposal may not: the legacy bare-string form, which carries no `format` for
- * the deterministic proof to validate against. */
+ * the deterministic proof to validate against.
+ *
+ * A round that throws this is retried with feedback, not ended outright (M17 P21, a live-run fix: a
+ * real, billed `opus` session ran to completion and was discarded on exactly this throw on round 1 of
+ * what was supposed to be a bounded, multi-round retry loop, with zero chance to self-correct — see
+ * `RoundFeedback`/`runAdoptTestsAgent`'s own round loop for the mechanism). The agent produced
+ * *something*, just not the right shape; the schema it failed is the SAME `ADOPT_TESTS_OUTPUT_SCHEMA`
+ * already disclosed to it as part of its own task, so naming exactly which Zod issue fired discloses
+ * nothing new and is directly actionable, the identical character as the translator-proof feedback
+ * this file already retries on. */
 function parseProposalResponse(structured: unknown): ProposalResponse {
   const result = proposalResponseSchema.safeParse(structured);
   if (!result.success) {
@@ -613,11 +700,17 @@ function shouldRetainLane(config: ForgeConfig, roundOutcome: 'passed' | 'failed'
  * doc comment for the full design.
  *
  * @throws {ForgeError} `RUN-056` when `test-architect` has no real materialized agent definition;
- * `RUN-160` when a round's own structured response is not a usable proposal at all, or names a
- * `translatorPath` outside its one allowed destination prefix; `RUN-161` when the round's own final
- * proposed command is refused by the vet; whatever `assembleAgentSession`/`createLaneWorktree`
- * themselves refuse with for a config or VCS problem this project has (an unmapped model tier, a
- * grant above the agent's own ceiling, a dirty or unavailable integration base, ...).
+ * `RUN-162` when the adapter has no real per-call exec gate; `RUN-161` when the round's own FINAL
+ * proposed command is refused by the vet -- deliberately never retried, see the round loop's own
+ * `catch` for why; whatever `assembleAgentSession`/`createLaneWorktree` themselves refuse with for a
+ * config or VCS problem this project has (an unmapped model tier, a grant above the agent's own
+ * ceiling, a dirty or unavailable integration base, ...) -- also never retried, since none of those
+ * is the agent's response having a bad day, it is FORGE's own setup being broken. A round's own
+ * structured response that is not a usable proposal at all, or names a `translatorPath` outside its
+ * one allowed destination prefix (`RUN-160`, `parseProposalResponse`/`assertTranslatorPathWithinClaim`)
+ * is caught INSIDE the round loop and retried with feedback instead (M17 P21) -- it is never thrown
+ * out of this function on a round before the last, and on the last round it becomes a typed
+ * `'exhausted'` result (`cause: 'invalid-response'`), never an uncaught throw.
  */
 export async function runAdoptTestsAgent(
   deps: AdoptTestsAgentDeps,
@@ -654,7 +747,7 @@ export async function runAdoptTestsAgent(
     clock,
   });
 
-  let feedback: { readonly failedCheck: ProofCheckNumber; readonly reason: string } | undefined;
+  let feedback: RoundFeedback | undefined;
   for (let round = 1; round <= maxRounds; round += 1) {
     const stepId = `adopt-tests:round-${String(round)}`;
     // A fresh, real `git worktree`, checked out from `ctx.integrationBase`, for THIS round alone --
@@ -720,18 +813,55 @@ export async function runAdoptTestsAgent(
       // (`removeLaneWorktree` in `finally`) -- this file's own top doc comment, "History", has the
       // full reasoning for why that is a strictly safer default than the old deny-list ever was.
 
-      const parsed = parseProposalResponse(session.structured);
+      // `parseProposalResponse`/`assertTranslatorPathWithinClaim` are the ONE retry-worthy failure
+      // class in this round (M17 P21, a live-run fix -- see both functions' own doc comments for the
+      // full reasoning): the agent produced *something*, just not a usable shape, so a round before
+      // the last is retried with real feedback rather than ending the whole command outright (the
+      // identical idiom this loop already used for a failing translator proof, below). Scoped to this
+      // one nested try so the `catch` cannot also swallow a later, genuinely different failure --
+      // `vetProposedTestCommand`'s own `RUN-161` and every other call in this round stay OUTSIDE it,
+      // on purpose.
+      let parsed: ProposalResponse;
+      try {
+        parsed = parseProposalResponse(session.structured);
+        // The one new check the lane model needs: a `translatorPath` outside its own claim prefix
+        // would otherwise have the copy-out below write some OTHER real in-lane file's content over
+        // an unrelated real path in the live project (this file's own `assertTranslatorPathWithinClaim`
+        // doc comment has the full reasoning). `noTestsFound !== true` first -- the SAME discriminant
+        // `proposalResponseSchema`'s own doc comment already narrows on below -- since that branch of
+        // the union carries no `translatorPath` field to check at all.
+        if (parsed.noTestsFound !== true && parsed.translatorPath !== undefined) {
+          assertTranslatorPathWithinClaim(parsed.translatorPath);
+        }
+      } catch (error) {
+        // Re-thrown immediately, unretried, when this is not the one known-retry-worthy shape: a
+        // genuine bug or infra failure here (impossible today -- both throw sites REACHABLE FROM
+        // INSIDE THIS TRY raise only `RUN-160` -- but checked by CODE, not merely by catch-site
+        // placement, so a future caller that adds a new throw to either function cannot silently
+        // start getting "free" retries it was never designed for) must surface immediately, never get
+        // relabelled as the agent having a bad day (M17 P21: the fix this round loop needed must not
+        // become one that MASKS a real FORGE defect). A THIRD `RUN-160` site exists in this file --
+        // the "unreachable by construction" fallback after this loop's own closing brace (critic1) --
+        // safe only because it sits lexically outside this try, never reachable here; its own comment
+        // cross-references this assumption, so a reader relocating that assertion sees this note too.
+        if (!isForgeError(error) || error.code !== 'RUN-160') throw error;
+        if (round === maxRounds) {
+          return {
+            outcome: 'exhausted',
+            layer,
+            rounds: round,
+            cause: 'invalid-response',
+            reason: error.message,
+            runId,
+          };
+        }
+        feedback = { kind: 'invalid-response', reason: error.message };
+        continue;
+      }
+
       if (parsed.noTestsFound === true) {
         roundOutcome = 'passed';
         return await stageNoTestSetup(deps, layer, parsed, clock, runId);
-      }
-
-      // The one new check the lane model needs: a `translatorPath` outside its own claim prefix would
-      // otherwise have the copy-out below write some OTHER real in-lane file's content over an
-      // unrelated real path in the live project (this file's own `assertTranslatorPathWithinClaim`
-      // doc comment has the full reasoning).
-      if (parsed.translatorPath !== undefined) {
-        assertTranslatorPathWithinClaim(parsed.translatorPath);
       }
 
       const probe: InjectedProbe = {
@@ -796,12 +926,13 @@ export async function runAdoptTestsAgent(
           outcome: 'exhausted',
           layer,
           rounds: round,
+          cause: 'proof-failed',
           failedCheck: proof.failedCheck,
           reason: proof.reason,
           runId,
         };
       }
-      feedback = { failedCheck: proof.failedCheck, reason: proof.reason };
+      feedback = { kind: 'proof-failed', failedCheck: proof.failedCheck, reason: proof.reason };
     } finally {
       await removeLaneWorktree(deps.projectRoot, lane, {
         retain: shouldRetainLane(deps.config, roundOutcome),
@@ -815,6 +946,18 @@ export async function runAdoptTestsAgent(
   // literal `while (true)` (which would obscure this loop's real, finite bound), so this is a real,
   // typed fallback for a branch no real input ever reaches, never a silent placeholder (`QUALITY-BAR.md`
   // R7).
+  //
+  // Reuses `RUN-160` safely ONLY because this throw sits lexically OUTSIDE every round's own nested
+  // try/catch above (M17 P21, critic1): that catch re-throws anything that is not `isForgeError(error)
+  // && error.code === 'RUN-160'` unretried, on the deliberate assumption that `RUN-160` at THAT site
+  // always means "the agent's own structured response was unusable," never a genuine internal-
+  // invariant bug. This throw is the one other `RUN-160` site in this file and is exactly the latter
+  // (an invariant violation, not an agent problem) -- safe today only by lexical position, not because
+  // the code itself is distinguishable from the retry-worthy kind. If a future refactor ever moved or
+  // inlined this assertion into the round body, it would silently start being retried as if the agent
+  // had a bad day. Flagging this here rather than minting a new code for a branch no real input can
+  // reach; a reader touching this assertion should re-examine that catch's own `RUN-160` assumption
+  // before relocating it.
   throw new ForgeError('RUN-160', {
     detail: 'the adopt-tests retry loop exited without a result -- this should be unreachable',
   });
