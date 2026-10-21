@@ -30310,3 +30310,47 @@ claim underneath was already confirmed precisely true by both critics independen
 precision correction, not a substantive one.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P20`.
+
+## Q340
+
+New disclosed defect, found during the first real push of `main`'s M17 Phase A work to `next`
+(2026-10-20/21, real run `39503607194` on GitHub Actions), not in the original 21+6(A-F) defect
+register and not caused by any M17 piece — a real, pre-existing Node 20 incompatibility only
+visible once real CI actually ran for the first time.
+
+`--experimental-strip-types` does not exist on Node 20.x at all (confirmed live: the real `node
+20.20.2` binary on `ubuntu-latest` rejects it outright with `bad option: --experimental-strip-
+types`). Every script that spawns a child process with this flag fails outright on the real `node
+20` leg of the matrix: `scripts/lib/schema-drift.mjs` (via `scripts/lib/emit-schemas-child.mjs`,
+hit 7 separate times by `scripts/schema-drift.test.ts`'s own real sub-cases), `scripts/bench.test.ts`
+(3 real assertion failures, each receiving the raw "bad option" stderr instead of its own expected
+content), and likely any sibling script using the identical spawn pattern. `specs/02` §2.1 pins
+Node >=20.10 as a tested, supported version (`floor` job's own OS/Node matrix tests 20/22/24) — this
+is a real, live violation of that pin, not a hypothetical one.
+
+**DECISION** — not fixed yet; folded into M17 P16's own mandate (`PLAN-M17.md`), since P16 is the
+piece whose own exit condition (a real, green `next` CI matrix) this blocks directly, and fixing it
+is a real prerequisite to getting ANY clean signal from the matrix at all, Windows included.
+
+## Q341
+
+New disclosed defect, found during the same real `next` push as Q340 — a real bug in the project's
+OWN verification tooling, not in FORGE's own product code, and not Windows-specific.
+
+On the one real matrix leg that got furthest before its own real test failures (`floor (node 22,
+ubuntu-latest, TZ=Asia/Kathmandu)`), `scripts/verify-success-criteria.mjs --only SC3` ran the real
+SIGKILL-resume success-criterion test (`packages/engine/test/e2e/crash-resume.test.ts`, specs/01
+§1.8's E3) — the captured, real inner `vitest` output shows `✓ ... 49394ms`, `Test Files 1 passed
+(1)`, `Tests 1 passed (1)` — a genuine pass. But the wrapper script itself then reported `SC3 [FAIL]
+... REFUSED: exit 0 but no test actually passed -- the -t pattern (or file target) matched zero real
+tests. This proves nothing; treated as FAIL.` and failed the whole success-criterion anyway. The
+real test passed; the script's own detection of that fact is what's broken — almost certainly an
+assumption (TTY/color-code output shape, or similar) that holds in local interactive dev but not on
+a real, non-interactive GitHub Actions runner.
+
+**DECISION** — not fixed yet; folded into M17 P16's own mandate alongside Q340, for the identical
+reason (blocks a clean real-matrix signal; found only because real CI finally ran).
+
+**Gauntlet:** see `GAUNTLET-LOG.md` once P16's own fix piece lands (not yet built as of this entry —
+this records the disclosure, per the owner's own "every disclosed defect fixed first" standing
+instruction, same as Q314/Q317 before their own follow-up pieces landed).

@@ -426,11 +426,44 @@ at landing, exactly as uncommitted writes are; an out-of-claim path is reverted 
 
 ---
 
-## P16 — Windows [#18]
+## P16 — Windows, and the real CI infrastructure that blocks seeing it [#18]
 
-**Mandate.** Spawn observed commands with an argv array (no shell, so no quoting); kill process trees
-with `taskkill /T /F`; lift `ENV-007` for the process surface; run the parity, binding, lane and
-test-adoption suites on Windows. Verified on GitHub's Windows runners via `next` (Decision 8).
+**Mandate.** The first real push of this plan's own work (`next`, 2026-10-20/21, run `39503607194`)
+surfaced real defects beyond what #18 anticipated — all 11 matrix legs failed, and none of the 3
+Windows legs completed within the 45-minute job ceiling, so this piece now also closes what blocks
+seeing a real signal at all, before closing #18 itself:
+
+1. **A Node 20 incompatibility, not Windows-specific** (new, undisclosed defect, `Q340`):
+   `--experimental-strip-types` does not exist on Node 20.x (confirmed live: Node 20.20.2 rejects it
+   as "bad option"); every script that spawns a child process with it — `scripts/lib/schema-
+   drift.mjs`, `scripts/verify-success-criteria.mjs`, `scripts/bench.test.ts`, and any sibling using
+   the same pattern — fails outright on the real `node 20` leg. `specs/02` §2.1 pins Node >=20.10 as
+   a tested, supported version; this is a real violation of that pin, confirmed on `ubuntu-latest`/
+   `node 20`.
+2. **A real bug in `scripts/verify-success-criteria.mjs`'s own pass-detection, not Windows-specific**
+   (new, undisclosed defect, `Q341`): on the one leg that got furthest (`node 22, ubuntu-latest,
+   TZ=Asia/Kathmandu`), the real SIGKILL-resume success-criterion test (`crash-resume.test.ts`, E3)
+   genuinely passed (`1 passed (1)`, confirmed in the captured log) but the wrapper script reported
+   `REFUSED: exit 0 but no test actually passed — the -t pattern (or file target) matched zero real
+   tests` and failed SC3 anyway — a real, environment-specific parsing bug (likely a TTY/color-code
+   assumption that only holds locally), not a real test failure.
+3. **The 45-minute job ceiling is still insufficient**, confirmed live: 9 of 11 real matrix legs in
+   this first real run hit it, including all 3 Windows legs and legs on every other OS too — worse
+   than the single-leg-class #18 originally named. Diagnose before just raising the number again:
+   `floor (node 24/22, macos-latest)` carried a real "capacity constraints … longer queue times"
+   annotation, so some of this may be queue time eating the job clock rather than `pnpm test` itself
+   growing slower — distinguish the two before choosing a fix (a higher ceiling, sharding `pnpm
+   test` across more jobs, or both).
+4. **Once 1–3 are fixed and a real matrix can complete**, close #18 itself for real: argv-array
+   command spawning (no shell, so no quoting), `taskkill /T /F` process-tree kill, lifting `ENV-007`
+   for the process surface, and the parity/binding/lane/test-adoption suites passing on a real
+   Windows runner — fixing whatever real Windows-specific defects a COMPLETED run then surfaces (none
+   have been seen cleanly yet: every Windows leg in the first real run died by timeout before
+   finishing, not by a real test failure).
+
+**Exit condition, concrete and real (narrower than the original piece's own looser framing)**:
+re-push to `next`, and the full real matrix `ci.yml` currently defines (11 jobs across its OS/Node/TZ
+combinations) is green, not merely "configured."
 
 ---
 
@@ -472,6 +505,12 @@ proves the translator, or proposes a runner) → `G-TestAdopt` → `forge refact
 land on trunk. Plus a forced transient failure retried live, and ledger tokens/cost cross-checked.
 Every real defect found is fixed under the gauntlet. Then tag `m17-hardened`. Does not start without
 the owner's explicit authorization in the conversation.
+
+**Closing gate, combined with P16 (owner instruction, 2026-10-21): Phase A's own `m17-hardened` tag
+is one combined gate, not two independently-closeable ones.** It is not cut until BOTH P16's real
+`next` CI matrix is fully green AND every real defect this piece's own live run finds is fixed under
+the identical gauntlet discipline as every other M17 piece — whichever of the two finishes its own
+fixes last is what actually unblocks the tag.
 
 ---
 
