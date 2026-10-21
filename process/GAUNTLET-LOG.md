@@ -24456,3 +24456,60 @@ third critic round, given the fix's narrow, already-thoroughly-tested scope): fu
 (9 files, 798 tests) plus direct `tsc --noEmit`/`pnpm lint` all clean on the final landing commit.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q344`.
+
+## M17 P21 (live-run fix 4) — the most adversarial fix of this live run
+
+Found live, mid-way through M17 P21's own live run: two independent, real `--agent` attempts both
+exhausted their full 3-round budget with the identical generic error
+(`"the test-architect session's structured response was not a usable adopt-tests proposal: (root):
+Invalid input."`). `ADOPT_TESTS_OUTPUT_SCHEMA` — the JSON Schema that actually steers the live
+model's structured output, confirmed wired through `SessionRequest.outputSchema` →
+`build-options.ts`'s `Options.outputFormat`, never merely an informational artifact — was a single
+flat object with no `required` fields at any nesting level, including its own `command` field
+(previously `{type: 'object'}`, zero content) and the nested `probe` object's own mandatory fields.
+The model had no schema-level signal for what was actually required; only prose retry feedback,
+which both real live attempts showed isn't reliably enough to self-correct.
+
+**Round 1's fix was itself wrong, caught only by insisting on a real live repro.** A first attempt
+rewrote the schema as a top-level `{anyOf: [branchA, branchB]}` to mirror `proposalResponseSchema`'s
+real two-branch Zod union exactly — field-by-field correct, independently confirmed by a critic
+against the real Zod source at every nesting level, with the two branches algebraically confirmed
+genuinely discriminable. But a critic's own real, billed round-trip plus two near-zero-token direct-
+API probes found the real Anthropic API rejects a top-level `oneOf`/`allOf`/`anyOf` outright — a
+hard `400`: `"input_schema does not support oneOf, allOf, or anyOf at the top level"` — because the
+SDK's structured-output option is implemented via an injected TOOL definition, held to ordinary tool
+`input_schema` rules, not the generic "structured outputs" documentation the builder's own
+(accurate, but for the wrong mechanism) lookup had consulted. That attempt made EVERY real call fail
+before the model ever saw a prompt — worse than the original defect, and nearly indistinguishable
+from it by symptom alone, since `runAdoptTestsAgent` never checks `session.ok`/`session.error`
+anywhere (a separate, pre-existing, disclosed gap), so a hard API rejection and a malformed model
+response produce byte-identical user-visible text.
+
+**The real fix**, found by the same builder after independently reproducing the critic's own 400 and
+live-probing two alternatives directly (not from documentation this time): `ADOPT_TESTS_OUTPUT_
+SCHEMA` is now one flat, non-union object — `required: ['command', 'reason']` only, the two fields
+unconditional across both real branches — plus a top-level `if`/`then`/`else` block expressing the
+real conditional requirement (`noTestsFound` implies `adrSummary`; otherwise `probe`+`runnerVersion`
+are required). Live-confirmed, via direct real API probes, both that this schema is accepted and
+that it genuinely steers which fields the model includes — not merely schema-valid-but-inert. The
+nested `command.output` `anyOf` is unchanged and confirmed safe (never at the schema root). The one
+disclosed limitation — this flat shape cannot reject a response mixing fields from both branches at
+the schema level alone, since a real `additionalProperties: false` discriminator only exists inside
+a branch-scoped `anyOf`, which this transport refuses at the root — is closed downstream by the
+real, unchanged `proposalResponseSchema` validator, confirmed (by hand-tracing the Zod logic and by
+test) to still correctly refuse that exact mixed shape. Deliberately avoided the riskier alternative
+(two separate tool schemas selected by tool-choice, which would have required broadening
+`adapter-kit`'s own shared `SessionRequest` type — used by 4 other real callers) in favor of the
+lower-blast-radius, single-file fix.
+
+**Independently confirmed end to end, three separate real times** (plus 2 additional targeted API
+probes), not merely by unit test: the builder's own two full live round-trip attempts (one reaching
+a real passing translator proof and a clean `"staged"` outcome; one producing a valid structured
+response too, confirmed against the real validator, but separately hitting an unrelated, already-
+disclosed `RUN-161` vetting refusal on a different field) plus a round-2 critic's own, fully
+independent third attempt (their own hand-written probe, never reading the builder's; a genuinely
+different fixture and branch — a zero-tests Node project reaching a clean `"no-test-setup"` outcome
+with a real ADR written). All three real attempts succeeded or failed for expected, unrelated
+reasons; none repeated the schema-level rejection.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q345`.

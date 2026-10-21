@@ -30456,3 +30456,37 @@ into the same piece rather than left as a named follow-up, since the fix was a n
 already-built pattern with no real design ambiguity.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
+
+## Q345
+
+M17 P21's own live run found a fourth, real, distinct defect: two independent, real `forge test
+adopt --agent` attempts both exhausted their full 3-round retry budget with the identical generic
+schema-validation error. `ADOPT_TESTS_OUTPUT_SCHEMA` — the JSON Schema actually steering the live
+model's structured output — had no `required` fields at any nesting level, giving the model no
+schema-level signal for what was actually mandatory; prose retry feedback alone was not reliably
+enough to self-correct.
+
+**DECISION** — a first fix attempt (a top-level `{anyOf: [branchA, branchB]}` mirroring the real
+Zod validator's two-branch union field-for-field) was itself found wrong by a critic's real, live
+round-trip: the real Anthropic API rejects a top-level `oneOf`/`allOf`/`anyOf` outright (the SDK's
+structured-output option is implemented via an injected tool definition, held to ordinary tool
+`input_schema` rules) — making every real call fail before the model ever saw a prompt, worse than
+the original defect, and nearly indistinguishable from it by symptom since the existing retry loop
+never checks `session.ok`/`session.error` (a separate, disclosed, pre-existing gap).
+
+**DECISION** — fixed for real: `ADOPT_TESTS_OUTPUT_SCHEMA` rewritten as one flat, non-union object
+with only the two unconditionally-required fields in `required`, plus a top-level `if`/`then`/`else`
+block for the real conditional requirement — live-confirmed via direct API probes both accepted by
+the real transport and genuinely steering model behavior. The one disclosed limitation (can't reject
+a mixed-branch response at the schema level alone) is closed downstream by the real, unchanged Zod
+validator, confirmed to still catch it. Deliberately scoped to this one file rather than broadening
+`adapter-kit`'s own shared `SessionRequest` type, which has 4 other real callers.
+
+**DECISION** — given this exact piece already had one confident-but-wrong fix, independently
+confirmed end to end THREE separate real times before landing: 2 full live round-trip attempts by
+the builder (one reaching a real passing proof and staged outcome; one a valid response separately
+hitting an unrelated, already-disclosed vetting refusal) and a fully independent third attempt by a
+round-2 critic (own hand-written probe, a different fixture and branch, reaching a clean
+no-test-setup outcome with a real ADR written) — none repeating the schema-level rejection.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
