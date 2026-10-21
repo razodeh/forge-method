@@ -24399,3 +24399,60 @@ a third critic round, given the fix's narrow, already-test-backed scope): all 8 
 (1321 tests) plus direct `tsc --noEmit`/`pnpm lint` all clean on the final landing commit.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q343`.
+
+## M17 P21 (live-run fix 2)
+
+Found live, mid-way through M17 P21's own live run: `forge test adopt` (bare, no `--agent`) marked a
+fresh Python project `confident: true` for pytest based solely on `pyproject.toml`/`setup.cfg`/
+`tox.ini` existing — packaging boilerplate every modern Python package needs, not evidence of a
+configured test tool. Confirmed live on the third live-run fixture (a project deliberately built with
+zero test files): the real detected command (`python -m pytest --junit-xml=...`) genuinely found
+`collected 0 items`. Compared directly against the equivalent JS detector in the same file
+(`detectJavaScript`), which already requires real evidence (a `scripts.test` match cross-checked
+against a real dependency, or a bare dependency) before `confident: true` — `detectPython` had no
+equivalent check at all.
+
+**Why this mattered more than a latent inaccuracy**: combined with the already-landed Q342 fix
+(confident/`detected` proposals are now promotable via `--write` after human `G-TestAdopt` approval),
+a Python project with zero tests would get staged with the SAME "confident" shape a real, working
+pytest setup gets, and nothing in the gate's own deterministic check verifies "does this command find
+real tests" — `specs/13` F-TEST-11 is explicit a no-tests project should get "a *proposal* for a
+conventional runner... as a reviewable change," never a silently-promotable confident match.
+
+**Fixed**: `detectPython` now requires real evidence — `pyproject.toml`'s `[tool.pytest.ini_options]`
+table, a real pytest dependency scoped to an actual dependency array (PEP 621's `dependencies`/
+`optional-dependencies`/`dependency-groups`, or Poetry's own native `[tool.poetry.dependencies]`-style
+tables), `setup.cfg`'s `[tool:pytest]`, `tox.ini`'s `[pytest]`, or a real `pytest.ini`/`conftest.py`/
+`test_*.py` file at the root or one level into `tests/`/`test/`. Lacking all of it, returns
+`confident: false` (the correct, deliberate handoff to `--agent`, per F-TEST-11's own design, not an
+oversight). A second, distinct detector with the identical defect class was found and fixed in the
+same piece: `detectGo` now requires a real `_test.go` file at the root or one level into its own
+immediate subdirectories before `confident: true`; `detectPhp` was checked and confirmed to already
+require a real declared dependency, no gap there.
+
+**Two independent critics, each in their own worktree, round 1 found a real BLOCKING regression and
+a real MAJOR completeness gap.** Critic1 (regex-precision lens): live-reproduced a false positive
+into the EXACT defect class this fix exists to close, via a different field — the dependency regex
+was applied to the whole raw file, so `description = "...'pytest' ecosystems"` and
+`keywords = ["pytest", "plugin"]` (PyPI classifier metadata, never a dependency declaration) both
+wrongly got `confident: true`. Also found a real MAJOR false negative: Poetry's own native TOML table
+syntax (`[tool.poetry.dependencies]`/`[tool.poetry.group.*.dependencies]` with a bare `pytest = "..."`
+key) was never detected — one of the two dominant real-world Python dependency styles. Critic2
+(scope/spec-alignment lens): confirmed everything else closed, including a full real end-to-end run
+through the already-landed Q342 promotion path with a genuinely pytest-configured fixture — but gave
+a strong, unhedged case against deferring the disclosed `detectGo` gap, since the fix is a near
+copy-paste of the pattern already built twice in the same commit and the milestone's own "fix ALL
+disclosed defects" rule is unconditional.
+
+**All three findings fixed in a second round**: the dependency regex rewritten with a real (if
+deliberately shallow, line-based, non-parsing) TOML table/array scanner that scopes the pytest-
+dependency check to actual dependency-array bodies, confirmed to close both live-reproduced
+regressions while preserving every existing positive/negative control; Poetry-table detection added
+and verified on 5 real fixtures (main deps, dev-group, legacy dev-dependencies, no-pytest, and a
+same-prefix-package negative control); `detectGo`'s identical fix folded in rather than deferred,
+verified on 5 real fixtures including a vendored-directory exclusion and a safely-bounded
+two-directories-deep negative control. Independently re-verified by the orchestrator directly (not a
+third critic round, given the fix's narrow, already-thoroughly-tested scope): full relevant battery
+(9 files, 798 tests) plus direct `tsc --noEmit`/`pnpm lint` all clean on the final landing commit.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q344`.

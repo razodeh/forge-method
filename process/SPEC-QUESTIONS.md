@@ -30428,3 +30428,31 @@ not caught by the builder's own narrower battery. Fixed (renamed), re-verified a
 root-enumerator sweep.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
+
+## Q344
+
+M17 P21's own live run found a third, real, distinct defect: `forge test adopt` (bare, no `--agent`)
+marked a Python project `confident: true` for pytest based solely on `pyproject.toml`/`setup.cfg`/
+`tox.ini` existing. Confirmed live on a project deliberately built with zero test files: the real
+detected command found `collected 0 items`. Combined with the already-landed Q342 fix, a no-tests
+Python project could be staged with the same "confident" shape a real, working setup gets, with
+nothing in the gate's own check verifying real tests exist — contradicting F-TEST-11's own stated
+design that a no-tests project should get a reviewable proposal, never a silently-promotable match.
+
+**DECISION** — fixed: `detectPython` now requires real evidence (a `[tool.pytest.ini_options]`
+table, a real pytest dependency scoped to an actual PEP 621 or Poetry-style dependency table, a
+`setup.cfg`/`tox.ini` pytest section, or a real `pytest.ini`/`conftest.py`/`test_*.py` file) before
+`confident: true`; lacking it, correctly hands off to `--agent`. `detectGo` (found to have the
+identical defect class in the same piece) now requires a real `_test.go` file the same way;
+`detectPhp` confirmed to already require a real dependency, no gap there.
+
+**DECISION** — 2 critics found a real BLOCKING regression in round 1 (the dependency-evidence regex
+was scoped to the whole file rather than a real dependency array, live-reproducing a false positive
+into the exact defect class via `description`/`keywords` prose) and a real MAJOR completeness gap
+(Poetry's own native TOML dependency-table syntax never detected). Both fixed in round 2 with a real
+TOML table/array scanner and dedicated Poetry-table detection, verified on 10 real fixtures combined.
+A critic's strong, unhedged case against deferring the disclosed `detectGo` gap was accepted — folded
+into the same piece rather than left as a named follow-up, since the fix was a near copy-paste of an
+already-built pattern with no real design ambiguity.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
