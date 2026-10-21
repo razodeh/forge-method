@@ -512,6 +512,18 @@ is one combined gate, not two independently-closeable ones.** It is not cut unti
 the identical gauntlet discipline as every other M17 piece — whichever of the two finishes its own
 fixes last is what actually unblocks the tag.
 
+**`Q347` added to this same gate.** The live run itself surfaced a severe, disclosed-not-fixed
+defect (`SPEC-QUESTIONS.md` `Q347`): under real `--agent` sessions' `dontAsk` permission mode,
+FORGE's own `canUseTool`/`vetProposedCommand` is not reliably the enforcement point for live Bash
+calls once shell operators are involved — the Claude Code CLI's own internal allow/deny resolution
+can both wrongly allow a shell-chained command whose base verb merely looks granted and wrongly deny
+one that should pass, in neither case ever reaching FORGE's own callback. This is not `adopt-tests`-
+specific; it is the channel every `kind: agent` step's live Bash calls run through. Deliberately not
+fixed under the live-run's own chain (the lesson, named twice already this milestone at `Q345`/`Q346`,
+is that a fix to exactly this class of thing that looks right on paper can still be wrong until a
+real, live round-trip proves otherwise) — needs its own dedicated piece with the same rigor as the
+original P7 gauntlet, and `m17-hardened` does not cut until it closes.
+
 ---
 
 ## Phase B — the trial (outline; finalized after the tag)

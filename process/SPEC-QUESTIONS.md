@@ -30534,3 +30534,84 @@ runner reporting per-test messages, confirmed to be the one remaining real obsta
 three live attempts via a zero-cost replay check, left for a separate product/spec decision.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
+
+## Q347
+
+New disclosed defect, found while verifying M17 P21 fix6 (the shell-pipe brief clarification) — the
+fix6 builder, re-reading real session transcripts for an unrelated reason, noticed something far
+more severe than fix6's own scope and flagged it rather than attempting a fix themselves. The
+orchestrator independently re-verified every claim below directly (own code reads, own transcript
+parsing, own SDK bundle inspection) before writing this entry, given the severity.
+
+**The finding.** Real, live Bash `tool_use` calls containing shell operators (`&&`, `|`, `;`) were
+issued during a real `--agent` adopt-tests investigation session and genuinely EXECUTED — confirmed
+by reading the real, persisted session transcript
+(`~/.claude/projects/-Users-razodeh-Library-Caches-forge-337737c061f2fb4c-...-round-1-.../*.jsonl`)
+directly and matching each `tool_use` to its own `tool_result`. Two concrete examples, both with
+real, substantive output (not a denial): `ls -la && echo --- && find . -maxdepth 3 -not -path
+'*/.git*' | sort` (real `ls -la` directory listing) and `rg -il "forge-json|forge_json|forgejson"
+.forge 2>/dev/null; echo ---; rg -il "junit-xml|vitest-json|jest-json|go-test-json" .forge
+2>/dev/null` (real `rg` search results). This is the first REAL confirmation of a risk FORGE's own
+code already disclosed as theoretically possible but "not assumed closed" (`build-options.ts`'s own
+doc comment) — now confirmed true with concrete, re-checkable evidence, not merely theoretical.
+
+**What this is NOT.** Re-read `grantWithAdoptTestsExec` (`adopt-tests-grant.ts`) and
+`mapToolGrantToAllowedTools`/`safeBashRule` (`tool-grant.ts`) directly: every real exec pattern
+FORGE emits is always either a parenthesized `Bash(${pattern})` rule or dropped (`undefined`) —
+never a bare `"Bash"` entry. So this is NOT the already-known, already-disclosed "bare allowedTools
+entry shadows canUseTool" mechanism (`CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`, which names only Read/Edit/
+Write, never Bash, in every real log this milestone produced) — FORGE's own grant shape was already
+confirmed innocent of that specific, narrower bug.
+
+**The real mechanism (confirmed by reading the vendored `@anthropic-ai/claude-agent-sdk` package's
+own `sdk.d.ts`/`sdk.mjs` directly, not inferred).** FORGE's real `--agent` sessions run under
+`permissionMode: 'dontAsk'` (confirmed verbatim in every transcript denial: "Claude Code is running
+in don't ask mode" — the SDK's own official doc comment: `'dontAsk' - Don't prompt for permissions,
+deny if not pre-approved`). The SDK's own `PermissionDenied` event doc is explicit: a tool call
+resolves through the CLI's own internal classification into allow / ask / deny *before* FORGE's
+`canUseTool` is ever consulted; only a call landing in the "ask" bucket is routed to `canUseTool` at
+all ("With a permission prompt surface (stdio/SDK canUseTool), the 'ask' path surfaces via a
+can_use_tool control_request"). A call that resolves to a hard internal ALLOW or DENY — by whatever
+mechanism the CLI uses internally — never reaches FORGE's callback, exactly the same shadowing
+principle already named for bare Read/Edit/Write entries, now confirmed to generalize to Bash via a
+different trigger. The denial message observed for every blocked call in the transcript
+("Permission to use Bash has been denied because Claude Code is running in don't ask mode") is the
+SDK's own generic text, not one of FORGE's typed `RUN-16x` errors — direct evidence `vetProposedCommand`
+was never reached for these calls either.
+
+Also found, in the same bundle: a `PermissionMode` doc explicitly naming `'auto'` as "Use a model
+classifier to approve/deny permission prompts" — i.e. Claude Code has a real, built-in, opaque
+safety classifier for permission decisions — plus an internal risk-category table (`dangerousRemoval`,
+`backgroundOperator`, `suspiciousWindowsPath`, `isolatePeerMachines`, `restrictedMode`, each flagged
+`classifierRouted`/`bypassImmune`) suggestive of shell-chained commands being routed through this
+classifier rather than through any FORGE-controlled list. This part is NOT fully pinned down — the
+object is defined but its consumer was not locatable in the minified bundle — so it is reported as
+strong circumstantial support, not a confirmed mechanism.
+
+**Why this is severe regardless of the exact classifier mechanics.** Every live example gathered
+this session that DID get asked-and-executed had a base verb matching a FORGE-granted pattern as a
+plain prefix (`ls*`, `rg*`) — consistent with "resolves to allow internally, before canUseTool." The
+one clean counter-example (`python3 .forge/test-translators/unit.py; echo "EXIT:$?"`, base verb also
+prefix-matching a granted pattern) was DENIED, by the same generic non-FORGE message — meaning
+whatever actually decided these outcomes, in both directions, was not FORGE's own deterministic
+`SHELL_OPERATOR_PATTERN`/`vetProposedCommand` check. The conclusion that survives regardless of which
+exact internal rule fired: **`canUseTool` is not reliably the enforcement point for live Bash calls
+under `dontAsk` mode once shell operators are involved — FORGE's own grant list and shell-operator
+denylist can be bypassed in the ALLOW direction by the CLI's own internal resolution, for commands
+whose base verb happens to look like a granted pattern.** This is not scoped to `adopt-tests` —
+every `kind: agent` step in every compiled workflow, across the whole product, runs real Bash calls
+through this same `dontAsk`-mode channel.
+
+**DECISION** — not fixed, and deliberately NOT rushed as a quick fix under this chain. This is the
+same live-exec security boundary P7's own 5-round gauntlet was built around, and it needs the same
+dedicated rigor (a focused root-cause investigation first, confirming exactly what the CLI's internal
+classification does with shell-chained commands under `dontAsk` mode, likely requiring controlled,
+minimal, isolated repros rather than further transcript archaeology; only then a fix design; then a
+full critic gauntlet re-confirming live, not just on paper, matching the lesson already learned twice
+this milestone — Q345's and Q346's own first fix attempts each looked right and were wrong until a
+real, live round-trip proved otherwise). Given the severity — this is the mechanism the whole product
+relies on to confine what a live agent session can do — this is folded into the `m17-hardened` closing
+gate alongside Q340/Q341/P16, not left as a lower-priority loose end. A dedicated piece should be
+opened to pursue it with the same structure P7 originally used.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
