@@ -12,9 +12,13 @@
  * **Why these runners, and not others.** `TEST_REPORT_FORMATS` (`@forge/schemas/config`) has six
  * built-ins; a project's own real output only ever fits one of them WITHOUT adding a dependency or
  * losing information to a schema this piece did not relax. Vitest/Jest/Mocha/Node's built-in test
- * runner (JS), pytest (Python, the same marker-presence confidence `ecosystem.ts`'s own legacy path
- * already established), `go test` (Go) and PHPUnit (PHP, whose own `--log-junit` is a zero-dependency
- * CLI flag) each have one. Maven/Gradle's own default JUnit XML output is one file PER TEST CLASS,
+ * runner (JS), pytest (Python), `go test` (Go) and PHPUnit (PHP, whose own `--log-junit` is a
+ * zero-dependency CLI flag) each have one -- for every one of these, `confident: true` requires real
+ * evidence the project actually configures that runner (a dependency, a config section, or a real
+ * test file), never merely that one of its ecosystem's own packaging manifests exists (`13`
+ * F-TEST-11's own live-discovered defect, `specs/22` M17 P21: a bare `pyproject.toml`/`go.mod` is
+ * packaging metadata every real package/module needs, whether or not it has a single test).
+ * Maven/Gradle's own default JUnit XML output is one file PER TEST CLASS,
  * which `execution.testCommands.<layer>.output.path`'s single-path shape (`18` §18.3) cannot express
  * without an aggregation step this piece does not build; `cargo test`'s stable CLI has no built-in
  * JUnit/TAP output at all; `dotnet test`'s own single-file format is TRX, which has no built-in
@@ -35,8 +39,8 @@
  * @see specs/18 §18.3
  * @see specs/22 M17 P6
  */
-import { listDirSorted, pathExists, readTextFile } from '@forge/core/fs';
-import type { ProjectPaths } from '@forge/core/fs';
+import { listDirEntriesSorted, listDirSorted, pathExists, readTextFile } from '@forge/core/fs';
+import type { DirEntry, ProjectPaths } from '@forge/core/fs';
 import type { StructuredTestCommand } from '@forge/schemas/config';
 
 /** The one layer `detectTestRunners` ever proposes for (`process/plans/PLAN-M17.md` P6's own report:
@@ -344,19 +348,259 @@ async function detectJavaScript(
 
 const PYTHON_MARKERS = ['pyproject.toml', 'setup.cfg', 'tox.ini'];
 
-/** `js`-equivalent confidence rule for Python: presence of any of the three markers means pytest, the
- * identical "a real, unambiguous declaration of which test tooling the project itself actually runs"
- * confidence `ecosystem.ts`'s own pre-existing legacy-path probe already applies to the same three
- * files (that file additionally accepts `pytest.ini`, which `13` F-TEST-11's own named manifest list
- * does not -- not reproduced here, since this detector's own job is the list that spec actually
- * names, not `ecosystem.ts`'s). */
+/** A real `pytest.ini` or `conftest.py`'s mere presence is already real evidence of a configured
+ * pytest setup, regardless of which `PYTHON_MARKERS` entry (if any) brought this probe here at all:
+ * nobody creates either file without actually intending to run pytest -- unlike `pyproject.toml`'s
+ * own `[project]`/`[build-system]` tables, which every modern Python PACKAGE needs whether or not it
+ * has a single test (`13` F-TEST-11's own live-discovered gap, `specs/22` M17 P21: a real, fresh
+ * `pyproject.toml` with only that packaging boilerplate and zero test files was staged `confident:
+ * true` for pytest before this fix -- `python -m pytest` really ran against it and collected 0
+ * items). Checked at the project root and inside the two conventional test directories below (see
+ * `findSharedPytestEvidence`) -- a deliberately shallow, bounded check, the same precedent this
+ * file's own Makefile recipe parser already sets: real, bounded evidence, not a general recursive
+ * test-discovery engine.
+ *
+ * The one-level test directories this probe also looks inside, for a `conftest.py` or a real
+ * pytest-convention test file placed there rather than at the root -- covers the overwhelmingly
+ * common real-world layout without becoming a full recursive walk. */
+const PYTHON_TEST_DIRS = ['tests', 'test'];
+
+/** pytest's own default `python_files` discovery glob (`test_*.py`, `*_test.py`) -- a real file
+ * matching it is direct, unambiguous evidence someone actually wrote a pytest test, never merely
+ * that the project happens to be written in Python. */
+function looksLikePytestTestFile(name: string): boolean {
+  return /^test_.*\.py$/.test(name) || /^.*_test\.py$/.test(name);
+}
+
+/** Whether `relativeDir` (the project root, or one of `PYTHON_TEST_DIRS`) has a real pytest-shaped
+ * test file sitting directly inside it. `listDirSorted` throws on a missing directory (unlike
+ * `pathExists`), so a non-existent `tests/`/`test/` reads the same as "nothing found there", never a
+ * real error this probe should propagate. */
+async function hasPytestTestFileIn(paths: ProjectPaths, relativeDir: string): Promise<boolean> {
+  let entries: readonly string[];
+  try {
+    entries = await listDirSorted(paths.resolveWithin(relativeDir));
+  } catch {
+    return false;
+  }
+  return entries.some((entry) => looksLikePytestTestFile(entry));
+}
+
+/** Evidence of a configured pytest setup that does not depend on which `PYTHON_MARKERS` entry
+ * matched: a real `pytest.ini` (root only -- that is the one place pytest itself ever reads it from),
+ * a real `conftest.py`, or a real pytest-convention test file, each checked at the project root and
+ * inside `PYTHON_TEST_DIRS`. Returns a human-readable description of what was found, or `undefined`
+ * when none of it exists. */
+async function findSharedPytestEvidence(
+  paths: ProjectPaths,
+  dir: string,
+): Promise<string | undefined> {
+  const pytestIniRelative = dir === '.' ? 'pytest.ini' : `${dir}/pytest.ini`;
+  if (await pathExists(paths.resolveWithin(pytestIniRelative))) {
+    return `${pytestIniRelative} exists`;
+  }
+  const candidateDirs = [dir, ...PYTHON_TEST_DIRS.map((d) => (dir === '.' ? d : `${dir}/${d}`))];
+  for (const candidateDir of candidateDirs) {
+    const conftestRelative = candidateDir === '.' ? 'conftest.py' : `${candidateDir}/conftest.py`;
+    if (await pathExists(paths.resolveWithin(conftestRelative))) {
+      return `${conftestRelative} exists`;
+    }
+    if (await hasPytestTestFileIn(paths, candidateDir)) {
+      const location = candidateDir === '.' ? './' : `${candidateDir}/`;
+      return `a real pytest-convention test file ("test_*.py"/"*_test.py") exists under ${location}`;
+    }
+  }
+  return undefined;
+}
+
+/** `pyproject.toml`'s own documented pytest config table -- the standard, explicit signal a project
+ * configures pytest through `pyproject.toml` itself, not merely that it ships the packaging
+ * boilerplate every modern Python package needs. A plain section-header match, not a real TOML
+ * parse: this codebase has no TOML dependency, and the exact literal header is unambiguous enough
+ * that a false positive would require another tool deliberately reusing pytest's own namespaced
+ * key, which TOML's own `[tool.*]` convention exists specifically to prevent. Internal whitespace
+ * around the dotted name (`[ tool.pytest.ini_options ]`) is tolerated -- legal TOML a strict literal
+ * match would otherwise miss. */
+const PYPROJECT_PYTEST_SECTION = /^\s*\[\s*tool\s*\.\s*pytest\s*\.\s*ini_options\s*]/m;
+
+/** `setup.cfg`'s own documented pytest section -- `[tool:pytest]` (the `tool:` prefix, not TOML's
+ * dotted `[tool.x]` form, is `setup.cfg`'s own INI-style convention for avoiding collisions with
+ * other tools' sections inside the one shared file). Internal whitespace tolerated, same reason as
+ * `PYPROJECT_PYTEST_SECTION`. */
+const SETUP_CFG_PYTEST_SECTION = /^\s*\[\s*tool\s*:\s*pytest\s*]/m;
+
+/** `tox.ini`'s own documented pytest section -- bare `[pytest]`, pytest's oldest, pre-`pyproject.toml`
+ * config-file convention, still read from `tox.ini` today. Internal whitespace tolerated, same
+ * reason as `PYPROJECT_PYTEST_SECTION`. */
+const TOX_INI_PYTEST_SECTION = /^\s*\[\s*pytest\s*]/m;
+
+/** Escapes `text` for literal use inside a `RegExp` (`node:path`-free, this file has no such helper
+ * already). */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Every TOML table header line in `text` whose own dotted name matches `headerPattern`, each paired
+ * with that table's own body text -- every line after the header, up to (not including) the next
+ * top-level `[...]`/`[[...]]` header line, or end of file. A deliberately shallow, line-based scan,
+ * not a real TOML parse (this codebase has no TOML dependency, the same reason every other
+ * marker-specific check in this file already is one): it only needs to bound WHICH table a line
+ * belongs to, never to parse the table's own values. */
+function tomlSectionBodiesMatching(text: string, headerPattern: RegExp): readonly string[] {
+  const lines = text.split('\n');
+  const bodies: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const headerMatch = /^\s*\[\s*([^[\]]+?)\s*]\s*(?:#.*)?$/.exec(lines[i] ?? '');
+    if (headerMatch === null || !headerPattern.test(headerMatch[1] ?? '')) continue;
+    const body: string[] = [];
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const next = lines[j] ?? '';
+      if (/^\s*\[/.test(next)) break;
+      body.push(next);
+    }
+    bodies.push(body.join('\n'));
+  }
+  return bodies;
+}
+
+/** The one table named exactly `header` (dots literal, not a regex) -- a convenience over
+ * `tomlSectionBodiesMatching` for the handful of this file's own checks that name one fixed table,
+ * never a family of them (`tomlSectionBodiesMatching` itself is what `pyprojectDeclaresPoetryPytest`
+ * below needs, since a Poetry dependency GROUP's own name is never fixed). */
+function tomlSectionBody(text: string, header: string): string | undefined {
+  const exact = new RegExp(`^${escapeRegExp(header)}$`);
+  return tomlSectionBodiesMatching(text, exact)[0];
+}
+
+/** Every `key = [ ... ]` array assignment inside `sectionBody`, optionally narrowed to one real key
+ * name -- tolerant of the array spanning multiple lines (legal TOML), but never crossing another
+ * `[`/`]` that would itself open or close a DIFFERENT array: a dependency array's own entries are
+ * always quoted strings, never a nested array, so this is a real, not merely convenient, bound. */
+function tomlArrayAssignments(
+  sectionBody: string,
+  keyFilter?: (key: string) => boolean,
+): readonly string[] {
+  const pattern = /([A-Za-z_][\w-]*)\s*=\s*\[([^[\]]*)]/g;
+  const bodies: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(sectionBody)) !== null) {
+    const key = match[1] ?? '';
+    if (keyFilter === undefined || keyFilter(key)) bodies.push(match[2] ?? '');
+  }
+  return bodies;
+}
+
+/** Every real dependency-array BODY text `pyproject.toml` can legally hold a `"pytest"` entry in --
+ * never the whole file. A critic round reproduced this directly: applying the dependency regex to
+ * the WHOLE raw file (this function's own pre-fix shape) read a standalone quoted `'pytest'` token
+ * inside an ordinary `description` string, and `keywords = ["pytest", "plugin"]` (PyPI classifier
+ * metadata, never a dependency list), as real dependency declarations -- exactly the false-confident
+ * defect class this detector exists to close. Scoped to three real locations instead: the bare
+ * `dependencies = [...]` key, itself scoped to inside `[project]` (PEP 621, so an unrelated
+ * `dependencies` key some other table might use is not this file's problem to guard against, since
+ * none of this file's own recognised tables use that name); every value array inside
+ * `[project.optional-dependencies]`; every value array inside `[dependency-groups]` (PEP 735). */
+function pyprojectDependencyArrayBodies(text: string): readonly string[] {
+  const bodies: string[] = [];
+  const projectBody = tomlSectionBody(text, 'project');
+  if (projectBody !== undefined) {
+    bodies.push(...tomlArrayAssignments(projectBody, (key) => key === 'dependencies'));
+  }
+  const optionalDependenciesBody = tomlSectionBody(text, 'project.optional-dependencies');
+  if (optionalDependenciesBody !== undefined) {
+    bodies.push(...tomlArrayAssignments(optionalDependenciesBody));
+  }
+  const dependencyGroupsBody = tomlSectionBody(text, 'dependency-groups');
+  if (dependencyGroupsBody !== undefined) {
+    bodies.push(...tomlArrayAssignments(dependencyGroupsBody));
+  }
+  return bodies;
+}
+
+/** A real, quoted `pytest` array entry -- `"pytest"`, `"pytest>=7.0"`, or `"pytest[extra]"` --
+ * matched as a quoted token rather than via a real TOML parse, for the same reason the TOML-section
+ * helpers above are: requiring the quotes plus an immediate end-of-token (a closing quote, an
+ * extras bracket, or a version-specifier character) rules out a same-prefix package name
+ * (`"pytest-mock"` does not match: nothing after "pytest" is one of those four shapes). Only ever
+ * run against an already-scoped dependency-array BODY (`pyprojectDependencyArrayBodies`), never raw
+ * file text -- see that function's own doc comment for the live-reproduced regression this ordering
+ * fixes. */
+const PYTEST_DEPENDENCY_TOKEN = /["']pytest(?:\[[\w,.-]*])?(?:\s*[<>=!~][^"']*)?["']/;
+
+function pyprojectDeclaresPytestDependency(text: string): boolean {
+  return pyprojectDependencyArrayBodies(text).some((body) => PYTEST_DEPENDENCY_TOKEN.test(body));
+}
+
+/** Poetry's own native dependency syntax -- a real TOML TABLE, never PEP 621's array, and so never
+ * matched by `pyprojectDependencyArrayBodies`/`PYTEST_DEPENDENCY_TOKEN` above at all: a bare
+ * (unquoted, or quoted the same way any TOML key can be) `pytest = "^7.4.0"` key inside
+ * `[tool.poetry.dependencies]`, the legacy `[tool.poetry.dev-dependencies]`, or a named dependency
+ * GROUP table, `[tool.poetry.group.<name>.dependencies]` (`<name>` is a project's own choice --
+ * `dev`, `test`, anything -- never a fixed string, which is why this needs
+ * `tomlSectionBodiesMatching`'s own pattern-matched form, not `tomlSectionBody`'s fixed one).
+ * Pre-PEP-621, still one of the two dominant real-world Python dependency styles: a real,
+ * working Poetry+pytest project with no `[tool.pytest.ini_options]` table and no PEP 621
+ * `dependencies`/`optional-dependencies`/`dependency-groups` array at all got handed off to
+ * `--agent` unnecessarily before this. */
+const POETRY_DEPENDENCY_TABLE_HEADER =
+  /^tool\.poetry\.(?:dependencies|dev-dependencies|group\.[\w.-]+\.dependencies)$/;
+
+/** The bare key `pytest` assigned anything (a plain version string, or an inline table like
+ * `{version = "^7.4.0", optional = true}`) -- only the KEY identifies the real dependency, exactly
+ * `hasDependency`'s own "only the key matters, never the version" rule for `package.json` above. */
+const POETRY_PYTEST_KEY = /^\s*["']?pytest["']?\s*=/m;
+
+function pyprojectDeclaresPoetryPytest(text: string): boolean {
+  return tomlSectionBodiesMatching(text, POETRY_DEPENDENCY_TABLE_HEADER).some((body) =>
+    POETRY_PYTEST_KEY.test(body),
+  );
+}
+
+/** Per-marker evidence that the marker's OWN real content declares pytest, beyond the marker's mere
+ * existence -- checked only for whichever of `PYTHON_MARKERS` actually matched. */
+const MARKER_SPECIFIC_EVIDENCE: Readonly<Record<string, (text: string) => boolean>> = {
+  'pyproject.toml': (text) =>
+    PYPROJECT_PYTEST_SECTION.test(text) ||
+    pyprojectDeclaresPytestDependency(text) ||
+    pyprojectDeclaresPoetryPytest(text),
+  'setup.cfg': (text) => SETUP_CFG_PYTEST_SECTION.test(text),
+  'tox.ini': (text) => TOX_INI_PYTEST_SECTION.test(text),
+};
+
+/**
+ * `js`'s equivalent confidence rule for Python: one of `PYTHON_MARKERS` existing is necessary (it is
+ * what makes this a Python candidate at all) but, after `13` F-TEST-11's own live-discovered gap
+ * above, no longer SUFFICIENT on its own -- a project with a bare, test-free `pyproject.toml` has
+ * exactly the packaging metadata every real Python package needs and says nothing at all about
+ * whether it has a configured test tool, the identical "dependency presence, not bare manifest
+ * presence, is the real signal" rule `detectJavaScript` above already applies to vitest/jest/mocha.
+ * `confident` now requires either the matched marker's own real pytest declaration
+ * (`MARKER_SPECIFIC_EVIDENCE`) or one of the marker-independent signals `findSharedPytestEvidence`
+ * checks (a real `pytest.ini`/`conftest.py`, or a real pytest-convention test file). Lacking all of
+ * that, this returns `confident: false` rather than `undefined`: the project genuinely is Python (one
+ * of the markers is real), so "hands off to `--agent`" (F-TEST-11: "a project with no test setup at
+ * all gets a *proposal* ... never a silently added dependency") is the honest answer, not "nothing
+ * recognised here at all".
+ */
 async function detectPython(
   paths: ProjectPaths,
   dir: string,
 ): Promise<DetectedCandidate | undefined> {
+  const present: { readonly marker: string; readonly relative: string; readonly text: string }[] =
+    [];
   for (const marker of PYTHON_MARKERS) {
     const relative = dir === '.' ? marker : `${dir}/${marker}`;
-    if (await pathExists(paths.resolveWithin(relative))) {
+    const abs = paths.resolveWithin(relative);
+    if (await pathExists(abs)) {
+      present.push({ marker, relative, text: await readTextFile(abs) });
+    }
+  }
+  if (present.length === 0) return undefined;
+
+  const markerList = present.map((p) => p.relative).join(', ');
+
+  for (const { marker, relative, text } of present) {
+    if (MARKER_SPECIFIC_EVIDENCE[marker]?.(text) === true) {
       return {
         dir,
         layer: DETECTED_LAYER,
@@ -364,16 +608,117 @@ async function detectPython(
         runner: 'pytest',
         confident: true,
         command: pytestCommand(),
-        reason: `${relative} exists -- pytest, by the same marker convention this codebase's legacy ecosystem probe already uses.`,
+        reason: `${relative} itself declares pytest (its own pytest config section, or a real "pytest" dependency) -- pytest.`,
       };
     }
   }
-  return undefined;
+
+  const shared = await findSharedPytestEvidence(paths, dir);
+  if (shared !== undefined) {
+    return {
+      dir,
+      layer: DETECTED_LAYER,
+      ecosystem: 'python',
+      runner: 'pytest',
+      confident: true,
+      command: pytestCommand(),
+      reason: `${markerList} exists, and ${shared} -- pytest.`,
+    };
+  }
+
+  return {
+    dir,
+    layer: DETECTED_LAYER,
+    ecosystem: 'python',
+    confident: false,
+    reason:
+      `${markerList} exists, but declares no real pytest configuration or dependency (checked: a ` +
+      '"[tool.pytest.ini_options]"/"[tool:pytest]"/"[pytest]" section, a "pytest" dependency, a ' +
+      '"pytest.ini"/"conftest.py" file, and a "test_*.py"/"*_test.py" file) -- Python packaging ' +
+      'metadata alone is not evidence of a configured test tool (specs/13 F-TEST-11).',
+  };
 }
 
+/** `looksLikePytestTestFile`'s Go equivalent: Go's own build toolchain recognises any file ending in
+ * `_test.go` as a test file (`go help test`) -- a real one is direct, unambiguous evidence someone
+ * actually wrote a Go test, never merely that the project is a Go module. `go.mod` is packaging/
+ * module metadata every Go module needs, with or without a single test -- the identical
+ * packaging-vs-tooling gap `13` F-TEST-11's own live-discovered Python defect already closed above
+ * (`specs/22` M17 P21), confirmed live on a second, real fixture (a bare `go.mod`, zero `_test.go`
+ * files, still got `confident: true` before this fix). */
+function looksLikeGoTestFile(name: string): boolean {
+  return name.endsWith('_test.go');
+}
+
+/** Directory names this probe never descends into while looking for a `_test.go` file -- none of
+ * them can hold a project's OWN test code: `.git`/`.forge` are tooling state, `vendor` is someone
+ * else's vendored dependency source (`go help modules`), `node_modules` only exists in a polyglot
+ * repo's unrelated JS half. */
+const GO_SCAN_EXCLUDED_DIRS = new Set(['.git', '.forge', 'vendor', 'node_modules']);
+
+/** Whether `relativeDir` has a real `_test.go` file sitting directly inside it. `listDirSorted`
+ * throws on a missing directory (unlike `pathExists`), so a non-existent directory reads as
+ * "nothing found there", never a real error this probe should propagate. */
+async function hasGoTestFileIn(paths: ProjectPaths, relativeDir: string): Promise<boolean> {
+  let entries: readonly string[];
+  try {
+    entries = await listDirSorted(paths.resolveWithin(relativeDir));
+  } catch {
+    return false;
+  }
+  return entries.some((entry) => looksLikeGoTestFile(entry));
+}
+
+/** Whether `dir` (the project root) or any of its own immediate subdirectories has a real
+ * `_test.go` file. Go's own convention scatters test files directly alongside the package they
+ * test, across however many packages a module has, so -- unlike Python's/JS's single `tests/`
+ * convention -- a module-root-only check would miss the overwhelmingly common real layout (more
+ * than one package). One level deep, not a full recursive walk: the same deliberately shallow,
+ * bounded precedent `findSharedPytestEvidence` already sets for Python; a module with every test
+ * file two or more directories down is a real, disclosed boundary of this check -- `confident:
+ * false` is still the SAFE failure mode `13` F-TEST-11 wants (hands off to `--agent`, never a wrong
+ * confident guess), never a crash or a silent wrong answer. */
+async function hasGoTestFileNearRoot(paths: ProjectPaths, dir: string): Promise<boolean> {
+  if (await hasGoTestFileIn(paths, dir)) return true;
+  let entries: readonly DirEntry[];
+  try {
+    entries = await listDirEntriesSorted(paths.resolveWithin(dir));
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory || GO_SCAN_EXCLUDED_DIRS.has(entry.name)) continue;
+    const relativeDir = dir === '.' ? entry.name : `${dir}/${entry.name}`;
+    if (await hasGoTestFileIn(paths, relativeDir)) return true;
+  }
+  return false;
+}
+
+/**
+ * `go.mod` existing is necessary (it is what makes this a Go candidate at all) but, after `13`
+ * F-TEST-11's own live-discovered Python gap above, no longer SUFFICIENT on its own for `confident:
+ * true` -- the identical "a packaging/module manifest every real project needs says nothing about
+ * whether it has a configured test" rule `detectPython` above now applies, applied here too. A real
+ * `_test.go` file at the root or in one of its own immediate subdirectories (`hasGoTestFileNearRoot`)
+ * is now required; lacking it, this returns `confident: false` (ecosystem still `'go'`, so the
+ * project is told what was found, never left guessing) rather than a false-confident proposal for a
+ * module with nothing to run.
+ */
 async function detectGo(paths: ProjectPaths, dir: string): Promise<DetectedCandidate | undefined> {
   const relative = dir === '.' ? 'go.mod' : `${dir}/go.mod`;
   if (!(await pathExists(paths.resolveWithin(relative)))) return undefined;
+  if (!(await hasGoTestFileNearRoot(paths, dir))) {
+    return {
+      dir,
+      layer: DETECTED_LAYER,
+      ecosystem: 'go',
+      confident: false,
+      reason:
+        `${relative} exists, but no real "_test.go" file was found at the project root or inside ` +
+        'its own immediate subdirectories -- a go.mod alone is Go module packaging metadata every ' +
+        'module needs, never evidence of a configured test (specs/13 F-TEST-11).',
+    };
+  }
   return {
     dir,
     layer: DETECTED_LAYER,
@@ -381,7 +726,7 @@ async function detectGo(paths: ProjectPaths, dir: string): Promise<DetectedCandi
     runner: 'go-test',
     confident: true,
     command: goTestCommand(),
-    reason: `${relative} exists -- "go test -json" is the standard library's own machine-readable output.`,
+    reason: `${relative} exists, and a real "_test.go" file was found -- "go test -json" is the standard library's own machine-readable output.`,
   };
 }
 
