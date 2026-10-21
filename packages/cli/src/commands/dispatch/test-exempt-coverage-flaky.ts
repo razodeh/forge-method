@@ -248,7 +248,14 @@ async function runTestFlakyCommand(paths: ProjectPaths, json: boolean): Promise<
 }
 
 /** Human-readable text for a {@link PromotionResult} -- `specs/22` M17 P7 closed the hand-off
- * this doc comment used to describe here: `'promoted'` is real now. */
+ * this doc comment used to describe here: `'promoted'` is real now.
+ *
+ * `'gate-not-available'`/`'not-approved'` no longer say "has a passing translator proof" (`specs/22`
+ * M17 P21's own fix): both outcomes are reachable for a confident, built-in-format `'detected'`
+ * proposal that never carries a proof at all (`adopt.ts`'s own `runPromotion`/
+ * `evaluateTestAdoptionApproval` doc comments), so that wording would be false for exactly the case
+ * this fix made reachable; the deterministic half having passed is the only thing either message
+ * claims now, true for a `'detected'` proposal and a proven `'agent'`/`'human'` one alike. */
 function describePromotionResult(result: PromotionResult): string {
   if (result.outcome === 'no-staged-proposal') {
     return `forge test adopt --write: no staged proposal exists for "${result.layer}" -- run "forge test adopt" first.`;
@@ -258,16 +265,16 @@ function describePromotionResult(result: PromotionResult): string {
   }
   if (result.outcome === 'gate-not-available') {
     return (
-      `forge test adopt --write: "${result.layer}"'s staged proposal has a passing translator proof, ` +
-      'but this project has no G-TestAdopt.gate.yaml yet -- run "forge module update" (or re-run ' +
-      '"forge init") to pick it up, then retry.'
+      `forge test adopt --write: "${result.layer}"'s staged proposal is ready for promotion, but this ` +
+      'project has no G-TestAdopt.gate.yaml yet -- run "forge module update" (or re-run "forge init") ' +
+      'to pick it up, then retry.'
     );
   }
   if (result.outcome === 'not-approved') {
     return (
-      `forge test adopt --write: "${result.layer}"'s staged proposal has a passing, current translator ` +
-      'proof, but no human has approved it at G-TestAdopt yet -- run "forge gate check G-TestAdopt ' +
-      '--run <runId>" to see it, then "forge gate approve G-TestAdopt --run <runId>", then retry.'
+      `forge test adopt --write: "${result.layer}"'s staged proposal is ready for promotion, but no ` +
+      'human has approved it at G-TestAdopt yet -- run "forge gate check G-TestAdopt --run <runId>" ' +
+      'to see it, then "forge gate approve G-TestAdopt --run <runId>", then retry.'
     );
   }
   return `forge test adopt --write: "${result.layer}" promoted -- execution.testCommands.${result.layer} now reflects the approved proposal.`;

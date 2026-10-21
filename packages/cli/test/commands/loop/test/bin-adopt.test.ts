@@ -9,11 +9,13 @@
  * @see specs/22 M17 P7
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { DEFAULT_CONFIG } from '@forge/schemas/config';
+import * as YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const LAUNCHER = fileURLToPath(new URL('../../../../bin/forge.mjs', import.meta.url));
@@ -49,6 +51,25 @@ async function tempDir(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'forge-bin-adopt-'));
   dirs.push(dir);
   return dir;
+}
+
+/** A real `.forge/checks/G-TestAdopt.gate.yaml` -- the identical real template `forge init` writes
+ * (`templates/checks/G-TestAdopt.gate.yaml`), hand-written here rather than requiring a real `forge
+ * init` (which needs a live `ANTHROPIC_API_KEY` for its platform-adapter preflight, out of reach for
+ * this bare-fixture test style). */
+async function writeGateFile(dir: string): Promise<void> {
+  await mkdir(path.join(dir, '.forge', 'checks'), { recursive: true });
+  await writeFile(
+    path.join(dir, '.forge', 'checks', 'G-TestAdopt.gate.yaml'),
+    'id: G-TestAdopt\nname: Test adoption gate\nautonomyOverride: null\nchecks:\n  deterministic:\n    - id: test-adoption:approved\n      run: "forge test adopt --check-proof unit --json"\n      parser: forge-json\n      failOn: "unapproved > 0"\n  advisory: []\nopenQuestionsPolicy: block\napproval:\n  required: true\n  roles: [human]\n  quorum: 1\n',
+  );
+}
+
+/** A real, minimal `.forge/config.yaml` -- `runPromotion`'s own `mergeStagedCommandIntoConfig`
+ * throws `CFG-020` ("never been initialized") without one. */
+async function writeBaseConfig(dir: string): Promise<void> {
+  await mkdir(path.join(dir, '.forge'), { recursive: true });
+  await writeFile(path.join(dir, '.forge', 'config.yaml'), YAML.stringify(DEFAULT_CONFIG));
 }
 
 describe('forge test adopt (specs/22 M17 P6)', () => {
@@ -109,7 +130,7 @@ describe('forge test adopt (specs/22 M17 P6)', () => {
     expect(parsed.outcome).toBe('no-staged-proposal');
   });
 
-  it('--write still refuses after a bare detection has staged a proposal (no proof yet)', async () => {
+  it('--write still refuses a bare detection with no proof, but NOT as "proof-not-passing" (specs/22 M17 P21: the translator proof does not gate a confident, built-in-format detection -- it now reaches "gate-not-available" instead, the next real, distinct reason, since this bare fixture has no G-TestAdopt.gate.yaml at all)', async () => {
     const dir = await tempDir();
     await writeFile(
       path.join(dir, 'package.json'),
@@ -120,7 +141,65 @@ describe('forge test adopt (specs/22 M17 P6)', () => {
     const result = run(['test', 'adopt', '--write', '--json'], dir);
     expect(result.status).toBe(1);
     const parsed = JSON.parse(result.stdout) as { readonly outcome: string };
-    expect(parsed.outcome).toBe('proof-not-passing');
+    expect(parsed.outcome).toBe('gate-not-available');
+  });
+
+  it('--write reaches "not-approved" for a bare detection with no proof, once a real G-TestAdopt.gate.yaml exists but no human has approved it (specs/22 M17 P21)', async () => {
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'fixture', devDependencies: { vitest: '2.0.0' } }),
+      'utf8',
+    );
+    await writeGateFile(dir);
+    run(['test', 'adopt'], dir);
+    const result = run(['test', 'adopt', '--write', '--run', 'p21-no-approval', '--json'], dir);
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout) as { readonly outcome: string };
+    expect(parsed.outcome).toBe('not-approved');
+  });
+
+  it('--write genuinely reaches "promoted" for a bare detection with no proof, end to end through the real "forge gate approve" binary too (specs/22 M17 P21: the defect this closes -- before this fix, --write could NEVER promote the single most common case, a confident Vitest/pytest/node --test/Jest/Mocha detection)', async () => {
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'fixture', devDependencies: { vitest: '2.0.0' } }),
+      'utf8',
+    );
+    await writeGateFile(dir);
+    await writeBaseConfig(dir);
+    const staged = run(['test', 'adopt', '--json'], dir);
+    expect(staged.status).toBe(0);
+
+    const runId = 'p21-promoted';
+    // The real `G-TestAdopt.gate.yaml` deterministic check (`forge test adopt --check-proof unit
+    // --json`) runs as a real, second `forge` subprocess here -- `forge gate approve` shells out to
+    // it exactly the way `G-TestAdopt.gate.yaml`'s own `run:` field says, never an in-process stub.
+    const approve = run(['gate', 'approve', 'G-TestAdopt', '--run', runId, '--json'], dir);
+    expect(approve.status).toBe(0);
+    const approveParsed = JSON.parse(approve.stdout) as {
+      readonly recorded: boolean;
+      readonly evaluation: { readonly checksPassed: number; readonly checksFailed: number };
+    };
+    expect(approveParsed.recorded).toBe(true);
+    expect(approveParsed.evaluation).toMatchObject({ checksPassed: 1, checksFailed: 0 });
+
+    const result = run(['test', 'adopt', '--write', '--run', runId, '--json'], dir);
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      readonly v: number;
+      readonly outcome: string;
+      readonly layer: string;
+    };
+    expect(parsed).toEqual({ v: 1, outcome: 'promoted', layer: 'unit' });
+
+    const config = YAML.parse(await readFile(path.join(dir, '.forge', 'config.yaml'), 'utf8')) as {
+      readonly execution: { readonly testCommands: Readonly<Record<string, unknown>> };
+    };
+    expect(config.execution.testCommands['unit']).toMatchObject({
+      run: 'npx vitest run --reporter=json',
+      format: 'vitest-json',
+    });
   });
 
   it("--check-proof <layer> --json (specs/22 M17 P7): G-TestAdopt.gate.yaml's own real check command, against a project with nothing staged", async () => {

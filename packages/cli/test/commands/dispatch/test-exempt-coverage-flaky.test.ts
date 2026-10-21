@@ -9,7 +9,7 @@
  *
  * @see specs/22 M17 P2
  */
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { execa } from 'execa';
@@ -19,10 +19,23 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { dispatchTestExemptCoverageFlaky } from '../../../src/commands/dispatch/test-exempt-coverage-flaky.ts';
 import type { DispatchContext } from '../../../src/commands/dispatch/shared.ts';
 import {
+  captureLogs,
   cleanupAll,
   createConfiguredProject as createTestProject,
   type TestProject,
 } from './dispatch-test-helpers.ts';
+
+/** A real `.forge/checks/G-TestAdopt.gate.yaml` -- the identical fixture
+ * `loop/test/adopt.test.ts`'s own `writeGateFile` writes, reproduced here rather than imported
+ * across a test/test boundary (this codebase's own convention: test fixtures are not a shared
+ * runtime dependency). */
+async function writeTestAdoptGateFile(project: TestProject): Promise<void> {
+  await mkdir(path.join(project.dir, '.forge', 'checks'), { recursive: true });
+  await writeFile(
+    path.join(project.dir, '.forge', 'checks', 'G-TestAdopt.gate.yaml'),
+    'id: G-TestAdopt\nname: Test adoption gate\nautonomyOverride: null\nchecks:\n  deterministic:\n    - id: test-adoption:approved\n      run: "forge test adopt --check-proof unit --json"\n      parser: forge-json\n      failOn: "unapproved > 0"\n  advisory: []\nopenQuestionsPolicy: block\napproval:\n  required: true\n  roles: [human]\n  quorum: 1\n',
+  );
+}
 
 /** Strips the real, written `gates` block out of an already-configured project's own
  * `.forge/config.yaml` -- `DEFAULT_CONFIG.gates` is typed optional on `ForgeConfig` precisely for
@@ -339,7 +352,7 @@ describe('dispatchTestExemptCoverageFlaky (specs/22 M17 P2)', () => {
     expect(exitCode).toBe(1);
   });
 
-  it('exits non-zero for "test adopt --write" against a real, staged proposal with no recorded proof yet', async () => {
+  it('exits non-zero for "test adopt --write" against a real, confidently-detected proposal with no proof at all -- "gate-not-available", never "proof-not-passing" (specs/22 M17 P21\'s own fix: a bare detection does not need a translator proof)', async () => {
     const project = await createTestProject();
     await writeFile(
       path.join(project.dir, 'package.json'),
@@ -347,13 +360,42 @@ describe('dispatchTestExemptCoverageFlaky (specs/22 M17 P2)', () => {
       'utf8',
     );
     await dispatchTestExemptCoverageFlaky(ctx(project, ['test', 'adopt'], true));
-    const result = await dispatchTestExemptCoverageFlaky(
-      ctx(project, ['test', 'adopt', '--write'], true),
+    // No `writeTestAdoptGateFile(project)` call: the gate file genuinely does not exist in this
+    // project (`createTestProject`'s own doc comment: it writes only a bare `.forge/config.yaml`).
+    const { exitCode, lines } = await captureLogs(() =>
+      dispatchTestExemptCoverageFlaky(ctx(project, ['test', 'adopt', '--write'], true)),
     );
-    // Every real `PromotionResult` outcome in this build is a refusal (no gate file exists for
-    // `G-TestAdopt` yet, P7) -- a real staged-but-unproven proposal still refuses, just for the
-    // other real, distinct reason (`'proof-not-passing'`, not `'no-staged-proposal'`).
-    expect(result).toBe(1);
+    // Before `specs/22` M17 P21's own fix, this real, confidently-detected proposal (no proof field
+    // at all -- `runDetectionAndStage` never supplies one) could NEVER reach anything past
+    // `'proof-not-passing'`: `runPromotion` refused unconditionally the instant `staged.proof ===
+    // undefined`, for every source, with no carve-out for a built-in-format detection. The real,
+    // live repro that found this defect was exactly this sequence (`forge init` + `forge test
+    // adopt` + `forge test adopt --write`) against a fresh fixture with an ordinary Vitest/`node
+    // --test` setup -- i.e. the single most common case. It now genuinely proceeds past the
+    // proof check and refuses for the NEXT real, distinct reason instead (`'gate-not-available'`,
+    // since this project's fixture has no `G-TestAdopt.gate.yaml` at all).
+    expect(exitCode).toBe(1);
+    const parsed = JSON.parse(lines[lines.length - 1] ?? '{}') as { readonly outcome?: string };
+    expect(parsed.outcome).toBe('gate-not-available');
+  });
+
+  it('exits non-zero for "test adopt --write --run <id>" against a real, confidently-detected proposal once the gate file exists but no human has approved it -- "not-approved"', async () => {
+    const project = await createTestProject();
+    await writeFile(
+      path.join(project.dir, 'package.json'),
+      JSON.stringify({ name: 'fixture', devDependencies: { vitest: '2' } }),
+      'utf8',
+    );
+    await writeTestAdoptGateFile(project);
+    await dispatchTestExemptCoverageFlaky(ctx(project, ['test', 'adopt'], true));
+    const { exitCode, lines } = await captureLogs(() =>
+      dispatchTestExemptCoverageFlaky(
+        ctx(project, ['test', 'adopt', '--write', '--run', 'p21-no-approval'], true),
+      ),
+    );
+    expect(exitCode).toBe(1);
+    const parsed = JSON.parse(lines[lines.length - 1] ?? '{}') as { readonly outcome?: string };
+    expect(parsed.outcome).toBe('not-approved');
   });
 
   it('refuses a real, unexpected extra positional for "test adopt"', async () => {

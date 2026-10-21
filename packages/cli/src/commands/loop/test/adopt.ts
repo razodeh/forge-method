@@ -285,6 +285,24 @@ export interface TestAdoptionApprovalResult {
   readonly detail: string;
 }
 
+/** Whether `command` declares a translator script (`13` F-TEST-11's own structured
+ * `execution.testCommands.<layer>.translate` field) -- the ONE thing the translator proof actually
+ * exists to gate ("the one path by which ANY format that is not one of F-TEST-7 point 2's
+ * built-ins ... is ever trusted"). Factored out so the `'detected'`-source proof bypass below
+ * (`evaluateTestAdoptionApproval`/`runPromotion`) can require this is `false` as well as `source ===
+ * 'detected'`, rather than trusting `source` alone -- a fresh critic round's own hardening: `source
+ * === 'detected'` is only EVER written by `runDetectionAndStage` today, and that function's seven
+ * static detectors (`detect.ts`) never set `translate`, so the two conditions happen to coincide in
+ * every build that exists right now. But `detect.ts`'s own doc comment already names real expansion
+ * targets (Rust, .NET, Ruby, Maven/Gradle) that could legitimately need a translator while still
+ * being a deterministic, non-agent detection; if a future change proposed one of those under
+ * `source: 'detected'` and this function only checked `source`, the bypass would silently reopen the
+ * exact unproven-translator hole this mechanism exists to close. Requiring BOTH makes the exemption
+ * safe by construction, not by the `source` convention being maintained correctly forever. */
+function declaresTranslator(command: TestCommandEntry): boolean {
+  return typeof command !== 'string' && command.translate !== undefined;
+}
+
 const TRANSLATOR_DIR_REL_PATH = '.forge/test-translators';
 
 /** The real, current content of `<layer>`'s own translator script, re-read off disk at check time --
@@ -317,12 +335,24 @@ async function currentTranslatorContent(
  * identical question in-process rather than shelling a second `forge` subprocess for its own,
  * narrower purpose (deciding whether `--write` may proceed, not producing a gate report).
  *
- * Passes (`unapproved: 0`) only when: a staged proposal exists for `layer`; it carries a RECORDED,
- * PASSING translator proof; and that proof is still CURRENT -- its own `subjectHash` matches the
- * proposal's current canonical form (`computeProofSubjectHash`, `proof.ts`), re-derived from the
- * translator's own REAL, CURRENT file content when one is declared, never the content a past run
- * happened to see (`10` §10.3 rule 8's own "no older than the translator's own current content
- * hash").
+ * Passes (`unapproved: 0`) when: a staged proposal exists for `layer`; AND EITHER (a) its own
+ * `source` is `'detected'` and it carries no proof at all -- `13` F-TEST-11's own translator proof
+ * "is the one path by which ANY format that is NOT one of F-TEST-7 point 2's built-ins ... is ever
+ * trusted"; `detect.ts`'s own confident candidates always map to a built-in `TEST_REPORT_FORMATS`
+ * entry with no `translate`, so the proof this mechanism exists for structurally does not apply to
+ * them, and `runDetectionAndStage` never supplies one (`StagedProposalRecord`'s own doc comment) --
+ * OR (b) it carries a RECORDED, PASSING translator proof that is still CURRENT -- its own
+ * `subjectHash` matches the proposal's current canonical form (`computeProofSubjectHash`,
+ * `proof.ts`), re-derived from the translator's own REAL, CURRENT file content when one is declared,
+ * never the content a past run happened to see (`10` §10.3 rule 8's own "no older than the
+ * translator's own current content hash"). A `'detected'` proposal that nonetheless carries a
+ * recorded proof (there is no real writer that does this today, but nothing stops a future one, or a
+ * hand edit) is NOT exempted by (a) -- it is evaluated under (b) exactly like any other source, so an
+ * explicit recorded failure is never silently waved through.
+ *
+ * Human approval at `G-TestAdopt` (`roles: [human]`, `quorum: 1`, `G-TestAdopt.gate.yaml`) is a
+ * SEPARATE, later requirement `runPromotion` still enforces for every source including `'detected'`
+ * -- this function only ever answers the deterministic half of that gate's own check.
  *
  * **Disclosed, not solved** (the same honest-limitation discipline `proof.ts`'s own doc comment
  * already models): the OTHER half of that same spec sentence -- "and the detected runner's own
@@ -370,11 +400,33 @@ async function evaluateTestAdoptionApproval(
     return { v: 1, layer, unapproved: 1, detail: `no staged proposal exists for "${layer}".` };
   }
   if (staged.proof === undefined) {
+    // `13` F-TEST-11's own translator proof exists only for a format that is NOT one of F-TEST-7
+    // point 2's built-ins -- a confident, built-in-format `'detected'` candidate structurally never
+    // has one (`detect.ts`'s own confident candidates always map to a built-in `TEST_REPORT_FORMATS`
+    // entry with no `translate`; `StagedProposalRecord`'s own doc comment: `runDetectionAndStage`
+    // never supplies one) and does not need one -- the refusal below is real for every OTHER source
+    // (`'agent'`/`'human'`), which this mechanism exists to hold to a real, passing proof before
+    // anything trusts them (`adopt-agent.ts`'s own `stageNoTestSetup`, for one, depends on exactly
+    // this refusal to keep an unproven agent-proposed runner choice out of the live config), AND for
+    // a `'detected'` proposal that -- contrary to every detector in this build today -- declares a
+    // translator (`declaresTranslator`'s own doc comment: the bypass never trusts `source` alone).
+    if (staged.source !== 'detected' || declaresTranslator(staged.command)) {
+      return {
+        v: 1,
+        layer,
+        unapproved: 1,
+        detail: "no translator proof has been recorded for this layer's staged proposal yet.",
+      };
+    }
     return {
       v: 1,
       layer,
-      unapproved: 1,
-      detail: "no translator proof has been recorded for this layer's staged proposal yet.",
+      unapproved: 0,
+      detail:
+        "this layer's staged proposal is a confident, built-in-format detection -- the translator " +
+        "proof (`13` F-TEST-11) exists only for a format that is not one of F-TEST-7 point 2's " +
+        'built-ins, so it does not gate a detected proposal; a human must still approve it at ' +
+        'G-TestAdopt before `--write` promotes it.',
     };
   }
   if (!staged.proof.ok) {
@@ -385,8 +437,7 @@ async function evaluateTestAdoptionApproval(
       detail: `the recorded translator proof failed check ${String(staged.proof.failedCheck)}: ${staged.proof.reason}`,
     };
   }
-  const needsTranslator =
-    typeof staged.command !== 'string' && staged.command.translate !== undefined;
+  const needsTranslator = declaresTranslator(staged.command);
   const translatorContent = needsTranslator
     ? await currentTranslatorContent(paths, layer)
     : undefined;
@@ -502,6 +553,23 @@ export interface PromotionContext {
  * one outcome that writes anything at all, and it is reached only after BOTH the deterministic check
  * ({@link checkTestAdoptionApproved}) and a real recorded human approval ({@link isGateApprovedForRun})
  * agree.
+ *
+ * **The translator-proof requirement does not apply to a confident, built-in-format `'detected'`
+ * candidate with no proof** (a fresh critic round's own live repro, `process/plans/PLAN-M17.md` P21:
+ * `forge test adopt --write` could NEVER promote the single most common case -- Vitest, pytest,
+ * `node --test`, Jest, Mocha -- because this function refused unconditionally the instant
+ * `staged.proof === undefined`, which is the ONLY state a bare detection ever reaches
+ * (`runDetectionAndStage` never supplies one; `StagedProposalRecord`'s own doc comment already said
+ * so). `13` F-TEST-11's own "The translator proof" paragraph is explicit that this proof "is the one
+ * path by which ANY format that is NOT one of F-TEST-7 point 2's built-ins ... is ever trusted" --
+ * it was never meant to gate a built-in-format detection at all. The early refusal below is now
+ * skipped for exactly that one case (`source === 'detected'` AND no proof recorded AND the staged
+ * command does not itself declare a translator -- {@link declaresTranslator}'s own doc comment has
+ * the hardening rationale: `source` alone is never trusted as a proxy for "no translator", even
+ * though the two happen to coincide for every detector this build ships today); every other
+ * reachable state -- no staged proposal, a FAILED or STALE proof regardless of source, or an
+ * agent/human-authored proposal with no proof at all -- refuses exactly as before, and human
+ * approval at `G-TestAdopt` is still required for every source, including `'detected'`.
  */
 export async function runPromotion(
   paths: ProjectPaths,
@@ -511,13 +579,17 @@ export async function runPromotion(
   const staged = await loadStagedProposalOrThrow(paths, layer);
   if (staged === undefined) return { outcome: 'no-staged-proposal', layer };
   if (staged.proof === undefined) {
-    return {
-      outcome: 'proof-not-passing',
-      layer,
-      detail: "no translator proof has been recorded for this layer's staged proposal yet.",
-    };
-  }
-  if (!staged.proof.ok) {
+    if (staged.source !== 'detected' || declaresTranslator(staged.command)) {
+      return {
+        outcome: 'proof-not-passing',
+        layer,
+        detail: "no translator proof has been recorded for this layer's staged proposal yet.",
+      };
+    }
+    // `source === 'detected'` with no proof AND no declared translator: the translator proof does
+    // not gate this case at all (see this function's own doc comment) -- falls through to the
+    // gate-availability/approval checks below, the same as a passing proof would.
+  } else if (!staged.proof.ok) {
     return {
       outcome: 'proof-not-passing',
       layer,

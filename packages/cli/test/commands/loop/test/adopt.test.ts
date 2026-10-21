@@ -264,6 +264,22 @@ function passingRecord(subjectHash: string): StagedProposalRecord {
   };
 }
 
+/** `SAMPLE_RECORD`, but `source: 'agent'` -- every test in this file that means to exercise the REAL
+ * translator-proof-required path (`13` F-TEST-11: "an agent-proposed configuration... is copied into
+ * .forge/config.yaml ONLY after it passes the translator proof") uses this, never the plain
+ * `'detected'`-sourced `SAMPLE_RECORD`/`passingRecord` -- `specs/22` M17 P21's own fix means a
+ * `'detected'` source with no proof no longer refuses, so a test that wants to prove the refusal
+ * still exists for an unproven AGENT/HUMAN proposal needs a source the fix does not exempt. */
+const AGENT_RECORD: StagedProposalRecord = { ...SAMPLE_RECORD, source: 'agent' };
+
+/** `passingRecord`, but `source: 'agent'` -- see {@link AGENT_RECORD}'s own doc comment. */
+function agentPassingRecord(subjectHash: string): StagedProposalRecord {
+  return {
+    ...AGENT_RECORD,
+    proof: { ok: true, subjectHash, runnerVersion: '1.0.0', checkedAt: '2026-01-01T00:00:00.000Z' },
+  };
+}
+
 describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adoption:approved" check (specs/22 M17 P7)', () => {
   it('unapproved=1 when nothing is staged', async () => {
     const dir = await tempDir();
@@ -272,7 +288,31 @@ describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adopti
     expect(result.detail).toContain('no staged proposal');
   });
 
-  it('unapproved=1 when the recorded proof failed', async () => {
+  it('unapproved=0 for a confident, "detected" built-in-format proposal with NO proof at all (specs/22 M17 P21: the translator proof does not gate a built-in-format detection)', async () => {
+    const dir = await tempDir();
+    const paths = new ProjectPaths(dir);
+    // SAMPLE_RECORD itself: source "detected", no "proof" field -- the exact shape
+    // `runDetectionAndStage` really produces for a confident Vitest/pytest/node --test/Jest/Mocha
+    // candidate (`runDetectionAndStage`'s own test above already proves this is the real shape).
+    await writeStagedProposal(paths, 'unit', SAMPLE_RECORD);
+    const result = await checkTestAdoptionApproved(paths, 'unit');
+    expect(result).toMatchObject({ v: 1, layer: 'unit', unapproved: 0 });
+    expect(result.detail).toContain('built-in-format detection');
+  });
+
+  it('unapproved=1 when a "detected" proposal\'s own command declares a translator, even with no proof at all (specs/22 M17 P21\'s own hardening: the bypass never trusts "source" alone -- it requires `declaresTranslator(command) === false` too, so a future detector that legitimately needs a translator under source "detected" cannot silently reopen the unproven-translator hole)', async () => {
+    const dir = await tempDir();
+    const paths = new ProjectPaths(dir);
+    await writeStagedProposal(paths, 'unit', {
+      ...SAMPLE_RECORD,
+      command: { ...SAMPLE_COMMAND, translate: 'python translate.py' },
+    });
+    const result = await checkTestAdoptionApproved(paths, 'unit');
+    expect(result.unapproved).toBe(1);
+    expect(result.detail).toContain('no translator proof');
+  });
+
+  it('unapproved=1 when a "detected" proposal carries an explicit, recorded FAILING proof (the bypass never overrides a real recorded failure)', async () => {
     const dir = await tempDir();
     const paths = new ProjectPaths(dir);
     await writeStagedProposal(paths, 'unit', {
@@ -291,21 +331,49 @@ describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adopti
     expect(result.detail).toContain('check 3');
   });
 
-  it('unapproved=1 when the recorded proof is stale (the proposal changed since it was taken)', async () => {
+  it('unapproved=1 when an AGENT-proposed configuration has no proof recorded yet (specs/22 M17 P21: the fix never exempts a non-"detected" source)', async () => {
+    const dir = await tempDir();
+    const paths = new ProjectPaths(dir);
+    await writeStagedProposal(paths, 'unit', AGENT_RECORD);
+    const result = await checkTestAdoptionApproved(paths, 'unit');
+    expect(result.unapproved).toBe(1);
+    expect(result.detail).toContain('no translator proof');
+  });
+
+  it("unapproved=1 when an AGENT-proposed configuration's recorded proof failed", async () => {
+    const dir = await tempDir();
+    const paths = new ProjectPaths(dir);
+    await writeStagedProposal(paths, 'unit', {
+      ...AGENT_RECORD,
+      proof: {
+        ok: false,
+        failedCheck: 3,
+        reason: 'wrong name',
+        subjectHash: 'abc',
+        runnerVersion: '1.0.0',
+        checkedAt: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    const result = await checkTestAdoptionApproved(paths, 'unit');
+    expect(result.unapproved).toBe(1);
+    expect(result.detail).toContain('check 3');
+  });
+
+  it("unapproved=1 when an AGENT-proposed configuration's recorded proof is stale (the proposal changed since it was taken)", async () => {
     const dir = await tempDir();
     const paths = new ProjectPaths(dir);
     // A real, passing proof hash for a DIFFERENT command than the one actually staged below.
-    await writeStagedProposal(paths, 'unit', passingRecord('not-the-real-hash'));
+    await writeStagedProposal(paths, 'unit', agentPassingRecord('not-the-real-hash'));
     const result = await checkTestAdoptionApproved(paths, 'unit');
     expect(result.unapproved).toBe(1);
     expect(result.detail).toContain('stale');
   });
 
-  it('unapproved=0 when the recorded proof is passing and current', async () => {
+  it("unapproved=0 when an AGENT-proposed configuration's recorded proof is passing and current", async () => {
     const dir = await tempDir();
     const paths = new ProjectPaths(dir);
     const realHash = SAMPLE_COMMAND_HASH;
-    await writeStagedProposal(paths, 'unit', passingRecord(realHash));
+    await writeStagedProposal(paths, 'unit', agentPassingRecord(realHash));
     const result = await checkTestAdoptionApproved(paths, 'unit');
     expect(result).toMatchObject({ v: 1, layer: 'unit', unapproved: 0 });
     expect(result.detail).toContain('current');
@@ -331,21 +399,21 @@ describe('runPromotion -- the full staged-proposal lifecycle, now that G-TestAdo
     expect(result).toEqual({ outcome: 'no-staged-proposal', layer: 'unit' });
   });
 
-  it('"proof-not-passing" when a proposal is staged but no proof has been recorded yet -- never resolves a runId to say so', async () => {
+  it('"proof-not-passing" when an AGENT-proposed configuration is staged but no proof has been recorded yet -- never resolves a runId to say so (specs/22 M17 P21: the fix never exempts a non-"detected" source)', async () => {
     const dir = await tempDir();
     const paths = new ProjectPaths(dir);
-    await writeStagedProposal(paths, 'unit', SAMPLE_RECORD);
+    await writeStagedProposal(paths, 'unit', AGENT_RECORD);
     const result = await runPromotion(paths, 'unit', neverResolveRunId());
     expect(result).toMatchObject({ outcome: 'proof-not-passing', layer: 'unit' });
     if (result.outcome === 'proof-not-passing')
       expect(result.detail).toContain('no translator proof');
   });
 
-  it('"proof-not-passing" when the recorded proof failed, naming the failing check', async () => {
+  it('"proof-not-passing" when an AGENT-proposed configuration\'s recorded proof failed, naming the failing check', async () => {
     const dir = await tempDir();
     const paths = new ProjectPaths(dir);
     const record: StagedProposalRecord = {
-      ...SAMPLE_RECORD,
+      ...AGENT_RECORD,
       proof: {
         ok: false,
         failedCheck: 3,
@@ -374,14 +442,88 @@ describe('runPromotion -- the full staged-proposal lifecycle, now that G-TestAdo
     expect(result).toEqual({ outcome: 'gate-not-available', layer: 'unit' });
   });
 
-  it('"proof-not-passing" when the gate file exists but the recorded proof is stale -- never resolves a runId to say so', async () => {
+  it('"proof-not-passing" when the gate file exists but an AGENT-proposed configuration\'s recorded proof is stale -- never resolves a runId to say so', async () => {
     const dir = await tempDir();
     const paths = new ProjectPaths(dir);
     await writeGateFile(dir);
-    await writeStagedProposal(paths, 'unit', passingRecord('not-the-real-hash'));
+    await writeStagedProposal(paths, 'unit', agentPassingRecord('not-the-real-hash'));
     const result = await runPromotion(paths, 'unit', neverResolveRunId());
     expect(result).toMatchObject({ outcome: 'proof-not-passing' });
     if (result.outcome === 'proof-not-passing') expect(result.detail).toContain('stale');
+  });
+
+  describe('a confident, "detected" built-in-format proposal with NO proof at all can now be promoted (specs/22 M17 P21)', () => {
+    it('"gate-not-available" (never "proof-not-passing") for a bare "detected" proposal when this project has no G-TestAdopt.gate.yaml yet -- the exact live repro that found this defect: a real "forge init" + "forge test adopt" fixture staged a confident node-test/TAP candidate with no proof field at all, and "--write" refused unconditionally', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      // SAMPLE_RECORD itself: source "detected", no "proof" field.
+      await writeStagedProposal(paths, 'unit', SAMPLE_RECORD);
+      // No `writeGateFile(dir)` call: the gate file genuinely does not exist in this project.
+      const result = await runPromotion(paths, 'unit', neverResolveRunId());
+      expect(result).toEqual({ outcome: 'gate-not-available', layer: 'unit' });
+    });
+
+    it('"not-approved" for a bare "detected" proposal once the gate file exists but no human has recorded approval yet', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      await writeGateFile(dir);
+      await writeStagedProposal(paths, 'unit', SAMPLE_RECORD);
+      const result = await runPromotion(paths, 'unit', promotionContext(dir, 'run-no-approval'));
+      expect(result).toEqual({ outcome: 'not-approved', layer: 'unit' });
+    });
+
+    it('"promoted": a bare "detected" proposal with no proof merges into the live .forge/config.yaml once a human has recorded real approval for the real run', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      await writeGateFile(dir);
+      await writeBaseConfig(dir);
+      await writeStagedProposal(paths, 'unit', SAMPLE_RECORD);
+      const runId = 'run-approved-detected';
+      await recordGateEvent(dir, runId, 'G-TestAdopt', 'GateApproved');
+
+      const result = await runPromotion(paths, 'unit', promotionContext(dir, runId));
+      expect(result).toEqual({ outcome: 'promoted', layer: 'unit' });
+
+      const written = YAML.parse(
+        await readFile(path.join(dir, '.forge', 'config.yaml'), 'utf8'),
+      ) as {
+        readonly execution: { readonly testCommands: Readonly<Record<string, unknown>> };
+      };
+      expect(written.execution.testCommands['unit']).toEqual(SAMPLE_RECORD.command);
+    });
+
+    it('"proof-not-passing" when a "detected" proposal carries an explicit, recorded FAILING proof -- the bypass never overrides a real recorded failure, even for this source', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      await writeGateFile(dir);
+      await writeStagedProposal(paths, 'unit', {
+        ...SAMPLE_RECORD,
+        proof: {
+          ok: false,
+          failedCheck: 3,
+          reason: 'wrong name',
+          subjectHash: 'abc',
+          runnerVersion: '1.0.0',
+          checkedAt: '2026-01-01T00:00:00.000Z',
+        },
+      });
+      const result = await runPromotion(paths, 'unit', neverResolveRunId());
+      expect(result).toMatchObject({ outcome: 'proof-not-passing', layer: 'unit' });
+      if (result.outcome === 'proof-not-passing') expect(result.detail).toContain('check 3');
+    });
+
+    it('"proof-not-passing" when a "detected" proposal\'s own command declares a translator, even with no proof at all -- the bypass requires declaresTranslator(command) === false too, never "source" alone', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      await writeStagedProposal(paths, 'unit', {
+        ...SAMPLE_RECORD,
+        command: { ...SAMPLE_COMMAND, translate: 'python translate.py' },
+      });
+      const result = await runPromotion(paths, 'unit', neverResolveRunId());
+      expect(result).toMatchObject({ outcome: 'proof-not-passing', layer: 'unit' });
+      if (result.outcome === 'proof-not-passing')
+        expect(result.detail).toContain('no translator proof');
+    });
   });
 
   it('"not-approved" when the deterministic check passes but no human has recorded approval for this run', async () => {
