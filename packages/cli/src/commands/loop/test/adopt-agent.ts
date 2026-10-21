@@ -221,6 +221,7 @@ import {
   vetProposedCommand,
 } from '@forge/engine/dispatch';
 import {
+  TEST_REPORT_FORMATS,
   testCommandEntrySchema,
   type ForgeConfig,
   type StructuredTestCommand,
@@ -286,8 +287,14 @@ const probeResponseSchema = z
 /** The structured JSON `ADOPT_TESTS_OUTPUT_SCHEMA` asks for — a real `command`/`probe` proposal, or a
  * `noTestsFound` proposal for a project with no test setup at all (`13` F-TEST-11 point 4). Validated
  * (`QUALITY-BAR.md` R1: an agent's own structured output is `unknown` until validated) before this
- * module ever reads a field off it. */
-const proposalResponseSchema = z.union([
+ * module ever reads a field off it.
+ *
+ * Exported (M17 P21, a second, more serious live-run defect than the retry-loop fix above) so a test
+ * can run real sample objects through this REAL validator and cross-check the verdict against
+ * {@link ADOPT_TESTS_OUTPUT_SCHEMA}'s own, independently-evaluated keywords — the two are maintained by
+ * hand, in the same file, and the only way to catch them drifting apart again is to exercise them
+ * side by side with the same fixtures, not to snapshot either one in isolation. */
+export const proposalResponseSchema = z.union([
   z
     .object({
       // Explicit, optional `false` (never bare-absent) so TypeScript's own value-based narrowing on
@@ -315,30 +322,195 @@ const proposalResponseSchema = z.union([
 
 type ProposalResponse = z.infer<typeof proposalResponseSchema>;
 
-/** `SessionRequest.outputSchema` — informational for the fake adapter (which trusts a script's own
- * `structured` field directly, `@forge/testkit`'s own `FakeSessionScript` doc comment), but a real
- * adapter needs a real shape to steer a real model's structured-output request toward
- * (`QUALITY-BAR.md` R7: never faked). Mirrors `proposalResponseSchema` above, loosely (JSON Schema has
- * no real discriminated-union syntax this codebase's own `JSONSchema` type carries). */
-const ADOPT_TESTS_OUTPUT_SCHEMA: NonNullable<SessionRequest['outputSchema']> = {
+/** `structuredTestCommandSchema`'s own shape (`@forge/schemas/config`), hand-mirrored here rather than
+ * imported: that zod schema is a module-private `const` in `schema.ts` (only its inferred TYPE,
+ * `StructuredTestCommand`, is exported) — exporting the schema VALUE too, just to reuse it in a prompt-
+ * steering JSON Schema one package over, was judged a bigger footprint than this fix warrants. Mirrors
+ * `structuredTestCommandSchema` field-for-field (`run`/`output`/`format` required, `translate`/`scope`/
+ * `filter`/`timeoutMs` optional; `output`'s own `source: 'stdout'` vs. `source: 'file', path` branches),
+ * confirmed directly against `packages/schemas/src/config/schema.ts`. Deliberately narrower than
+ * `testCommandEntrySchema` (`proposalResponseSchema`'s own `command` field, both branches): that zod
+ * union also accepts a bare string (the legacy form) at the OUTER union level, which `command` TYPED
+ * this way never matches — on purpose. `parseProposalResponse` already refuses a bare-string `command`
+ * with its own dedicated, clear error ("the proposed \"command\" is the legacy bare-string form...")
+ * AFTER zod's own union accepts it, precisely because an agent-authored proposal must never use that
+ * form; steering the model away from ever offering it at the schema level, rather than only catching it
+ * after the fact, is strictly better, not a mismatch this fix introduces.
+ *
+ * `output`'s own `anyOf` below is NESTED (a property's own schema, not `ADOPT_TESTS_OUTPUT_SCHEMA`'s
+ * own root) — confirmed, by a live probe against the real SDK (see `ADOPT_TESTS_OUTPUT_SCHEMA`'s own
+ * doc comment for the full story of why that check was necessary at all), that a NESTED `anyOf` is
+ * accepted and correctly steers the model, unlike a ROOT one. Left exactly as it was before that
+ * finding, since nothing about it was ever the problem. */
+const COMMAND_OUTPUT_JSON_SCHEMA = {
+  anyOf: [
+    {
+      type: 'object',
+      properties: { source: { type: 'string', const: 'stdout' } },
+      required: ['source'],
+      additionalProperties: false,
+    },
+    {
+      type: 'object',
+      properties: { source: { type: 'string', const: 'file' }, path: { type: 'string' } },
+      required: ['source', 'path'],
+      additionalProperties: false,
+    },
+  ],
+} as const;
+
+const COMMAND_JSON_SCHEMA = {
   type: 'object',
   properties: {
-    command: { type: 'object' },
-    probe: {
-      type: 'object',
-      properties: {
-        path: { type: 'string' },
-        content: { type: 'string' },
-        expectedName: { type: 'string' },
-        expectedFile: { type: 'string' },
-      },
-    },
-    translatorPath: { type: 'string' },
-    runnerVersion: { type: 'string' },
-    reason: { type: 'string' },
-    noTestsFound: { type: 'boolean' },
-    adrSummary: { type: 'string' },
+    run: { type: 'string' },
+    output: COMMAND_OUTPUT_JSON_SCHEMA,
+    format: { type: 'string', enum: [...TEST_REPORT_FORMATS] },
+    translate: { type: 'string' },
+    scope: { type: 'string' },
+    filter: { type: 'string' },
+    timeoutMs: { type: 'integer' },
   },
+  required: ['run', 'output', 'format'],
+  additionalProperties: false,
+} as const;
+
+/** Mirrors `probeResponseSchema` above field-for-field: `path`/`content`/`expectedName` required,
+ * `expectedFile` optional, no extra keys (`additionalProperties: false`, mirroring `.strict()`). */
+const PROBE_JSON_SCHEMA = {
+  type: 'object',
+  properties: {
+    path: { type: 'string' },
+    content: { type: 'string' },
+    expectedName: { type: 'string' },
+    expectedFile: { type: 'string' },
+  },
+  required: ['path', 'content', 'expectedName'],
+  additionalProperties: false,
+} as const;
+
+/**
+ * `SessionRequest.outputSchema` — informational for the fake adapter (which trusts a script's own
+ * `structured` field directly, `@forge/testkit`'s own `FakeSessionScript` doc comment), but a real
+ * adapter needs a real shape to steer a real model's structured-output request toward
+ * (`QUALITY-BAR.md` R7: never faked) — confirmed directly (`build-options.ts`'s own `buildSdkOptions`)
+ * that `req.outputSchema` really does reach the real SDK's own `Options.outputFormat = {type:
+ * 'json_schema', schema}`, never an unused or merely-informational artifact.
+ *
+ * **The real defect this replaces (M17 P21, found live, a SECOND, more serious repro than the
+ * retry-loop fix above).** The original version of this schema was ONE FLAT object listing every
+ * field from BOTH of `proposalResponseSchema`'s own branches as `properties`, with NO `required` array
+ * at all (at any nesting level, including `probe`'s own `path`/`content`/`expectedName`) and no
+ * structure at all reflecting the real two-branch union `proposalResponseSchema` (a `z.union` of two
+ * `.strict()` object schemas) actually enforces afterward. A real, billed live run hit this twice,
+ * independently: once on the `noTestsFound` branch (a genuinely test-less fixture project) and once on
+ * the ordinary `command`/`probe`/`runnerVersion`/`reason` branch (a fixture with real, working tests) —
+ * both exhausted all 3 rounds with the IDENTICAL generic, field-path-less Zod error (`"(root): Invalid
+ * input."`), because the schema steering every round's own prompt never changed, only the prose
+ * feedback did, and prose alone was not enough across 3 real rounds for either case.
+ *
+ * **A FIRST fix attempt (`anyOf` of the two real branches) was ALSO wrong — caught only by a live
+ * probe, not by documentation, and is the reason this doc comment now trusts nothing it has not run.**
+ * That attempt reasoned from Anthropic's own structured-outputs (`output_config.format`) documentation,
+ * which genuinely does list `anyOf`/`allOf`/`enum`/`const` as supported — but that documentation
+ * describes a DIFFERENT mechanism than the one this transport actually uses. Confirmed directly with a
+ * minimal, near-zero-token, two-line probe (`query({prompt, options: {outputFormat: {type:
+ * 'json_schema', schema}}})` against the real, installed SDK, no FORGE machinery involved): the Claude
+ * Agent SDK's own `Options.outputFormat` is implemented by injecting a synthetic `custom` tool and
+ * forcing it, and that tool's `input_schema` is held to ordinary TOOL input-schema rules, not the
+ * Messages-API-level structured-outputs rules — confirmed by the real API's own 400, reproduced
+ * byte-for-byte: `"tools.N.custom.input_schema: input_schema does not support oneOf, allOf, or anyOf at
+ * the top level"`. A session hitting this failed at the SCHEMA level, before the model ever saw a
+ * prompt (zero generation tokens, suspiciously fast round times) — producing a result byte-identical in
+ * shape to "the model answered with a bad structured response," which is exactly why this was
+ * indistinguishable from the original defect by symptom alone; `runAdoptTestsAgent` does not inspect
+ * `session.ok`/`session.error` anywhere (a separate, pre-existing gap, not fixed here) so neither
+ * failure mode is currently told apart from the other at that layer either.
+ *
+ * **What IS confirmed safe, by the identical kind of live probe (never by documentation alone, after
+ * the above).** A top-level schema with NO `oneOf`/`allOf`/`anyOf` at its own root is accepted. Within
+ * that constraint, two real, separately-probed mechanisms both work correctly on this exact transport:
+ * (1) `anyOf` NESTED inside a property (not at the schema root) is accepted and the model honours it —
+ * probed directly with a schema whose `output` property was an `anyOf` of two `.strict()`-shaped
+ * branches, and the real response matched the correct branch; `COMMAND_OUTPUT_JSON_SCHEMA` below still
+ * uses this, unchanged, for exactly that reason. (2) Top-level `if`/`then`/`else`, combined with a
+ * top-level `additionalProperties: false`, is ALSO accepted and ALSO actually steers which fields the
+ * model treats as required — probed directly with a trivial `if: {noTestsFound-shaped const check} /
+ * then: {require a} / else: {require b}` schema; the live response matched whichever branch the probe's
+ * own prompt implied, proving the conditional is real model-visible steering, not merely accepted-but-
+ * inert syntax.
+ *
+ * **The fix: ONE flat, non-union `type: 'object'` schema, with `if`/`then`/`else` carrying the real
+ * conditional-requiredness signal declaratively, plus prose `description`s as a second, redundant
+ * channel.** `required: ['command', 'reason']` are the only two fields genuinely unconditional across
+ * BOTH of `proposalResponseSchema`'s own branches; `if` tests whether `noTestsFound` is present and
+ * `true` (the real branch-B discriminant), `then` adds `adrSummary` to what is required, `else` adds
+ * `probe`/`runnerVersion` instead — mirroring each branch's own real `required` array as closely as this
+ * transport's top-level constraint allows.
+ *
+ * **Disclosed, not silently accepted: this design CANNOT reject a response that mixes fields from both
+ * branches (e.g. `noTestsFound: true` with a `probe` also present) purely at the schema level.** A
+ * per-branch `additionalProperties: false` — the thing that would forbid exactly that — only exists
+ * inside a real `anyOf`/`oneOf` branch, and a top-level one is the exact construct this transport
+ * refuses. This is a real, accepted limitation of the only schema shape this transport allows for this
+ * kind of conditional contract, not an oversight: `parseProposalResponse`'s own real, unchanged
+ * `proposalResponseSchema.safeParse` — the SAME validator this schema is tested against below — remains
+ * the authoritative, final gate against exactly this mixed shape, and a response that mixes branches
+ * still correctly triggers the SAME retry-with-feedback loop (`RoundFeedback`, M17 P21's first fix,
+ * above) it always did; this schema's job is narrower than its first attempt aimed for — steer the
+ * model AWAY from the specific, observed failure (missing required fields, in either branch, including
+ * nested ones) as strongly as this transport allows, not replace the real validator's own exclusivity
+ * check, which was never actually achievable here.
+ *
+ * `command`'s own shape is `COMMAND_JSON_SCHEMA` (the structured form alone), deliberately narrower
+ * than the real `command: testCommandEntrySchema` field it validates against (which also accepts the
+ * legacy bare-string form) — see `COMMAND_JSON_SCHEMA`'s own doc comment.
+ *
+ * Exported (M17 P21) alongside `proposalResponseSchema` so a test can run the SAME sample objects
+ * through both and assert they agree — the real way to prove this schema and the real validator stay
+ * in sync, rather than asserting either one's shape in isolation (`adopt-agent-output-schema.test.ts`).
+ */
+export const ADOPT_TESTS_OUTPUT_SCHEMA: NonNullable<SessionRequest['outputSchema']> = {
+  type: 'object',
+  properties: {
+    noTestsFound: {
+      type: 'boolean',
+      description:
+        'Set to true ONLY when investigation finds this project has no test setup at all. When true, ' +
+        'omit "probe", "runnerVersion", and "translatorPath" entirely, and report "adrSummary" ' +
+        'instead. When false or omitted, report "probe" and "runnerVersion" instead of "adrSummary".',
+    },
+    command: COMMAND_JSON_SCHEMA,
+    probe: {
+      ...PROBE_JSON_SCHEMA,
+      description:
+        'The injected-failure probe. Required unless "noTestsFound" is true, in which case omit this ' +
+        'field entirely.',
+    },
+    translatorPath: {
+      type: 'string',
+      description:
+        'Only when a translator script was written. Never set when "noTestsFound" is true.',
+    },
+    runnerVersion: {
+      type: 'string',
+      description:
+        'Required unless "noTestsFound" is true, in which case omit this field entirely.',
+    },
+    reason: { type: 'string' },
+    adrSummary: {
+      type: 'string',
+      description:
+        'A short rationale for the ADR. Required ONLY when "noTestsFound" is true; omit otherwise.',
+    },
+  },
+  required: ['command', 'reason'],
+  additionalProperties: false,
+  if: {
+    properties: { noTestsFound: { const: true } },
+    required: ['noTestsFound'],
+  },
+  then: { required: ['adrSummary'] },
+  else: { required: ['probe', 'runnerVersion'] },
 };
 
 export interface AdoptTestsAgentDeps {

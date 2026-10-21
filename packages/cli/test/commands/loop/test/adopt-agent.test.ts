@@ -35,6 +35,7 @@ import { readTextFile } from '@forge/core/fs';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  ADOPT_TESTS_OUTPUT_SCHEMA,
   runAdoptTestsAgent,
   type AdoptTestsAgentDeps,
 } from '../../../../src/commands/loop/test/adopt-agent.ts';
@@ -186,6 +187,48 @@ describe('runAdoptTestsAgent -- a passing proof on the first round (specs/22 M17
     // never a hand-built evidence object asserted against in isolation.
     const check = await checkTestAdoptionApproved(project.paths, 'unit');
     expect(check).toMatchObject({ v: 1, layer: 'unit', unapproved: 0 });
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('runAdoptTestsAgent -- the real SessionRequest actually carries ADOPT_TESTS_OUTPUT_SCHEMA (specs/22 M17 P21)', () => {
+  it('wires the exact exported schema object into SessionRequest.outputSchema -- not a second, independently-defined one that could drift from it', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    const requests: SessionRequest[] = [];
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return true;
+      },
+      {
+        text: ['investigated package.json; proposing node --test'],
+        structured: {
+          command: NODE_TEST_COMMAND,
+          probe: {
+            path: 'probe.test.js',
+            content: probeContent('PROBE deliberately fails'),
+            expectedName: 'PROBE deliberately fails',
+          },
+          runnerVersion: process.version,
+          reason: 'package.json has no test script; node --test discovers *.test.js directly.',
+        },
+      },
+    );
+
+    await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    expect(requests).toHaveLength(1);
+    // Reference equality, not merely a deep-equal snapshot: proves this is the SAME object
+    // `proposalResponseSchema`'s own cross-checked test suite
+    // (`adopt-agent-output-schema.test.ts`) exercises, not a copy that happened to match today.
+    expect(requests[0]?.outputSchema).toBe(ADOPT_TESTS_OUTPUT_SCHEMA);
 
     await rm(dir, { recursive: true, force: true });
   });
