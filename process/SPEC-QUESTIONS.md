@@ -30617,3 +30617,67 @@ opened to pursue it with the same structure P7 originally used.
 **Gauntlet:** see `GAUNTLET-LOG.md` once the dedicated follow-up piece lands (not yet built as of
 this entry — this records the disclosure, per the owner's own "every disclosed defect fixed first"
 standing instruction, same as Q314/Q317/Q340/Q341 before their own follow-up pieces landed).
+
+## Q348
+
+Found live, mid-way through M17 P21's own live run — fixture2's own retry with `Q346`'s and fix6's
+own fixes both applied. The model got everything up through the translator right (no shell-pipe
+mistake), then hit a new, real, distinct mistake in how it reported its injected-failure probe.
+
+Per the brief's own step 2, the model investigated by temporarily appending a deliberately-failing
+case to `specs/strings.spec.js` (the fixture's one existing spec file), watched the translator
+correctly report the failure, then reverted the edit — exactly what step 2's own prior text
+described ("a single, deliberately failing test you add yourself... placed somewhere its own
+discovery will find it... removed again before you finish"). It then reported that SAME,
+now-reverted file as its final `probe.path`. `RUN-158` (`packages/cli/src/commands/loop/test/
+proof.ts`) correctly refused: the translator-proof replays the reported probe for real, in the real
+project tree (not a copy), by writing the reported `content` to the reported `path` — doing that to
+a real, pre-existing file would destroy it, so the mechanism requires a brand-new, not-already-
+existing path and refuses otherwise (confirmed, independently, by a critic reading `proof.ts`'s own
+doc comment and `writeNewFileAtomic`'s real atomic-create semantics in `packages/core/src/fs/
+atomic.ts` — a single `fsp.open(path,'wx')`+`fsp.link()` pair, no TOCTOU gap). This cost one full
+real, paid round for nothing.
+
+**Root cause: the brief itself, not the model.** Step 2 permits (and all but recommends) exactly the
+move that then fails — editing an existing file is the single most natural, idiomatic way to inject
+a failing test in a project with one existing spec file. A separate Do-not bullet already said "do
+not write... anything outside the translator path," which, read literally, already forbade this —
+a direct, unresolved contradiction between step 2 and the Do-not section the model had to resolve on
+its own, and did, reasonably, in the direction that then failed.
+
+**Two independent critics reviewed the first fix attempt and found real issues, fixed in the landed
+version rather than patched around.** One found a BLOCKING `prettier --check` failure (the new prose
+wasn't rewrapped per this file's own `proseWrap` rule — confirmed a real regression, not pre-
+existing, by piping both the pre- and post-fix file through `prettier --check --stdin-filepath`
+directly) and a misattribution (a "step 2's own example" reference to a directory-grouped layout
+that step 2 never actually shows — the real example is the later Worked Example). The other found a
+real internal tension the first attempt's own new wording introduced: it told the model that
+however it checked the failure live — including by editing the one existing file — it should report
+a DIFFERENT, never-actually-run sibling-file/content pair as the final probe, directly contradicting
+the brief's own opening line, "never a value you have not personally watched run." That critic also
+independently confirmed every code-level claim the brief's new text makes (the atomic-create
+semantics above) and found no existing test asserting on wording this fix changes.
+
+**Fixed by simplifying, not patching around the tension** (the same lesson `M16 P4` already
+established and this milestone has now reapplied): step 2 now has the model do the ENTIRE live
+check — create, run, observe, remove — at a brand-new path from the very start, never by editing an
+existing file at all, so the path it verifies with and the path it finally reports are always the
+identical thing, with an explicit instruction to confirm the path is free first. The Do-not bullet's
+exception is simplified to match (a new probe file, never an edit). The misattribution is corrected.
+Regenerated the matching `fixtures/greenfield-service/.forge/` snapshot — correctly, the second
+time: an earlier regeneration attempt silently read the WRONG, not-yet-fixed source, because it
+invoked `forge init` via the main checkout's own `bin.ts` instead of the worktree's own, reading
+templates from the wrong tree entirely — caught before landing by diffing the regenerated fixture's
+own body directly against the real, edited template rather than trusting the regeneration step had
+worked.
+
+**Disclosed, not fixed here**: `RUN-158` is thrown outside `adopt-agent.ts`'s own round-loop
+try/catch, so unlike every other proof-failure check (1 through 5, fed back via a `proof-failed`
+retry in the same session), it is never caught and retried — a probe-path collision burns the
+ENTIRE multi-round session, not one round, which is the real reason this exact mistake cost a full
+round for nothing rather than a cheap, same-session retry. A code-level fix (catching `RUN-158` the
+same way `proof-failed` already is) would make this whole class of mistake far cheaper to recover
+from, independent of how well the brief's own prose holds up against a future model or project —
+left as a disclosed follow-up opportunity, not touched by this piece.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.

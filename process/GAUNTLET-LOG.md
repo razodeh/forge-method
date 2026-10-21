@@ -24645,3 +24645,79 @@ defect of its own.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q346` (this fix continues that same entry's own brief; it
 did not surface a new disclosed defect of its own).
+
+## M17 P21 (live-run fix 7)
+
+**What prompted it.** `fixture2-bespoke-runner`'s own retry, with `Q346`'s and fix6's fixes both
+applied, got everything right through the translator (no shell-pipe mistake), then hit a new, real
+mistake reporting its injected-failure probe. Per step 2's own prior text, the model temporarily
+appended a deliberately-failing case to the fixture's one existing spec file (`specs/strings.spec.js`),
+watched the translator correctly report it, reverted the edit, then reported that same file as its
+final `probe.path`. `RUN-158` correctly refused — the translator-proof replays the probe for real,
+in the real project tree, by writing the reported content to the reported path, and a real,
+pre-existing file would be destroyed by that; the mechanism requires a brand-new path by design.
+Confirmed via a direct read of the real session transcript (`~/.claude/projects/...-15210282a3010a1f-...`):
+the model DID read the existing file's full content early in its own investigation, then genuinely
+reused that exact path for its final report — not a transcription error, a real misunderstanding of
+what the final `probe` field requires versus what step 2's own live-check instruction permits.
+
+**Root cause traced to a direct, unresolved contradiction already in the brief**, not merely a
+missing caveat: step 2 permitted (and effectively recommended, via "placed somewhere its own
+discovery will find it") editing an existing file to inject the probe, while a separate Do-not
+bullet already said, read literally, the opposite ("do not write... anything outside the translator
+path"). The model resolved the ambiguity in the direction step 2's own specific instruction pointed,
+which then failed `RUN-158`'s own, different and stricter, requirement for the FINAL reported path.
+
+**Two independent critics, each in their own worktree, reviewed the first fix attempt and both
+returned "needs changes," not "ship as-is."** Critic 1 (prose/scenario angle): found a BLOCKING
+`prettier --check` regression (confirmed real, not pre-existing, by piping both the pre- and
+post-fix file through `prettier --check --stdin-filepath` directly — the post-fix file alone
+failed) and a misattribution (a false "step 2's own example" reference — the real directory-grouped
+example is the later Worked Example, not step 2). Also confirmed, independently: the fixture
+regeneration was genuine (hash match), the step-2-vs-Do-not contradiction was cleanly resolved by
+the first attempt's own text, no other place in the brief implied reporting an existing file, and
+the "sibling file" fallback was correctly scoped (conditioned on a directory-scanning discovery
+mechanism, not overgeneralized to a hard-coded test list). Critic 2 (code/mechanism angle): verified
+every factual claim the new brief text makes against the real code (`proof.ts`'s `RUN-158` throw;
+`writeNewFileAtomic`'s real `fsp.open(path,'wx')`+`fsp.link()` atomic-create, confirmed no TOCTOU
+gap exists between a free-path check and the actual write) and found no existing test conflicting
+with the new wording. **Critic 2 also found the piece's own most consequential finding**: the first
+attempt's own new text told the model that however it checked the failure live — including by
+editing the existing file — it should report a DIFFERENT, never-actually-run sibling-file/content
+pair as its final probe, a real, internal tension against the brief's own opening line, "never a
+value you have not personally watched run" (bounded — `RUN-158` and the proof's other checks would
+still catch a genuinely non-equivalent probe at replay time — but could burn another real round).
+Critic 2 additionally flagged that nothing told the model to verify its chosen path was actually
+free before reporting it, and raised — as a legitimate, separate, NOT-required-for-this-fix
+alternative — whether the real fix should live at the code level (FORGE generating a guaranteed-
+unique probe path itself, rather than relying on a live model reading prose correctly every time).
+
+**Fixed by simplifying rather than patching around the tension, the same lesson `M16 P4`'s own
+history already established.** Step 2 now has the model do the ENTIRE live check — create, run,
+observe, remove — at a brand-new path from the very start, never by editing an existing file at
+all, so the path it verifies with and the path it finally reports are always the identical thing,
+with an explicit instruction to confirm the path is free first (using investigation already done,
+or a granted read-only command). The Do-not bullet's own exception is simplified to match (a new
+probe file, never an edit). The misattribution is corrected to point at the real Worked Example.
+Prettier formatting fixed. Re-verified directly rather than via a third critic round (a narrow,
+risk-REDUCING revision — simplification, a formatting fix, a corrected citation — not new logic),
+matching the same judgment call M16's P2/P3/P5/P10 fix-passes already used: full scoped battery
+(`proof.test.ts`, `adopt-agent.test.ts`, `greenfield-fixture-generated.test.ts`,
+`spec-cli-examples.test.ts`) green, `pnpm typecheck`/`lint`/`prettier --check` all clean.
+
+**A real process mistake, caught before landing rather than after.** Regenerating the fixture a
+second time (to pick up the fix-pass's own revised wording) initially invoked `forge init` via the
+MAIN checkout's own `bin.ts`, which reads templates from the main checkout's own tree — silently
+reproducing the stale, pre-fix content instead of the worktree's genuinely edited one, since the
+worktree's own edits were never on main's own checkout yet. Caught by diffing the regenerated
+fixture's own body directly against the real, edited template byte-for-byte, rather than trusting
+the regeneration step had succeeded just because it exited cleanly — fixed by invoking `bin.ts` from
+the SAME worktree whose templates were being regenerated, re-verified byte-identical.
+
+**Disclosed, not fixed, by design — see `SPEC-QUESTIONS.md` `## Q348` for the full narrative**:
+`RUN-158` is thrown outside the round loop's own try/catch in `adopt-agent.ts`, unlike every other
+proof-failure check, so this exact mistake (or any future, different cause of the same error) burns
+an entire multi-round session rather than one cheap, same-session retry — a code-level opportunity,
+not touched by this piece.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q348`.
