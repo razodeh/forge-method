@@ -30695,3 +30695,72 @@ including the independently-verified security reasoning for why this is safe to 
 `RUN-161` deliberately still is not.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
+
+## Q349
+
+Found live, mid-way through M17 P21's own live run — `fixture2`'s own retry, with `Q348`'s own fix
+(fix8) applied and already confirmed working as designed (the model got a full 3 real rounds with
+real feedback, never a crashed session). All 3 rounds still exhausted on the SAME `RUN-158` class,
+each with a genuinely different, never-before-used probe filename — proving this was never about
+filename choice at all.
+
+**Root cause, confirmed directly from 3 separate real session transcripts, not inferred.** The
+brief instructs the model to create a deliberately-failing probe at a brand-new path (`Q348`'s own
+fix), observe the real failure, then remove the probe again before finishing. The model did exactly
+this, then tried `rm <probe-path>` and separately `git clean -f -- <probe-path>` — BOTH DENIED
+("Permission to use Bash has been denied because Claude Code is running in don't ask mode"), since
+neither is in `ADOPT_TESTS_EXEC_PATTERNS`, the model's own granted exec-pattern allowlist. The model
+then tried `AskUserQuestion` to escalate (also denied, non-interactive mode), gave up, and
+explicitly said in its own final response text: "Two attempts to delete the probe file (rm, git
+clean) were both refused... I cannot ask interactively, so I'll complete the deliverable and flag
+the leftover prominently" — reporting the probe anyway, honestly disclosing the problem. FORGE's
+own later `runTranslatorProof` call then found that exact path already occupied by the model's own
+un-removable leftover (both the model's own session and `runTranslatorProof` run in the SAME fresh
+`createLaneWorktree` lane, same round) and refused with `RUN-158`. **The model's own granted tools
+include no way to delete a file it creates at all** — `Edit`/`Write` can only create or modify
+content, never unlink a file, and no exec pattern grants `rm`/`git clean`/an equivalent. "Create a
+new file, then remove it" is something the brief instructs but the model's own tool set makes
+structurally impossible to actually satisfy.
+
+**Why the fix could not simply grant `rm`/`git clean`, and could not simply delete whatever already
+sits at the reported path.** A SEPARATE, earlier piece this milestone (`Q348`) exists because a
+model ONCE reported a genuinely pre-existing, already-committed project file as its probe path;
+`writeNewFileAtomic`'s refusal in THAT case is the entire point — the only thing standing between a
+wrong probe report and silently destroying real content. Granting `rm`/`git clean` as a new model
+exec pattern would reopen a DIFFERENT, separate concern this milestone is independently tracking
+(`Q347`'s own live-exec permission-boundary investigation) for a problem FORGE's own code can
+instead close with zero new capability granted to the model — this project's own "least privilege
+where there is no cost to it" philosophy (`adopt-tests-grant.ts`'s own doc comment).
+
+**The fix.** Each round's lane is a FRESH `git worktree`, checked out from the integration base, so
+by construction anything on disk there is either already committed (genuinely TRACKED) or something
+THIS round's own live session wrote during investigation (necessarily UNTRACKED, since nothing in
+this flow ever runs `git add` inside the lane). "Untracked" is therefore the literal, structural
+definition of "this round's own leftover," not a heuristic. `isConfirmedUntrackedInGit` runs `git
+--literal-pathspecs ls-files --error-unmatch`, returning true ONLY on a confirmed-untracked exit
+code and failing closed for tracked, not-a-repo, missing-git, or any surprise; the leftover is
+removed ONLY when confirmed untracked, immediately before `writeNewFileAtomic` inside
+`runTranslatorProof`.
+
+**Two independent critics, given the security stakes (how close this sits to `Q348`'s own
+protection), both ran real git experiments rather than reasoning in the abstract** — tracked-clean,
+tracked-with-local-modifications, untracked, non-repo, missing git binary, a leading-dash filename
+with/without `--` (confirming `--literal-pathspecs` and `--` are load-bearing, not decorative, via a
+real misparse without them), a dangling symlink, `git rm --cached` (confirmed to read as
+"untracked" too, but unreachable today since the model's own granted git patterns — `log*`/`diff*`/
+`show*` — include no index-mutating subcommand). Both independently confirmed `Q348`'s own test
+still refuses exactly as before, byte-for-byte unchanged, against a real git repo. **Both also
+independently found the SAME real regression by direct, reproduced experiment**: an untracked
+DIRECTORY (not a file) at the probe path crashed the whole round loop uncaught — `rm` with no
+`recursive: true` throwing `ERR_FS_EISDIR`, caught by nothing (not `RUN-114`/`RUN-158`/`CFG-003`/
+`CFG-004`) — WORSE than this fix's own starting point, since that exact collision used to reach
+`writeNewFileAtomic` and refuse cleanly with `RUN-158`, the same as any other. Fixed by checking the
+real file type via `lstat` before removing (only ever a regular file — a live session's own
+tool-use can write a file, never a directory, per the brief) and wrapping the removal so it
+genuinely never throws past this function's own boundary, matching its own "Never throws" doc claim
+for real. One critic also caught a self-contradiction the first attempt's own doc comment
+introduced (one paragraph claimed the SIGKILL-reclaim mechanism "has zero production call sites
+today"; the very next paragraph, added by the SAME commit, named `adopt-agent.ts` as its real
+caller) — fixed in the same pass.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.

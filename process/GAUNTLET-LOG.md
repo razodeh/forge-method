@@ -24792,3 +24792,67 @@ now hit many times, plus a comparable `ENOTEMPTY` temp-dir race in `bin.test.ts`
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q348` (updated in place with this fix's own resolution,
 rather than a new entry, since it is the direct, promised follow-up to what that entry already
 disclosed).
+
+## M17 P21 (live-run fix 9) — the model has no tool that can delete a file; found live via direct transcript inspection, not inferred
+
+**What prompted it.** `fixture2`'s own retry, with `Q348`'s own fix8 already landed and confirmed
+working exactly as designed (a full 3-round session with real feedback, never a crashed session),
+STILL exhausted all 3 rounds — each hitting `RUN-158`, each with a genuinely different, never-before
+-used filename. Direct inspection of all 3 real session transcripts (not speculation) found the real
+cause: on every round, the model created its probe, observed the real failure, then tried `rm
+<probe-path>` and separately `git clean -f -- <probe-path>` to clean up — BOTH denied, since neither
+is in `ADOPT_TESTS_EXEC_PATTERNS`. The model then tried `AskUserQuestion` to escalate (also denied,
+non-interactive mode), gave up, and explicitly stated in its own final text: "Two attempts to delete
+the probe file (rm, git clean) were both refused... I cannot ask interactively, so I'll complete the
+deliverable and flag the leftover prominently" — reporting the probe anyway. FORGE's own later
+`runTranslatorProof` (confirmed to run in the SAME fresh `createLaneWorktree` lane the model's own
+session just used, same round) then found that exact path already occupied and refused. The model's
+own granted tools include no way to delete a file it creates at all.
+
+**Dispatched a dedicated builder, given the real incident and the structural (not probabilistic)
+nature of the cause.** The builder confirmed every link in the chain directly against the real code
+(`adopt-agent.ts`'s round loop, `proof.ts`'s `runTranslatorProof`, `@forge/vcs`'s lane-worktree
+creation) and, critically, verified the chosen mechanism — "untracked in the lane's own git state"
+as the structural signal distinguishing a genuinely pre-existing project file from the model's own
+this-round scratch leftover — via REAL git experiments (`git ls-files --error-unmatch`'s own real
+exit codes for tracked/untracked/not-a-repo/missing-binary), not by assumption. Implemented
+`isConfirmedUntrackedInGit` (fails closed for every ambiguous case) and `reclaimLaneLeftoverProbe`
+(removes a leftover only when confirmed untracked), wired in immediately before
+`writeNewFileAtomic` inside `runTranslatorProof` — deliberately NOT inside the existing
+`reclaimStaleProbe` (a different mechanism, SIGKILL-recovery via a durable marker from a PRIOR
+invocation, not this-round git-tracking state) and deliberately NOT a new `rm`/`git clean` grant to
+the model (would reopen `Q347`'s own separate live-exec concern for a problem FORGE's own code can
+close with zero new model capability).
+
+**Two independent critics, each in their own worktree, given the security stakes (how close this
+sits to `Q348`'s own protection), both ran real experiments rather than reasoning in the abstract —
+and both independently found the SAME real regression.** Both constructed real git repos covering
+tracked-clean, tracked-with-local-modifications, untracked, non-repo, missing-git-binary, a
+leading-dash filename with and without `--` (confirming `--literal-pathspecs`/`--` are load-bearing,
+not decorative — a real misparse without them), a dangling symlink, and `git rm --cached` (confirmed
+to read as "untracked" too, but unreachable today since the model's own granted git patterns include
+no index-mutating subcommand) — the tracked/untracked distinction held in every case, and `Q348`'s
+own collision test was re-confirmed to refuse exactly as before, byte-for-byte unchanged, now
+against a real git repo rather than only the original bare non-git temp dir. **Both critics
+independently reproduced the identical real bug**: an untracked DIRECTORY (not a file) at the probe
+path crashed the whole round loop uncaught — `rm` with no `recursive: true` throwing `ERR_FS_EISDIR`,
+caught by nothing — WORSE than this fix's own starting point, since that exact collision used to
+reach `writeNewFileAtomic` and refuse cleanly with `RUN-158` like any other. One critic also caught a
+genuine self-contradiction the first attempt's own doc comment introduced (one paragraph claimed the
+SIGKILL-reclaim mechanism "has zero production call sites today"; the very next paragraph, added by
+the SAME commit, named `adopt-agent.ts` as its real caller).
+
+**Fixed directly by the orchestrator rather than redispatching the builder**, given both findings
+were small, well-understood, and already pinpointed with a concrete repro by two independent
+sources: `reclaimLaneLeftoverProbe` now checks the real file type via `lstat` before removing (only
+ever a regular file — a live session's own tool-use can write a file, never a directory, per the
+brief) and wraps the removal itself so it genuinely never throws past this function's own boundary;
+the doc-comment contradiction corrected. Added a dedicated test proving the directory case now
+refuses cleanly with `RUN-158`, the identical shape every other collision gets. Re-verified directly
+rather than via a third critic round (both fixes are narrow, risk-reducing corrections to an already
+-reviewed mechanism, matching the same judgment call this milestone has used before for comparable
+fix-passes): full `proof.test.ts` (20/20) and `adopt-agent.test.ts` (24/24) green, `pnpm typecheck`/
+`lint` clean, the unscoped `-t "M17"` sweep clean except the well-established `test/intake-workflow.
+test.ts` flake, re-confirmed clean in isolation.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q349`.
