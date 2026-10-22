@@ -425,7 +425,12 @@ describe('buildSdkOptions: PreToolUse hook (SessionRequest.vetFileAccess wiring)
     );
     const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
     const result = await hook?.(
-      { hook_event_name: 'SessionStart', session_id: 's', transcript_path: '/t', cwd: '/tmp' } as Parameters<HookCallback>[0],
+      {
+        hook_event_name: 'SessionStart',
+        session_id: 's',
+        transcript_path: '/t',
+        cwd: '/tmp',
+      } as Parameters<HookCallback>[0],
       undefined,
       hookCallOptions(),
     );

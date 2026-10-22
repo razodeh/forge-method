@@ -1211,7 +1211,7 @@ describe('runAgentWork — commit subject uses the step id and brief title, neve
 });
 
 describe("runAgentStep -- a real per-call gate on the session's own LIVE Read/Edit/Write tool use (SPEC-QUESTIONS.md Q347)", () => {
-  it('sets SessionRequest.vetFileAccess for EVERY real kind:agent step, not only adopt-tests\'s own rounds -- and that real callback refuses the exact live exploit shape Q347 found (a real absolute-path Write completely outside the step\'s own lane), while allowing an in-lane target', async () => {
+  it("sets SessionRequest.vetFileAccess for EVERY real kind:agent step, not only adopt-tests's own rounds -- and that real callback refuses the exact live exploit shape Q347 found (a real absolute-path Write completely outside the step's own lane), while allowing an in-lane target", async () => {
     const projectRoot = await createTempRepo('agent-file-access-gate');
     const adapter = new FakePlatformAdapter();
     adapter.script(() => true, {
@@ -1248,9 +1248,9 @@ describe("runAgentStep -- a real per-call gate on the session's own LIVE Read/Ed
     // session's own lane worktree -- refused here through the SAME `createLiveFileAccessGate`
     // mechanism `buildSessionRequest` wires into every real step, never a hand-asserted "would be
     // refused."
-    await expect(
-      gate('Write', '/tmp/forge-probe/test_forge_probe.py'),
-    ).resolves.toMatchObject({ allowed: false });
+    await expect(gate('Write', '/tmp/forge-probe/test_forge_probe.py')).resolves.toMatchObject({
+      allowed: false,
+    });
     // A real target inside THIS step's own lane (`captured.cwd`) still passes.
     await expect(gate('Write', path.join(captured.cwd, 'src/feature.ts'))).resolves.toMatchObject({
       allowed: true,

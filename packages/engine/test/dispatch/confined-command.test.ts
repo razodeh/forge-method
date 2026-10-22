@@ -914,7 +914,7 @@ describe('a refused command leaves no trace (the canary file is never created)',
   });
 });
 
-describe('createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analogue of vetProposedCommand, for a live session\'s own Read/Edit/Write tool use', () => {
+describe("createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analogue of vetProposedCommand, for a live session's own Read/Edit/Write tool use", () => {
   it('allows an in-lane target for all three tool names, including a FRESH Write target that does not exist yet', async () => {
     const root = await lane();
     await writeFile(path.join(root, 'existing.txt'), 'hello');
@@ -933,7 +933,7 @@ describe('createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analo
     });
   });
 
-  it('denies a genuinely out-of-lane absolute target for all three tool names, naming the tool and the path in the reason -- the exact exploit shape Q347 found live (a real Write to /tmp/forge-probe/..., completely outside the session\'s own lane)', async () => {
+  it("denies a genuinely out-of-lane absolute target for all three tool names, naming the tool and the path in the reason -- the exact exploit shape Q347 found live (a real Write to /tmp/forge-probe/..., completely outside the session's own lane)", async () => {
     const root = await lane();
     const outside = await lane();
     const target = path.join(outside, 'forge-probe', 'test_forge_probe.py');
@@ -947,7 +947,7 @@ describe('createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analo
     }
   });
 
-  it('a symlinked directory inside the lane that points outside it is refused, and a symlink that stays inside is not -- mirroring vetPath\'s own identical real-filesystem check above', async () => {
+  it("a symlinked directory inside the lane that points outside it is refused, and a symlink that stays inside is not -- mirroring vetPath's own identical real-filesystem check above", async () => {
     const root = await lane();
     const outside = await lane();
     await writeFile(path.join(outside, 'secret.txt'), 'SECRET');
@@ -961,7 +961,7 @@ describe('createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analo
     await expect(gate('Read', path.join(root, 'inside'))).resolves.toEqual({ allowed: true });
   });
 
-  it('a lane whose own path IS a symlink (the root argument itself, not a path inside it) still allows an in-lane target -- the macOS /tmp -> /private/tmp shape this gate\'s own live experiment hit directly', async () => {
+  it("a lane whose own path IS a symlink (the root argument itself, not a path inside it) still allows an in-lane target -- the macOS /tmp -> /private/tmp shape this gate's own live experiment hit directly", async () => {
     const realRoot = await lane();
     const container = await mkdtemp(path.join(tmpdir(), 'forge-confined-'));
     dirs.push(container);
@@ -978,7 +978,7 @@ describe('createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analo
     await expect(gate('Write', path.join(realRoot, 'ok.txt'))).resolves.toEqual({ allowed: true });
   });
 
-  it('a relative file_path (never the real SDK\'s own contract, but a defensive case) resolves against root, and an escaping ../ is still denied', async () => {
+  it("a relative file_path (never the real SDK's own contract, but a defensive case) resolves against root, and an escaping ../ is still denied", async () => {
     const root = await lane();
     const outside = await lane();
     await writeFile(path.join(outside, 'secret.txt'), 'SECRET');

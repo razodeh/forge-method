@@ -1283,7 +1283,7 @@ describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE e
 });
 
 describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE Read/Edit/Write tool use (SPEC-QUESTIONS.md Q347)", () => {
-  it('sets SessionRequest.vetFileAccess for real, and that real callback refuses the exact live exploit shape Q347 found (a real Write to an absolute path completely outside the round\'s own lane), while allowing an in-lane target', async () => {
+  it("sets SessionRequest.vetFileAccess for real, and that real callback refuses the exact live exploit shape Q347 found (a real Write to an absolute path completely outside the round's own lane), while allowing an in-lane target", async () => {
     const dir = await tempDir();
     const project = await projectWithTestArchitect();
     const adapter = new FakePlatformAdapter();
@@ -1332,9 +1332,9 @@ describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE R
     // created `/tmp/forge-probe/test_forge_probe.py`, an absolute path completely outside that
     // session's own lane worktree -- refused, for real, through the real `createLiveFileAccessGate`
     // mechanism, never a hand-asserted "would be refused," for all three gated tool names.
-    await expect(
-      gate('Write', '/tmp/forge-probe/test_forge_probe.py'),
-    ).resolves.toMatchObject({ allowed: false });
+    await expect(gate('Write', '/tmp/forge-probe/test_forge_probe.py')).resolves.toMatchObject({
+      allowed: false,
+    });
     await expect(gate('Edit', '/tmp/forge-probe/test_forge_probe.py')).resolves.toMatchObject({
       allowed: false,
     });
@@ -1344,9 +1344,9 @@ describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE R
     // A real target inside THIS round's own lane (`captured.cwd`) still passes -- the gate narrows a
     // live file-tool decision, it does not blanket-deny every path.
     if (captured === undefined) throw new Error('unreachable');
-    await expect(
-      gate('Write', `${captured.cwd}/probe.test.js`),
-    ).resolves.toMatchObject({ allowed: true });
+    await expect(gate('Write', `${captured.cwd}/probe.test.js`)).resolves.toMatchObject({
+      allowed: true,
+    });
 
     await rm(dir, { recursive: true, force: true });
   });
