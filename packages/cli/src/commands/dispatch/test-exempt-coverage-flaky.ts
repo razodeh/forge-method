@@ -307,6 +307,12 @@ function describeAdoptTestsAgentResult(result: AdoptTestsAgentResult): string {
       `translator proof last failed check ${String(result.failedCheck)}: ${result.reason}`
     );
   }
+  if (result.cause === 'proof-threw') {
+    return (
+      `forge test adopt --agent: exhausted ${String(result.rounds)} round(s) for "${result.layer}" -- the ` +
+      `translator proof itself could not even run: ${result.reason}`
+    );
+  }
   return (
     `forge test adopt --agent: exhausted ${String(result.rounds)} round(s) for "${result.layer}" -- the ` +
     `session's structured response was never usable: ${result.reason}`

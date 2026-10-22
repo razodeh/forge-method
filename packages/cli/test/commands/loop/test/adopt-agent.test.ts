@@ -25,6 +25,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { execa } from 'execa';
 import type { PlatformAdapter, SessionRequest } from '@forge/adapter-kit/types';
 import {
   checkTestAdoptionApproved,
@@ -107,6 +108,22 @@ const test = require('node:test');
 const assert = require('node:assert');
 test(${JSON.stringify(testName)}, () => { assert.strictEqual(1, 2); });
 `;
+}
+
+/** Writes `relativePath` and commits it into the project's own git history (M17 P21, live-run fix
+ * 8) -- `runAdoptTestsAgent`'s own round loop runs `runTranslatorProof` inside a fresh LANE worktree
+ * (`createLaneWorktree`'s own doc comment: `git worktree add -b <branch> <path> <resolvedBase>`,
+ * checked out from `ctx.integrationBase`, a real git revision), never a copy of the live, possibly-
+ * dirty working tree `project.dir` itself is. A file merely written to `project.dir` with no commit
+ * (the way every other fixture file in this suite that the AGENT reads off `deps.paths` directly
+ * already is, e.g. `projectWithTestArchitect`'s own brief/agent files) would never appear inside that
+ * checkout at all -- this is what makes the colliding file in the tests below a REAL, pre-existing
+ * file from the lane's own point of view, not merely from the live project's. */
+async function commitRealFile(dir: string, relativePath: string, content: string): Promise<void> {
+  await mkdir(path.dirname(path.join(dir, relativePath)), { recursive: true });
+  await writeFile(path.join(dir, relativePath), content);
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '-m', `add ${relativePath}`], { cwd: dir });
 }
 
 // `'node --test'` literally -- not `process.execPath`: a real agent's own proposal names the plain
@@ -451,6 +468,202 @@ describe('runAdoptTestsAgent -- stops after the bound and discloses the last fai
 
     // Nothing is staged for a fully-exhausted round -- `adopt.ts`'s own "nothing reaches
     // .forge/config.yaml without approval" extends here: nothing reaches even the STAGED record.
+    const onDisk = await readStagedProposal(project.paths, 'unit');
+    expect(onDisk.outcome).toBe('missing');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('runAdoptTestsAgent -- runTranslatorProof itself THROWING (not returning {ok:false}) is retried with feedback, not an immediate failure (specs/22 M17 P21) (live-run fix 8)', () => {
+  it("round 1's probe path collides with a real, pre-existing file (RUN-158); round 2 reports a genuinely new path and succeeds, with the real collision named in round 2's own prompt", async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    // A real, pre-existing file, committed into the project's own git history before the round loop
+    // ever runs -- the lane each round runs in is a fresh checkout of THIS history (`commitRealFile`'s
+    // own doc comment has the full reasoning), so this is a real collision from the lane's own point
+    // of view, not merely the live project's.
+    await commitRealFile(
+      project.dir,
+      'already-exists.test.js',
+      "// a real file this project already ships -- never the proof's own probe\n",
+    );
+
+    const adapter = new FakePlatformAdapter();
+    const requests: SessionRequest[] = [];
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return request.stepId.includes(':round-1');
+      },
+      {
+        text: ['round 1: naming a probe path that collides with a real, pre-existing file'],
+        structured: {
+          command: NODE_TEST_COMMAND,
+          probe: {
+            path: 'already-exists.test.js',
+            content: probeContent('PROBE deliberately fails'),
+            expectedName: 'PROBE deliberately fails',
+          },
+          runnerVersion: process.version,
+          reason: 'round 1: a colliding probe path, on purpose',
+        },
+      },
+    );
+    adapter.script((request) => request.stepId.includes(':round-2'), {
+      text: ['round 2: a genuinely new probe path, after reading the real collision'],
+      structured: {
+        command: NODE_TEST_COMMAND,
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        runnerVersion: process.version,
+        reason: 'round 2: a genuinely free path this time',
+      },
+    });
+
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    // This is the real live defect (M17 P21, Q348): `runTranslatorProof`'s own `RUN-158` throw used
+    // to sit outside every try/catch the round loop had and kill the WHOLE command on round 1, with
+    // zero chance for round 2 to ever run. The round loop now catches it without crashing, and round
+    // 2 stages for real, same as a round that fixed a failing proof's own named check instead.
+    expect(result.outcome).toBe('staged');
+    if (result.outcome !== 'staged') throw new Error('unreachable');
+    expect(result.rounds).toBe(2);
+
+    // Round 2's own real, assembled prompt carries round 1's own real collision feedback -- not
+    // reconstructed independently, the actual text the session was sent -- and it genuinely names
+    // the real problem (the already-existing path), never a generic, unattributed error.
+    expect(requests).toHaveLength(2);
+    const round2System = requests[1]?.systemPrompt.text ?? '';
+    expect(round2System).toContain('round 2');
+    expect(round2System).toContain('could not even run');
+    expect(round2System).toContain('already-exists.test.js');
+    expect(round2System).toContain('already exists');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('round 1\'s probe path escapes the project tree (CFG-003, the SAME "runTranslatorProof threw" class, never assumed to be RUN-158 alone); round 2 fixes it and succeeds', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+
+    const adapter = new FakePlatformAdapter();
+    const requests: SessionRequest[] = [];
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return request.stepId.includes(':round-1');
+      },
+      {
+        text: ['round 1: naming a probe path that escapes the project tree'],
+        structured: {
+          command: NODE_TEST_COMMAND,
+          probe: {
+            // `ProjectPaths.resolveWithin` refuses this by traversal (`CFG-003`) before the probe is
+            // ever written -- the SAME "runTranslatorProof threw instead of returning {ok:false}"
+            // defect class RUN-158 above is, confirmed directly against `proof.ts`'s own `runTranslatorProof`
+            // doc comment, which documents this as its other real throw.
+            path: '../escaped.test.js',
+            content: probeContent('PROBE deliberately fails'),
+            expectedName: 'PROBE deliberately fails',
+          },
+          runnerVersion: process.version,
+          reason: 'round 1: an escaping probe path, on purpose',
+        },
+      },
+    );
+    adapter.script((request) => request.stepId.includes(':round-2'), {
+      text: ['round 2: a genuinely in-tree probe path, after reading the real escape refusal'],
+      structured: {
+        command: NODE_TEST_COMMAND,
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        runnerVersion: process.version,
+        reason: 'round 2: a genuinely in-tree path this time',
+      },
+    });
+
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    expect(result.outcome).toBe('staged');
+    if (result.outcome !== 'staged') throw new Error('unreachable');
+    expect(result.rounds).toBe(2);
+
+    expect(requests).toHaveLength(2);
+    const round2System = requests[1]?.systemPrompt.text ?? '';
+    expect(round2System).toContain('round 2');
+    expect(round2System).toContain('could not even run');
+    expect(round2System).toContain('../escaped.test.js');
+    expect(round2System).toContain('escapes the project root');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('runAdoptTestsAgent -- a probe path that never stops colliding exhausts the same bound a failing proof already has (specs/22 M17 P21) (live-run fix 8)', () => {
+  it('exhausts 3 rounds (default), never a 4th, when the probe path always collides with the same real file -- a typed result, never an uncaught RUN-158', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    await commitRealFile(
+      project.dir,
+      'already-exists.test.js',
+      '// a real file this project already ships\n',
+    );
+
+    const adapter = new FakePlatformAdapter();
+    let calls = 0;
+    adapter.script(
+      () => {
+        calls += 1;
+        return true;
+      },
+      {
+        text: ['always the same colliding probe path'],
+        structured: {
+          command: NODE_TEST_COMMAND,
+          probe: {
+            path: 'already-exists.test.js',
+            content: probeContent('PROBE deliberately fails'),
+            expectedName: 'PROBE deliberately fails',
+          },
+          runnerVersion: process.version,
+          reason: 'always the same colliding path, on purpose',
+        },
+      },
+    );
+
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    expect(result.outcome).toBe('exhausted');
+    if (result.outcome !== 'exhausted') throw new Error('unreachable');
+    expect(result.cause).toBe('proof-threw');
+    if (result.cause !== 'proof-threw') throw new Error('unreachable');
+    expect(result.rounds).toBe(3);
+    expect(result.reason).toContain('already-exists.test.js');
+    expect(result.reason).toContain('already exists');
+    expect(calls).toBe(3); // never a 4th session -- the identical bound a failing proof already has
+
+    // Nothing is staged for a fully-exhausted round, the identical guarantee every other exhaustion
+    // cause already has.
     const onDisk = await readStagedProposal(project.paths, 'unit');
     expect(onDisk.outcome).toBe('missing');
 

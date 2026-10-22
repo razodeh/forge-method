@@ -195,6 +195,28 @@
  * elsewhere in the round (`assembleAgentSession`, the adapter, `createLaneWorktree`, …) still
  * propagates immediately rather than being silently relabelled as the agent having a bad day.
  *
+ * **A SECOND throw escaped the identical feedback machinery, found live twice over (M17 P21, Q348 —
+ * a real live-run defect, not a critic round).** `runTranslatorProof` itself (`proof.ts`) can THROW
+ * instead of returning a real `{ok: false}` — its own doc comment documents exactly two such cases,
+ * `RUN-158` (the reported probe `path` already names a real file on disk) and `CFG-003`/`CFG-004`
+ * (`ProjectPaths.resolveWithin` refusing a reported path that escapes the project or falls under a
+ * denied prefix) — and that call sat OUTSIDE every nested try/catch the round loop had, so either
+ * throw killed the whole bounded, multi-round session on round 1, with zero chance to self-correct,
+ * for the identical character of mistake the `RUN-160` fix above already made cheap elsewhere in the
+ * same round. Reproduced live, independently, by a test-architect session that watched its own probe
+ * run correctly, then reported the SAME already-existing path it had just used to check that failure
+ * live as its final `probe.path` (`Q348`'s own fixture2 finding; the brief itself was separately
+ * fixed, M17 P21 live-run fixes 6/7, to stop steering a model toward this exact mistake — this piece
+ * is the disclosed code-level follow-up those fixes left open). Fixed the identical way: a new,
+ * narrowly-scoped `try` around the `runTranslatorProof` call alone, matching on exactly `RUN-158`/
+ * `CFG-003`/`CFG-004` — the real throw contract `proof.ts`'s own doc comment commits to, never
+ * "anything thrown inside this call" — feeding the real error's own message into the next round's
+ * prompt (a new `RoundFeedback` kind, `'proof-threw'`, bounded by the identical `round === maxRounds`
+ * check every other retry-worthy failure already uses). Safe to retry for the identical reason
+ * `RUN-160`'s own fix already is, never `RUN-161`'s: every one of these three codes names an
+ * absolute, never-relaxing structural rule (a reported path must stay inside the project and must not
+ * already exist), not a security boundary a round-by-round oracle could probe weaker.
+ *
  * @see specs/13 F-TEST-11
  * @see specs/22 M17 P6 (`proof.ts`, `adopt.ts` — the staged-proposal lifecycle this plugs into)
  * @see specs/22 M17 P7
@@ -236,7 +258,12 @@ import { buildRunEngineContext } from '../../run/context.ts';
 import { DETECTED_LAYER } from './detect.ts';
 import { writeStagedProposal, type StagedProposalRecord } from './adopt.ts';
 import { createSystemTempPath } from './system-temp.ts';
-import { runTranslatorProof, type InjectedProbe, type ProofCheckNumber } from './proof.ts';
+import {
+  runTranslatorProof,
+  type InjectedProbe,
+  type ProofCheckNumber,
+  type TranslatorProofResult,
+} from './proof.ts';
 
 const TEST_ARCHITECT_AGENT_ID = 'test-architect';
 
@@ -577,6 +604,21 @@ export type AdoptTestsAgentResult =
       readonly runId: string;
     }
   | {
+      readonly outcome: 'exhausted';
+      readonly layer: string;
+      readonly rounds: number;
+      /** `runTranslatorProof` itself kept THROWING instead of returning a real `{ok: false}` (M17
+       * P21, a second live-run fix, Q348) — `proof.ts`'s own `RUN-158` (the reported probe path
+       * already names a real file) or `ProjectPaths.resolveWithin`'s own `CFG-003`/`CFG-004` (the
+       * reported probe path, or a structured `command.output.path`, escapes the project or falls
+       * under a denied prefix), fed back as real feedback each round the identical way a failing
+       * proof's own named check, or an unusable structured response, already is. See
+       * `RoundFeedback`'s own doc comment for the full reasoning. */
+      readonly cause: 'proof-threw';
+      readonly reason: string;
+      readonly runId: string;
+    }
+  | {
       readonly outcome: 'no-test-setup';
       readonly layer: string;
       readonly adrPath: string;
@@ -595,14 +637,32 @@ export type AdoptTestsAgentResult =
  * was wrong, then let the agent try again" idiom applies: the agent produced *something*, just not
  * the right shape, and the validation detail is directly actionable. Deliberately excludes a
  * `vetProposedTestCommand`/`RUN-161` refusal — see `runAdoptTestsAgent`'s own round loop doc comment
- * for why that one is never turned into feedback at all. */
+ * for why that one is never turned into feedback at all.
+ *
+ * `'proof-threw'` is new (M17 P21, a SECOND live-run fix, Q348): `runTranslatorProof` itself
+ * (`proof.ts`) can THROW instead of returning `{ok: false}` — its own doc comment documents exactly
+ * two such cases, both traceable to a model-reported path: `RUN-158` (the probe's own `path` already
+ * names a real file — `writeNewFileAtomic` refuses to overwrite it) and `CFG-003`/`CFG-004`
+ * (`ProjectPaths.resolveWithin` refusing a `probe.path`, or a structured `command.output.path`, that
+ * escapes the lane root or falls under a denied prefix). Found live, twice, burning an entire
+ * multi-round session for a mistake a cheap, same-session retry could fix instead — the IDENTICAL
+ * character of defect `'invalid-response'` above already closed for a malformed structured response,
+ * just one call later in the round, not yet closed for this one. Safe to retry with feedback for the
+ * identical reason `assertTranslatorPathWithinClaim`'s own doc comment already gives for `RUN-160`:
+ * every one of these three codes names an absolute, unconditional, never-relaxing structural rule (a
+ * reported path must stay inside the project and must not already exist), never a hidden security
+ * boundary the way `RUN-161`'s own command allowlist is — there, the ALLOWED SET itself is what a
+ * round-by-round oracle could probe out; here, telling a confused-but-cooperative agent "this exact
+ * path is unusable, choose another" cannot weaken a rule that never relaxes no matter how many rounds
+ * run. */
 type RoundFeedback =
   | {
       readonly kind: 'proof-failed';
       readonly failedCheck: ProofCheckNumber;
       readonly reason: string;
     }
-  | { readonly kind: 'invalid-response'; readonly reason: string };
+  | { readonly kind: 'invalid-response'; readonly reason: string }
+  | { readonly kind: 'proof-threw'; readonly reason: string };
 
 /** One round's own task text: the real, shipped brief (`briefs/adopt-tests.md`, read off the
  * project's own materialized copy, `resolveContentReference`) plus, from round 2 on, the PREVIOUS
@@ -621,7 +681,9 @@ async function buildRoundTaskText(
       ? ''
       : feedback.kind === 'proof-failed'
         ? `\n\nThe previous round's translator proof failed check ${String(feedback.failedCheck)}: ${feedback.reason}\nRevise the actual cause this names, then report again.`
-        : `\n\nThe previous round's structured response was not usable: ${feedback.reason}\nReport a response that matches the required JSON shape exactly (a real "command" and "probe", or "noTestsFound" with a proposed command and an ADR summary), then try again.`;
+        : feedback.kind === 'invalid-response'
+          ? `\n\nThe previous round's structured response was not usable: ${feedback.reason}\nReport a response that matches the required JSON shape exactly (a real "command" and "probe", or "noTestsFound" with a proposed command and an ADR summary), then try again.`
+          : `\n\nThe previous round's translator proof could not even run: ${feedback.reason}\nReport a probe path (and, if a structured output file path is used, that path too) that is a plain, project-relative path which does NOT already exist and does not escape or fall under a directory FORGE reserves -- choose a genuinely new one, then try again.`;
   return `${kickoff}${feedbackText}\n\n${brief}`;
 }
 
@@ -882,7 +944,11 @@ function shouldRetainLane(config: ForgeConfig, roundOutcome: 'passed' | 'failed'
  * one allowed destination prefix (`RUN-160`, `parseProposalResponse`/`assertTranslatorPathWithinClaim`)
  * is caught INSIDE the round loop and retried with feedback instead (M17 P21) -- it is never thrown
  * out of this function on a round before the last, and on the last round it becomes a typed
- * `'exhausted'` result (`cause: 'invalid-response'`), never an uncaught throw.
+ * `'exhausted'` result (`cause: 'invalid-response'`), never an uncaught throw. Likewise, `proof.ts`'s
+ * own `runTranslatorProof` THROWING (`RUN-158`, or `CFG-003`/`CFG-004` for a reported path that
+ * escapes the project or falls under a denied prefix) is caught INSIDE the round loop and retried
+ * with feedback the identical way (M17 P21, a second live-run fix, Q348) -- on the last round it
+ * becomes a typed `'exhausted'` result (`cause: 'proof-threw'`), never an uncaught throw either.
  */
 export async function runAdoptTestsAgent(
   deps: AdoptTestsAgentDeps,
@@ -1056,16 +1122,47 @@ export async function runAdoptTestsAgent(
       // the full reasoning).
       await vetProposedTestCommand(command, lane.path);
 
-      const proof = await runTranslatorProof({
-        command,
-        cwd: lane.path,
-        paths: lanePaths,
-        createTempPath,
-        probe,
-        ...(translatorContent === undefined ? {} : { translatorContent }),
-        runnerVersion: parsed.runnerVersion,
-        now: () => clock.now(),
-      });
+      // `runTranslatorProof` itself THROWING, rather than returning a real `{ok: false}`, is the ONE
+      // other retry-worthy failure class this round can hit (M17 P21, a second live-run fix, Q348 --
+      // see `RoundFeedback`'s own doc comment for the full reasoning). Scoped to this one nested try,
+      // exactly like the `parseProposalResponse`/`assertTranslatorPathWithinClaim` try above, so the
+      // `catch` cannot also swallow a later, genuinely different failure. `proof.ts`'s own doc
+      // comment on `runTranslatorProof` is the real throw contract checked here -- `RUN-158`, or
+      // whatever `ProjectPaths.resolveWithin` raises (`CFG-003`/`CFG-004`) for a path escape -- never
+      // "anything thrown inside this call," so a future caller that teaches `runTranslatorProof` a
+      // new, different throw cannot silently start getting "free" retries it was never designed for.
+      let proof: TranslatorProofResult;
+      try {
+        proof = await runTranslatorProof({
+          command,
+          cwd: lane.path,
+          paths: lanePaths,
+          createTempPath,
+          probe,
+          ...(translatorContent === undefined ? {} : { translatorContent }),
+          runnerVersion: parsed.runnerVersion,
+          now: () => clock.now(),
+        });
+      } catch (error) {
+        if (
+          !isForgeError(error) ||
+          (error.code !== 'RUN-158' && error.code !== 'CFG-003' && error.code !== 'CFG-004')
+        ) {
+          throw error;
+        }
+        if (round === maxRounds) {
+          return {
+            outcome: 'exhausted',
+            layer,
+            rounds: round,
+            cause: 'proof-threw',
+            reason: error.message,
+            runId,
+          };
+        }
+        feedback = { kind: 'proof-threw', reason: error.message };
+        continue;
+      }
 
       if (proof.ok) {
         roundOutcome = 'passed';
