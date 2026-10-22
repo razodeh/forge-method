@@ -28,7 +28,13 @@
  *    lane's or the integration branch's own content — untrusted, `20` §20.5 point 3), so
  *    `restrictGrantForTaint` strips exec and network from the grant regardless of the agent's own
  *    declaration, keeping only read/write — a session that cannot run `git commit` (or anything else)
- *    through its own granted tools at all, only edit files.
+ *    through its own granted tools at all, only edit files. The `startSession` call also sets
+ *    `vetFileAccess: createLiveFileAccessGate(description.worktreePath)` (`SPEC-QUESTIONS.md` Q347):
+ *    a gauntlet critic found this was the one real `startSession` caller in the codebase missing it,
+ *    on a session that is `taint: 'external'` by construction and genuinely granted bare `Write`/
+ *    `Edit` — the exact bare-shadowed shape the gate exists to close, previously left open on the one
+ *    path specifically built to process another lane's own untrusted content. See `runResolverSession`'s
+ *    own doc comment for the full reasoning.
  * 3. **Verify after the session ends** (`verifyResolution`), before ever trusting its answer: HEAD in the
  *    lane worktree did not move (`MERGE-RESOLVER-TREE-MOVED` — belt-and-braces against a platform whose
  *    own tool-grant enforcement is not airtight, or a future capability this grant does not yet cover),
@@ -89,6 +95,7 @@ import { VcsError } from '@forge/vcs';
 
 import { deriveStoryId, type StepNode } from '../plan/index.ts';
 import { assembleAgentSession, promptRecordDirName } from './assemble.ts';
+import { createLiveFileAccessGate } from './confined-command.ts';
 import { writeResultRecord } from './result-record.ts';
 import { sanitizeUsageNumber } from './steps.ts';
 import type {
@@ -483,6 +490,21 @@ async function runResolverSession(
         [FORGE_AGENT_ID]: agent.id,
       },
       abortSignal: abortController.signal,
+      // The real, per-call gate on this session's own live `Read`/`Edit`/`Write` tool use
+      // (`SPEC-QUESTIONS.md` Q347) -- a gauntlet critic found this call site was the one real
+      // `startSession` caller in the codebase that built its own `SessionRequest` object literal
+      // without it, on a session that is `taint: 'external'` by construction and genuinely granted
+      // bare `Write`/`Edit` (`callerConfinesWrites: true` above forces `mayWrite = true` in
+      // `assemble.ts`) -- the exact bare-shadowed shape this gate exists to close, left open on the
+      // one path specifically built to process another lane's (or integration's) own untrusted
+      // content. `verifyResolution` below is belt-and-braces against a platform whose own tool-grant
+      // enforcement is not airtight, but it only inspects the lane worktree's OWN git state --
+      // structurally blind to a write at an absolute path outside the worktree entirely, which is
+      // exactly what this gate (not `verifyResolution`) closes. Confined to this SAME worktree
+      // (`description.worktreePath`, identical to `cwd` just above), built by the SAME shared
+      // `createLiveFileAccessGate` every other real `kind: agent` step uses, not a second,
+      // independently-maintained gate for this one caller.
+      vetFileAccess: createLiveFileAccessGate(description.worktreePath),
     });
     await ctx.telemetry.emit({
       type: 'SessionEvent',

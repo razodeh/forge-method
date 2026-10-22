@@ -276,6 +276,33 @@ describe('createAgentConflictResolver -- (b)+(c) session and verification', () =
     expect(seen?.systemPrompt.text).not.toContain('FORGE_UNTRUSTED_CONTENT');
   });
 
+  it("wires SessionRequest.vetFileAccess to the SAME worktree cwd (SPEC-QUESTIONS.md Q347) -- a gauntlet critic found this was the one real startSession caller missing it entirely, on a session that is taint: 'external' by construction and genuinely granted bare Write/Edit (the exact bare-shadowed shape the gate exists to close)", async () => {
+    const worktreePath = await conflictWorktree('vet-file-access');
+    const outsideDir = await mkdtemp(path.join(tmpdir(), 'forge-conflict-resolver-outside-'));
+    const adapter = new FakePlatformAdapter();
+    let seen: SessionRequest | undefined;
+    adapter.script((request) => {
+      if (request.stepId.endsWith(':resolve-conflict')) seen = request;
+      return false;
+    }, {});
+    adapter.script((request) => request.stepId.endsWith(':resolve-conflict'), {
+      writeFiles: [{ relativePath: 'same.txt', content: 'merged\n' }],
+    });
+    const ctx = await contextWithStep(adapter);
+    await createAgentConflictResolver(ctx)(describeConflict(worktreePath, 'wf:step'));
+
+    expect(seen?.vetFileAccess).toBeDefined();
+    // A real in-worktree target is allowed...
+    await expect(
+      seen?.vetFileAccess?.('Write', path.join(worktreePath, 'same.txt')),
+    ).resolves.toEqual({ allowed: true });
+    // ...and a genuinely out-of-worktree absolute target -- the exact shape Q347 found live -- is
+    // genuinely denied, proving this is the real, live gate (`createLiveFileAccessGate`), not a stub.
+    await expect(
+      seen?.vetFileAccess?.('Write', path.join(outsideDir, 'escaped.txt')),
+    ).resolves.toMatchObject({ allowed: false });
+  });
+
   it('markers left in the file: unresolved, not thrown', async () => {
     const worktreePath = await conflictWorktree('markers-left');
     const adapter = new FakePlatformAdapter();
