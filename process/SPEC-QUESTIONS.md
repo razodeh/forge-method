@@ -30659,9 +30659,35 @@ STAYING inside its own lane (bounded, since lane isolation would still confine t
 reason (bare Read/Edit/Write shadowing): a live session can write to the REAL HOST FILESYSTEM,
 outside any lane at all, with nothing standing in the way.
 
-**Gauntlet:** see `GAUNTLET-LOG.md` once the dedicated follow-up piece lands (not yet built as of
-this entry — this records the disclosure, per the owner's own "every disclosed defect fixed first"
-standing instruction, same as Q314/Q317/Q340/Q341 before their own follow-up pieces landed).
+**FIXED — a dedicated, 3-round gauntlet matching P7's own original rigor (finding 1 above).** A
+`PreToolUse` hook (`SessionRequest.vetFileAccess`, `createLiveFileAccessGate`,
+`packages/engine/src/dispatch/confined-command.ts`; wiring in
+`packages/adapter-claude-code/src/sdk/build-options.ts`) now confines Read/Edit/Write to each
+session's own lane — validated, before any code was written, by a real, live, standalone
+round-trip against the real API, not just by reading the SDK's own type definitions. Threaded
+through every real `kind: agent` session construction site, including the default agent-based
+conflict resolver (`conflict-resolver.ts`'s `runResolverSession`, a round-1-critic-found gap: the
+one path specifically designed to process `taint: 'external'` untrusted content, where both of
+`verifyResolution`'s own existing belt-and-braces checks are structurally blind to a file-access
+escape). Took three full rounds to close completely — a first symlink-escape bypass (2+ missing
+directory levels skipping resolution entirely), then a second, deeper variant (a dangling symlink
+climbed past without being resolved, confirmed as a real, physical filesystem escape, especially
+severe in the just-hardened conflict-resolver context) — before round 3 replaced the whole
+resolution strategy with a complete, correctly-generalized forward walk (`resolveRealpathTolerant`)
+that resolves every symlink it encounters regardless of whether that symlink's own target
+currently exists. A dedicated final critic round, tasked specifically with finding a fifth gap,
+tried hard (symlink cycles, composed multi-direction escapes, the real OS's own empirically-measured
+depth ceiling) and found none. Also added `AdapterCapabilities.fileAccessGating` (mirroring
+`execCommandGating`), both critics' independent recommendation, wired into `adopt-agent.ts`'s
+existing `RUN-162` refusal. Full narrative: `GAUNTLET-LOG.md`'s own `## M17 P21` entry for this
+fix.
+
+**Still disclosed, not fixed by this piece (deliberately out of scope, named in finding 1
+above)**: `WebFetch`/`WebSearch` also go bare under `network: 'full'` — a separate instance of the
+same underlying SDK behavior, found while building this fix, correctly left for its own future
+piece rather than scope-creeping this already-large one.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21` (the Q347 fix entry).
 
 ## Q348
 
