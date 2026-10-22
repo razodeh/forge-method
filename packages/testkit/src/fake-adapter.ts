@@ -163,6 +163,12 @@ const DEFAULT_CAPABILITIES: AdapterCapabilities = {
   // needs to exercise the "no real gate" refusal path overrides this via the existing
   // `capabilityOverrides` constructor argument, the identical mechanism every other flag here uses.
   execCommandGating: true,
+  // Genuinely backed up, not a degraded default (`SPEC-QUESTIONS.md` Q347, fix-round critics): the
+  // identical reasoning as `execCommandGating` immediately above, now for `script.writeFiles` --
+  // `runScriptPhases`'s own write-file handling really does consult `ctx.vetFileAccess` (this file's
+  // own `ScriptPhaseContext.vetFileAccess` doc comment) when a caller sets one, before performing the
+  // write. Overridden the identical way via `capabilityOverrides` when a test needs the refusal path.
+  fileAccessGating: true,
 };
 
 const DEFAULT_SCRIPT: FakeSessionScript = {
@@ -214,6 +220,15 @@ interface ScriptPhaseContext {
    * (the real property this type exists to prove lives in Claude Code's own SDK, `canUseTool`, which
    * this fake does not run). `undefined` when the request carries none. */
   readonly vetExecCommand: SessionRequest['vetExecCommand'];
+  /** `SessionRequest.vetFileAccess` (`SPEC-QUESTIONS.md` Q347), threaded through for the identical
+   * reason as `vetExecCommand` immediately above, now for a scripted `writeFiles` entry — consulted
+   * (with tool name `'Write'`) before this fake performs the write at all, not only
+   * `resolveInsideCwd`'s own lexical containment check, which a scripted `relativePath` can never
+   * fail by construction (`resolveInsideCwd`'s own doc comment). Without this, no fake-adapter-backed
+   * test could ever exercise a real caller's own file-access gate (the real mechanism lives in Claude
+   * Code's own SDK, `Options.hooks.PreToolUse`, which this fake does not run). `undefined` when the
+   * request carries none. */
+  readonly vetFileAccess: SessionRequest['vetFileAccess'];
 }
 
 interface ScriptPhaseOutcome {
@@ -671,6 +686,22 @@ export class FakePlatformAdapter implements PlatformAdapter {
         };
         continue;
       }
+      // `ctx.vetFileAccess` (`SessionRequest.vetFileAccess`, `SPEC-QUESTIONS.md` Q347): consulted IN
+      // ADDITION to `resolveInsideCwd`'s own lexical containment check above, mirroring the identical
+      // property `ctx.vetExecCommand` already adds on top of `isExecAllowed` below -- the one way a
+      // fake-adapter-backed test can exercise a caller's own gate at all (this type's own doc comment
+      // on `ScriptPhaseContext.vetFileAccess` has the fuller reasoning).
+      const fileAccessVetted =
+        ctx.vetFileAccess === undefined ? true : (await ctx.vetFileAccess('Write', target)).allowed;
+      if (!fileAccessVetted) {
+        yield {
+          type: 'tool.result',
+          id,
+          ok: false,
+          summary: `refused: "${file.relativePath}" was denied by this session's own vetFileAccess gate`,
+        };
+        continue;
+      }
       await mkdir(path.dirname(target), { recursive: true });
       await writeFile(target, file.content, 'utf8');
       changedFiles.push(file.relativePath);
@@ -743,6 +774,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
       abortSignal: request.abortSignal,
       limits: request.limits,
       vetExecCommand: request.vetExecCommand,
+      vetFileAccess: request.vetFileAccess,
     });
 
     if (outcome.endedEarly !== undefined) {
@@ -858,10 +890,12 @@ export class FakePlatformAdapter implements PlatformAdapter {
       tools: rememberedContext.tools,
       abortSignal: request.abortSignal,
       limits: request.limits,
-      // `RememberedSessionContext` does not carry `vetExecCommand` (this file's own doc comment on
-      // that type) -- a resumed session has no caller-supplied gate to re-apply here. No real caller
-      // resumes an adopt-tests session today, so this is not a live gap this round needs to close.
+      // `RememberedSessionContext` does not carry `vetExecCommand`/`vetFileAccess` (this file's own
+      // doc comment on that type) -- a resumed session has no caller-supplied gate to re-apply here.
+      // No real caller resumes an adopt-tests session today, so this is not a live gap this round
+      // needs to close.
       vetExecCommand: undefined,
+      vetFileAccess: undefined,
     });
     const finalText = leadingTextParts.join('') + outcome.finalText;
 

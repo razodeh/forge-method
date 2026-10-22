@@ -696,6 +696,7 @@ describe('runAgentStep — UsageRecorded carries the real cacheReadTokens/cacheC
     toolProxy: false,
     turnLimitEnforcement: false,
     execCommandGating: false,
+    fileAccessGating: false,
   };
 
   function cacheTokenStubAdapter(

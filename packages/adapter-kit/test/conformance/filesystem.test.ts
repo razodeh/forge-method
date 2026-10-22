@@ -80,6 +80,7 @@ const CAPABILITIES: AdapterCapabilities = {
   toolProxy: false,
   turnLimitEnforcement: true,
   execCommandGating: true,
+  fileAccessGating: true,
 };
 
 describe('checkC3ToolRestriction — refusal signalled only via result.ok', () => {

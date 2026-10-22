@@ -81,6 +81,12 @@ export function staticCapabilities(
     // transport has no equivalent hook at all, `build-args.ts`'s own doc comment), never a
     // remote-environment unknown.
     execCommandGating: transport === 'sdk',
+    // `SPEC-QUESTIONS.md` Q347, fix-round critics: the identical transport asymmetry as
+    // `execCommandGating` immediately above, for the identical reason -- `build-options.ts`'s own
+    // `buildFileAccessHook` only ever reaches the sdk transport's real `Options.hooks.PreToolUse`; the
+    // cli transport has no documented hooks equivalent either (that function's own doc comment).
+    // Fixed by this adapter's own construction, never a remote-environment unknown.
+    fileAccessGating: transport === 'sdk',
   };
 }
 

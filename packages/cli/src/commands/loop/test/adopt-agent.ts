@@ -935,7 +935,8 @@ function shouldRetainLane(config: ForgeConfig, roundOutcome: 'passed' | 'failed'
  * doc comment for the full design.
  *
  * @throws {ForgeError} `RUN-056` when `test-architect` has no real materialized agent definition;
- * `RUN-162` when the adapter has no real per-call exec gate; `RUN-161` when the round's own FINAL
+ * `RUN-162` when the adapter has no real per-call exec gate OR no real per-call file-access gate;
+ * `RUN-161` when the round's own FINAL
  * proposed command is refused by the vet -- deliberately never retried, see the round loop's own
  * `catch` for why; whatever `assembleAgentSession`/`createLaneWorktree` themselves refuse with for a
  * config or VCS problem this project has (an unmapped model tier, a grant above the agent's own
@@ -956,14 +957,17 @@ export async function runAdoptTestsAgent(
   options: AdoptTestsAgentOptions = {},
 ): Promise<AdoptTestsAgentResult> {
   // Refused upfront, before a lane, a session, or even the agent definition is ever touched
-  // (`specs/22` M17 P7, critic round 5): a transport with no real per-call exec gate
-  // (`AdapterCapabilities.execCommandGating`, its own doc comment has the full reasoning) has no real
-  // safety guarantee for the live investigation phase this command's own exec grant exists to run at
+  // (`specs/22` M17 P7, critic round 5; extended for `fileAccessGating` by `SPEC-QUESTIONS.md` Q347's
+  // own fix-round critics): a transport with no real per-call exec gate
+  // (`AdapterCapabilities.execCommandGating`, its own doc comment has the full reasoning) OR no real
+  // per-call file-access gate (`AdapterCapabilities.fileAccessGating`, the identical reasoning, for
+  // this round's own live `Read`/`Edit`/`Write` tool use via `vetFileAccess` below) has no real safety
+  // guarantee for the live investigation phase this command's own exec AND write grant exist to run at
   // all -- a hard refusal here, never a warning a human could miss, is the DELIBERATE choice: see
-  // `createLiveExecGate`'s own doc comment for why this gate matters at all, and this function's top
-  // doc comment for the KEPT-lane-isolation DECISION this refusal does not change.
+  // `createLiveExecGate`'s own doc comment for why the exec half of this gate matters at all, and this
+  // function's top doc comment for the KEPT-lane-isolation DECISION this refusal does not change.
   const adapterCapabilities = await deps.adapter.capabilities();
-  if (!adapterCapabilities.execCommandGating) {
+  if (!adapterCapabilities.execCommandGating || !adapterCapabilities.fileAccessGating) {
     throw new ForgeError('RUN-162', { adapterId: deps.adapter.id });
   }
 

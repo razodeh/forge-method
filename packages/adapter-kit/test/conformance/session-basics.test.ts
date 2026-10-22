@@ -51,6 +51,7 @@ const CAPABILITIES: AdapterCapabilities = {
   toolProxy: false,
   turnLimitEnforcement: true,
   execCommandGating: true,
+  fileAccessGating: true,
 };
 
 function minimalAdapter(overrides: Partial<PlatformAdapter>): PlatformAdapter {

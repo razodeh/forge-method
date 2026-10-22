@@ -1387,6 +1387,40 @@ describe('runAdoptTestsAgent -- refuses upfront on a transport with no real per-
 
     await rm(dir, { recursive: true, force: true });
   });
+
+  it("throws RUN-162 the identical way for a transport with a real exec gate but no real per-call FILE-ACCESS gate (SPEC-QUESTIONS.md Q347, fix-round critics): execCommandGating alone is not enough any more -- this round's own live Read/Edit/Write tool use needs its own real gate too", async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    // `execCommandGating: true` (the default), `fileAccessGating: false` only -- proves the new check
+    // genuinely requires BOTH flags, not merely one re-checked twice under an unchanged OR that always
+    // happened to already be true for this half.
+    const adapter = new FakePlatformAdapter({ fileAccessGating: false });
+    let sessionStarted = false;
+    const spying: PlatformAdapter = {
+      id: adapter.id,
+      displayName: adapter.displayName,
+      capabilities: () => adapter.capabilities(),
+      preflight: () => adapter.preflight(),
+      listModels: () => adapter.listModels(),
+      startSession: (req: SessionRequest) => {
+        sessionStarted = true;
+        return adapter.startSession(req);
+      },
+      resumeSession: (sessionId, req) => adapter.resumeSession(sessionId, req),
+    };
+
+    await expect(
+      runAdoptTestsAgent(deps(project, spying), {
+        layer: 'unit',
+        clock: fixedClock(),
+        createTempPath: makeCreateTempPath(dir),
+      }),
+    ).rejects.toMatchObject({ code: 'RUN-162' });
+
+    expect(sessionStarted).toBe(false);
+
+    await rm(dir, { recursive: true, force: true });
+  });
 });
 
 describe('runAdoptTestsAgent -- a genuine infrastructure failure still propagates immediately, never swallowed as "the agent had a bad day" (specs/22 M17 P7) (M17 P21 live-run fix)', () => {

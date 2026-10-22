@@ -137,5 +137,10 @@ export function genericCapabilities(config: AdapterYamlConfig): AdapterCapabilit
     // tool calls the way Claude Code's SDK `canUseTool` does), so `SessionRequest.vetExecCommand`, if a
     // caller ever set one, could not be honoured here regardless. Honestly `false`.
     execCommandGating: false,
+    // `SPEC-QUESTIONS.md` Q347, fix-round critics: the identical reasoning as `execCommandGating`
+    // immediately above -- this adapter has no per-tool-call permission concept at all, so
+    // `SessionRequest.vetFileAccess`, if a caller ever set one, could not be honoured here either.
+    // Honestly `false`.
+    fileAccessGating: false,
   };
 }

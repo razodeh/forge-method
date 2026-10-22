@@ -62,6 +62,7 @@ const CAPABILITIES: AdapterCapabilities = {
   toolProxy: false,
   turnLimitEnforcement: true,
   execCommandGating: true,
+  fileAccessGating: true,
 };
 
 function emptyResult(overrides: Record<string, unknown> = {}) {

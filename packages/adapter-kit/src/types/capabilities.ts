@@ -51,4 +51,20 @@ export interface AdapterCapabilities {
    * behind it is not a guarantee, and a silent, best-effort fallback could be missed the way a mere
    * warning can be. */
   readonly execCommandGating: boolean;
+  /** Whether a real, per-call gate on live, in-turn `Read`/`Edit`/`Write` tool use is actually active
+   * for this adapter in its CURRENT configuration — `SessionRequest.vetFileAccess`, when a caller sets
+   * one, is genuinely consulted before a live file-tool call executes, never merely accepted and
+   * silently ignored. The file-access sibling of `execCommandGating` immediately above, added for the
+   * identical reason (`SPEC-QUESTIONS.md` Q347, two independent gauntlet critics reviewing the fix for
+   * it): SDK transport is not merely a config choice for `@forge/adapter-claude-code` — it is the
+   * automatic fallback whenever the real, installed `@anthropic-ai/claude-agent-sdk` module fails to
+   * import (`adapter.ts`'s own transport-selection logic). If that fallback ever triggers, an ordinary
+   * `kind: agent` step's own `SessionRequest.vetFileAccess` (`createLiveFileAccessGate`, wired into
+   * every such step by `steps.ts`/`dispatch-agent-step.ts`/`conflict-resolver.ts`) would be silently
+   * accepted and never actually consulted — the exact "a safety guarantee with no real gate behind it
+   * is not a guarantee" failure `execCommandGating`'s own doc comment already names, now possible on
+   * the Read/Edit/Write side too. `forge test adopt --agent`'s own `RUN-162` upfront refusal (this
+   * capability's own doc comment names where it is consumed) now requires this flag `true` as well,
+   * not only `execCommandGating`. */
+  readonly fileAccessGating: boolean;
 }

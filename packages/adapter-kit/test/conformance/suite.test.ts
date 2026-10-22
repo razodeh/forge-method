@@ -255,6 +255,7 @@ class StubAdapter implements PlatformAdapter {
       toolProxy: false,
       turnLimitEnforcement: true,
       execCommandGating: true,
+      fileAccessGating: true,
     });
   }
 

@@ -34,6 +34,7 @@ function capabilities(overrides: Partial<AdapterCapabilities> = {}): AdapterCapa
     toolProxy: false,
     turnLimitEnforcement: true,
     execCommandGating: true,
+    fileAccessGating: true,
     ...overrides,
   };
 }
