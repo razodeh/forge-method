@@ -30835,3 +30835,43 @@ today"; the very next paragraph, added by the SAME commit, named `adopt-agent.ts
 caller) — fixed in the same pass.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
+
+## Q350
+
+Found live, while building `Q347`'s own dedicated fix (`PreToolUse`-hook lane confinement for
+`Read`/`Edit`/`Write`'s bare-shadowing of `canUseTool`) — a second, separate instance of the exact
+same underlying SDK behavior, deliberately left out of that piece's own scope rather than
+scope-creeping an already-large, security-critical fix.
+
+`mapToolGrantToAllowedTools` (`packages/adapter-claude-code/src/tool-grant.ts`) pushes bare
+`'WebFetch'`/`'WebSearch'` strings — no domain scoping, no path confinement, nothing — whenever a
+grant's own `network` field is `'full'`. Per the identical SDK behavior `Q347` already confirmed
+(`CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`), any bare `allowedTools` entry shadows `canUseTool` entirely —
+so a session granted `network: 'full'` would have genuinely unconfined `WebFetch`/`WebSearch`
+access, with FORGE's own callback never consulted, regardless of what domain or URL the model
+requests.
+
+**Not currently live-exploitable, confirmed by checking every real caller**: `network: 'full'`
+appears in exactly two places in the whole codebase outside this one mapping function's own doc
+comment — `AdapterCapabilities.network: 'full'` (`adapter-claude-code/src/capabilities.ts`, a
+capability DECLARATION describing what the adapter CAN support, never itself a per-session grant)
+and `safety-scan.ts`'s own natural-language risk-pattern table (used to flag a THIRD-PARTY module's
+own prose claiming "full network access" during install-time review, not to grant anything to a
+FORGE-authored role). No shipped agent role, brief, or workflow step anywhere under
+`packages/templates/` or `specs/` actually requests `network: 'full'` as its own grant today —
+confirmed by grep, not assumed. This is the identical shape `Q347`'s own fix found for
+`NotebookEdit`/`ToolGrant.extra` (a real, latent landmine with no current production trigger): safe
+today only because nothing exercises it, not because the mechanism is actually confined.
+
+**DECISION** — disclosed, not fixed. Given it mirrors `Q347`'s own now-fixed mechanism almost
+exactly, the real fix is likely small once undertaken (extend `vetFileAccess`'s own `PreToolUse`
+hook — or a sibling hook for the same event — to also validate `WebFetch`/`WebSearch`'s own real
+`tool_input` shape, presumably a `url` field, against whatever domain-scoping the grant actually
+intended, the same way `safeWebFetchDomainRule` already tries to do at the `allowedTools`-string
+level for the narrower `'allowlist'` case). Left for a future piece rather than built now, given
+`Q347`'s own fix already took three full rounds and this one has no current production trigger to
+make it urgent — but it should be fixed before any real role is ever given `network: 'full'`, not
+discovered the hard way the way `Q347`'s own Read/Edit/Write gap was.
+
+**Gauntlet:** see `GAUNTLET-LOG.md` once a dedicated follow-up piece lands (not yet built as of this
+entry — same precedent as `Q314`/`Q317`/`Q340`/`Q341` before their own follow-up pieces landed).
