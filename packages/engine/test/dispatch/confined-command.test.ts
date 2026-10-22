@@ -1026,4 +1026,87 @@ describe("createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analo
     const target = path.join(root, 'sub', 'escape', 'newdir', 'deep', 'file.txt');
     await expect(gate('Write', target)).resolves.toMatchObject({ allowed: false });
   });
+
+  describe('a dangling symlink (round 3, both critics): the symlink itself exists, but ITS OWN target does not -- realpath(the symlink) throws ENOENT for this exactly the way it throws for "nothing here at all", so a check that only tries realpath and catches the failure cannot tell the two apart', () => {
+    it("denies the critic's own exact live repro: lane/escape.txt -> outsideRoot/newleaf.txt, outsideRoot exists, newleaf.txt does not -- the single most common Write shape there is (a brand-new file, no nesting)", async () => {
+      const root = await lane();
+      const outside = await lane();
+      await symlink(path.join(outside, 'newleaf.txt'), path.join(root, 'escape.txt'));
+      const gate = createLiveFileAccessGate(root);
+      const target = path.join(root, 'escape.txt');
+      const verdict = await gate('Write', target);
+      expect(verdict).toMatchObject({ allowed: false });
+      if (verdict.allowed) throw new Error('unreachable');
+      expect(verdict.reason).toContain('Write');
+      expect(verdict.reason).toContain(target);
+      // Physically confirm the gate's verdict matches the real SDK/write-tool's own behaviour: a
+      // plain fs write through the dangling symlink lands at the symlink's resolved target, fully
+      // outside the lane -- the exact escape the critic physically confirmed landed on disk.
+      await writeFile(target, 'escaped');
+      expect(await readFile(path.join(outside, 'newleaf.txt'), 'utf8')).toBe('escaped');
+    });
+
+    it('allows the identical dangling-symlink shape when the symlink target is IN-LANE instead: lane/escape.txt -> lane/newleaf.txt, newleaf.txt does not exist yet', async () => {
+      const root = await lane();
+      await symlink(path.join(root, 'newleaf.txt'), path.join(root, 'escape.txt'));
+      const gate = createLiveFileAccessGate(root);
+      const target = path.join(root, 'escape.txt');
+      await expect(gate('Write', target)).resolves.toEqual({ allowed: true });
+      await writeFile(target, 'hello');
+      expect(await readFile(path.join(root, 'newleaf.txt'), 'utf8')).toBe('hello');
+    });
+
+    it('denies a dangling symlink with MORE path components after it in the original target (the deepest combination of both rounds): lane/escape/sub/file.txt where escape -> outsideRoot/newdir and newdir does not exist yet', async () => {
+      const root = await lane();
+      const outside = await lane();
+      await symlink(path.join(outside, 'newdir'), path.join(root, 'escape'));
+      const gate = createLiveFileAccessGate(root);
+      const target = path.join(root, 'escape', 'sub', 'file.txt');
+      const verdict = await gate('Write', target);
+      expect(verdict).toMatchObject({ allowed: false });
+      if (verdict.allowed) throw new Error('unreachable');
+      expect(verdict.reason).toContain('Write');
+      expect(verdict.reason).toContain(target);
+    });
+
+    it('allows the same deeper-nested dangling shape when the eventual target is in-lane: lane/escape/sub/file.txt where escape -> lane/newdir and newdir does not exist yet', async () => {
+      const root = await lane();
+      await symlink(path.join(root, 'newdir'), path.join(root, 'escape'));
+      const gate = createLiveFileAccessGate(root);
+      const target = path.join(root, 'escape', 'sub', 'file.txt');
+      await expect(gate('Write', target)).resolves.toEqual({ allowed: true });
+    });
+
+    it('a dangling symlink that resolves via a RELATIVE link target (not absolute) is still resolved against its own containing directory, not cwd', async () => {
+      const root = await lane();
+      const outside = await lane();
+      // A relative symlink target, exactly as `ln -s ../../whatever/newleaf.txt escape.txt` would
+      // create: must be resolved against the symlink's OWN directory (`root`), never `process.cwd()`.
+      const relativeTarget = path.join(path.relative(root, outside), 'newleaf.txt');
+      await symlink(relativeTarget, path.join(root, 'escape.txt'));
+      const gate = createLiveFileAccessGate(root);
+      const target = path.join(root, 'escape.txt');
+      await expect(gate('Write', target)).resolves.toMatchObject({ allowed: false });
+    });
+
+    it('denies a Read/Edit of a dangling symlink the identical way a Write is denied -- the verdict does not depend on which of the three tools is asking', async () => {
+      const root = await lane();
+      const outside = await lane();
+      await symlink(path.join(outside, 'newleaf.txt'), path.join(root, 'escape.txt'));
+      const gate = createLiveFileAccessGate(root);
+      const target = path.join(root, 'escape.txt');
+      await expect(gate('Read', target)).resolves.toMatchObject({ allowed: false });
+      await expect(gate('Edit', target)).resolves.toMatchObject({ allowed: false });
+    });
+
+    it('a symlink CHAIN that is dangling only at its final hop (escape -> mid -> outsideRoot/newleaf.txt, mid exists as a symlink, newleaf.txt does not) is still denied -- the recursive resolution keeps following hop after hop, not just one', async () => {
+      const root = await lane();
+      const outside = await lane();
+      await symlink(path.join(outside, 'newleaf.txt'), path.join(root, 'mid'));
+      await symlink(path.join(root, 'mid'), path.join(root, 'escape.txt'));
+      const gate = createLiveFileAccessGate(root);
+      const target = path.join(root, 'escape.txt');
+      await expect(gate('Write', target)).resolves.toMatchObject({ allowed: false });
+    });
+  });
 });

@@ -54,7 +54,7 @@
  * @see PLAN-M14.md P28
  */
 import { execFileSync } from 'node:child_process';
-import { realpath } from 'node:fs/promises';
+import { lstat, readlink, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ExecCommandVerdict, ToolGrant } from '@forge/adapter-kit';
@@ -1439,54 +1439,108 @@ function resolveFileAccessTarget(filePath: string, root: string): string {
   return path.isAbsolute(filePath) ? filePath : path.resolve(root, filePath);
 }
 
+/** The hop limit a symlink chain is allowed before this walk gives up and treats the rest of the
+ * chain as a literal, unresolved remainder — matching the limit real OS `realpath` implementations
+ * use (glibc/Linux's own `MAXSYMLINKS`), so a cycle or a pathological chain cannot hang this walk or
+ * recurse without bound. */
+const MAX_SYMLINK_HOPS = 40;
+
 /**
- * Resolves `target`'s real path as far as the real filesystem allows, for a target that may not exist
- * yet. If `target` itself exists, its own `realpath` is the answer (symlinks and all, fully resolved).
- * Otherwise this walks UP the ancestor chain — parent, grandparent, and so on — until it finds the
- * first ancestor that genuinely exists, `realpath`s THAT ancestor (resolving any symlink anywhere in
- * the existing prefix, including a symlink that is itself the escape vector), and rejoins the result
- * with the remaining, not-yet-existing suffix segments in their original order.
+ * Resolves `target`'s real path the way the real filesystem resolves it for a live file-tool call —
+ * including a target that does not exist yet, and including a target that passes THROUGH a symlink
+ * whose own eventual target does not exist yet either (a **dangling symlink**). A plain `realpath()`
+ * cannot do this: it throws `ENOENT` both for "nothing exists at this path at all" and for "something
+ * exists here, but it's a symlink whose own target does not resolve" — the two are indistinguishable
+ * to any check that only tries `realpath` and catches the failure.
  *
- * **Why a single `dirname` step is not enough.** This function's own first version (and, independently,
- * two gauntlet critics reviewing it) tried `realpath(target)`, then — on failure — `realpath(dirname(target))`
- * once, and gave up to the raw, un-resolved `target` if THAT also failed. That one-level fallback is
- * exactly wide enough for an ordinary fresh `Write` (the file does not exist, but its immediate parent
- * directory does) but silently returns the untouched, un-realpath'd path the moment the target is TWO OR
- * MORE directory levels below a point that does not exist yet — the ordinary shape of a `Write` that
- * creates several new nested directories at once. Both critics reproduced, independently, through the real
- * adapter/SDK (not merely a unit test): a lane with an in-lane symlink (`/lane/escape` -> `/outside`) and a
- * `Write` target two levels under it (`/lane/escape/newdir/deep/file.txt`) — the single-`dirname` fallback
- * throws on `/lane/escape/newdir/deep` (it doesn't exist either), falls through to the raw, un-realpath'd
- * target, and the caller's own `within(root, realTarget)` check then compares a path that is textually
- * `/lane/...` and is therefore wrongly judged in-lane — while the real write, performed by the real SDK
- * against the real filesystem, lands at `/outside/newdir/deep/file.txt`, fully outside the lane. Walking
- * all the way up (not merely one level) is what finds `/lane/escape` — the first ancestor that actually
- * exists — resolves ITS OWN symlink, and correctly rejoins `newdir/deep/file.txt` onto `/outside`.
+ * **The algorithm (a forward walk, not an ancestor climb).** Starting at the filesystem's own root,
+ * this walks `target`'s path components one at a time, left to right, maintaining a resolved-so-far
+ * absolute path, and at each step `lstat`s (never `realpath`s) the next candidate:
  *
- * Never throws: if no ancestor at all can be `realpath`'d (not even the filesystem root, which should be
- * impossible on a real filesystem), this falls back to the raw, un-resolved `target` — the identical
- * fail-open-only-in-an-impossible-situation behaviour this function's own predecessor already had, kept
- * here rather than invented fresh.
+ * - does not exist (`ENOENT`, or any other `lstat` failure): nothing from here to the end of the
+ *   original path can be resolved further — append the rest of the original components, literally,
+ *   to resolved-so-far, and stop. This is the correct final answer: a not-yet-existing path cannot
+ *   itself be a symlink, so there is nothing left to follow.
+ * - exists and is a symlink: `readlink` it and resolve its target — absolute as given, or, for a
+ *   relative target, resolved against the SYMLINK'S OWN containing directory (never `cwd`, which has
+ *   no bearing on what a relative symlink target means) — then recursively apply this same walk to
+ *   that resolved target and continue the OUTER walk from whatever it returns. This happens
+ *   regardless of whether the symlink's own target currently exists (the dangling case this function
+ *   exists to fix) and regardless of how many components of the original path still remain after this
+ *   symlink — both independently necessary: a dangling symlink can be the final component (nothing
+ *   left to append) or have several more components still to resolve underneath it (those components
+ *   get appended, literally, onto the dangling target's own resolved-so-far, by the SAME "does not
+ *   exist" branch above, on the next iteration).
+ * - exists and is not a symlink (a plain file or directory): append it as given and continue.
+ *
+ * **Why this replaces an ancestor-climb.** An earlier version of this function (and, independently,
+ * two gauntlet critics reviewing it) tried `realpath(target)`, then climbed upward via `dirname` until
+ * it found the first existing ancestor, `realpath`'d that ancestor, and rejoined the un-resolved
+ * suffix. Climbing from the TARGET upward only ever asks "does something exist here yet" — it has no
+ * way to notice that the existing ancestor it eventually finds and stops on is itself a symlink needing
+ * `readlink` resolution if ITS OWN target happens not to exist yet, which is exactly the dangling-symlink
+ * shape a third gauntlet critic found live: `lane/escape.txt` → `outsideRoot/newleaf.txt` where
+ * `outsideRoot` exists but `newleaf.txt` does not — `realpath(escape.txt)` and `realpath(dirname(...))`
+ * both throw `ENOENT`, the climb reaches `lane` (which does exist), stops there, and rejoins the raw,
+ * un-resolved `escape.txt` onto it — textually still in-lane, while the real SDK `Write` call that this
+ * gate exists to vet follows the symlink and lands fully outside the lane. Walking FORWARD and `lstat`ing
+ * every existing component (symlink or not) as it is reached, rather than only checking for absence,
+ * is what tells "nothing here" and "a symlink here, dangling or not" apart.
+ *
+ * Deliberately walks from the filesystem's own root rather than starting from the lane's own `root`
+ * argument: a `target.startsWith(root)` shortcut is a classic path-prefix footgun (`"/lane2/evil"`
+ * also starts with the string `"/lane"`), and the extra `lstat` calls walking through `root`'s own
+ * ordinary ancestor directories costs microseconds — there is no correctness reason to take the
+ * shortcut, and one real way for it to go wrong.
+ *
+ * Never throws: an `lstat` failure other than "does not exist" (e.g. a permission error) is treated
+ * identically to "does not exist" — append the rest literally and stop — the same fail-toward-deciding
+ * behaviour, rather than leaving the caller's containment check with nothing to compare against.
  */
-async function realpathOfFirstExistingAncestor(target: string): Promise<string> {
-  try {
-    return await realpath(target);
-  } catch {
-    // Falls through to the ancestor walk below.
-  }
-  const suffix: string[] = [];
-  let current = target;
-  for (;;) {
-    const parent = path.dirname(current);
-    if (parent === current) return target; // reached the root with no existing ancestor at all
-    suffix.unshift(path.basename(current));
+async function resolveRealpathTolerant(
+  target: string,
+  hopsRemaining = MAX_SYMLINK_HOPS,
+): Promise<string> {
+  const parsedRoot = path.parse(target).root;
+  const components = target
+    .slice(parsedRoot.length)
+    .split(path.sep)
+    .filter((component) => component !== '');
+  let resolved = parsedRoot;
+  for (let index = 0; index < components.length; index += 1) {
+    const component = components[index];
+    if (component === undefined) break; // unreachable: index < components.length always holds here
+    const candidate = path.join(resolved, component);
+    let stats;
     try {
-      const realParent = await realpath(parent);
-      return path.join(realParent, ...suffix);
+      stats = await lstat(candidate);
     } catch {
-      current = parent;
+      return path.join(candidate, ...components.slice(index + 1));
     }
+    if (!stats.isSymbolicLink()) {
+      resolved = candidate;
+      continue;
+    }
+    if (hopsRemaining <= 0) {
+      // A cycle or a pathological chain: stop resolving and treat the rest as literal, rather than
+      // recursing without bound.
+      return path.join(candidate, ...components.slice(index + 1));
+    }
+    let linkTarget: string;
+    try {
+      linkTarget = await readlink(candidate);
+    } catch {
+      // `lstat` just confirmed this is a symlink, so `readlink` failing here is a race (something
+      // removed it between the two calls) rather than an expected outcome -- treat it the same as
+      // any other unresolvable component: literal, and stop.
+      return path.join(candidate, ...components.slice(index + 1));
+    }
+    const resolvedLinkTarget = path.isAbsolute(linkTarget)
+      ? linkTarget
+      : path.resolve(path.dirname(candidate), linkTarget);
+    resolved = await resolveRealpathTolerant(resolvedLinkTarget, hopsRemaining - 1);
   }
+  return resolved;
 }
 
 /**
@@ -1500,10 +1554,11 @@ async function realpathOfFirstExistingAncestor(target: string): Promise<string> 
  * once, up front (so a lane whose own path crosses a symlink — e.g. macOS's `/tmp` -> `/private/tmp`,
  * confirmed hit directly while building this gate's own live experiment — is not itself mistaken for
  * an escape). The call's own target is resolved against `root`, then its real path is resolved via
- * {@link realpathOfFirstExistingAncestor} — not a single `realpath(target)`-then-`realpath(dirname)`
- * attempt, which a critic round found has a live, confirmed symlink-escape gap two or more missing
- * directory levels deep (that function's own doc comment has the full reasoning and the critics' own
- * exact repro). A target contained in either `root` or `root`'s own realpath (matching `within`'s own
+ * {@link resolveRealpathTolerant} — a full forward walk that `lstat`s every component and resolves a
+ * symlink wherever it finds one, INCLUDING a dangling one whose own target does not currently exist
+ * (that function's own doc comment has the full reasoning and three rounds of critics' own exact
+ * repros: the plain in-lane-symlink case, the "2+ missing levels past a resolvable symlink" case, and
+ * the "the symlink itself is dangling" case). A target contained in either `root` or `root`'s own realpath (matching `within`'s own
  * existing double-check convention, used identically by `vetPath` above for the exact same "the lane
  * path itself may be a symlink" reason) is allowed; anything else is denied, with a reason naming the
  * tool, the offending path, and the lane it escaped.
@@ -1527,7 +1582,7 @@ export function createLiveFileAccessGate(
     }
     const realRoot = await realpath(root).catch(() => root);
     const target = resolveFileAccessTarget(filePath, root);
-    const realTarget = await realpathOfFirstExistingAncestor(target);
+    const realTarget = await resolveRealpathTolerant(target);
     if (within(root, realTarget) || within(realRoot, realTarget)) {
       return { allowed: true };
     }
