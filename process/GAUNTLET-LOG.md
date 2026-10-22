@@ -24721,3 +24721,74 @@ an entire multi-round session rather than one cheap, same-session retry — a co
 not touched by this piece.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q348`.
+
+## M17 P21 (live-run fix 8) — a code-level fix, not a brief one; two more real rounds burned on the exact gap Q348 had already disclosed
+
+**What prompted it.** `Q348`'s own entry disclosed, without fixing, that `runTranslatorProof`'s
+throw (`RUN-158`) was never caught by `adopt-agent.ts`'s own round loop, so any cause of it burned
+an entire multi-round session rather than costing one cheap retry. The live run itself immediately
+supplied the proof this was worth doing now: `fixture2`'s own retry, WITH `Q348`'s own brief fix
+already applied, hit the identical throw twice more in a row. The second of those two was a
+genuinely different real cause from the one that originally motivated `Q348` — direct transcript
+inspection showed the model create its probe, observe the translator report the failure, remove the
+probe, then (for extra verification) create it a SECOND time, observe it again, and never remove it
+before submitting its final answer — a real mid-session slip, not a brief-wording gap the prose
+could have prevented. Three real, paid rounds total, across three distinct causes, all landing on
+the identical structural hole.
+
+**Dispatched a dedicated builder for the code-level fix**, given it had now proven valuable on three
+separate real occasions rather than continuing to retry blind. The builder confirmed the framing
+directly against the real code before changing anything, and REFINED it: the real throw surface is
+`RUN-158` *and* `CFG-003`/`CFG-004` (`proof.ts`'s own doc comment names all three; `CFG-003`/`004`
+are `ProjectPaths.resolveWithin` rejecting a path that escapes the project tree, reachable from
+either the model's `probe.path` or a structured `command.output.path` deep inside
+`runStructuredTestLayer`) — not `RUN-158` alone. Wrapped `runTranslatorProof`'s call in a new,
+narrowly-scoped try/catch (mirroring the EXISTING `RUN-160`/`proof-failed` retry pattern exactly):
+catches only the three named codes, re-throws anything else immediately; added a new `RoundFeedback`
+kind (`'proof-threw'`) and `AdoptTestsAgentResult` exhaustion cause; fed the real error back into
+the next round's prompt. Deliberately left `vetProposedTestCommand`'s `RUN-161` untouched and still
+uncaught — the builder's own stated reasoning: `RUN-161` is a security backstop that must never give
+a round-by-round oracle into FORGE's own live-exec allowlist, a fundamentally different kind of
+information than a model's own probe-path choice colliding with something.
+
+**Two independent critics, each in their own worktree, focused hardest on exactly that security
+distinction, since getting it wrong either direction was the real risk.** Both independently
+confirmed, from the real code, that `RUN-161` genuinely stays uncaught and non-retryable (the
+pre-existing test asserting this was unaffected) and that the builder's framing of the status quo
+was accurate. Critic 1 went further adversarially: confirmed `DENIED_PREFIXES` (the only thing a
+`CFG-003`/`004` denial message could leak) is a tiny, fixed, already-public list baked into the
+error text itself, and that the agent's own grant already permits broad read access (`ls*`/`rg*`/
+`cat*`) to the entire real file tree — so feeding back "that path already exists" discloses strictly
+LESS than one ordinary `ls` call already would, categorically different from `RUN-161`'s own exec-
+allowlist boundary, which the model has no other legitimate channel to learn. Critic 2 independently
+traced every throw site reachable from the new try block (`proof.ts`, `reporter.ts`, `atomic.ts`,
+`paths.ts`) and confirmed the catch correctly does NOT swallow `RUN-034` (a genuine disk failure) or
+any non-`ForgeError` — only the three named codes retry. Critic 2 also resolved, definitively rather
+than by assumption, the one real design question this fix's own motivation raised: can a leftover
+probe file from a THROWN round leak into the NEXT round's own attempt? No — each round gets its own
+fresh lane worktree (`laneIdFor(runId, 'adopt-tests:round-${round}')`), and none of the three caught
+codes can leave a probe file behind in the first place (each throws before the file is ever written,
+or deterministically on the baseline run before a probe exists at all) — the SIGKILL-leftover
+scenario that motivated the original design is a genuinely different code path (`reclaimStaleProbe`),
+unrelated to this fix.
+
+**One small, real, non-blocking gap found during review, fixed rather than disclosed, given how
+cheap it was**: `describeAdoptTestsAgentResult` (`test-exempt-coverage-flaky.ts`) only branched on
+`cause === 'proof-failed'`; both `'invalid-response'` (pre-existing) and the new `'proof-threw'`
+fell into one shared fallback message hardcoded as "the session's structured response was never
+usable" — factually wrong for `'proof-threw'` (the response WAS usable; the proof itself couldn't
+run). Added the missing branch directly; exit code was already correct regardless.
+
+**Both critics personally ran the full scoped battery, `proof.test.ts`, and the unscoped `-t "M17"`
+sweep rather than trusting the builder's own report** — 23 new-plus-existing `adopt-agent.test.ts`
+cases, 16 `proof.test.ts` cases, typecheck/lint clean both times. One critic's own unscoped sweep hit
+2 test-file failures (`bin.test.ts`'s own gitignore-entries subtest, `test/plan-and-loop.test.ts`) —
+independently re-confirmed by the orchestrator via a clean, correctly-pathed, properly-timed isolated
+re-run of all three files the live run's own two real incidents and this critic's own sweep had each
+touched (`bin.test.ts`, `plan-and-loop.test.ts`, `test/intake-workflow.test.ts`): 261/261 clean,
+confirming host contention (the identical `test/intake-workflow.test.ts` flake this milestone has
+now hit many times, plus a comparable `ENOTEMPTY` temp-dir race in `bin.test.ts`), not a regression.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q348` (updated in place with this fix's own resolution,
+rather than a new entry, since it is the direct, promised follow-up to what that entry already
+disclosed).

@@ -30671,13 +30671,27 @@ templates from the wrong tree entirely — caught before landing by diffing the 
 own body directly against the real, edited template rather than trusting the regeneration step had
 worked.
 
-**Disclosed, not fixed here**: `RUN-158` is thrown outside `adopt-agent.ts`'s own round-loop
-try/catch, so unlike every other proof-failure check (1 through 5, fed back via a `proof-failed`
-retry in the same session), it is never caught and retried — a probe-path collision burns the
-ENTIRE multi-round session, not one round, which is the real reason this exact mistake cost a full
-round for nothing rather than a cheap, same-session retry. A code-level fix (catching `RUN-158` the
-same way `proof-failed` already is) would make this whole class of mistake far cheaper to recover
-from, independent of how well the brief's own prose holds up against a future model or project —
-left as a disclosed follow-up opportunity, not touched by this piece.
+**Disclosed, not fixed here (at the time this entry was first written)**: `RUN-158` is thrown
+outside `adopt-agent.ts`'s own round-loop try/catch, so unlike every other proof-failure check
+(1 through 5, fed back via a `proof-failed` retry in the same session), it is never caught and
+retried — a probe-path collision burns the ENTIRE multi-round session, not one round, which is the
+real reason this exact mistake cost a full round for nothing rather than a cheap, same-session
+retry. A code-level fix (catching `RUN-158` the same way `proof-failed` already is) would make this
+whole class of mistake far cheaper to recover from, independent of how well the brief's own prose
+holds up against a future model or project.
+
+**UPDATE — fixed, M17 P21 (live-run fix 8).** The real live run itself supplied the proof this was
+worth doing now rather than later: `fixture2`'s own retry, with this entry's own brief fix already
+applied, hit the IDENTICAL `RUN-158` class twice more in a row — once from a genuinely different
+real cause (the model created, observed, and removed its probe once, then recreated it a SECOND
+time to re-verify and simply forgot to remove it again before submitting — a real mid-session slip,
+not a brief-wording gap) — burning two more full rounds on exactly the mechanism this paragraph
+named. `runTranslatorProof`'s own throw (`RUN-158`, or `CFG-003`/`CFG-004` — `ProjectPaths.
+resolveWithin` rejecting an escaping path, reachable from the model's own `probe.path` OR a
+structured `command.output.path`, a slightly wider surface than this entry originally named) is now
+caught and fed back as a same-session retry, the identical way `proof-failed` already was — see
+`GAUNTLET-LOG.md`'s own `## M17 P21 (live-run fix 8)` entry for the full build and critic narrative,
+including the independently-verified security reasoning for why this is safe to retry while
+`RUN-161` deliberately still is not.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
