@@ -993,4 +993,37 @@ describe("createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analo
     const gate = createLiveFileAccessGate(root);
     await expect(gate('Write', '')).resolves.toMatchObject({ allowed: false });
   });
+
+  it("denies a Write target two or more directory levels under an in-lane symlink that points outside the lane, even though neither the target nor its immediate parent exists yet -- the live, independently-reproduced gap both critics found: a single realpath(target)-then-realpath(dirname) fallback gives up and returns the raw, un-realpath'd (and therefore textually still in-lane) path once BOTH attempts fail, letting the real write land fully outside the lane", async () => {
+    const root = await lane();
+    const outside = await lane();
+    await symlink(outside, path.join(root, 'escape'));
+    const gate = createLiveFileAccessGate(root);
+    // The exact repro shape both critics used: `/lane/escape -> /outside`, `Write` to
+    // `/lane/escape/newdir/deep/file.txt` -- two missing directory levels (`newdir`, `deep`) below the
+    // symlink -- must resolve against `/outside/newdir/deep/file.txt`, not textually inside `/lane`.
+    const target = path.join(root, 'escape', 'newdir', 'deep', 'file.txt');
+    const verdict = await gate('Write', target);
+    expect(verdict).toMatchObject({ allowed: false });
+    if (verdict.allowed) throw new Error('unreachable');
+    expect(verdict.reason).toContain('Write');
+    expect(verdict.reason).toContain(target);
+  });
+
+  it('still allows a Write target three directory levels deep with NO symlink involved at all -- the ancestor walk must keep climbing past more than one missing level for an ordinary in-lane nested create, not only deny the symlinked case', async () => {
+    const root = await lane();
+    const gate = createLiveFileAccessGate(root);
+    const target = path.join(root, 'a', 'b', 'c', 'new.txt');
+    await expect(gate('Write', target)).resolves.toEqual({ allowed: true });
+  });
+
+  it('denies a Write target under a symlink several levels deep in the lane (not the immediate child of root), proving the ancestor walk keeps climbing past more than one non-existent level before it reaches the symlinked ancestor', async () => {
+    const root = await lane();
+    const outside = await lane();
+    await mkdir(path.join(root, 'sub'), { recursive: true });
+    await symlink(outside, path.join(root, 'sub', 'escape'));
+    const gate = createLiveFileAccessGate(root);
+    const target = path.join(root, 'sub', 'escape', 'newdir', 'deep', 'file.txt');
+    await expect(gate('Write', target)).resolves.toMatchObject({ allowed: false });
+  });
 });

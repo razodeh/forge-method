@@ -1440,6 +1440,56 @@ function resolveFileAccessTarget(filePath: string, root: string): string {
 }
 
 /**
+ * Resolves `target`'s real path as far as the real filesystem allows, for a target that may not exist
+ * yet. If `target` itself exists, its own `realpath` is the answer (symlinks and all, fully resolved).
+ * Otherwise this walks UP the ancestor chain — parent, grandparent, and so on — until it finds the
+ * first ancestor that genuinely exists, `realpath`s THAT ancestor (resolving any symlink anywhere in
+ * the existing prefix, including a symlink that is itself the escape vector), and rejoins the result
+ * with the remaining, not-yet-existing suffix segments in their original order.
+ *
+ * **Why a single `dirname` step is not enough.** This function's own first version (and, independently,
+ * two gauntlet critics reviewing it) tried `realpath(target)`, then — on failure — `realpath(dirname(target))`
+ * once, and gave up to the raw, un-resolved `target` if THAT also failed. That one-level fallback is
+ * exactly wide enough for an ordinary fresh `Write` (the file does not exist, but its immediate parent
+ * directory does) but silently returns the untouched, un-realpath'd path the moment the target is TWO OR
+ * MORE directory levels below a point that does not exist yet — the ordinary shape of a `Write` that
+ * creates several new nested directories at once. Both critics reproduced, independently, through the real
+ * adapter/SDK (not merely a unit test): a lane with an in-lane symlink (`/lane/escape` -> `/outside`) and a
+ * `Write` target two levels under it (`/lane/escape/newdir/deep/file.txt`) — the single-`dirname` fallback
+ * throws on `/lane/escape/newdir/deep` (it doesn't exist either), falls through to the raw, un-realpath'd
+ * target, and the caller's own `within(root, realTarget)` check then compares a path that is textually
+ * `/lane/...` and is therefore wrongly judged in-lane — while the real write, performed by the real SDK
+ * against the real filesystem, lands at `/outside/newdir/deep/file.txt`, fully outside the lane. Walking
+ * all the way up (not merely one level) is what finds `/lane/escape` — the first ancestor that actually
+ * exists — resolves ITS OWN symlink, and correctly rejoins `newdir/deep/file.txt` onto `/outside`.
+ *
+ * Never throws: if no ancestor at all can be `realpath`'d (not even the filesystem root, which should be
+ * impossible on a real filesystem), this falls back to the raw, un-resolved `target` — the identical
+ * fail-open-only-in-an-impossible-situation behaviour this function's own predecessor already had, kept
+ * here rather than invented fresh.
+ */
+async function realpathOfFirstExistingAncestor(target: string): Promise<string> {
+  try {
+    return await realpath(target);
+  } catch {
+    // Falls through to the ancestor walk below.
+  }
+  const suffix: string[] = [];
+  let current = target;
+  for (;;) {
+    const parent = path.dirname(current);
+    if (parent === current) return target; // reached the root with no existing ancestor at all
+    suffix.unshift(path.basename(current));
+    try {
+      const realParent = await realpath(parent);
+      return path.join(realParent, ...suffix);
+    } catch {
+      current = parent;
+    }
+  }
+}
+
+/**
  * Builds `SessionRequest.vetFileAccess` for one session (`SPEC-QUESTIONS.md` Q347): a real per-call
  * gate on the session's own LIVE `Read`/`Edit`/`Write` tool use, the file-path analogue of
  * `createLiveExecGate`'s own Bash gate (`adopt-agent.ts`) — built here, not there, so every real
@@ -1449,13 +1499,14 @@ function resolveFileAccessTarget(filePath: string, root: string): string {
  * **Containment, mirroring `vetPath`'s own double-check above.** `root`'s own realpath is resolved
  * once, up front (so a lane whose own path crosses a symlink — e.g. macOS's `/tmp` -> `/private/tmp`,
  * confirmed hit directly while building this gate's own live experiment — is not itself mistaken for
- * an escape). The call's own target is resolved against `root`, then realpath'd too: when the target
- * does not exist yet (the ordinary case for a fresh `Write`), its own DIRNAME is realpath'd instead,
- * so a symlinked lane directory still resolves correctly for a file that is about to be created
- * rather than failing the realpath call outright. A target contained in either `root` or `root`'s own
- * realpath (matching `within`'s own existing double-check convention, used identically by `vetPath`
- * above for the exact same "the lane path itself may be a symlink" reason) is allowed; anything else
- * is denied, with a reason naming the tool, the offending path, and the lane it escaped.
+ * an escape). The call's own target is resolved against `root`, then its real path is resolved via
+ * {@link realpathOfFirstExistingAncestor} — not a single `realpath(target)`-then-`realpath(dirname)`
+ * attempt, which a critic round found has a live, confirmed symlink-escape gap two or more missing
+ * directory levels deep (that function's own doc comment has the full reasoning and the critics' own
+ * exact repro). A target contained in either `root` or `root`'s own realpath (matching `within`'s own
+ * existing double-check convention, used identically by `vetPath` above for the exact same "the lane
+ * path itself may be a symlink" reason) is allowed; anything else is denied, with a reason naming the
+ * tool, the offending path, and the lane it escaped.
  *
  * **Fails closed on a malformed `tool_input`** (no string `filePath` at all): never reachable for a
  * genuine `Read`/`Edit`/`Write` call given the SDK's own real `FileReadInput`/`FileEditInput`/
@@ -1476,16 +1527,7 @@ export function createLiveFileAccessGate(
     }
     const realRoot = await realpath(root).catch(() => root);
     const target = resolveFileAccessTarget(filePath, root);
-    let realTarget: string;
-    try {
-      realTarget = await realpath(target);
-    } catch {
-      try {
-        realTarget = path.join(await realpath(path.dirname(target)), path.basename(target));
-      } catch {
-        realTarget = target;
-      }
-    }
+    const realTarget = await realpathOfFirstExistingAncestor(target);
     if (within(root, realTarget) || within(realRoot, realTarget)) {
       return { allowed: true };
     }
