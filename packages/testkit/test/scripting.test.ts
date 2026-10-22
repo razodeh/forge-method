@@ -210,3 +210,98 @@ describe('FakeSessionScript.execAttempts + SessionRequest.vetExecCommand', () =>
     expect(execResult).toMatchObject({ ok: true });
   });
 });
+
+/** `SessionRequest.vetFileAccess` (`SPEC-QUESTIONS.md` Q347): the identical mechanism as
+ * `vetExecCommand` immediately above, added to the same fake adapter for the identical reason --
+ * `FakeSessionScript.writeFiles` already checks `resolveInsideCwd` on its own, the same way
+ * `execAttempts` already checks `isExecAllowed` on its own, and `ctx.vetFileAccess` is consulted IN
+ * ADDITION to that, never in place of it (`fake-adapter.ts`'s own `writeFiles` handling, immediately
+ * after its `resolveInsideCwd` check). This proves the FAKE consults the callback correctly, never
+ * that a real adapter's own live SDK hook does -- `confined-command.test.ts`'s own
+ * `createLiveFileAccessGate` suite and `file-access-gate.live.test.ts` cover that separately. */
+describe('FakeSessionScript.writeFiles + SessionRequest.vetFileAccess', () => {
+  it('a scripted write attempt whose target is inside cwd but fails vetFileAccess is still refused, and the file is never actually written', async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'write', {
+      writeFiles: [{ relativePath: 'secret.txt', content: 'x' }],
+    });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(
+      baseRequest({
+        cwd,
+        prompt: 'write',
+        // Inside cwd (passes resolveInsideCwd on its own), but refused anyway -- the exact
+        // "contained by the lexical check, denied by the live gate anyway" gap this suite mirrors
+        // from vetExecCommand's own identical case above.
+        vetFileAccess: (_toolName: string, filePath: string) =>
+          Promise.resolve(
+            filePath.includes('secret')
+              ? {
+                  allowed: false,
+                  reason: 'refused: this path is denied regardless of cwd containment',
+                }
+              : { allowed: true },
+          ),
+      }),
+    );
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+    const result = await handle.result();
+
+    const writeResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'write:secret.txt',
+    );
+    expect(writeResult).toMatchObject({ ok: false });
+    expect(existsSync(path.join(cwd, 'secret.txt'))).toBe(false);
+    expect(result.changedFiles).toEqual([]);
+  });
+
+  it('a scripted write attempt that is inside cwd AND passes vetFileAccess is allowed, and the file is actually written', async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'write', {
+      writeFiles: [{ relativePath: 'ok.txt', content: 'hello' }],
+    });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(
+      baseRequest({
+        cwd,
+        prompt: 'write',
+        vetFileAccess: (_toolName: string, filePath: string) =>
+          Promise.resolve(
+            filePath.includes('secret') ? { allowed: false, reason: 'refused' } : { allowed: true },
+          ),
+      }),
+    );
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+    const result = await handle.result();
+
+    const writeResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'write:ok.txt',
+    );
+    expect(writeResult).toMatchObject({ ok: true });
+    expect(await readFile(path.join(cwd, 'ok.txt'), 'utf8')).toBe('hello');
+    expect(result.changedFiles).toEqual(['ok.txt']);
+  });
+
+  it('with no vetFileAccess at all (every caller before this piece), behaviour is unchanged: cwd containment alone decides', async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'write', {
+      writeFiles: [{ relativePath: 'secret.txt', content: 'x' }],
+    });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'write' }));
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+    const result = await handle.result();
+
+    const writeResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'write:secret.txt',
+    );
+    // Allowed here ONLY because this test's own target is inside cwd and no gate is set --
+    // documenting the pre-Q347 status quo this file's own doc comment contrasts against, not
+    // endorsing the name.
+    expect(writeResult).toMatchObject({ ok: true });
+    expect(result.changedFiles).toEqual(['secret.txt']);
+  });
+});

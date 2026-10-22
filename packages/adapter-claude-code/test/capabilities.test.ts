@@ -52,6 +52,11 @@ describe('staticCapabilities', () => {
     expect(staticCapabilities([], 'sdk').execCommandGating).toBe(true);
     expect(staticCapabilities([], 'cli').execCommandGating).toBe(false);
   });
+
+  it('fileAccessGating is true for sdk and false for cli -- the identical transport asymmetry as execCommandGating, for the identical reason (SPEC-QUESTIONS.md Q347): buildFileAccessHook only ever reaches the sdk transport', () => {
+    expect(staticCapabilities([], 'sdk').fileAccessGating).toBe(true);
+    expect(staticCapabilities([], 'cli').fileAccessGating).toBe(false);
+  });
 });
 
 describe('confirmedCapabilities', () => {
@@ -79,5 +84,10 @@ describe('confirmedCapabilities', () => {
   it('still reports execCommandGating per-transport once confirmed', () => {
     expect(confirmedCapabilities([], 'sdk').execCommandGating).toBe(true);
     expect(confirmedCapabilities([], 'cli').execCommandGating).toBe(false);
+  });
+
+  it('still reports fileAccessGating per-transport once confirmed', () => {
+    expect(confirmedCapabilities([], 'sdk').fileAccessGating).toBe(true);
+    expect(confirmedCapabilities([], 'cli').fileAccessGating).toBe(false);
   });
 });
