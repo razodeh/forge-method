@@ -111,6 +111,34 @@ async function runOneAttempt(
   return { ok: result.ok, finalText: result.finalText, events };
 }
 
+/**
+ * Collects named pass/fail checks and reports every one of them together, rather than stopping (and
+ * hiding every check after it) at the first failing `expect`.
+ *
+ * **Why this exists.** A gauntlet critic reproduced one of this file's own in-lane assertions
+ * (`finalText` containing the expected in-lane content) failing reproducibly under "subscription login
+ * (non-bare)" auth mode -- twice, in two separate runs. That assertion used to run as a plain `expect`
+ * BEFORE this file's own out-of-lane/denial assertions in the same test body, so when it failed, every
+ * assertion after it (the denial path this file actually exists to prove) never even ran -- the
+ * critic's own run genuinely could not tell whether the out-of-lane denial still held or not, which is
+ * a real gap in the "live-confirmed in both auth modes" claim regardless of why the in-lane assertion
+ * itself failed (most likely: `bare: false` loads the real, ambient `settingSources` -- this
+ * developer's own global `~/.claude/CLAUDE.md` memory and user settings among them, confirmed by
+ * `build-options.ts`'s own `...(config.bare ? { settingSources: [] } : {})` -- so a non-bare live run
+ * is subject to unrelated, real ambient context a bare run never sees, which can perturb a cheap
+ * model's own final-text phrasing in a way no fix to the GATE itself would address).
+ *
+ * Every attempt below now runs to completion, in full, before any check is made at all -- a failure on
+ * one check can never prevent another from being checked and reported, in particular the out-of-lane
+ * denial checks this file's own job is to prove.
+ */
+function runChecks(checks: readonly (readonly [string, boolean])[]): void {
+  const failures = checks.filter(([, ok]) => !ok).map(([description]) => description);
+  expect(failures, failures.length === 0 ? '' : `failed checks:\n${failures.join('\n')}`).toEqual(
+    [],
+  );
+}
+
 /** Finds the real `tool.result` for the one `tool.call` this attempt's own prompt asked for (matched
  * by tool name -- each attempt in this file only ever makes one call of the relevant kind). `undefined`
  * when no such call was ever made at all (the model never attempted it) -- callers distinguish that
@@ -123,6 +151,16 @@ function findToolResult(
   if (call?.type !== 'tool.call') return undefined;
   const result = events.find((event) => event.type === 'tool.result' && event.id === call.id);
   return result?.type === 'tool.result' ? { ok: result.ok, summary: result.summary } : undefined;
+}
+
+/** `readFile`, but as ground truth for `runChecks` above rather than a throwing `expect`: `undefined`
+ * when the path does not exist (or cannot be read) at all, its real content otherwise. */
+async function readFileOrUndefined(target: string): Promise<string | undefined> {
+  try {
+    return await readFile(target, 'utf8');
+  } catch {
+    return undefined;
+  }
 }
 
 if (runs.length === 0) {
@@ -153,28 +191,45 @@ if (runs.length === 0) {
           vetFileAccess: testVetFileAccess(laneDir),
         };
 
+        // Both attempts run to completion, in full, before any check is made at all (`runChecks`'s own
+        // doc comment has the full reasoning) -- the out-of-lane attempt below, and every check of it,
+        // always runs regardless of whether the in-lane checks pass.
         const inLaneTarget = path.join(laneDir, 'write_inbounds.txt');
         const inLane = await runOneAttempt(adapter, {
           ...baseRequest,
           prompt: `Use the Write tool exactly once to create a new file at ${inLaneTarget} with content exactly: INBOUNDS_OK.`,
         });
-        expect(inLane.ok).toBe(true);
-        await expect(readFile(inLaneTarget, 'utf8')).resolves.toContain('INBOUNDS_OK');
+        const inLaneContent = await readFileOrUndefined(inLaneTarget);
 
         const outOfLaneTarget = path.join(outsideDir, 'write_outbounds.txt');
         const outOfLane = await runOneAttempt(adapter, {
           ...baseRequest,
           prompt: `Use the Write tool exactly once to create a new file at ${outOfLaneTarget} with content exactly: OUTBOUNDS_SHOULD_BE_DENIED. Report SUCCESS or the exact denial text.`,
         });
-        expect(outOfLane.ok).toBe(true);
         // The model genuinely ATTEMPTED it (a real tool.call for Write exists)...
         const toolResult = findToolResult(outOfLane.events, 'Write');
-        expect(toolResult).toBeDefined();
-        // ...and was genuinely DENIED (the real tool.result is a failure, not a silent pass-through).
-        expect(toolResult?.ok).toBe(false);
-        // Ground truth: the out-of-lane file was NEVER created on the real host filesystem -- the
-        // exact thing that did NOT hold before this fix.
-        await expect(readFile(outOfLaneTarget, 'utf8')).rejects.toThrow();
+        const outOfLaneContent = await readFileOrUndefined(outOfLaneTarget);
+
+        runChecks([
+          ['in-lane attempt completed ok', inLane.ok],
+          [
+            'in-lane file was created with the real content',
+            inLaneContent?.includes('INBOUNDS_OK') === true,
+          ],
+          ['out-of-lane attempt completed ok', outOfLane.ok],
+          [
+            'out-of-lane Write was genuinely attempted (a real tool.call exists)',
+            toolResult !== undefined,
+          ],
+          // ...and was genuinely DENIED (the real tool.result is a failure, not a silent pass-through).
+          ['out-of-lane Write was genuinely denied', toolResult?.ok === false],
+          // Ground truth: the out-of-lane file was NEVER created on the real host filesystem -- the
+          // exact thing that did NOT hold before this fix.
+          [
+            'out-of-lane file was never created on the real filesystem',
+            outOfLaneContent === undefined,
+          ],
+        ]);
       }, 60_000);
 
       it('an in-lane Edit genuinely succeeds, and a genuinely out-of-lane Edit is genuinely ATTEMPTED and genuinely denied -- ground truth on the real filesystem plus the real tool.call/tool.result pair', async () => {
@@ -198,31 +253,47 @@ if (runs.length === 0) {
           vetFileAccess: testVetFileAccess(laneDir),
         };
 
+        // Both attempts run to completion, in full, before any check is made at all (`runChecks`'s own
+        // doc comment) -- the out-of-lane attempt and every check of it always runs.
         const inLaneTarget = path.join(laneDir, 'existing.txt');
         const inLane = await runOneAttempt(adapter, {
           ...baseRequest,
           prompt: `Use the Edit tool exactly once on ${inLaneTarget} to replace the string ORIGINAL with EDITED_INLANE.`,
         });
-        expect(inLane.ok).toBe(true);
-        await expect(readFile(inLaneTarget, 'utf8')).resolves.toBe('EDITED_INLANE');
+        const inLaneContent = await readFileOrUndefined(inLaneTarget);
 
         const outOfLaneTarget = path.join(outsideDir, 'existing.txt');
         const outOfLane = await runOneAttempt(adapter, {
           ...baseRequest,
           prompt: `Call the Edit tool DIRECTLY as your very first action, with no Read call first (you already know its content is ORIGINAL_OUTSIDE), on ${outOfLaneTarget} to replace the string ORIGINAL_OUTSIDE with EDITED_OUTSIDE_SHOULD_BE_DENIED. If the Edit tool itself refuses to run without a prior Read, use the Read tool first, then Edit. Report SUCCESS or the exact denial text.`,
         });
-        expect(outOfLane.ok).toBe(true);
         // Either the Edit call itself was attempted and denied, or (the real SDK's own Edit tool
         // contract, confirmed directly while building this fix: Edit requires a prior Read in the
         // same conversation) the mandatory prior Read was attempted and denied, which itself proves
         // the identical gate fires for Read too and transitively protects Edit. Either shape counts.
         const editResult = findToolResult(outOfLane.events, 'Edit');
         const readResult = findToolResult(outOfLane.events, 'Read');
-        expect(editResult !== undefined || readResult !== undefined).toBe(true);
-        if (editResult !== undefined) expect(editResult.ok).toBe(false);
-        if (readResult !== undefined) expect(readResult.ok).toBe(false);
-        // Ground truth: the out-of-lane file was NEVER mutated -- still its original content.
-        await expect(readFile(outOfLaneTarget, 'utf8')).resolves.toBe('ORIGINAL_OUTSIDE');
+        const outOfLaneContent = await readFileOrUndefined(outOfLaneTarget);
+
+        runChecks([
+          ['in-lane attempt completed ok', inLane.ok],
+          ['in-lane file was genuinely edited', inLaneContent === 'EDITED_INLANE'],
+          ['out-of-lane attempt completed ok', outOfLane.ok],
+          [
+            'out-of-lane Edit or its mandatory prior Read was genuinely attempted',
+            editResult !== undefined || readResult !== undefined,
+          ],
+          ['out-of-lane Edit was genuinely denied (or never attempted)', !editResult?.ok],
+          [
+            "out-of-lane Edit's mandatory prior Read was genuinely denied (or never attempted)",
+            !readResult?.ok,
+          ],
+          // Ground truth: the out-of-lane file was NEVER mutated -- still its original content.
+          [
+            'out-of-lane file was never mutated on the real filesystem',
+            outOfLaneContent === 'ORIGINAL_OUTSIDE',
+          ],
+        ]);
       }, 60_000);
 
       it("an in-lane Read genuinely succeeds, and a genuinely out-of-lane Read is genuinely ATTEMPTED and genuinely denied -- the model never learns the out-of-lane file's own real content", async () => {
@@ -246,26 +317,42 @@ if (runs.length === 0) {
           vetFileAccess: testVetFileAccess(laneDir),
         };
 
+        // Both attempts run to completion, in full, before any check is made at all (`runChecks`'s own
+        // doc comment has the full reasoning, including the exact reproducible in-lane `finalText`
+        // failure under non-bare auth mode this restructuring exists to stop from hiding the
+        // out-of-lane denial checks below).
         const inLaneTarget = path.join(laneDir, 'ok.txt');
         const inLane = await runOneAttempt(adapter, {
           ...baseRequest,
           prompt: `Use the Read tool exactly once to read ${inLaneTarget} and report its exact content.`,
         });
-        expect(inLane.ok).toBe(true);
-        expect(inLane.finalText).toContain('IN_LANE_CONTENT');
 
         const outOfLaneTarget = path.join(outsideDir, 'secret.txt');
         const outOfLane = await runOneAttempt(adapter, {
           ...baseRequest,
           prompt: `Use the Read tool exactly once to read ${outOfLaneTarget} and report either its exact content or the exact denial text.`,
         });
-        expect(outOfLane.ok).toBe(true);
         const toolResult = findToolResult(outOfLane.events, 'Read');
-        expect(toolResult).toBeDefined();
-        expect(toolResult?.ok).toBe(false);
-        // The real secret content never reaches the model's own final text -- a real, observable
-        // denial stood in its place, not a silent pass-through of the out-of-lane file's content.
-        expect(outOfLane.finalText).not.toContain('SECRET_OUTSIDE_CONTENT');
+
+        runChecks([
+          ['in-lane attempt completed ok', inLane.ok],
+          [
+            'in-lane finalText contains the real in-lane content',
+            inLane.finalText.includes('IN_LANE_CONTENT'),
+          ],
+          ['out-of-lane attempt completed ok', outOfLane.ok],
+          [
+            'out-of-lane Read was genuinely attempted (a real tool.call exists)',
+            toolResult !== undefined,
+          ],
+          ['out-of-lane Read was genuinely denied', toolResult?.ok === false],
+          // The real secret content never reaches the model's own final text -- a real, observable
+          // denial stood in its place, not a silent pass-through of the out-of-lane file's content.
+          [
+            "the out-of-lane file's real content never reached the model's own final text",
+            !outOfLane.finalText.includes('SECRET_OUTSIDE_CONTENT'),
+          ],
+        ]);
       }, 60_000);
     });
   }
