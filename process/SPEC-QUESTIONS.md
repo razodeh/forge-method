@@ -30614,6 +30614,51 @@ relies on to confine what a live agent session can do — this is folded into th
 gate alongside Q340/Q341/P16, not left as a lower-priority loose end. A dedicated piece should be
 opened to pursue it with the same structure P7 originally used.
 
+**UPDATE — the real severity confirmed, and refined, by scanning every real session transcript this
+milestone's own live run already generated (210 transcript directories, 2299 real Bash `tool_use`
+calls, zero new spend — free, since the data already existed).** Three findings, in order of
+severity:
+
+1. **Read/Edit/Write's own already-known shadowing (`CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`, printed in
+   every real `--agent` log this entire milestone) is not merely a theoretical gap — it is a real,
+   already-exploited (benignly, in this instance) capability.** A real transcript
+   (`adopt-tests-20261021163238340-adopt-tests-round-1-86dd312c`) shows a live session's own
+   `Write` tool call create `/tmp/forge-probe/test_forge_probe.py` — an absolute path completely
+   outside that round's own disposable lane worktree, on the real host filesystem, with ZERO
+   confinement, ZERO denial, and (by the warning's own text) ZERO `canUseTool` consultation. The
+   model's own purpose here was benign (a throwaway probe file for its own investigation), but the
+   mechanism that let it write there is the SAME one that would let a future, less careful or
+   adversarial session write anywhere a live `--agent` session's own OS-level file permissions
+   allow — confirmed real, not hypothetical.
+2. **Bash's own absolute-path confinement, where it exists, is narrower than it looks.** Every
+   `ls`/`find`/`cp`-style command whose own path ARGUMENT pointed outside a lane was denied with a
+   distinct, path-aware message ("Claude Code may only list/search/copy files in the allowed
+   working directories for this session") — genuinely different from the generic "don't ask mode"
+   denial, and genuinely effective for these specific, natively-recognized sub-operations (25 real,
+   confirmed denials of this shape found). But this confinement does NOT extend to an absolute-path
+   ARGUMENT passed to an externally-invoked, allowlisted PROGRAM: a real `pytest
+   /tmp/forge-probe/test_forge_probe.py --rootdir=/tmp/forge-probe -o
+   pythonpath=<a worktree path outside the CURRENT lane entirely> ...` ran to completion,
+   unconfined, because `pytest*` itself matched a granted exec pattern and nothing downstream
+   re-checked ITS OWN argument paths against the lane boundary the way the native `ls`/`find`/`cp`
+   handling does.
+3. **A previously-undocumented, separate heuristic — "Contains brace with quote character
+   (expansion obfuscation)" — blocks some Bash commands outright regardless of actual danger, and
+   demonstrably false-positives on entirely benign content.** Found blocking two real, legitimate
+   commands this milestone's own history already produced: a differential-testing shell script
+   using ordinary parameter expansion inside shell functions, and a heredoc write of a structured
+   handoff record whose own prose quoted JavaScript template-literal syntax (`` `${operation}
+   requires two numbers` ``). Not a security hole by itself (it fails closed, refusing rather than
+   executing), but a real, newly-found false-positive class worth folding into whatever dedicated
+   piece eventually addresses this entry, since it affects ordinary, correct agent behavior too.
+
+Taken together, finding 1 is the one that most changes this entry's own urgency: the ORIGINAL
+Q347 text focused on whether a Bash call with shell operators could bypass `canUseTool` while
+STAYING inside its own lane (bounded, since lane isolation would still confine the blast radius)
+— found 1 confirms something more severe already happens for real, for a DIFFERENT, already-named
+reason (bare Read/Edit/Write shadowing): a live session can write to the REAL HOST FILESYSTEM,
+outside any lane at all, with nothing standing in the way.
+
 **Gauntlet:** see `GAUNTLET-LOG.md` once the dedicated follow-up piece lands (not yet built as of
 this entry — this records the disclosure, per the owner's own "every disclosed defect fixed first"
 standing instruction, same as Q314/Q317/Q340/Q341 before their own follow-up pieces landed).
