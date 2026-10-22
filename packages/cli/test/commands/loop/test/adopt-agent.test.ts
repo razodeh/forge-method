@@ -671,6 +671,65 @@ describe('runAdoptTestsAgent -- a probe path that never stops colliding exhausts
   });
 });
 
+describe("runAdoptTestsAgent -- the live session's own UNTRACKED, same-round leftover at the reported probe path is reclaimed automatically, never RUN-158 (specs/22 M17 P21) (live-run fix 9)", () => {
+  it("round 1's live session writes the probe file itself via its own tool-use (simulating a denied rm/git clean cleanup attempt), then reports that SAME path -- the round stages on round 1, never retried, never throws", async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+
+    const adapter = new FakePlatformAdapter();
+    const requests: SessionRequest[] = [];
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return true;
+      },
+      {
+        text: [
+          'wrote the probe, watched it fail for real, tried rm and git clean to remove it again -- ' +
+            'both denied -- reporting the same path anyway, exactly as the real live-run defect did',
+        ],
+        // The live session's OWN tool-use write -- real bytes on disk in the lane, via `fs`, never
+        // `git add` (`fake-adapter.ts`'s own `writeFiles` handling, confirmed directly) -- the
+        // identical shape the real incident's own denied `rm`/`git clean` left behind: a probe the
+        // model created, genuinely could not delete, and reported anyway.
+        writeFiles: [
+          { relativePath: 'probe.test.js', content: probeContent('PROBE deliberately fails') },
+        ],
+        structured: {
+          command: NODE_TEST_COMMAND,
+          probe: {
+            path: 'probe.test.js',
+            content: probeContent('PROBE deliberately fails'),
+            expectedName: 'PROBE deliberately fails',
+          },
+          runnerVersion: process.version,
+          reason:
+            "the probe already exists from this round's own investigation; reporting it as-is.",
+        },
+      },
+    );
+
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    // The real fix (M17 P21, live-run fix 9): the leftover is confirmed UNTRACKED in the lane's own
+    // real git state (`createLaneWorktree`'s own real `git worktree add` checkout -- nothing the
+    // live session itself writes via `fs`, never `git add`, is ever tracked there) and reclaimed
+    // automatically, right before `writeNewFileAtomic` would otherwise refuse it with `RUN-158` --
+    // the round stages on its own real merits, round 1, never retried, never throwing at all.
+    expect(result.outcome).toBe('staged');
+    if (result.outcome !== 'staged') throw new Error('unreachable');
+    expect(result.rounds).toBe(1);
+    expect(result.record.proof?.ok).toBe(true);
+    expect(requests).toHaveLength(1);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
 describe('runAdoptTestsAgent -- no test setup at all: a proposal and an ADR, never a dependency change (specs/22 M17 P7)', () => {
   it("stages a record with no proof and writes a real ADR carrying the agent's own summary", async () => {
     const dir = await tempDir();

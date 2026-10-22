@@ -83,19 +83,36 @@
  * (`PROOF_LOCK_REL_PATH`, `writeFileAtomic`, fsync'd before rename) records exactly which probe path
  * this invocation is about to write BEFORE it writes it; `reclaimStaleProbe` reads that marker back
  * at the START of every invocation (including the very next one after a crash) and removes whatever
- * it names before doing anything else. Has zero production call sites today (P7's own job to wire a
- * real caller) -- not reachable by any shipped command yet, but disclosed and fixed now rather than
- * left for P7 to inherit silently.
+ * it names before doing anything else. `adopt-agent.ts`'s own round loop (below) is this function's
+ * one real production caller, so this path is genuinely reachable, not merely theoretical.
+ *
+ * **A model-reported probe colliding with its OWN, undeletable-by-it, same-round leftover is
+ * reclaimed automatically, right before the write that would otherwise refuse it (M17 P21, a real
+ * live-run defect, live-run fix 9).** `adopt-agent.ts`'s own round loop (P7's real caller, above)
+ * runs this function inside a fresh `createLaneWorktree` checkout every round; a live agent session
+ * that creates a probe file, watches it fail, then genuinely cannot delete it again (`rm`/
+ * `git clean` are not in its own granted exec patterns, and non-interactive mode has no escalation
+ * path) has no choice but to disclose the leftover and report the same path anyway. Reclaiming it
+ * is still safe, and never reopens `Q348`'s own, separately-real incident (a model reporting a
+ * genuinely pre-existing, already-committed project file), because `reclaimLaneLeftoverProbe`
+ * (below) only ever removes a path it independently confirms is UNTRACKED in `cwd`'s own real git
+ * state -- a structural fact about this round's own fresh lane, not a filename heuristic, and a
+ * check that degrades to a safe no-op (never a deletion) the moment `cwd` is not a git repository
+ * at all, exactly preserving this function's own "needs no worktree to be correct" design above for
+ * every caller that genuinely has none.
  *
  * @see specs/13 F-TEST-11
  * @see specs/22 M17 P6
  */
 import { createHash } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { lstat, rm } from 'node:fs/promises';
+
+import { execa } from 'execa';
 
 import { ForgeError } from '@forge/core/errors';
 import { readTextFile, writeFileAtomic, writeNewFileAtomic } from '@forge/core/fs';
-import type { ProjectPaths } from '@forge/core/fs';
+import type { AbsolutePath, ProjectPaths } from '@forge/core/fs';
 import { runShellCommand } from '@forge/engine/dispatch';
 import type { StructuredTestCommand } from '@forge/schemas/config';
 
@@ -247,6 +264,107 @@ async function reclaimStaleProbe(paths: ProjectPaths): Promise<void> {
   await rm(lockPath, { force: true });
 }
 
+/** Whether `relativePath` is confirmed UNTRACKED in the real git repository rooted at `cwd` --
+ * `true` only for `git`'s own documented "a real repo, but this exact pathspec matches no file(s)
+ * known to git" outcome (`git ls-files --error-unmatch`'s own exit code `1`); `false` for every
+ * other outcome, including the positive "this path IS tracked" case (exit `0`) and every case this
+ * function cannot actually confirm one way or the other (`cwd` is not a git repository at all --
+ * exit `128` -- the `git` binary itself is missing, or any other spawn surprise). Deliberately
+ * fails CLOSED: a caller only ever uses `true` here as a licence to delete something, so "I don't
+ * know" and "it IS tracked" must collapse to the identical, safe answer (`false`, meaning: leave it
+ * alone, exactly like a plain, non-git project tree always has). Confirmed directly, with a real
+ * `git init`/`add`/`commit` repo plus a real `git worktree add` lane off it (this fix's own real
+ * experiment, not an assumption): a tracked file exits `0`, an untracked one exits `1` with git's
+ * own "did not match any file(s) known to git" on stderr, and a bare non-repo directory exits `128`
+ * with "fatal: not a git repository" -- three genuinely distinct, never-ambiguous outcomes.
+ *
+ * `--literal-pathspecs` (a top-level `git` flag, checked separately, by real experiment, to behave
+ * identically to its absence for every ordinary path this module ever sees): `relativePath` is a
+ * model-reported string, never one this module controls, so a caller could in principle report a
+ * value starting with git's own pathspec-magic syntax (`:(exclude)...`, `:(icase)...`, ...) --
+ * disabling it closes even the theoretical possibility of such a string being interpreted as
+ * anything other than one literal, ordinary path, the identical property `lstat`/`rm` below
+ * already have for free (plain filesystem joins, never pathspec-aware). */
+async function isConfirmedUntrackedInGit(cwd: string, relativePath: string): Promise<boolean> {
+  try {
+    const result = await execa(
+      'git',
+      ['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', relativePath],
+      { cwd, reject: false },
+    );
+    return result.exitCode === 1;
+  } catch {
+    return false;
+  }
+}
+
+/** Reclaims `probePath` -- BEFORE `writeNewFileAtomic` ever attempts to write it -- when, and only
+ * when, it is this round's OWN leftover from the live agent session that ran in this exact `cwd`
+ * just before this call: something the model's own tool-use wrote to disk during investigation
+ * (a deliberately-failing probe, per the brief), then tried and failed to delete again (`rm`/
+ * `git clean` are not in `ADOPT_TESTS_EXEC_PATTERNS`, so a live, non-interactive session has
+ * genuinely no tool of its own that can unlink a file it created), and finally reported anyway
+ * rather than silently drop the disclosure (M17 P21, a real live-run defect, live-run fix 9).
+ *
+ * **Why "untracked in `cwd`'s own git state" is the right, and only, signal, not a heuristic.**
+ * `runTranslatorProof`'s one production caller (`adopt-agent.ts`) always runs this inside a FRESH
+ * `createLaneWorktree` checkout (`@forge/vcs`'s own `git worktree add -b <branch> <path>
+ * <resolvedBase>`): by construction, the only things that can ever exist on disk in that lane are
+ * (a) whatever was already committed into the checked-out revision -- genuinely TRACKED, by
+ * definition -- and (b) whatever THIS round's own live session wrote during investigation, which is
+ * necessarily UNTRACKED (nothing else in this flow ever runs `git add`/`git commit` inside the
+ * lane). "Untracked" is therefore not a proxy or a best guess for "the model's own this-round
+ * leftover" -- it is the literal, structural definition of it, confirmed against the real
+ * `createLaneWorktree` source and a real worktree experiment, not merely asserted.
+ *
+ * **Why this cannot reopen `Q348`.** `Q348`'s own incident (`process/SPEC-QUESTIONS.md`) is a model
+ * reporting a REAL, already-committed project file (`specs/strings.spec.js`, in the fixture that
+ * motivated it) as its probe path -- exactly the TRACKED case this function returns `false` for,
+ * every time, by construction: a committed file is never untracked in the lane that checked it out.
+ * `writeNewFileAtomic`'s own refusal (`RUN-158`) is therefore completely unchanged for that case --
+ * this function removes nothing and `runTranslatorProof` proceeds exactly as it did before this fix.
+ *
+ * **Why this does not need, and deliberately avoids, a new model-grantable `rm`/`git clean`.**
+ * Granting either as a live exec pattern (`ADOPT_TESTS_EXEC_PATTERNS`) would hand the model itself a
+ * new, narrowly-scoped but real file-deletion capability, reopening a DIFFERENT, separate concern
+ * (`Q347`'s own live-exec permission-boundary investigation) for a problem FORGE's own code can
+ * instead close with zero new capability granted to the model at all: this check runs entirely in
+ * FORGE's own process, against FORGE's own read of the lane's real git state, never through any
+ * tool the model itself invokes.
+ *
+ * Never throws: a reported path that no longer resolves safely, names a directory rather than a
+ * plain file (a live session's own tool-use can only ever have written a FILE as its probe, per the
+ * brief, so anything else at this path is not this step's leftover to remove at all), or hits any
+ * other surprise, leaves nothing for THIS step to remove -- `writeNewFileAtomic` right after it is
+ * still the one real, load-bearing check, exactly as before this fix. A first version of this
+ * function reclaimed ANY untracked path regardless of type, which crashed the whole round loop
+ * uncaught (`rm` with no `recursive: true` throwing `ERR_FS_EISDIR` on a directory, never caught as
+ * `RUN-114`/`RUN-158`/`CFG-003`/`CFG-004`) -- a real regression TWO independent critics each found
+ * by direct, reproduced experiment, worse than this fix's own starting point (that collision used to
+ * reach `writeNewFileAtomic` and refuse cleanly, the same as any other). Fixed by checking the real
+ * file TYPE, not just existence, and by never letting the removal step itself throw past this
+ * function's own boundary. */
+async function reclaimLaneLeftoverProbe(
+  cwd: string,
+  probePath: AbsolutePath,
+  relativePath: string,
+): Promise<void> {
+  let stats: Stats;
+  try {
+    stats = await lstat(probePath);
+  } catch {
+    return;
+  }
+  if (!stats.isFile()) return;
+  if (!(await isConfirmedUntrackedInGit(cwd, relativePath))) return;
+  try {
+    await rm(probePath, { force: true });
+  } catch {
+    // Left for `writeNewFileAtomic` to refuse, exactly as before this fix -- this step's own job is
+    // a best-effort cleanup, never a second place the caller's own collision check can be bypassed.
+  }
+}
+
 /** Best-effort pass/fail totals read off a raw run's own captured stdout, for check 2's optional
  * summary-line half -- TAP's own `# pass N`/`# fail N` lines, else a generic `"N passed"`/`"N
  * failed"` pattern common to many ad hoc and script-based runners. `undefined` when neither is
@@ -316,6 +434,13 @@ export async function runTranslatorProof(
   // find and remove -- never the reverse (a probe with no marker, which nothing would ever reclaim).
   await writeFileAtomic(lockPath, JSON.stringify({ probePath: probe.path }));
   try {
+    // Reclaims `probePath` when, and only when, it is THIS round's own untracked leftover in `cwd`'s
+    // own real git state -- a model-reported probe path colliding with its own already-created, but
+    // undeletable-by-it, scratch file (M17 P21, live-run fix 9; `reclaimLaneLeftoverProbe`'s own doc
+    // comment has the full reasoning, including why a genuinely TRACKED collision, `Q348`'s own
+    // incident, is never touched here and still reaches `writeNewFileAtomic`'s own `RUN-158` below,
+    // completely unchanged).
+    await reclaimLaneLeftoverProbe(cwd, probePath, probe.path);
     // `writeNewFileAtomic`, not `writeFileAtomic`: a probe path that already names a real file is a
     // caller mistake (it would silently stand in for -- and then this function would delete --
     // content that was never the caller's scratch probe at all), refused rather than clobbered. The

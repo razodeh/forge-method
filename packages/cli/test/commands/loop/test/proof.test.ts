@@ -6,9 +6,11 @@
  * @see specs/13 F-TEST-11
  * @see specs/22 M17 P6
  */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+import { execa } from 'execa';
 
 import { ProjectPaths } from '@forge/core/fs';
 import type { StructuredTestCommand } from '@forge/schemas/config';
@@ -39,6 +41,24 @@ function makeCreateTempPath(dir: string): () => string {
 /** Fixed, injected clock (`QUALITY-BAR.md` R10) -- every test passes the identical value, so nothing
  * here ever reads a real wall clock. */
 const NOW = () => '2026-01-01T00:00:00.000Z';
+
+/** A real `git init` repo at `dir` -- M17 P21 live-run fix 9's own tracked-vs-untracked distinction
+ * (`reclaimLaneLeftoverProbe`, `proof.ts`) only ever activates inside a real git repository, so
+ * these tests need one, unlike every other fixture in this file. */
+async function initGitRepo(dir: string): Promise<void> {
+  await execa('git', ['init', '--quiet'], { cwd: dir });
+  await execa('git', ['config', 'user.email', 'proof-test@example.com'], { cwd: dir });
+  await execa('git', ['config', 'user.name', 'Proof Test'], { cwd: dir });
+}
+
+/** Writes `relativePath` and genuinely commits it -- the one way a file is TRACKED in `dir`'s own
+ * git state, the identical real signal `reclaimLaneLeftoverProbe` reads (`git ls-files
+ * --error-unmatch`), mirroring `adopt-agent.test.ts`'s own `commitRealFile` helper. */
+async function commitRealFile(dir: string, relativePath: string, content: string): Promise<void> {
+  await writeFile(path.join(dir, relativePath), content, 'utf8');
+  await execa('git', ['add', '-A'], { cwd: dir });
+  await execa('git', ['commit', '--quiet', '-m', `add ${relativePath}`], { cwd: dir });
+}
 
 describe('runTranslatorProof -- happy path, a real "node --test" run, TAP, no translator (specs/22 M17 P6)', () => {
   it('passes all five checks for a real baseline + a real injected-failure probe', async () => {
@@ -625,5 +645,149 @@ describe('runTranslatorProof -- the probe is refused, never silently overwritten
     expect(await readFile(path.join(dir, 'probe.test.js'), 'utf8')).toBe(
       'not a probe at all -- a real, pre-existing file',
     );
+  });
+});
+
+describe('runTranslatorProof -- an UNTRACKED, same-round leftover at the probe path is reclaimed automatically, never refused (specs/22 M17 P21) (live-run fix 9)', () => {
+  it('a real git repo whose probe path is already occupied by a file that was never git-added is cleaned up before writing, and the proof passes on its own merits', async () => {
+    const dir = await tempDir();
+    await initGitRepo(dir);
+    await commitRealFile(
+      dir,
+      'baseline.test.js',
+      `
+const test = require('node:test');
+const assert = require('node:assert');
+test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
+`,
+    );
+    // Simulates the real live-run defect this fix closes: a live agent session already created
+    // this exact file during its own investigation (per the brief: a deliberately-failing probe,
+    // watched run for real), then genuinely could not delete it again -- `rm`/`git clean` are not
+    // in its own granted exec patterns, and non-interactive mode has no escalation path -- so the
+    // leftover sits on disk, UNTRACKED (written directly with `fs`, never `git add`), exactly as a
+    // real denied `rm` would leave it.
+    await writeFile(
+      path.join(dir, 'probe.test.js'),
+      '// a leftover from a live session that could not delete its own probe -- never git-added\n',
+      'utf8',
+    );
+    const result = await runTranslatorProof({
+      command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+      cwd: dir,
+      paths: new ProjectPaths(dir),
+      createTempPath: makeCreateTempPath(dir),
+      probe: REAL_PROBE,
+      runnerVersion: process.version,
+      now: NOW,
+    });
+    // Reclaimed, not refused: this runs to real completion exactly like the happy-path test at the
+    // top of this file -- no RUN-158, because the leftover is confirmed untracked and removed
+    // before `writeNewFileAtomic` ever has a chance to see it there.
+    expect(result).toMatchObject({ ok: true, runnerVersion: process.version });
+    // Left exactly as every other passing run leaves it -- the probe itself (now the REAL one this
+    // call wrote, not the leftover) is removed afterwards, same as always.
+    await expect(readFile(path.join(dir, 'probe.test.js'), 'utf8')).rejects.toThrow();
+  });
+
+  it('a real git repo with no collision at all still passes -- the ordinary case, now actually exercised against a real git worktree-shaped lane, not only a bare non-git temp dir', async () => {
+    const dir = await tempDir();
+    await initGitRepo(dir);
+    await commitRealFile(
+      dir,
+      'baseline.test.js',
+      `
+const test = require('node:test');
+const assert = require('node:assert');
+test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
+`,
+    );
+    const result = await runTranslatorProof({
+      command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+      cwd: dir,
+      paths: new ProjectPaths(dir),
+      createTempPath: makeCreateTempPath(dir),
+      probe: REAL_PROBE,
+      runnerVersion: process.version,
+      now: NOW,
+    });
+    expect(result).toMatchObject({ ok: true, runnerVersion: process.version });
+  });
+});
+
+describe('runTranslatorProof -- a TRACKED, genuinely pre-existing project file at the probe path is NEVER reclaimed; RUN-158 still refuses exactly as before (specs/22 M17 P21) (live-run fix 9)', () => {
+  it('a real git repo with the collision file actually committed (the Q348 shape) still refuses with RUN-158, and the real file is left completely untouched', async () => {
+    const dir = await tempDir();
+    await initGitRepo(dir);
+    await commitRealFile(
+      dir,
+      'baseline.test.js',
+      `
+const test = require('node:test');
+const assert = require('node:assert');
+test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
+`,
+    );
+    // A real, pre-existing project file, genuinely committed -- the exact `Q348` shape
+    // (`process/SPEC-QUESTIONS.md`): a model reporting a real, already-committed file as its probe
+    // path. This must NEVER be reclaimed, no matter how this fix reads the lane's own git state --
+    // reclaiming it would silently reopen the already-disclosed, already-fixed incident `RUN-158`
+    // exists to prevent.
+    await commitRealFile(
+      dir,
+      'already-exists.test.js',
+      "// a real file this project already ships -- never the proof's own probe\n",
+    );
+    await expect(
+      runTranslatorProof({
+        command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+        cwd: dir,
+        paths: new ProjectPaths(dir),
+        createTempPath: makeCreateTempPath(dir),
+        probe: { ...REAL_PROBE, path: 'already-exists.test.js' },
+        runnerVersion: process.version,
+        now: NOW,
+      }),
+    ).rejects.toMatchObject({ code: 'RUN-158', cause: { code: 'RUN-114' } });
+    // Completely unchanged: the real, tracked file is never touched by this fix's own new
+    // untracked-leftover cleanup, exactly as it was never touched before this fix existed.
+    expect(await readFile(path.join(dir, 'already-exists.test.js'), 'utf8')).toBe(
+      "// a real file this project already ships -- never the proof's own probe\n",
+    );
+  });
+});
+
+describe('runTranslatorProof -- an untracked DIRECTORY at the probe path is never reclaimed either, and never crashes the round (specs/22 M17 P21) (live-run fix 9, round 2)', () => {
+  it('a real git repo whose probe path names an untracked directory (not a file) still refuses with RUN-158, the identical shape every other collision gets -- never an uncaught EISDIR', async () => {
+    const dir = await tempDir();
+    await initGitRepo(dir);
+    await commitRealFile(
+      dir,
+      'baseline.test.js',
+      `
+const test = require('node:test');
+const assert = require('node:assert');
+test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
+`,
+    );
+    // The one real regression two independent critics each found by direct, reproduced experiment
+    // in this fix's own first attempt: a live session's own tool-use can only ever write a FILE as
+    // its probe (per the brief), but nothing stopped this new reclaim step from also matching a
+    // directory that merely happens to be untracked (a test runner's own cache dir, for instance) --
+    // `rm` with no `recursive: true` throws `ERR_FS_EISDIR`, uncaught by any of RUN-114/RUN-158/
+    // CFG-003/CFG-004, crashing the whole round loop. Worse than this fix's own starting point: that
+    // exact collision used to reach `writeNewFileAtomic` and refuse cleanly, the same as any other.
+    await mkdir(path.join(dir, 'probe.test.js'));
+    await expect(
+      runTranslatorProof({
+        command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+        cwd: dir,
+        paths: new ProjectPaths(dir),
+        createTempPath: makeCreateTempPath(dir),
+        probe: REAL_PROBE,
+        runnerVersion: process.version,
+        now: NOW,
+      }),
+    ).rejects.toMatchObject({ code: 'RUN-158', cause: { code: 'RUN-114' } });
   });
 });
