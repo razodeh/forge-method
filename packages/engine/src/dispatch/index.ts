@@ -118,6 +118,7 @@ export {
 export {
   commandWords,
   CONFINED_ENV_ALLOWLIST,
+  createLiveFileAccessGate,
   killGroup,
   listDescendantPids,
   PROPOSED_ENV_FIXED,
@@ -130,6 +131,7 @@ export {
   type CommandRefusalReason,
   type ConfinedCommandResult,
   type ConfinedLimits,
+  type LiveFileAccessToolName,
 } from './confined-command.ts';
 export {
   expandTrustedInvocation,

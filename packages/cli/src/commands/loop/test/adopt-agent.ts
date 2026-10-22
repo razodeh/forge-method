@@ -238,6 +238,7 @@ import { resolveContentReference } from '@forge/agents/prompt';
 import {
   ADOPT_TESTS_EXEC_PATTERNS,
   assembleAgentSession,
+  createLiveFileAccessGate,
   grantWithAdoptTestsExec,
   readProjectAgent,
   vetProposedCommand,
@@ -1042,6 +1043,11 @@ export async function runAdoptTestsAgent(
         // comment has the full critic-round-4 finding and the honest disclosure of what is, and is
         // not, verified about it).
         vetExecCommand: createLiveExecGate(lane.path),
+        // The real, per-call gate on this round's own live `Read`/`Edit`/`Write` tool use
+        // (`SPEC-QUESTIONS.md` Q347) -- the SAME lane `cwd` already confines `vetExecCommand` above
+        // to, built by the SAME shared `createLiveFileAccessGate` every other real `kind: agent` step
+        // now uses too, not a second, independently-maintained gate for this one round.
+        vetFileAccess: createLiveFileAccessGate(lane.path),
       };
       const handle = await ctx.adapter.startSession(sessionRequest);
       const session = await handle.result();

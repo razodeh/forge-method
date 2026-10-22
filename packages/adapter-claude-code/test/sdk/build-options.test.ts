@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import { claudeCodeAdapterConfigSchema } from '../../src/config.ts';
 import { buildSdkOptions } from '../../src/sdk/build-options.ts';
 import { mapToolGrantToAllowedTools } from '../../src/tool-grant.ts';
@@ -304,5 +305,154 @@ describe('buildSdkOptions: canUseTool (SessionRequest.vetExecCommand wiring) (sp
       options.canUseTool?.('Read', { path: 'x' }, opts),
     ]);
     for (const result of results) expect(result).not.toBeNull();
+  });
+});
+
+/** The second and third real `HookCallback` arguments this suite never cares about the CONTENTS of
+ * (`toolUseID`, `{ signal }`), mirroring `canUseToolOptions()`'s own identical "supply something real,
+ * assert nothing about it" convention above. */
+function hookCallOptions(): { signal: AbortSignal } {
+  return { signal: new AbortController().signal };
+}
+
+/** A real, minimal `PreToolUseHookInput` -- every `BaseHookInput` field the installed `.d.ts` actually
+ * requires (`session_id`/`transcript_path`/`cwd`), plus the three `PreToolUse`-specific fields this
+ * gate reads. */
+function preToolUseInput(toolName: string, toolInput: unknown): Parameters<HookCallback>[0] {
+  return {
+    hook_event_name: 'PreToolUse',
+    session_id: 'session-1',
+    transcript_path: '/tmp/transcript.jsonl',
+    cwd: '/tmp/lane',
+    tool_name: toolName,
+    tool_input: toolInput,
+    tool_use_id: 'tool-use-1',
+  };
+}
+
+describe('buildSdkOptions: PreToolUse hook (SessionRequest.vetFileAccess wiring) (SPEC-QUESTIONS.md Q347)', () => {
+  it('is omitted entirely from Options when req.vetFileAccess is unset -- strictly additive, no change for every caller before this piece', () => {
+    const options = buildSdkOptions(baseRequest(), claudeCodeAdapterConfigSchema.parse({}));
+    expect(options.hooks).toBeUndefined();
+  });
+
+  it('registers exactly one PreToolUse matcher, with no `matcher` pattern restricting it (every tool_use event is inspected; the callback itself narrows to Read/Edit/Write) -- when req.vetFileAccess IS set', () => {
+    const options = buildSdkOptions(
+      baseRequest({ vetFileAccess: () => Promise.resolve({ allowed: true }) }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    expect(options.hooks?.PreToolUse).toHaveLength(1);
+    expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+    expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
+  });
+
+  it.each(['Read', 'Edit', 'Write'] as const)(
+    'denies a real out-of-lane %s call with the real vetFileAccess reason, via a genuine PreToolUseHookSpecificOutput deny decision',
+    async (toolName) => {
+      const options = buildSdkOptions(
+        baseRequest({
+          vetFileAccess: () =>
+            Promise.resolve({
+              allowed: false,
+              reason: `refused: ${toolName} resolves outside the lane`,
+            }),
+        }),
+        claudeCodeAdapterConfigSchema.parse({}),
+      );
+      const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+      const result = await hook?.(
+        preToolUseInput(toolName, { file_path: '/tmp/forge-probe/test_forge_probe.py' }),
+        'tool-use-1',
+        hookCallOptions(),
+      );
+      expect(result).toMatchObject({
+        continue: false,
+        decision: 'block',
+        reason: `refused: ${toolName} resolves outside the lane`,
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: `refused: ${toolName} resolves outside the lane`,
+        },
+      });
+    },
+  );
+
+  it.each(['Read', 'Edit', 'Write'] as const)(
+    'allows a real in-lane %s call when the gate allows it',
+    async (toolName) => {
+      const options = buildSdkOptions(
+        baseRequest({ vetFileAccess: () => Promise.resolve({ allowed: true }) }),
+        claudeCodeAdapterConfigSchema.parse({}),
+      );
+      const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+      const result = await hook?.(
+        preToolUseInput(toolName, { file_path: '/tmp/lane/ok.txt' }),
+        'tool-use-1',
+        hookCallOptions(),
+      );
+      expect(result).toEqual({ continue: true });
+    },
+  );
+
+  it('allows a non-Read/Edit/Write tool call (Bash included) immediately, without ever calling vetFileAccess at all', async () => {
+    let calls = 0;
+    const options = buildSdkOptions(
+      baseRequest({
+        vetFileAccess: () => {
+          calls += 1;
+          return Promise.resolve({ allowed: false, reason: 'should never be reached' });
+        },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    for (const toolName of ['Bash', 'Glob', 'Grep', 'WebFetch', 'Task']) {
+      const result = await hook?.(
+        preToolUseInput(toolName, { anything: 'x' }),
+        'tool-use-1',
+        hookCallOptions(),
+      );
+      expect(result).toEqual({ continue: true });
+    }
+    expect(calls).toBe(0);
+  });
+
+  it('passes through a non-PreToolUse hook event untouched (this callback is only ever registered under the PreToolUse key, but fails safe if it were ever invoked for a different event)', async () => {
+    const options = buildSdkOptions(
+      baseRequest({ vetFileAccess: () => Promise.resolve({ allowed: false, reason: 'x' }) }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    const result = await hook?.(
+      { hook_event_name: 'SessionStart', session_id: 's', transcript_path: '/t', cwd: '/tmp' } as Parameters<HookCallback>[0],
+      undefined,
+      hookCallOptions(),
+    );
+    expect(result).toEqual({ continue: true });
+  });
+
+  it('denies (never allows) a Write/Edit/Read call whose own "tool_input" carries no real "file_path" string -- fail closed on an unexpected shape, matching buildCanUseTool\'s own identical convention for a non-string Bash "command"', async () => {
+    let calls = 0;
+    const options = buildSdkOptions(
+      baseRequest({
+        vetFileAccess: () => {
+          calls += 1;
+          return Promise.resolve({ allowed: true });
+        },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    const missingPath = await hook?.(preToolUseInput('Write', {}), 'tool-use-1', hookCallOptions());
+    const numericPath = await hook?.(
+      preToolUseInput('Edit', { file_path: 1234 }),
+      'tool-use-1',
+      hookCallOptions(),
+    );
+    expect(missingPath).toMatchObject({ continue: false, decision: 'block' });
+    expect(numericPath).toMatchObject({ continue: false, decision: 'block' });
+    // Never even reached the real gate for a shape it cannot vet at all.
+    expect(calls).toBe(0);
   });
 });

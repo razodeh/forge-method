@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   CONFINED_ENV_ALLOWLIST,
+  createLiveFileAccessGate,
   PROPOSED_ENV_FIXED,
   runConfinedCommand,
   scrubbedEnvironment,
@@ -910,5 +911,86 @@ describe('a refused command leaves no trace (the canary file is never created)',
     });
     expect(ran.stdout).toBe('hello');
     expect(await readFile(path.join(root, 'sub', 'a.txt'), 'utf8')).toBe('hello\n');
+  });
+});
+
+describe('createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analogue of vetProposedCommand, for a live session\'s own Read/Edit/Write tool use', () => {
+  it('allows an in-lane target for all three tool names, including a FRESH Write target that does not exist yet', async () => {
+    const root = await lane();
+    await writeFile(path.join(root, 'existing.txt'), 'hello');
+    const gate = createLiveFileAccessGate(root);
+    await expect(gate('Read', path.join(root, 'existing.txt'))).resolves.toEqual({ allowed: true });
+    await expect(gate('Edit', path.join(root, 'existing.txt'))).resolves.toEqual({ allowed: true });
+    // `Write`'s own real target routinely does not exist on disk yet -- the gate must not require it
+    // to, the same way `vetPath`'s own glob-expansion logic above tolerates a not-yet-existing match.
+    await expect(gate('Write', path.join(root, 'brand-new.txt'))).resolves.toEqual({
+      allowed: true,
+    });
+    // A nested, not-yet-existing path two levels deep: `dirname` realpath still has to walk further
+    // than one level up to find a real ancestor.
+    await expect(gate('Write', path.join(root, 'nested', 'deep', 'new.txt'))).resolves.toEqual({
+      allowed: true,
+    });
+  });
+
+  it('denies a genuinely out-of-lane absolute target for all three tool names, naming the tool and the path in the reason -- the exact exploit shape Q347 found live (a real Write to /tmp/forge-probe/..., completely outside the session\'s own lane)', async () => {
+    const root = await lane();
+    const outside = await lane();
+    const target = path.join(outside, 'forge-probe', 'test_forge_probe.py');
+    const gate = createLiveFileAccessGate(root);
+    for (const toolName of ['Read', 'Edit', 'Write'] as const) {
+      const verdict = await gate(toolName, target);
+      expect(verdict).toMatchObject({ allowed: false });
+      if (verdict.allowed) throw new Error('unreachable');
+      expect(verdict.reason).toContain(toolName);
+      expect(verdict.reason).toContain(target);
+    }
+  });
+
+  it('a symlinked directory inside the lane that points outside it is refused, and a symlink that stays inside is not -- mirroring vetPath\'s own identical real-filesystem check above', async () => {
+    const root = await lane();
+    const outside = await lane();
+    await writeFile(path.join(outside, 'secret.txt'), 'SECRET');
+    await symlink(outside, path.join(root, 'escape'));
+    await writeFile(path.join(root, 'real.txt'), 'x');
+    await symlink(path.join(root, 'real.txt'), path.join(root, 'inside'));
+    const gate = createLiveFileAccessGate(root);
+    await expect(gate('Read', path.join(root, 'escape', 'secret.txt'))).resolves.toMatchObject({
+      allowed: false,
+    });
+    await expect(gate('Read', path.join(root, 'inside'))).resolves.toEqual({ allowed: true });
+  });
+
+  it('a lane whose own path IS a symlink (the root argument itself, not a path inside it) still allows an in-lane target -- the macOS /tmp -> /private/tmp shape this gate\'s own live experiment hit directly', async () => {
+    const realRoot = await lane();
+    const container = await mkdtemp(path.join(tmpdir(), 'forge-confined-'));
+    dirs.push(container);
+    const symlinkedRoot = path.join(container, 'lane-link');
+    await symlink(realRoot, symlinkedRoot);
+    // The gate is built from the UN-resolved, symlinked path -- `vetProposedCommand`'s own callers
+    // (`createLiveExecGate`, `buildSessionRequest`) likewise hand a lane path straight through without
+    // realpath'ing it first, so this is the real shape the gate must tolerate, not a contrived one.
+    const gate = createLiveFileAccessGate(symlinkedRoot);
+    await expect(gate('Write', path.join(symlinkedRoot, 'ok.txt'))).resolves.toEqual({
+      allowed: true,
+    });
+    // The identical real target, addressed through its OWN real (non-symlinked) path, is in-lane too.
+    await expect(gate('Write', path.join(realRoot, 'ok.txt'))).resolves.toEqual({ allowed: true });
+  });
+
+  it('a relative file_path (never the real SDK\'s own contract, but a defensive case) resolves against root, and an escaping ../ is still denied', async () => {
+    const root = await lane();
+    const outside = await lane();
+    await writeFile(path.join(outside, 'secret.txt'), 'SECRET');
+    const gate = createLiveFileAccessGate(root);
+    await expect(gate('Write', 'inside.txt')).resolves.toEqual({ allowed: true });
+    const relativeEscape = path.relative(root, path.join(outside, 'secret.txt'));
+    await expect(gate('Read', relativeEscape)).resolves.toMatchObject({ allowed: false });
+  });
+
+  it('fails closed on an empty file_path rather than silently allowing it', async () => {
+    const root = await lane();
+    const gate = createLiveFileAccessGate(root);
+    await expect(gate('Write', '')).resolves.toMatchObject({ allowed: false });
   });
 });

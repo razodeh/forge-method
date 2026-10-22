@@ -1282,6 +1282,76 @@ describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE e
   });
 });
 
+describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE Read/Edit/Write tool use (SPEC-QUESTIONS.md Q347)", () => {
+  it('sets SessionRequest.vetFileAccess for real, and that real callback refuses the exact live exploit shape Q347 found (a real Write to an absolute path completely outside the round\'s own lane), while allowing an in-lane target', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['investigated package.json; no test script found; node --test discovers *.test.js'],
+      structured: {
+        command: NODE_TEST_COMMAND,
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        runnerVersion: process.version,
+        reason: 'package.json has no test script; node --test discovers *.test.js directly.',
+      },
+    });
+
+    let captured: SessionRequest | undefined;
+    const capturing: PlatformAdapter = {
+      id: adapter.id,
+      displayName: adapter.displayName,
+      capabilities: () => adapter.capabilities(),
+      preflight: () => adapter.preflight(),
+      listModels: () => adapter.listModels(),
+      startSession: (req: SessionRequest) => {
+        captured = req;
+        return adapter.startSession(req);
+      },
+      resumeSession: (sessionId, req) => adapter.resumeSession(sessionId, req),
+    };
+
+    const result = await runAdoptTestsAgent(deps(project, capturing), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+    expect(result.outcome).toBe('staged');
+
+    // `runAdoptTestsAgent` really sets the field -- not merely declares it legal to set.
+    expect(captured?.vetFileAccess).toBeDefined();
+    const gate = captured?.vetFileAccess;
+    if (gate === undefined) throw new Error('unreachable');
+
+    // The exact live exploit Q347's own UPDATE section found, confirmed real by scanning an actual
+    // session transcript this milestone's own live run already produced: a real `Write` tool call
+    // created `/tmp/forge-probe/test_forge_probe.py`, an absolute path completely outside that
+    // session's own lane worktree -- refused, for real, through the real `createLiveFileAccessGate`
+    // mechanism, never a hand-asserted "would be refused," for all three gated tool names.
+    await expect(
+      gate('Write', '/tmp/forge-probe/test_forge_probe.py'),
+    ).resolves.toMatchObject({ allowed: false });
+    await expect(gate('Edit', '/tmp/forge-probe/test_forge_probe.py')).resolves.toMatchObject({
+      allowed: false,
+    });
+    await expect(gate('Read', '/tmp/forge-probe/test_forge_probe.py')).resolves.toMatchObject({
+      allowed: false,
+    });
+    // A real target inside THIS round's own lane (`captured.cwd`) still passes -- the gate narrows a
+    // live file-tool decision, it does not blanket-deny every path.
+    if (captured === undefined) throw new Error('unreachable');
+    await expect(
+      gate('Write', `${captured.cwd}/probe.test.js`),
+    ).resolves.toMatchObject({ allowed: true });
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
 describe('runAdoptTestsAgent -- refuses upfront on a transport with no real per-call exec gate (specs/22 M17 P7) (critic round 5)', () => {
   it('throws RUN-162, naming the real adapter id, before any lane, session, or agent definition is ever touched', async () => {
     const dir = await tempDir();

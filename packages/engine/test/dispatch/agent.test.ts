@@ -1209,3 +1209,51 @@ describe('runAgentWork — commit subject uses the step id and brief title, neve
     expect(stdout.trim()).toBe('forge(wf): add the widget');
   });
 });
+
+describe("runAgentStep -- a real per-call gate on the session's own LIVE Read/Edit/Write tool use (SPEC-QUESTIONS.md Q347)", () => {
+  it('sets SessionRequest.vetFileAccess for EVERY real kind:agent step, not only adopt-tests\'s own rounds -- and that real callback refuses the exact live exploit shape Q347 found (a real absolute-path Write completely outside the step\'s own lane), while allowing an in-lane target', async () => {
+    const projectRoot = await createTempRepo('agent-file-access-gate');
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['implemented the feature'],
+      writeFiles: [{ relativePath: 'src/feature.ts', content: 'export const x = 1;\n' }],
+    });
+    let captured: SessionRequest | undefined;
+    const realStartSession = adapter.startSession.bind(adapter);
+    adapter.startSession = (request) => {
+      captured = request;
+      return realStartSession(request);
+    };
+    const ctx = createTestContext({ projectRoot, adapter });
+    const stepNode = node({
+      id: 'wf:implement',
+      kind: 'agent',
+      agent: toAgentId('engineer'),
+      brief: 'implement the feature',
+      produces: ['src/feature.ts'],
+    });
+
+    const outcome = await executeStep(stepNode, ctx);
+
+    expect(outcome.status).toBe('succeeded');
+    // `buildSessionRequest` (`steps.ts`) really sets the field for an ORDINARY agent step -- not
+    // merely declares it legal to set, and not only for `adopt-tests`'s own separately-wired rounds.
+    expect(captured?.vetFileAccess).toBeDefined();
+    const gate = captured?.vetFileAccess;
+    if (gate === undefined || captured === undefined) throw new Error('unreachable');
+
+    // The exact live exploit Q347's own UPDATE section found, confirmed real by scanning an actual
+    // session transcript this milestone's own live run already produced: a real `Write` tool call
+    // created `/tmp/forge-probe/test_forge_probe.py`, an absolute path completely outside that
+    // session's own lane worktree -- refused here through the SAME `createLiveFileAccessGate`
+    // mechanism `buildSessionRequest` wires into every real step, never a hand-asserted "would be
+    // refused."
+    await expect(
+      gate('Write', '/tmp/forge-probe/test_forge_probe.py'),
+    ).resolves.toMatchObject({ allowed: false });
+    // A real target inside THIS step's own lane (`captured.cwd`) still passes.
+    await expect(gate('Write', path.join(captured.cwd, 'src/feature.ts'))).resolves.toMatchObject({
+      allowed: true,
+    });
+  });
+});

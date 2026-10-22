@@ -51,6 +51,7 @@ import type {
 import type { AgentDefinition } from '@forge/agents/schema';
 import {
   assembleAgentSession,
+  createLiveFileAccessGate,
   deriveTestExec,
   grantWithTestExec,
   markRefusal,
@@ -525,6 +526,9 @@ async function runReadOnlySession(
       ? {}
       : { outputSchema: OUTPUT_SCHEMAS[request.phase] }),
     abortSignal: abortController.signal,
+    // `SPEC-QUESTIONS.md` Q347: a real, live per-call confinement on this phase's own `Read`/`Edit`/
+    // `Write` tool use to the SAME lane `guard.lane.path` already is `cwd`.
+    vetFileAccess: createLiveFileAccessGate(guard.lane.path),
   };
   await ctx.telemetry.emit({
     type: 'SessionStarted',
@@ -688,6 +692,8 @@ async function runFixSession(
     env: { [FORGE_RUN_ID]: ctx.runId, [FORGE_STEP_ID]: stepId, [FORGE_AGENT_ID]: agent.id },
     outputSchema: FIX_OUTPUT_SCHEMA,
     abortSignal: abortController.signal,
+    // `SPEC-QUESTIONS.md` Q347: see `runReadOnlySession`'s own identical comment above.
+    vetFileAccess: createLiveFileAccessGate(guard.lane.path),
   };
   await ctx.telemetry.emit({
     type: 'SessionStarted',

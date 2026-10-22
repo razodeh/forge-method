@@ -32,6 +32,7 @@ import { artifactTypeById } from '@forge/schemas';
 import { readEvents } from '@forge/telemetry/events';
 import { minimatch } from 'minimatch';
 
+import { createLiveFileAccessGate } from './confined-command.ts';
 import { recordChecks } from '../gates/index.ts';
 import { parseReviewVerdict, type ReviewVerdict } from '../interaction/review-report.ts';
 import { deriveStoryId, mergeLandingScope, upstreamOf, type StepNode } from '../plan/index.ts';
@@ -629,7 +630,14 @@ export async function runLaneLifecycle(
  * resolved values -- none of `ctx.model`/`ctx.tools` (which serve only ad-hoc, non-agent-step sessions)
  * is read here. `env` carries the FORGE run/step/agent marker (`@forge/core/session-marker`,
  * `PLAN-M14.md` P4, `SPEC-QUESTIONS.md` Q232 decision 9): composed from `ctx.runId`, `node.id` and
- * `assembled.agent.id` -- the agent this assembly actually resolved, never `process.env` (R10). */
+ * `assembled.agent.id` -- the agent this assembly actually resolved, never `process.env` (R10).
+ *
+ * `vetFileAccess: createLiveFileAccessGate(cwd)` (`SPEC-QUESTIONS.md` Q347): every real `kind: agent`
+ * step's own session gets a real, live per-call confinement on its `Read`/`Edit`/`Write` tool use to
+ * this SAME `cwd` -- never only `adopt-tests`'s own rounds, which is where the identical Bash-side
+ * gate (`vetExecCommand`) is, by contrast, still confined to today (a real, disclosed asymmetry this
+ * one does not repeat: the file-access gate costs nothing beyond `cwd`, already a required field on
+ * every `SessionRequest`, unlike the Bash gate's own richer, caller-specific vet logic). */
 function buildSessionRequest(
   node: StepNode,
   ctx: ExecuteStepContext,
@@ -660,6 +668,7 @@ function buildSessionRequest(
       [FORGE_AGENT_ID]: assembled.agent.id,
     },
     abortSignal,
+    vetFileAccess: createLiveFileAccessGate(cwd),
   };
 }
 

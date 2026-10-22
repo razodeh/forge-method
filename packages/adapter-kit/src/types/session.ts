@@ -89,6 +89,63 @@ export interface SessionRequest {
    * costly API call.
    */
   readonly vetExecCommand?: (command: string) => Promise<ExecCommandVerdict>;
+  /**
+   * An optional, per-call gate on the session's own LIVE, in-turn `Read`/`Edit`/`Write` tool use —
+   * called with the tool name and the real absolute `file_path` argument a live file-tool call is
+   * about to touch, BEFORE the adapter lets it execute (`SPEC-QUESTIONS.md` Q347). `undefined` when
+   * the caller has no such gate: the adapter falls back to its own native tool-grant mapping alone
+   * (bare `Read`/`Edit`/`Write` entries), exactly as before this field existed -- purely additive,
+   * never a replacement for `tools`.
+   *
+   * **Why this exists at all.** Claude Code's own real SDK prints
+   * `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED` in every real `--agent` log this product has produced: a bare
+   * `Read`/`Edit`/`Write` entry in `allowedTools` (`tool-grant.ts`'s own `mapToolGrantToAllowedTools`
+   * always emits exactly these three as bare strings, never a parenthesised, narrower rule the way
+   * Bash patterns are) auto-approves the whole tool before `vetExecCommand`'s own sibling mechanism,
+   * `canUseTool`, is ever consulted -- confirmed not merely theoretical by a real, live `--agent`
+   * session transcript this milestone's own run already produced: a real `Write` tool call created
+   * `/tmp/forge-probe/test_forge_probe.py`, an absolute path completely outside that session's own
+   * lane worktree, on the real host filesystem, with zero confinement and zero denial. `cwd` governs
+   * only a subprocess's own STARTING directory (`vetExecCommand`'s own doc comment already establishes
+   * this for Bash); nothing analogous ever existed for a live file-tool call's own `file_path`
+   * argument, which can be any absolute path the model writes, regardless of `cwd`.
+   *
+   * **The real fix, and why it is a *different* SDK mechanism than `vetExecCommand`'s.** Claude
+   * Code's own SDK documents exactly two remedies for `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`: "use a
+   * PreToolUse hook" or "remove the bare names from allowedTools so they fall through to
+   * `canUseTool`." The second is not available here -- Claude Code's own real tool-permission
+   * vocabulary (confirmed against the installed SDK's own `.d.ts`) has no narrower, path-scoped rule
+   * syntax for `Read`/`Edit`/`Write` the way `Bash(pattern)`/`WebFetch(domain:host)` exist for their
+   * own tools, so the bare entries cannot be replaced with an equivalently-permissive narrower rule.
+   * The first remedy is a structurally earlier, separate mechanism from `canUseTool`
+   * (`Options.hooks.PreToolUse`, confirmed directly against the installed `.d.ts`): a real, live,
+   * API-key-backed experiment (not merely a reading of the type's own doc comment) confirmed it fires
+   * regardless of whether the tool is bare-listed in `allowedTools` -- the exact thing
+   * `canUseTool`'s own shadowing does NOT survive -- denying a genuinely out-of-lane `Write`/`Edit`/
+   * `Read` with the model receiving a real, observable denial (a `tool_result` with `is_error: true`
+   * and this callback's own `reason` text), while an in-lane call of the identical shape still
+   * succeeds.
+   *
+   * **Scope.** Project-neutral by design, mirroring `vetExecCommand`'s own reasoning exactly: a plain
+   * `(toolName, filePath) => Promise<ExecCommandVerdict>`, never a `ToolGrant`/root pair, so this type
+   * never needs to know HOW a caller derived its verdict and no adapter needs to import anything
+   * beyond this one function shape. `toolName` is always one of `'Read' | 'Edit' | 'Write'` -- the
+   * complete real bare-shadowed set this milestone's own disclosure names (re-confirmed directly
+   * against the installed SDK's own shadowing-warning source: it actually flags ANY bare
+   * `allowedTools` entry, not only these three, but `mapToolGrantToAllowedTools` is the one place
+   * that could ever emit a bare non-exec, non-network tool name today, and it only ever does so for
+   * these three -- `WebFetch`/`WebSearch` only ever appear bare for `network: 'full'`, a separate,
+   * undisclosed finding this field deliberately does not attempt to close, matching the owner's own
+   * explicit "stay focused on Read/Edit/Write" scope for this piece).
+   *
+   * **Known gap, disclosed rather than assumed closed**, mirroring `vetExecCommand`'s own identical
+   * disclosure: only the SDK transport (`@forge/adapter-claude-code`'s `buildSdkOptions`) can honour
+   * this at all -- the CLI transport (`spawn.ts`) has no documented hooks equivalent either.
+   */
+  readonly vetFileAccess?: (
+    toolName: 'Read' | 'Edit' | 'Write',
+    filePath: string,
+  ) => Promise<ExecCommandVerdict>;
 }
 
 export interface ResumeRequest {

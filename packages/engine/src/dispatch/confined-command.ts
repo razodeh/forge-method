@@ -33,10 +33,23 @@
  * command — which until this piece ran through `execa(command, { shell: true })` with the whole parent
  * environment and no vet at all (`test/shell-sinks-inventory.test.ts`'s own `open` rows).
  *
+ * `SPEC-QUESTIONS.md` Q347 adds `createLiveFileAccessGate`: a THIRD thing lives here, the file-path analogue of
+ * `vetProposedCommand` for a live session's own `Read`/`Edit`/`Write` tool calls rather than its Bash calls.
+ * `SessionRequest.vetExecCommand`'s own doc comment already establishes that `cwd` is a subprocess's own
+ * STARTING directory, never a containment boundary — true for Bash, and equally true for a live file-tool call's
+ * own `file_path` argument, which can be any absolute path the model writes regardless of `cwd`. Confirmed live
+ * (not merely disclosed) by a real `--agent` session transcript this milestone's own run already produced: a
+ * real `Write` tool call created a file completely outside its own lane worktree, with zero confinement. Reuses
+ * this file's own `within()` helper (already proven against Bash's path-shaped words) rather than inventing a
+ * second containment check — the one real difference is the input shape: one absolute path handed directly by
+ * the SDK's own `tool_input.file_path`, not a path-shaped WORD that first has to be extracted from a shell command
+ * string the way `vetPath`/`pathCandidates` do for Bash.
+ *
  * @see specs/20 §20.1
  * @see specs/20 §20.4
  * @see specs/20 §20.10
  * @see SPEC-QUESTIONS.md Q222
+ * @see SPEC-QUESTIONS.md Q347
  * @see PLAN-M13.md P28
  * @see PLAN-M14.md P28
  */
@@ -44,7 +57,7 @@ import { execFileSync } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { ToolGrant } from '@forge/adapter-kit';
+import type { ExecCommandVerdict, ToolGrant } from '@forge/adapter-kit';
 import { listDirEntriesSorted, type AbsolutePath } from '@forge/core/fs';
 import {
   isExecAllowed,
@@ -1406,4 +1419,79 @@ export async function runConfinedCommand(
   } finally {
     disarm();
   }
+}
+
+/** The one, complete, real bare-shadowed tool-name set `createLiveFileAccessGate` (below) ever gates —
+ * re-confirmed directly against the installed SDK's own `tool_input` shapes (`sdk-tools.d.ts`:
+ * `FileReadInput`/`FileEditInput`/`FileWriteInput` each carry exactly `file_path: string`, nothing else
+ * this gate needs) rather than assumed from `CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`'s own warning text alone. */
+export type LiveFileAccessToolName = 'Read' | 'Edit' | 'Write';
+
+/**
+ * Resolves `filePath` the way a live file-tool call's own argument should be read: absolute as-is
+ * (the SDK's own real contract for all three tools — confirmed against `sdk-tools.d.ts`: `Write`'s
+ * own `file_path` doc literally says "must be absolute, not relative"), or against `root` on the
+ * rare/defensive chance a caller's own tool_input carries a relative one anyway (fail toward
+ * confinement, not toward trusting an unexpected shape). Mirrors `vetPath`'s own `path.resolve(root,
+ * candidate)` call above, not a second, independently-invented resolution rule.
+ */
+function resolveFileAccessTarget(filePath: string, root: string): string {
+  return path.isAbsolute(filePath) ? filePath : path.resolve(root, filePath);
+}
+
+/**
+ * Builds `SessionRequest.vetFileAccess` for one session (`SPEC-QUESTIONS.md` Q347): a real per-call
+ * gate on the session's own LIVE `Read`/`Edit`/`Write` tool use, the file-path analogue of
+ * `createLiveExecGate`'s own Bash gate (`adopt-agent.ts`) — built here, not there, so every real
+ * `kind: agent` step's own `SessionRequest` (not only `adopt-tests`'s own) can share the identical,
+ * once-reviewed containment logic rather than each caller re-deriving it.
+ *
+ * **Containment, mirroring `vetPath`'s own double-check above.** `root`'s own realpath is resolved
+ * once, up front (so a lane whose own path crosses a symlink — e.g. macOS's `/tmp` -> `/private/tmp`,
+ * confirmed hit directly while building this gate's own live experiment — is not itself mistaken for
+ * an escape). The call's own target is resolved against `root`, then realpath'd too: when the target
+ * does not exist yet (the ordinary case for a fresh `Write`), its own DIRNAME is realpath'd instead,
+ * so a symlinked lane directory still resolves correctly for a file that is about to be created
+ * rather than failing the realpath call outright. A target contained in either `root` or `root`'s own
+ * realpath (matching `within`'s own existing double-check convention, used identically by `vetPath`
+ * above for the exact same "the lane path itself may be a symlink" reason) is allowed; anything else
+ * is denied, with a reason naming the tool, the offending path, and the lane it escaped.
+ *
+ * **Fails closed on a malformed `tool_input`** (no string `filePath` at all): never reachable for a
+ * genuine `Read`/`Edit`/`Write` call given the SDK's own real `FileReadInput`/`FileEditInput`/
+ * `FileWriteInput.file_path: string` contract, but denied rather than silently allowed on the off
+ * chance some other shape ever reaches this function — the same "fail closed on anything unexpected"
+ * convention `build-options.ts`'s own `buildCanUseTool` already applies to a non-string Bash
+ * `input.command`.
+ */
+export function createLiveFileAccessGate(
+  root: string,
+): (toolName: LiveFileAccessToolName, filePath: string) => Promise<ExecCommandVerdict> {
+  return async (toolName, filePath) => {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
+      return {
+        allowed: false,
+        reason: `refused: this ${toolName} call carries no real file path to vet at all.`,
+      };
+    }
+    const realRoot = await realpath(root).catch(() => root);
+    const target = resolveFileAccessTarget(filePath, root);
+    let realTarget: string;
+    try {
+      realTarget = await realpath(target);
+    } catch {
+      try {
+        realTarget = path.join(await realpath(path.dirname(target)), path.basename(target));
+      } catch {
+        realTarget = target;
+      }
+    }
+    if (within(root, realTarget) || within(realRoot, realTarget)) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: `refused: ${toolName} path "${filePath}" resolves outside this session's own lane (${root}).`,
+    };
+  };
 }

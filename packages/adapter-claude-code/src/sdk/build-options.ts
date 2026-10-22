@@ -7,7 +7,13 @@
  * @see SPEC-QUESTIONS.md Q115
  * @see PLAN-M7.md P3
  */
-import type { CanUseTool, Options } from '@anthropic-ai/claude-agent-sdk';
+import type {
+  CanUseTool,
+  HookCallback,
+  HookCallbackMatcher,
+  Options,
+  PreToolUseHookSpecificOutput,
+} from '@anthropic-ai/claude-agent-sdk';
 import type { SessionRequest } from '@forge/adapter-kit';
 
 import type { ClaudeCodeAdapterConfig } from '../config.ts';
@@ -65,6 +71,85 @@ function buildCanUseTool(req: SessionRequest): CanUseTool | undefined {
   };
 }
 
+/** A `PreToolUseHookSpecificOutput` denial, plus the generic `decision`/`reason` pair every hook
+ * event (not only `PreToolUse`) also understands -- both set to the identical text, matching the
+ * real SDK's own documented precedent (`ExitPlanModeInput`'s own sibling `PreModelSwitch` output
+ * carries the same `permissionDecision`/`permissionDecisionReason` pair) rather than relying on only
+ * one of the two mechanisms the installed `.d.ts` exposes for "deny this tool call." */
+function denyFileAccess(reason: string): { continue: false } & {
+  decision: 'block';
+  reason: string;
+  hookSpecificOutput: PreToolUseHookSpecificOutput;
+} {
+  return {
+    continue: false,
+    decision: 'block',
+    reason,
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: reason,
+    },
+  };
+}
+
+/**
+ * `req.vetFileAccess` (`SPEC-QUESTIONS.md` Q347), wired into the SDK's own real
+ * `Options.hooks.PreToolUse` -- a DIFFERENT, structurally earlier mechanism than `buildCanUseTool`
+ * above, and deliberately so: `mapToolGrantToAllowedTools` always emits bare `'Read'`/`'Edit'`/
+ * `'Write'` strings (never a parenthesised, narrower rule the way Bash/WebFetch patterns are), and
+ * the real, installed SDK's own documented behaviour is that a bare `allowedTools` entry
+ * auto-approves the whole tool BEFORE `canUseTool` is ever consulted (`CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`,
+ * printed in every real `--agent` log this product has produced) -- so wiring this into
+ * `canUseTool` the way `vetExecCommand` is wired above would silently never fire for exactly the
+ * three tools it exists to confine. The SDK's own warning text names a `PreToolUse` hook as the
+ * other real remedy, and a real, live, API-key-backed experiment (not merely a reading of the
+ * installed `.d.ts`) confirmed it: an in-lane `Write`/`Edit`/`Read` still succeeds, and a
+ * genuinely out-of-lane one is denied, with the model receiving a real, observable denial (a
+ * `tool_result` with `is_error: true` carrying this callback's own `reason` text) -- not a silent
+ * hang or crash.
+ *
+ * `undefined` when `req` carries no gate (every caller before this piece): returns `undefined` so
+ * `buildSdkOptions` omits `hooks` entirely, leaving every existing session's own behaviour
+ * unchanged -- the identical "strictly additive" discipline `buildCanUseTool` already established.
+ *
+ * Only `'Read'`/`'Edit'`/`'Write'` tool_use events are ever routed through the gate -- every other
+ * `tool_name` (including `'Bash'`, already covered separately by `buildCanUseTool`) resolves
+ * `{ continue: true }` immediately. A call whose own `tool_input.file_path` is somehow not a string
+ * is DENIED, not allowed (fail closed, matching `buildCanUseTool`'s own identical convention for a
+ * non-string Bash `input.command`) -- near-unreachable in practice given the real SDK's own
+ * `FileReadInput`/`FileEditInput`/`FileWriteInput.file_path: string` contract (confirmed against the
+ * installed `sdk-tools.d.ts`), which is exactly why failing closed costs nothing real here either.
+ *
+ * **Disclosed, not assumed closed.** `PreToolUseHookInput.tool_input` is typed `unknown` in the
+ * installed `.d.ts` -- this function reads `file_path` off it with a plain runtime shape check, not
+ * a schema-validated parse, matching `buildCanUseTool`'s own identical, already-accepted treatment
+ * of `input['command']` immediately above.
+ */
+function buildFileAccessHook(req: SessionRequest): HookCallback | undefined {
+  const vetFileAccess = req.vetFileAccess;
+  if (vetFileAccess === undefined) return undefined;
+  return async (input) => {
+    if (input.hook_event_name !== 'PreToolUse') return { continue: true };
+    const toolName = input.tool_name;
+    if (toolName !== 'Read' && toolName !== 'Edit' && toolName !== 'Write') {
+      return { continue: true };
+    }
+    const toolInput = input.tool_input;
+    const filePath =
+      toolInput !== null && typeof toolInput === 'object' && 'file_path' in toolInput
+        ? (toolInput as Record<string, unknown>)['file_path']
+        : undefined;
+    if (typeof filePath !== 'string') {
+      return denyFileAccess(
+        `refused: this ${toolName} call carries no real "file_path" string to vet at all.`,
+      );
+    }
+    const verdict = await vetFileAccess(toolName, filePath);
+    return verdict.allowed ? { continue: true } : denyFileAccess(verdict.reason);
+  };
+}
+
 export function buildSdkOptions(
   req: SessionRequest,
   config: ClaudeCodeAdapterConfig,
@@ -72,6 +157,7 @@ export function buildSdkOptions(
   mcp?: McpSessionExtras,
 ): Options {
   const canUseTool = buildCanUseTool(req);
+  const fileAccessHook = buildFileAccessHook(req);
   const options: Options = {
     cwd: req.cwd,
     model: req.model,
@@ -91,6 +177,18 @@ export function buildSdkOptions(
     // `buildCanUseTool` (above) returns `undefined` when `req.vetExecCommand` is unset, so this
     // spread adds nothing at all for every caller before critic round 4 -- strictly additive.
     ...(canUseTool === undefined ? {} : { canUseTool }),
+    // `buildFileAccessHook` (above) returns `undefined` when `req.vetFileAccess` is unset, so this
+    // spread adds nothing at all for every caller before this piece -- strictly additive, the
+    // identical discipline as `canUseTool` directly above. One matcher, no `matcher` pattern (every
+    // tool_use event is inspected; the callback itself narrows to `Read`/`Edit`/`Write`), mirroring
+    // the installed `.d.ts`'s own worked example shape (`hooks: { PreToolUse: [{ hooks: [...] }] }`).
+    ...(fileAccessHook === undefined
+      ? {}
+      : {
+          hooks: {
+            PreToolUse: [{ hooks: [fileAccessHook] } satisfies HookCallbackMatcher],
+          },
+        }),
     // `07` §7.3's own mapping table names `--bare` for the CLI transport; the SDK has no literal
     // `bare` field at all (confirmed: no such field exists in the real `Options` type). Its own real,
     // documented isolation control is `settingSources: []` -- "Pass `[]` to disable filesystem

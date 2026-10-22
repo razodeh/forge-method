@@ -20,6 +20,7 @@ import type { AgentDefinition } from '@forge/agents/schema';
 import type { InteractionMode } from '@forge/agents/interaction';
 
 import { assembleAgentSession, markRefusal, promptRecordDirName } from '../dispatch/assemble.ts';
+import { createLiveFileAccessGate } from '../dispatch/confined-command.ts';
 import { expandRequestedContext } from '../dispatch/context-expansion.ts';
 import { runAgentStep } from '../dispatch/steps.ts';
 import type { ExecuteStepContext } from '../dispatch/types.ts';
@@ -94,10 +95,11 @@ export async function runParticipantSession(
   // this participant's own resolved agent, never `node.agent` (the step's primary author) and never
   // `process.env` (R10) -- every participant this dispatch layer runs carries the marker, whichever
   // interaction mode or perspective it is.
+  const participantCwd = cwd ?? ctx.projectRoot;
   const request: SessionRequest = {
     runId: ctx.runId,
     stepId: assembled.stepKey,
-    cwd: cwd ?? ctx.projectRoot,
+    cwd: participantCwd,
     systemPrompt: assembled.systemPrompt,
     prompt:
       untrustedInput === undefined ? assembled.prompt : `${assembled.prompt}\n\n${untrustedInput}`,
@@ -117,6 +119,11 @@ export async function runParticipantSession(
     },
     ...(outputSchema === undefined ? {} : { outputSchema }),
     abortSignal: abortController.signal,
+    // `SPEC-QUESTIONS.md` Q347: a participant session is read-only by construction (this function's
+    // own top doc comment), but `tools.read` is still granted, so its own live `Read` tool use gets
+    // the identical lane-cwd confinement every other real session now gets -- never only `adopt-
+    // tests`'s own rounds.
+    vetFileAccess: createLiveFileAccessGate(participantCwd),
   };
   await ctx.telemetry.emit({
     type: 'SessionStarted',
