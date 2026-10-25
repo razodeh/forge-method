@@ -14,7 +14,7 @@
  * @see PLAN-M10.md P17
  * @see PLAN-M14.md P28
  */
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -295,6 +295,52 @@ describe('runBuildAndTestChecks', () => {
     // refused, not merely logged.
     const checks = await runBuildAndTestChecks(dir, survey, FIXED_CLOCK, REAL_ENV);
     expect(checks).toHaveLength(0);
+  }, 30_000);
+
+  it('accepts a package.json manifest whose own containing directory is literally named with a leading ".." (not a real escape) -- resolveContainedManifestPath\'s own raw string-prefix check used to misread this as one, silently skipping the build check entirely', async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'forge-adopt-verify-dotdir-'));
+    // The REAL package.json `npm run build` actually runs against lives at the repo root, as every
+    // other test in this suite's own fixtures already does -- that is what this test asserts against.
+    // The manifest `detectCommands` is told to inspect instead sits one level down, inside a directory
+    // literally named with a leading ".." (not a real escape), purely to exercise
+    // `resolveContainedManifestPath`'s own fix: before the fix, its raw string-prefix check misread
+    // "..weird/package.json" as an escape attempt and silently skipped the build check entirely
+    // (`detectCommands` never even read it).
+    await writeFile(
+      path.join(dir, 'package.json'),
+      JSON.stringify({
+        name: 'root',
+        version: '1.0.0',
+        scripts: { build: 'node -e "process.exit(0)"' },
+      }),
+    );
+    await mkdir(path.join(dir, '..weird'), { recursive: true });
+    await writeFile(
+      path.join(dir, '..weird', 'package.json'),
+      JSON.stringify({
+        name: 'nested',
+        version: '1.0.0',
+        scripts: { build: 'node -e "process.exit(1)"' },
+      }),
+    );
+    await execa('git', ['init', '--quiet', '-b', 'main'], { cwd: dir });
+    await execa('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
+    await execa('git', ['config', 'user.name', 'Test'], { cwd: dir });
+    await execa('git', ['add', '.'], { cwd: dir });
+    await execa('git', ['commit', '--quiet', '-m', 'init'], { cwd: dir });
+    const survey: Survey = {
+      ...surveyWithManifest(),
+      manifests: [{ toolchain: 'node', path: '..weird/package.json' }],
+    };
+    const checks = await runBuildAndTestChecks(dir, survey, FIXED_CLOCK, REAL_ENV);
+    const build = checks.find((c) => c.kind === 'build');
+    // Before the fix: resolveContainedManifestPath wrongly refused "..weird/package.json" as an
+    // escape, so detectCommands never read it and reported no build command at all -- `build` would be
+    // `undefined` here (no check at all), not a `fail`/`pass` outcome. After the fix, the nested
+    // manifest is read (it declares a `build` script), detectCommands reports the hard-coded
+    // 'npm run build', and the command that actually runs executes from the clone's own root -- where
+    // the REAL root package.json's own build script lives -- and that one exits 0.
+    expect(build).toMatchObject({ outcome: 'pass', command: 'npm run build' });
   }, 30_000);
 });
 

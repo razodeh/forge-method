@@ -99,7 +99,18 @@ async function resolveContainedManifestPath(
 ): Promise<string | undefined> {
   const resolved = path.resolve(sourceRoot, relativePath);
   const lexicalRelative = path.relative(sourceRoot, resolved);
-  if (lexicalRelative.startsWith('..') || path.isAbsolute(lexicalRelative)) return undefined;
+  // The first path SEGMENT must be checked, not a raw string prefix: `path.relative` can return a
+  // literal `'...'` (e.g. for a manifest-reported path like `'...'` or `'..foo'`), and
+  // `'...'.startsWith('..')` is `true` purely because the first two characters coincidentally match,
+  // even though `...`/`..foo` name a real sibling inside `sourceRoot`, never a `..` parent-directory
+  // escape.
+  if (
+    lexicalRelative === '..' ||
+    lexicalRelative.startsWith('..' + path.sep) ||
+    path.isAbsolute(lexicalRelative)
+  ) {
+    return undefined;
+  }
 
   try {
     const [realSourceRoot, realResolved] = await Promise.all([
@@ -107,7 +118,15 @@ async function resolveContainedManifestPath(
       realpath(resolved),
     ]);
     const realRelative = path.relative(realSourceRoot, realResolved);
-    if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) return undefined;
+    // Same first-segment fix as the lexical check above, applied to the real, symlink-resolved
+    // comparison too.
+    if (
+      realRelative === '..' ||
+      realRelative.startsWith('..' + path.sep) ||
+      path.isAbsolute(realRelative)
+    ) {
+      return undefined;
+    }
   } catch {
     return undefined;
   }
