@@ -20,7 +20,10 @@ import type { AgentDefinition } from '@forge/agents/schema';
 import type { InteractionMode } from '@forge/agents/interaction';
 
 import { assembleAgentSession, markRefusal, promptRecordDirName } from '../dispatch/assemble.ts';
-import { createLiveFileAccessGate } from '../dispatch/confined-command.ts';
+import {
+  createLiveFileAccessGate,
+  createLiveNetworkAccessGate,
+} from '../dispatch/confined-command.ts';
 import { expandRequestedContext } from '../dispatch/context-expansion.ts';
 import { runAgentStep } from '../dispatch/steps.ts';
 import type { ExecuteStepContext } from '../dispatch/types.ts';
@@ -124,6 +127,10 @@ export async function runParticipantSession(
     // the identical lane-cwd confinement every other real session now gets -- never only `adopt-
     // tests`'s own rounds.
     vetFileAccess: createLiveFileAccessGate(participantCwd),
+    // `SPEC-QUESTIONS.md` Q350: the identical reasoning, now for this participant's own live
+    // `WebFetch`/`WebSearch` tool use, built from the SAME `assembled.tools` grant `tools` above
+    // already is.
+    vetNetworkAccess: createLiveNetworkAccessGate(assembled.tools),
   };
   await ctx.telemetry.emit({
     type: 'SessionStarted',

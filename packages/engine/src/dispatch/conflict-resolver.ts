@@ -33,8 +33,12 @@
  *    a gauntlet critic found this was the one real `startSession` caller in the codebase missing it,
  *    on a session that is `taint: 'external'` by construction and genuinely granted bare `Write`/
  *    `Edit` — the exact bare-shadowed shape the gate exists to close, previously left open on the one
- *    path specifically built to process another lane's own untrusted content. See `runResolverSession`'s
- *    own doc comment for the full reasoning.
+ *    path specifically built to process another lane's own untrusted content. Also sets
+ *    `vetNetworkAccess: createLiveNetworkAccessGate(assembled.tools)` (`SPEC-QUESTIONS.md` Q350), for
+ *    the identical reason on the network side — `assembled.tools.network` is always `'none'` here
+ *    (`restrictGrantForTaint` above already strips it), so this is belt-and-braces against that
+ *    stripping ever regressing, not a live behavior change today. See `runResolverSession`'s own doc
+ *    comment for the full reasoning.
  * 3. **Verify after the session ends** (`verifyResolution`), before ever trusting its answer: HEAD in the
  *    lane worktree did not move (`MERGE-RESOLVER-TREE-MOVED` — belt-and-braces against a platform whose
  *    own tool-grant enforcement is not airtight, or a future capability this grant does not yet cover),
@@ -95,7 +99,7 @@ import { VcsError } from '@forge/vcs';
 
 import { deriveStoryId, type StepNode } from '../plan/index.ts';
 import { assembleAgentSession, promptRecordDirName } from './assemble.ts';
-import { createLiveFileAccessGate } from './confined-command.ts';
+import { createLiveFileAccessGate, createLiveNetworkAccessGate } from './confined-command.ts';
 import { writeResultRecord } from './result-record.ts';
 import { sanitizeUsageNumber } from './steps.ts';
 import type {
@@ -505,6 +509,11 @@ async function runResolverSession(
       // `createLiveFileAccessGate` every other real `kind: agent` step uses, not a second,
       // independently-maintained gate for this one caller.
       vetFileAccess: createLiveFileAccessGate(description.worktreePath),
+      // `SPEC-QUESTIONS.md` Q350: the identical reasoning, now for this session's own live
+      // `WebFetch`/`WebSearch` tool use, built from the SAME `assembled.tools` grant `tools` above
+      // already is (stripped to `network: 'none'` by `restrictGrantForTaint`, so this denies
+      // unconditionally today -- belt-and-braces, not a live behavior change).
+      vetNetworkAccess: createLiveNetworkAccessGate(assembled.tools),
     });
     await ctx.telemetry.emit({
       type: 'SessionEvent',

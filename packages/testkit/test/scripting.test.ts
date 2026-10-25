@@ -305,3 +305,144 @@ describe('FakeSessionScript.writeFiles + SessionRequest.vetFileAccess', () => {
     expect(result.changedFiles).toEqual(['secret.txt']);
   });
 });
+
+/** `SessionRequest.vetNetworkAccess` (`SPEC-QUESTIONS.md` Q350, found while fixing Q347): the identical
+ * mechanism as `vetExecCommand`/`vetFileAccess` above, added to the same fake adapter for the identical
+ * reason -- `FakeSessionScript.webFetchAttempts`/`webSearchAttempts` already check the grant-native
+ * `isHostAllowed`/`tools.network === 'full'` on their own, and `ctx.vetNetworkAccess` is consulted IN
+ * ADDITION to that, never in place of it. This proves the FAKE consults the callback correctly, never
+ * that a real adapter's own live SDK hook does -- `confined-command.test.ts`'s own
+ * `createLiveNetworkAccessGate` suite and `build-options.test.ts`'s own `vetNetworkAccess` wiring suite
+ * cover that separately. */
+describe('FakeSessionScript.webFetchAttempts/webSearchAttempts + SessionRequest.vetNetworkAccess', () => {
+  it('a scripted WebFetch attempt whose host is granted (network: full) but fails vetNetworkAccess is still refused', async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'fetch', {
+      webFetchAttempts: ['https://evil.example.com/'],
+    });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(
+      baseRequest({
+        cwd,
+        prompt: 'fetch',
+        tools: { read: true, write: false, exec: false, network: 'full' },
+        // Matches the grant (`network: 'full'` allows every host) but is refused by the gate anyway --
+        // the exact "grant-native check passes, live gate still decides" shape `vetExecCommand`'s own
+        // identical case above already proves for Bash.
+        vetNetworkAccess: (_toolName, url) =>
+          Promise.resolve(
+            url?.includes('evil')
+              ? { allowed: false, reason: 'refused: this host is denied regardless of the grant' }
+              : { allowed: true },
+          ),
+      }),
+    );
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+
+    const fetchResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'webfetch:0',
+    );
+    expect(fetchResult).toMatchObject({ ok: false });
+  });
+
+  it('a scripted WebFetch attempt that is granted AND passes vetNetworkAccess is allowed', async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'fetch', {
+      webFetchAttempts: ['https://docs.example.com/'],
+    });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(
+      baseRequest({
+        cwd,
+        prompt: 'fetch',
+        tools: { read: true, write: false, exec: false, network: 'full' },
+        vetNetworkAccess: (_toolName, url) =>
+          Promise.resolve(
+            url?.includes('evil') ? { allowed: false, reason: 'refused' } : { allowed: true },
+          ),
+      }),
+    );
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+
+    const fetchResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'webfetch:0',
+    );
+    expect(fetchResult).toMatchObject({ ok: true });
+  });
+
+  it("a scripted WebFetch attempt is refused when the grant's own network is 'none', even with no vetNetworkAccess at all -- the grant-native check alone already refuses it", async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'fetch', {
+      webFetchAttempts: ['https://example.com/'],
+    });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'fetch' }));
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+
+    const fetchResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'webfetch:0',
+    );
+    // `baseRequest`'s own default grant is `network: 'none'` -- refused here ONLY by the grant-native
+    // check, documenting the pre-Q350 status quo this file's own doc comment contrasts against.
+    expect(fetchResult).toMatchObject({ ok: false });
+  });
+
+  it("a scripted WebSearch attempt is allowed only when the grant's network is 'full', and vetNetworkAccess is consulted with 'WebSearch'/undefined -- WebSearchInput has no real per-call host to vet at all", async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'search', {
+      webSearchAttempts: ['forge adapter sdk'],
+    });
+    const cwd = await createScratchDir();
+    let receivedArgs: readonly [string, string | undefined] | undefined;
+    const handle = await adapter.startSession(
+      baseRequest({
+        cwd,
+        prompt: 'search',
+        tools: { read: true, write: false, exec: false, network: 'full' },
+        vetNetworkAccess: (toolName, url) => {
+          receivedArgs = [toolName, url];
+          return Promise.resolve({ allowed: true });
+        },
+      }),
+    );
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+
+    const searchResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'websearch:0',
+    );
+    expect(searchResult).toMatchObject({ ok: true });
+    expect(receivedArgs).toEqual(['WebSearch', undefined]);
+  });
+
+  it("a scripted WebSearch attempt is refused under network: 'allowlist', even with no vetNetworkAccess at all -- WebSearch has no domain-scoped grant form, mirroring tool-grant.ts's own documented precedent", async () => {
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'search', {
+      webSearchAttempts: ['forge adapter sdk'],
+    });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(
+      baseRequest({
+        cwd,
+        prompt: 'search',
+        tools: {
+          read: true,
+          write: false,
+          exec: false,
+          network: 'allowlist',
+          allowlistHosts: ['example.com'],
+        },
+      }),
+    );
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+
+    const searchResult = events.find(
+      (event) => event.type === 'tool.result' && event.id === 'websearch:0',
+    );
+    expect(searchResult).toMatchObject({ ok: false });
+  });
+});

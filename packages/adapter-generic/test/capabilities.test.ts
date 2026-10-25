@@ -134,6 +134,7 @@ describe('genericCapabilities: fixed, disclosed generic defaults for fields 07 Â
     expect(capabilities.turnLimitEnforcement).toBe(false);
     expect(capabilities.execCommandGating).toBe(false);
     expect(capabilities.fileAccessGating).toBe(false);
+    expect(capabilities.networkAccessGating).toBe(false);
     expect(capabilities.permissionModes).toEqual([
       'manual',
       'accept-edits',

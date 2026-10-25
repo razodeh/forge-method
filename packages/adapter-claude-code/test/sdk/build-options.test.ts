@@ -461,3 +461,244 @@ describe('buildSdkOptions: PreToolUse hook (SessionRequest.vetFileAccess wiring)
     expect(calls).toBe(0);
   });
 });
+
+describe('buildSdkOptions: PreToolUse hook (SessionRequest.vetNetworkAccess wiring) (SPEC-QUESTIONS.md Q350)', () => {
+  it('is omitted entirely from Options when neither req.vetFileAccess nor req.vetNetworkAccess is set -- strictly additive, no change for every caller before this piece', () => {
+    const options = buildSdkOptions(baseRequest(), claudeCodeAdapterConfigSchema.parse({}));
+    expect(options.hooks).toBeUndefined();
+  });
+
+  it('registers exactly one PreToolUse matcher holding exactly one real HookCallback when ONLY req.vetNetworkAccess is set (vetFileAccess unset) -- the composed callback, not a second array entry', () => {
+    const options = buildSdkOptions(
+      baseRequest({ vetNetworkAccess: () => Promise.resolve({ allowed: true }) }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    expect(options.hooks?.PreToolUse).toHaveLength(1);
+    expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+    expect(options.hooks?.PreToolUse?.[0]?.matcher).toBeUndefined();
+  });
+
+  it('registers exactly one PreToolUse matcher holding exactly one real HookCallback when BOTH req.vetFileAccess and req.vetNetworkAccess are set -- composed in plain JS, never two separate array entries relying on undocumented SDK multi-hook combination', () => {
+    const options = buildSdkOptions(
+      baseRequest({
+        vetFileAccess: () => Promise.resolve({ allowed: true }),
+        vetNetworkAccess: () => Promise.resolve({ allowed: true }),
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    expect(options.hooks?.PreToolUse).toHaveLength(1);
+    expect(options.hooks?.PreToolUse?.[0]?.hooks).toHaveLength(1);
+  });
+
+  it('denies a real WebFetch call with the real vetNetworkAccess reason when the gate refuses', async () => {
+    const options = buildSdkOptions(
+      baseRequest({
+        vetNetworkAccess: () =>
+          Promise.resolve({
+            allowed: false,
+            reason: "refused: this session's own network grant does not allow that host",
+          }),
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    const result = await hook?.(
+      preToolUseInput('WebFetch', { url: 'https://evil.example.com/', prompt: 'summarize' }),
+      'tool-use-1',
+      hookCallOptions(),
+    );
+    expect(result).toMatchObject({
+      continue: false,
+      decision: 'block',
+      reason: "refused: this session's own network grant does not allow that host",
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason:
+          "refused: this session's own network grant does not allow that host",
+      },
+    });
+  });
+
+  it('allows a real WebFetch call when the gate allows it, passing the real url through verbatim', async () => {
+    let receivedUrl: string | undefined;
+    const options = buildSdkOptions(
+      baseRequest({
+        vetNetworkAccess: (toolName, url) => {
+          if (toolName === 'WebFetch') receivedUrl = url;
+          return Promise.resolve({ allowed: true });
+        },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    const result = await hook?.(
+      preToolUseInput('WebFetch', { url: 'https://docs.example.com/guide', prompt: 'read it' }),
+      'tool-use-1',
+      hookCallOptions(),
+    );
+    expect(result).toEqual({ continue: true });
+    expect(receivedUrl).toBe('https://docs.example.com/guide');
+  });
+
+  it('calls vetNetworkAccess with undefined for a WebSearch call -- WebSearchInput has no real per-call url field at all, unlike WebFetchInput', async () => {
+    let receivedArgs: readonly [string, string | undefined] | undefined;
+    const options = buildSdkOptions(
+      baseRequest({
+        vetNetworkAccess: (toolName, url) => {
+          receivedArgs = [toolName, url];
+          return Promise.resolve({ allowed: true });
+        },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    const result = await hook?.(
+      preToolUseInput('WebSearch', { query: 'forge adapter sdk' }),
+      'tool-use-1',
+      hookCallOptions(),
+    );
+    expect(result).toEqual({ continue: true });
+    expect(receivedArgs).toEqual(['WebSearch', undefined]);
+  });
+
+  it('denies a WebSearch call when the gate refuses it', async () => {
+    const options = buildSdkOptions(
+      baseRequest({
+        vetNetworkAccess: () =>
+          Promise.resolve({ allowed: false, reason: "refused: network grant is not 'full'" }),
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    const result = await hook?.(
+      preToolUseInput('WebSearch', { query: 'anything' }),
+      'tool-use-1',
+      hookCallOptions(),
+    );
+    expect(result).toMatchObject({ continue: false, decision: 'block' });
+  });
+
+  it('allows a non-WebFetch/WebSearch tool call (Read/Edit/Write/Bash included) immediately, without ever calling vetNetworkAccess at all', async () => {
+    let calls = 0;
+    const options = buildSdkOptions(
+      baseRequest({
+        vetNetworkAccess: () => {
+          calls += 1;
+          return Promise.resolve({ allowed: false, reason: 'should never be reached' });
+        },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    for (const toolName of ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Task']) {
+      const result = await hook?.(
+        preToolUseInput(toolName, { anything: 'x' }),
+        'tool-use-1',
+        hookCallOptions(),
+      );
+      expect(result).toEqual({ continue: true });
+    }
+    expect(calls).toBe(0);
+  });
+
+  it('denies (never allows) a WebFetch call whose own "tool_input" carries no real "url" string -- fail closed on an unexpected shape, matching the file-access hook\'s own identical convention for a non-string "file_path"', async () => {
+    let calls = 0;
+    const options = buildSdkOptions(
+      baseRequest({
+        vetNetworkAccess: () => {
+          calls += 1;
+          return Promise.resolve({ allowed: true });
+        },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    const missingUrl = await hook?.(
+      preToolUseInput('WebFetch', { prompt: 'x' }),
+      'tool-use-1',
+      hookCallOptions(),
+    );
+    const numericUrl = await hook?.(
+      preToolUseInput('WebFetch', { url: 1234, prompt: 'x' }),
+      'tool-use-1',
+      hookCallOptions(),
+    );
+    expect(missingUrl).toMatchObject({ continue: false, decision: 'block' });
+    expect(numericUrl).toMatchObject({ continue: false, decision: 'block' });
+    // Never even reached the real gate for a shape it cannot vet at all.
+    expect(calls).toBe(0);
+  });
+
+  it("passes through a non-PreToolUse hook event untouched, mirroring the file-access hook's own identical fail-safe", async () => {
+    const options = buildSdkOptions(
+      baseRequest({ vetNetworkAccess: () => Promise.resolve({ allowed: false, reason: 'x' }) }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    const result = await hook?.(
+      {
+        hook_event_name: 'SessionStart',
+        session_id: 's',
+        transcript_path: '/t',
+        cwd: '/tmp',
+      } as Parameters<HookCallback>[0],
+      undefined,
+      hookCallOptions(),
+    );
+    expect(result).toEqual({ continue: true });
+  });
+
+  it('with BOTH vetFileAccess and vetNetworkAccess set: a denied Write call never consults vetNetworkAccess, and a denied WebFetch call never consults vetFileAccess -- each gate only ever decides the tool names it owns, proven by call counts rather than assumed from the source', async () => {
+    let fileAccessCalls = 0;
+    let networkAccessCalls = 0;
+    const options = buildSdkOptions(
+      baseRequest({
+        vetFileAccess: () => {
+          fileAccessCalls += 1;
+          return Promise.resolve({ allowed: false, reason: 'file denied' });
+        },
+        vetNetworkAccess: () => {
+          networkAccessCalls += 1;
+          return Promise.resolve({ allowed: false, reason: 'network denied' });
+        },
+      }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+
+    const writeResult = await hook?.(
+      preToolUseInput('Write', { file_path: '/tmp/x' }),
+      'tool-use-1',
+      hookCallOptions(),
+    );
+    expect(writeResult).toMatchObject({ continue: false, reason: 'file denied' });
+    expect(fileAccessCalls).toBe(1);
+    expect(networkAccessCalls).toBe(0);
+
+    const fetchResult = await hook?.(
+      preToolUseInput('WebFetch', { url: 'https://example.com/', prompt: 'x' }),
+      'tool-use-1',
+      hookCallOptions(),
+    );
+    expect(fetchResult).toMatchObject({ continue: false, reason: 'network denied' });
+    expect(fileAccessCalls).toBe(1);
+    expect(networkAccessCalls).toBe(1);
+  });
+
+  it('never resolves to null for any input this suite exercises -- the real SDK\'s own doc comment warns a stray null blocks the tool "indefinitely"', async () => {
+    const options = buildSdkOptions(
+      baseRequest({ vetNetworkAccess: () => Promise.resolve({ allowed: false, reason: 'x' }) }),
+      claudeCodeAdapterConfigSchema.parse({}),
+    );
+    const hook = options.hooks?.PreToolUse?.[0]?.hooks[0];
+    const opts = hookCallOptions();
+    const results = await Promise.all([
+      hook?.(preToolUseInput('WebFetch', { url: 'https://example.com/', prompt: 'x' }), 'id', opts),
+      hook?.(preToolUseInput('WebFetch', {}), 'id', opts),
+      hook?.(preToolUseInput('WebSearch', { query: 'x' }), 'id', opts),
+      hook?.(preToolUseInput('Read', { file_path: '/x' }), 'id', opts),
+    ]);
+    for (const result of results) expect(result).not.toBeNull();
+  });
+});

@@ -51,6 +51,7 @@ const CAPABILITIES: AdapterCapabilities = {
   turnLimitEnforcement: true,
   execCommandGating: true,
   fileAccessGating: true,
+  networkAccessGating: true,
 };
 
 describe('checkC5Abort — stream closes cleanly with no session.ended event', () => {

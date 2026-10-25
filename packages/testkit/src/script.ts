@@ -36,6 +36,17 @@ export interface FakeSessionScript {
    * `tools.exec` grant before being claimed as a successful `tool.result` — an unauthorised entry is
    * reported as a failed `tool.result`, matching `07` §7.2's own "adapters MUST fail closed." */
   readonly execAttempts?: readonly string[];
+  /** A simulated live `WebFetch` call per entry (`SPEC-QUESTIONS.md` Q350) — each a real URL, checked
+   * via `isHostAllowed` (`@forge/adapter-kit/grants`) against the session's own `tools.network`/
+   * `allowlistHosts` grant before being claimed as a successful `tool.result`, the identical generic
+   * gating `execAttempts` already gives `tools.exec`. An unauthorised entry (including every entry,
+   * when `tools.network` is `'none'`) is reported as a failed `tool.result`. */
+  readonly webFetchAttempts?: readonly string[];
+  /** A simulated live `WebSearch` call per entry (`SPEC-QUESTIONS.md` Q350) — each a search query,
+   * claimed as a successful `tool.result` only when the session's own `tools.network` is `'full'`
+   * (`WebSearch` has no per-call host to scope, mirroring `tool-grant.ts`'s own documented precedent
+   * that `'allowlist'` never grants it at all), otherwise reported as a failed `tool.result`. */
+  readonly webSearchAttempts?: readonly string[];
   /** Simulates untrusted content (an MCP tool result, a fetched page, ...) entering this session — run
    * through `stripControlTokens` (`@forge/adapter-kit/control-tokens`, P3) before being folded into the
    * session's own text output, so a live `FORGE_*` token embedded in it is neutralised rather than

@@ -142,5 +142,10 @@ export function genericCapabilities(config: AdapterYamlConfig): AdapterCapabilit
     // `SessionRequest.vetFileAccess`, if a caller ever set one, could not be honoured here either.
     // Honestly `false`.
     fileAccessGating: false,
+    // `SPEC-QUESTIONS.md` Q350 (found while fixing Q347): the identical reasoning as
+    // `execCommandGating`/`fileAccessGating` immediately above -- this adapter has no per-tool-call
+    // permission concept at all, so `SessionRequest.vetNetworkAccess`, if a caller ever set one,
+    // could not be honoured here either. Honestly `false`.
+    networkAccessGating: false,
   };
 }

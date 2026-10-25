@@ -42,7 +42,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { parseControlTokens, stripControlTokens } from '@forge/adapter-kit/control-tokens';
-import { isExecAllowed } from '@forge/adapter-kit/grants';
+import { isExecAllowed, isHostAllowed } from '@forge/adapter-kit/grants';
 import type {
   AdapterCapabilities,
   AdapterEvent,
@@ -169,6 +169,13 @@ const DEFAULT_CAPABILITIES: AdapterCapabilities = {
   // own `ScriptPhaseContext.vetFileAccess` doc comment) when a caller sets one, before performing the
   // write. Overridden the identical way via `capabilityOverrides` when a test needs the refusal path.
   fileAccessGating: true,
+  // Genuinely backed up, not a degraded default (`SPEC-QUESTIONS.md` Q350, found while fixing Q347):
+  // the identical reasoning as `fileAccessGating` immediately above, now for `script.webFetchAttempts`/
+  // `script.webSearchAttempts` -- `runScriptPhases`'s own handling of both really does consult
+  // `ctx.vetNetworkAccess` (this file's own `ScriptPhaseContext.vetNetworkAccess` doc comment) when a
+  // caller sets one, before claiming either kind of attempt as a successful `tool.result`. Overridden
+  // the identical way via `capabilityOverrides` when a test needs the refusal path.
+  networkAccessGating: true,
 };
 
 const DEFAULT_SCRIPT: FakeSessionScript = {
@@ -229,6 +236,15 @@ interface ScriptPhaseContext {
    * Code's own SDK, `Options.hooks.PreToolUse`, which this fake does not run). `undefined` when the
    * request carries none. */
   readonly vetFileAccess: SessionRequest['vetFileAccess'];
+  /** `SessionRequest.vetNetworkAccess` (`SPEC-QUESTIONS.md` Q350), threaded through for the identical
+   * reason as `vetFileAccess` immediately above, now for a scripted `webFetchAttempts`/
+   * `webSearchAttempts` entry — consulted (with the real tool name and, for `WebFetch` only, the real
+   * URL) before either kind of attempt is claimed as a successful `tool.result`, not only
+   * `isHostAllowed(ctx.tools, ...)`/`ctx.tools.network === 'full'` below. Without this, no
+   * fake-adapter-backed test could ever exercise a real caller's own network-access gate (the real
+   * mechanism lives in Claude Code's own SDK, `Options.hooks.PreToolUse`, which this fake does not
+   * run). `undefined` when the request carries none. */
+  readonly vetNetworkAccess: SessionRequest['vetNetworkAccess'];
 }
 
 interface ScriptPhaseOutcome {
@@ -736,6 +752,53 @@ export class FakePlatformAdapter implements PlatformAdapter {
     }
 
     if (yield* bailIfAborted()) return outcome('aborted');
+    for (const [index, url] of (script.webFetchAttempts ?? []).entries()) {
+      if (yield* bailIfAborted()) return outcome('aborted');
+      const id = `webfetch:${String(index)}`;
+      // `ctx.vetNetworkAccess` (`SessionRequest.vetNetworkAccess`, `SPEC-QUESTIONS.md` Q350):
+      // consulted IN ADDITION to the grant-native check below, mirroring the identical property
+      // `ctx.vetExecCommand` already adds on top of `isExecAllowed` above -- the one way a
+      // fake-adapter-backed test can exercise a caller's own network-access gate at all.
+      const vetted =
+        ctx.vetNetworkAccess === undefined
+          ? true
+          : (await ctx.vetNetworkAccess('WebFetch', url)).allowed;
+      // Destructured, not a `.hostname` member access on a fresh `new URL(...)`: the real-but-
+      // overbroad R10 `HOST_FACT_NAMES` lint rule (`eslint.config.js`) matches ANY `MemberExpression`
+      // named `hostname` on the assumption it is `os.hostname()` (a genuine per-machine fact); this is
+      // the unrelated, deterministic WHATWG `URL.hostname` -- a pure parse of `url`, not a host fact at
+      // all -- and destructuring sidesteps the selector's own `MemberExpression`-only AST match rather
+      // than suppressing the rule (`createLiveNetworkAccessGate`'s own identical comment).
+      let hostname: string | undefined;
+      try {
+        ({ hostname } = new URL(url));
+      } catch {
+        hostname = undefined;
+      }
+      const grantAllowed = hostname !== undefined && isHostAllowed(ctx.tools, hostname);
+      const allowed = grantAllowed && this.caps.network !== 'none' && vetted;
+      yield { type: 'tool.call', id, name: 'web_fetch', input: { url } };
+      yield { type: 'tool.result', id, ok: allowed, summary: url };
+    }
+
+    if (yield* bailIfAborted()) return outcome('aborted');
+    for (const [index, query] of (script.webSearchAttempts ?? []).entries()) {
+      if (yield* bailIfAborted()) return outcome('aborted');
+      const id = `websearch:${String(index)}`;
+      // `ctx.vetNetworkAccess`: the identical consultation as `webFetchAttempts` immediately above,
+      // now for `WebSearch` -- always called with `undefined` for the second argument, mirroring the
+      // real `WebSearchInput` shape (`createLiveNetworkAccessGate`'s own doc comment has the fuller
+      // reasoning for why `WebSearch` has no per-call host to vet at all).
+      const vetted =
+        ctx.vetNetworkAccess === undefined
+          ? true
+          : (await ctx.vetNetworkAccess('WebSearch', undefined)).allowed;
+      const allowed = ctx.tools.network === 'full' && this.caps.network !== 'none' && vetted;
+      yield { type: 'tool.call', id, name: 'web_search', input: { query } };
+      yield { type: 'tool.result', id, ok: allowed, summary: query };
+    }
+
+    if (yield* bailIfAborted()) return outcome('aborted');
     return outcome(undefined);
   }
 
@@ -775,6 +838,7 @@ export class FakePlatformAdapter implements PlatformAdapter {
       limits: request.limits,
       vetExecCommand: request.vetExecCommand,
       vetFileAccess: request.vetFileAccess,
+      vetNetworkAccess: request.vetNetworkAccess,
     });
 
     if (outcome.endedEarly !== undefined) {
@@ -890,12 +954,13 @@ export class FakePlatformAdapter implements PlatformAdapter {
       tools: rememberedContext.tools,
       abortSignal: request.abortSignal,
       limits: request.limits,
-      // `RememberedSessionContext` does not carry `vetExecCommand`/`vetFileAccess` (this file's own
-      // doc comment on that type) -- a resumed session has no caller-supplied gate to re-apply here.
-      // No real caller resumes an adopt-tests session today, so this is not a live gap this round
-      // needs to close.
+      // `RememberedSessionContext` does not carry `vetExecCommand`/`vetFileAccess`/`vetNetworkAccess`
+      // (this file's own doc comment on that type) -- a resumed session has no caller-supplied gate to
+      // re-apply here. No real caller resumes an adopt-tests session today, so this is not a live gap
+      // this round needs to close.
       vetExecCommand: undefined,
       vetFileAccess: undefined,
+      vetNetworkAccess: undefined,
     });
     const finalText = leadingTextParts.join('') + outcome.finalText;
 

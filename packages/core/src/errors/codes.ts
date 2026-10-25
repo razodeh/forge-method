@@ -3781,12 +3781,12 @@ export const ERROR_CODES = {
     exitCode: EXIT_CODES.failure,
     message: (d: { adapterId: string }) =>
       `the adopt-tests agent session needs a real, per-call gate on its own live exec AND its own ` +
-      `live Read/Edit/Write tool use, which "${show(d.adapterId)}" cannot provide in its current ` +
-      'configuration.',
+      `live Read/Edit/Write tool use AND its own live WebFetch/WebSearch tool use, which ` +
+      `"${show(d.adapterId)}" cannot provide in its current configuration.`,
     remedy:
-      'Set a transport that supports a real per-call exec gate and file-access gate (Claude Code: ' +
-      'unset "transport" or set it to "sdk" in platform.adapterConfig["claude-code"], and make sure ' +
-      'the SDK package resolves), then retry.',
+      'Set a transport that supports a real per-call exec gate, file-access gate and network-access ' +
+      'gate (Claude Code: unset "transport" or set it to "sdk" in ' +
+      'platform.adapterConfig["claude-code"], and make sure the SDK package resolves), then retry.',
   },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 

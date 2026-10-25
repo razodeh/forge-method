@@ -1352,6 +1352,63 @@ describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE R
   });
 });
 
+describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE WebFetch/WebSearch tool use (SPEC-QUESTIONS.md Q350)", () => {
+  it("sets SessionRequest.vetNetworkAccess for real, and that real callback denies both WebFetch and WebSearch -- the test-architect fixture agent's own real grant (agentYaml's network: false) resolves to network: 'none', so this is not a hand-asserted 'would be refused' but the real createLiveNetworkAccessGate mechanism reading the round's own real grant", async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['investigated package.json; no test script found; node --test discovers *.test.js'],
+      structured: {
+        command: NODE_TEST_COMMAND,
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        runnerVersion: process.version,
+        reason: 'package.json has no test script; node --test discovers *.test.js directly.',
+      },
+    });
+
+    let captured: SessionRequest | undefined;
+    const capturing: PlatformAdapter = {
+      id: adapter.id,
+      displayName: adapter.displayName,
+      capabilities: () => adapter.capabilities(),
+      preflight: () => adapter.preflight(),
+      listModels: () => adapter.listModels(),
+      startSession: (req: SessionRequest) => {
+        captured = req;
+        return adapter.startSession(req);
+      },
+      resumeSession: (sessionId, req) => adapter.resumeSession(sessionId, req),
+    };
+
+    const result = await runAdoptTestsAgent(deps(project, capturing), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+    expect(result.outcome).toBe('staged');
+
+    // `runAdoptTestsAgent` really sets the field -- not merely declares it legal to set.
+    expect(captured?.vetNetworkAccess).toBeDefined();
+    const gate = captured?.vetNetworkAccess;
+    if (gate === undefined) throw new Error('unreachable');
+
+    // This round's own real grant has `network: 'none'` (the fixture agent's own `network: false`) --
+    // both tools are denied for real, through the real `createLiveNetworkAccessGate` mechanism, never
+    // a hand-asserted "would be refused."
+    await expect(gate('WebFetch', 'https://example.com/')).resolves.toMatchObject({
+      allowed: false,
+    });
+    await expect(gate('WebSearch', undefined)).resolves.toMatchObject({ allowed: false });
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
 describe('runAdoptTestsAgent -- refuses upfront on a transport with no real per-call exec gate (specs/22 M17 P7) (critic round 5)', () => {
   it('throws RUN-162, naming the real adapter id, before any lane, session, or agent definition is ever touched', async () => {
     const dir = await tempDir();
@@ -1395,6 +1452,40 @@ describe('runAdoptTestsAgent -- refuses upfront on a transport with no real per-
     // genuinely requires BOTH flags, not merely one re-checked twice under an unchanged OR that always
     // happened to already be true for this half.
     const adapter = new FakePlatformAdapter({ fileAccessGating: false });
+    let sessionStarted = false;
+    const spying: PlatformAdapter = {
+      id: adapter.id,
+      displayName: adapter.displayName,
+      capabilities: () => adapter.capabilities(),
+      preflight: () => adapter.preflight(),
+      listModels: () => adapter.listModels(),
+      startSession: (req: SessionRequest) => {
+        sessionStarted = true;
+        return adapter.startSession(req);
+      },
+      resumeSession: (sessionId, req) => adapter.resumeSession(sessionId, req),
+    };
+
+    await expect(
+      runAdoptTestsAgent(deps(project, spying), {
+        layer: 'unit',
+        clock: fixedClock(),
+        createTempPath: makeCreateTempPath(dir),
+      }),
+    ).rejects.toMatchObject({ code: 'RUN-162' });
+
+    expect(sessionStarted).toBe(false);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("throws RUN-162 the identical way for a transport with real exec AND file-access gates but no real per-call NETWORK-ACCESS gate (SPEC-QUESTIONS.md Q350, found while fixing Q347): execCommandGating/fileAccessGating alone are not enough any more -- this round's own live WebFetch/WebSearch tool use needs its own real gate too", async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    // `execCommandGating: true`/`fileAccessGating: true` (the defaults), `networkAccessGating: false`
+    // only -- proves the new check genuinely requires all three flags, not merely two re-checked
+    // under an unchanged OR that always happened to already be true for this third.
+    const adapter = new FakePlatformAdapter({ networkAccessGating: false });
     let sessionStarted = false;
     const spying: PlatformAdapter = {
       id: adapter.id,

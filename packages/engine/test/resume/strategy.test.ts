@@ -35,6 +35,7 @@ function capabilities(overrides: Partial<AdapterCapabilities> = {}): AdapterCapa
     turnLimitEnforcement: true,
     execCommandGating: true,
     fileAccessGating: true,
+    networkAccessGating: true,
     ...overrides,
   };
 }

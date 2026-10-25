@@ -52,6 +52,7 @@ import type { AgentDefinition } from '@forge/agents/schema';
 import {
   assembleAgentSession,
   createLiveFileAccessGate,
+  createLiveNetworkAccessGate,
   deriveTestExec,
   grantWithTestExec,
   markRefusal,
@@ -529,6 +530,10 @@ async function runReadOnlySession(
     // `SPEC-QUESTIONS.md` Q347: a real, live per-call confinement on this phase's own `Read`/`Edit`/
     // `Write` tool use to the SAME lane `guard.lane.path` already is `cwd`.
     vetFileAccess: createLiveFileAccessGate(guard.lane.path),
+    // `SPEC-QUESTIONS.md` Q350: the identical reasoning, now for this phase's own live
+    // `WebFetch`/`WebSearch` tool use, built from the SAME `assembled.tools` grant `tools` above
+    // already is.
+    vetNetworkAccess: createLiveNetworkAccessGate(assembled.tools),
   };
   await ctx.telemetry.emit({
     type: 'SessionStarted',
@@ -694,6 +699,8 @@ async function runFixSession(
     abortSignal: abortController.signal,
     // `SPEC-QUESTIONS.md` Q347: see `runReadOnlySession`'s own identical comment above.
     vetFileAccess: createLiveFileAccessGate(guard.lane.path),
+    // `SPEC-QUESTIONS.md` Q350: see `runReadOnlySession`'s own identical comment above.
+    vetNetworkAccess: createLiveNetworkAccessGate(assembled.tools),
   };
   await ctx.telemetry.emit({
     type: 'SessionStarted',

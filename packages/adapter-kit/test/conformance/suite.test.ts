@@ -256,6 +256,7 @@ class StubAdapter implements PlatformAdapter {
       turnLimitEnforcement: true,
       execCommandGating: true,
       fileAccessGating: true,
+      networkAccessGating: true,
     });
   }
 

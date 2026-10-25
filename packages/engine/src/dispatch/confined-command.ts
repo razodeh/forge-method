@@ -45,11 +45,20 @@
  * the SDK's own `tool_input.file_path`, not a path-shaped WORD that first has to be extracted from a shell command
  * string the way `vetPath`/`pathCandidates` do for Bash.
  *
+ * `SPEC-QUESTIONS.md` Q350 (found while building Q347's own fix, deliberately left out of that piece's
+ * scope) adds `createLiveNetworkAccessGate`: a FOURTH thing lives here, the identical bare-shadowing
+ * defect class as Q347, now for a live session's own `WebFetch`/`WebSearch` tool calls rather than its
+ * `Read`/`Edit`/`Write` calls. Reuses `isHostAllowed` (`@forge/adapter-kit/grants`) — the same function
+ * `vetNetworkAndArguments` (below) already uses to judge a Bash-originated URL against the identical
+ * `ToolGrant.network`/`allowlistHosts` fields — rather than inventing a second reading of what the
+ * grant's own network policy means.
+ *
  * @see specs/20 §20.1
  * @see specs/20 §20.4
  * @see specs/20 §20.10
  * @see SPEC-QUESTIONS.md Q222
  * @see SPEC-QUESTIONS.md Q347
+ * @see SPEC-QUESTIONS.md Q350
  * @see PLAN-M13.md P28
  * @see PLAN-M14.md P28
  */
@@ -1590,5 +1599,107 @@ export function createLiveFileAccessGate(
       allowed: false,
       reason: `refused: ${toolName} path "${filePath}" resolves outside this session's own lane (${root}).`,
     };
+  };
+}
+
+/** The one, complete, real bare-shadowed tool-name set `createLiveNetworkAccessGate` (below) ever
+ * gates (`SPEC-QUESTIONS.md` Q350) -- confirmed directly against the installed SDK's own real
+ * `tool_input` shapes (`sdk-tools.d.ts`: `WebFetchInput.url: string`; `WebSearchInput` carries no
+ * comparable single-host field at all, only a `query` and two MODEL-chosen, not FORGE-chosen,
+ * `allowed_domains`/`blocked_domains` hints). */
+export type LiveNetworkAccessToolName = 'WebFetch' | 'WebSearch';
+
+/**
+ * Builds `SessionRequest.vetNetworkAccess` for one session (`SPEC-QUESTIONS.md` Q350, found while
+ * building `createLiveFileAccessGate` above): the network analogue of that function, for a live
+ * session's own `WebFetch`/`WebSearch` tool use rather than its `Read`/`Edit`/`Write` calls.
+ *
+ * **Policy, grounded in the grant's own already-documented semantics, not invented here.** `WebFetch`:
+ * the real `url` argument's hostname is checked against `isHostAllowed(grant, hostname)`
+ * (`@forge/adapter-kit/grants`) -- the EXACT SAME function `vetNetworkAndArguments` (above, this file)
+ * already uses to judge a Bash-originated URL against the identical grant, so this is one, shared
+ * reading of "what network: 'full'/'allowlist'/'none' means," not a second, independently-invented
+ * one. Concretely: a `network: 'full'` session's `WebFetch` calls are allowed for any host at all
+ * (`isHostAllowed`'s own "'full' allows every host" contract) -- the only currently-reachable case
+ * (`SPEC-QUESTIONS.md` Q350: no shipped role grants `network: 'full'` today), so wiring this gate in is
+ * a zero-behaviour-change consultation, not a new restriction on anything live. A `network: 'allowlist'`
+ * session's calls are allowed only for a host literally present in `grant.allowlistHosts`
+ * (case-insensitively, `isHostAllowed`'s own existing comparison) -- genuine belt-and-braces alongside
+ * whatever the SDK's own native, non-bare `WebFetch(domain:host)` rule matching already does for that
+ * case (never itself bare, so not the shape Q350 found broken), not a path this piece newly unlocks. A
+ * `network: 'none'` session's calls are always denied. A malformed or unparsable `url` is denied
+ * outright, fail closed, matching `createLiveFileAccessGate`'s own identical treatment of a non-string
+ * `filePath` immediately above. `WebSearch`: there is no per-call host to check at all
+ * (`LiveNetworkAccessToolName`'s own doc comment has the real `WebSearchInput` shape) -- allowed only
+ * when `grant.network === 'full'`, mirroring `tool-grant.ts`'s own `mapToolGrantToAllowedTools` doc
+ * comment, which already establishes that `WebSearch` has no domain-scoped grant form at all and is
+ * never even mapped onto `allowedTools` for `'allowlist'` (fail closed, matching `'none'` for that one
+ * tool specifically) -- this gate holds every real call to the identical rule, not only the ones that
+ * happened to reach `allowedTools` bare.
+ *
+ * **Disclosed, not assumed closed** (`SessionRequest.vetNetworkAccess`'s own doc comment has the fuller
+ * reasoning). Unlike `createLiveFileAccessGate`, no live, API-key-backed experiment confirms the real
+ * SDK's `PreToolUse` hook is actually consulted for a `WebFetch`/`WebSearch` call the way `Q347`'s own
+ * experiment confirmed it for `Read`/`Edit`/`Write` -- no shipped role grants `network: 'full'` today,
+ * so there is no live fixture to run that experiment against.
+ */
+export function createLiveNetworkAccessGate(
+  grant: Pick<ToolGrant, 'network' | 'allowlistHosts'>,
+): (toolName: LiveNetworkAccessToolName, url: string | undefined) => Promise<ExecCommandVerdict> {
+  return (toolName, url) => {
+    if (toolName === 'WebSearch') {
+      if (grant.network === 'full') return Promise.resolve({ allowed: true });
+      return Promise.resolve({
+        allowed: false,
+        reason:
+          `refused: WebSearch has no per-call host to scope, and this session's own network grant ` +
+          `is '${grant.network}', not 'full'.`,
+      });
+    }
+    if (typeof url !== 'string' || url.length === 0) {
+      return Promise.resolve({
+        allowed: false,
+        reason: 'refused: this WebFetch call carries no real "url" string to vet at all.',
+      });
+    }
+    // Destructured, not a `.hostname` member access on a fresh `new URL(...)`: the real-but-
+    // overbroad R10 `HOST_FACT_NAMES` lint rule (`eslint.config.js`) matches ANY `MemberExpression`
+    // named `hostname` on the assumption it is `os.hostname()` (a genuine per-machine fact); this is
+    // the unrelated, deterministic WHATWG `URL.hostname` -- a pure parse of `url`, not a host fact at
+    // all -- and destructuring sidesteps the selector's own `MemberExpression`-only AST match rather
+    // than suppressing the rule.
+    let hostname: string;
+    try {
+      ({ hostname } = new URL(url));
+    } catch {
+      return Promise.resolve({
+        allowed: false,
+        reason: `refused: WebFetch url "${url}" could not be parsed as a real URL at all.`,
+      });
+    }
+    // `isHostAllowed`'s own declared parameter type is the full `ToolGrant` even though its body only
+    // ever reads `network`/`allowlistHosts` -- the identical dummy-`read`/`write`/`exec` construction
+    // `vetNetworkAndArguments` (above, this file) already uses to call the same function with the
+    // same narrower information, not a second, independently-invented workaround.
+    if (
+      isHostAllowed(
+        {
+          read: true,
+          write: false,
+          exec: false,
+          network: grant.network,
+          ...(grant.allowlistHosts === undefined ? {} : { allowlistHosts: grant.allowlistHosts }),
+        },
+        hostname,
+      )
+    ) {
+      return Promise.resolve({ allowed: true });
+    }
+    return Promise.resolve({
+      allowed: false,
+      reason:
+        `refused: WebFetch url "${url}" names a host this session's own network grant ` +
+        `('${grant.network}') does not allow.`,
+    });
   };
 }

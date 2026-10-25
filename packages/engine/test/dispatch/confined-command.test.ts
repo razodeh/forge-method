@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   CONFINED_ENV_ALLOWLIST,
   createLiveFileAccessGate,
+  createLiveNetworkAccessGate,
   PROPOSED_ENV_FIXED,
   runConfinedCommand,
   scrubbedEnvironment,
@@ -1107,6 +1108,85 @@ describe("createLiveFileAccessGate (SPEC-QUESTIONS.md Q347): the file-path analo
       const gate = createLiveFileAccessGate(root);
       const target = path.join(root, 'escape.txt');
       await expect(gate('Write', target)).resolves.toMatchObject({ allowed: false });
+    });
+  });
+});
+
+describe("createLiveNetworkAccessGate (SPEC-QUESTIONS.md Q350): the network analogue of createLiveFileAccessGate, for a live session's own WebFetch/WebSearch tool use", () => {
+  describe('WebFetch', () => {
+    it("allows any host at all under network: 'full' -- isHostAllowed's own contract, re-exercised through this gate rather than assumed", async () => {
+      const gate = createLiveNetworkAccessGate({ network: 'full' });
+      await expect(gate('WebFetch', 'https://example.com/page')).resolves.toEqual({
+        allowed: true,
+      });
+      await expect(gate('WebFetch', 'https://totally-unrelated.example.org/')).resolves.toEqual({
+        allowed: true,
+      });
+    });
+
+    it("denies every host under network: 'none', naming the tool, the url and the network value in the reason", async () => {
+      const gate = createLiveNetworkAccessGate({ network: 'none' });
+      const verdict = await gate('WebFetch', 'https://example.com/page');
+      expect(verdict).toMatchObject({ allowed: false });
+      if (verdict.allowed) throw new Error('unreachable');
+      expect(verdict.reason).toContain('WebFetch');
+      expect(verdict.reason).toContain('https://example.com/page');
+      expect(verdict.reason).toContain('none');
+    });
+
+    it("under network: 'allowlist', allows a host literally present in allowlistHosts (case-insensitively) and denies any other host -- the same isHostAllowed comparison vetNetworkAndArguments already uses for a Bash-originated URL", async () => {
+      const gate = createLiveNetworkAccessGate({
+        network: 'allowlist',
+        allowlistHosts: ['Api.Example.com'],
+      });
+      await expect(gate('WebFetch', 'https://api.example.com/v1')).resolves.toEqual({
+        allowed: true,
+      });
+      await expect(gate('WebFetch', 'https://evil.example.org/')).resolves.toMatchObject({
+        allowed: false,
+      });
+    });
+
+    it("denies every host under network: 'allowlist' when allowlistHosts is absent -- fail closed, never silently permissive, mirroring isHostAllowed's own doc comment", async () => {
+      const gate = createLiveNetworkAccessGate({ network: 'allowlist' });
+      await expect(gate('WebFetch', 'https://example.com/')).resolves.toMatchObject({
+        allowed: false,
+      });
+    });
+
+    it('denies (never allows) a url that does not parse as a real URL at all, even under network: full -- fail closed on a shape this gate cannot even extract a host from', async () => {
+      const gate = createLiveNetworkAccessGate({ network: 'full' });
+      await expect(gate('WebFetch', 'not a real url')).resolves.toMatchObject({ allowed: false });
+    });
+
+    it("denies (never allows) a missing or empty url, even under network: full -- fail closed, matching createLiveFileAccessGate's own identical convention for an empty file_path", async () => {
+      const gate = createLiveNetworkAccessGate({ network: 'full' });
+      await expect(gate('WebFetch', undefined)).resolves.toMatchObject({ allowed: false });
+      await expect(gate('WebFetch', '')).resolves.toMatchObject({ allowed: false });
+    });
+  });
+
+  describe('WebSearch', () => {
+    it("allows WebSearch under network: 'full', ignoring whatever (always undefined, per the real contract) is passed as url", async () => {
+      const gate = createLiveNetworkAccessGate({ network: 'full' });
+      await expect(gate('WebSearch', undefined)).resolves.toEqual({ allowed: true });
+    });
+
+    it("denies WebSearch under network: 'none' and network: 'allowlist' alike -- mirroring tool-grant.ts's own documented precedent that WebSearch has no domain-scoped grant form at all, naming the tool and the actual network value in the reason", async () => {
+      const noneGate = createLiveNetworkAccessGate({ network: 'none' });
+      const noneVerdict = await noneGate('WebSearch', undefined);
+      expect(noneVerdict).toMatchObject({ allowed: false });
+      if (noneVerdict.allowed) throw new Error('unreachable');
+      expect(noneVerdict.reason).toContain('WebSearch');
+      expect(noneVerdict.reason).toContain('none');
+
+      const allowlistGate = createLiveNetworkAccessGate({
+        network: 'allowlist',
+        allowlistHosts: ['example.com'],
+      });
+      await expect(allowlistGate('WebSearch', undefined)).resolves.toMatchObject({
+        allowed: false,
+      });
     });
   });
 });

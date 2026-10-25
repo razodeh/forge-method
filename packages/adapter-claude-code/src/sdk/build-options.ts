@@ -5,6 +5,8 @@
  *
  * @see specs/07 §7.3
  * @see SPEC-QUESTIONS.md Q115
+ * @see SPEC-QUESTIONS.md Q347
+ * @see SPEC-QUESTIONS.md Q350
  * @see PLAN-M7.md P3
  */
 import type {
@@ -75,8 +77,10 @@ function buildCanUseTool(req: SessionRequest): CanUseTool | undefined {
  * event (not only `PreToolUse`) also understands -- both set to the identical text, matching the
  * real SDK's own documented precedent (`ExitPlanModeInput`'s own sibling `PreModelSwitch` output
  * carries the same `permissionDecision`/`permissionDecisionReason` pair) rather than relying on only
- * one of the two mechanisms the installed `.d.ts` exposes for "deny this tool call." */
-function denyFileAccess(reason: string): { continue: false } & {
+ * one of the two mechanisms the installed `.d.ts` exposes for "deny this tool call." Shared by every
+ * real PreToolUse gate this file builds (`buildFileAccessHook`, `SPEC-QUESTIONS.md` Q347;
+ * `buildNetworkAccessHook`, `SPEC-QUESTIONS.md` Q350) -- one denial shape, not two that could drift. */
+function denyPreToolUse(reason: string): { continue: false } & {
   decision: 'block';
   reason: string;
   hookSpecificOutput: PreToolUseHookSpecificOutput;
@@ -90,6 +94,50 @@ function denyFileAccess(reason: string): { continue: false } & {
       permissionDecision: 'deny',
       permissionDecisionReason: reason,
     },
+  };
+}
+
+/** Every real decision a PreToolUse gate in this file ever returns -- deliberately narrower than the
+ * real SDK's own `HookJSONOutput` (which also allows an `AsyncHookJSONOutput` shape neither
+ * `buildFileAccessHook` nor `buildNetworkAccessHook` ever produces), so `composePreToolUseHooks`
+ * (below) can branch on `.continue` directly without a type guard -- both members have it. */
+type PreToolUseGateResult = { readonly continue: true } | ReturnType<typeof denyPreToolUse>;
+
+/** One PreToolUse gate: the same real parameters the SDK's own `HookCallback` is called with, narrowed
+ * to this file's own `PreToolUseGateResult` rather than the full `HookJSONOutput` union. */
+type PreToolUseGate = (...args: Parameters<HookCallback>) => Promise<PreToolUseGateResult>;
+
+/** Extracts a string field off a `PreToolUseHookInput.tool_input` (typed `unknown` in the installed
+ * `.d.ts`) with a plain runtime shape check, not a schema-validated parse -- the identical,
+ * already-accepted treatment `buildFileAccessHook`'s own prior inline version of this check, and
+ * `buildCanUseTool`'s `input['command']` check above, both already give an untyped `tool_input`/
+ * `input`. `undefined` for anything that is not a real, non-empty string at that key, including a
+ * missing key, a `null`/non-object `toolInput`, or a wrong-typed value -- one fail-closed path for
+ * every caller of this helper, not one per field. */
+function stringField(toolInput: unknown, field: string): string | undefined {
+  const value =
+    toolInput !== null && typeof toolInput === 'object' && field in toolInput
+      ? (toolInput as Record<string, unknown>)[field]
+      : undefined;
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** Runs every gate in `gates`, in order, against the SAME real PreToolUse call, short-circuiting on
+ * the first denial -- never relies on the real SDK's own (undocumented, here) behaviour for combining
+ * MULTIPLE `HookCallback`s registered against the same event: this file registers at most one real
+ * `HookCallback` with the SDK (`buildSdkOptions`, below) regardless of how many of `vetFileAccess`/
+ * `vetNetworkAccess` a caller actually set, composing them itself in plain JS instead. Each gate
+ * already resolves `{ continue: true }` immediately for any `tool_name` it does not itself care about
+ * (`buildFileAccessHook`/`buildNetworkAccessHook`'s own doc comments), so at most one gate in `gates`
+ * ever produces a real denial for any single call -- this function's own ordering therefore never
+ * matters in practice, only its "any denial wins" semantics do. */
+function composePreToolUseHooks(gates: readonly PreToolUseGate[]): HookCallback {
+  return async (...args) => {
+    for (const gate of gates) {
+      const result = await gate(...args);
+      if (!result.continue) return result;
+    }
+    return { continue: true };
   };
 }
 
@@ -126,7 +174,7 @@ function denyFileAccess(reason: string): { continue: false } & {
  * a schema-validated parse, matching `buildCanUseTool`'s own identical, already-accepted treatment
  * of `input['command']` immediately above.
  */
-function buildFileAccessHook(req: SessionRequest): HookCallback | undefined {
+function buildFileAccessHook(req: SessionRequest): PreToolUseGate | undefined {
   const vetFileAccess = req.vetFileAccess;
   if (vetFileAccess === undefined) return undefined;
   return async (input) => {
@@ -135,18 +183,70 @@ function buildFileAccessHook(req: SessionRequest): HookCallback | undefined {
     if (toolName !== 'Read' && toolName !== 'Edit' && toolName !== 'Write') {
       return { continue: true };
     }
-    const toolInput = input.tool_input;
-    const filePath =
-      toolInput !== null && typeof toolInput === 'object' && 'file_path' in toolInput
-        ? (toolInput as Record<string, unknown>)['file_path']
-        : undefined;
-    if (typeof filePath !== 'string') {
-      return denyFileAccess(
+    const filePath = stringField(input.tool_input, 'file_path');
+    if (filePath === undefined) {
+      return denyPreToolUse(
         `refused: this ${toolName} call carries no real "file_path" string to vet at all.`,
       );
     }
     const verdict = await vetFileAccess(toolName, filePath);
-    return verdict.allowed ? { continue: true } : denyFileAccess(verdict.reason);
+    return verdict.allowed ? { continue: true } : denyPreToolUse(verdict.reason);
+  };
+}
+
+/**
+ * `req.vetNetworkAccess` (`SPEC-QUESTIONS.md` Q350, found while building `buildFileAccessHook` above),
+ * composed into the SAME real `Options.hooks.PreToolUse` callback as that function (`buildSdkOptions`,
+ * below, via `composePreToolUseHooks`) -- the identical, structurally-earlier-than-`canUseTool`
+ * mechanism, for the identical reason: `mapToolGrantToAllowedTools` pushes bare `'WebFetch'`/
+ * `'WebSearch'` strings whenever a grant's `network` is `'full'`, and a bare `allowedTools` entry
+ * auto-approves the whole tool before `canUseTool` is ever consulted
+ * (`CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`) -- `buildFileAccessHook`'s own doc comment has the fuller
+ * account of why a `PreToolUse` hook, not `canUseTool`, is the real remedy.
+ *
+ * `undefined` when `req` carries no gate (every caller before this piece, and every caller that sets
+ * `vetFileAccess` but not this field): returns `undefined` so `buildSdkOptions` omits this gate from
+ * the composed callback entirely -- the identical "strictly additive" discipline `buildFileAccessHook`
+ * already established.
+ *
+ * Only `'WebFetch'`/`'WebSearch'` tool_use events are ever routed through the gate -- every other
+ * `tool_name` resolves `{ continue: true }` immediately. `'WebSearch'` is passed `undefined` for its
+ * second argument (it has no real per-call `url` field at all, `SessionRequest.vetNetworkAccess`'s own
+ * doc comment has the full reasoning) -- `vetNetworkAccess` itself decides that call on `toolName`
+ * alone. A `'WebFetch'` call whose own `tool_input.url` is somehow not a string is DENIED, not allowed
+ * (fail closed, matching `buildFileAccessHook`'s own identical convention for a non-string
+ * `file_path`) -- near-unreachable in practice given the real SDK's own `WebFetchInput.url: string`
+ * contract (confirmed against the installed `sdk-tools.d.ts`), which is exactly why failing closed
+ * costs nothing real here either.
+ *
+ * **Disclosed, not assumed closed.** Identical to `buildFileAccessHook`'s own disclosure, plus one
+ * more: whether the real SDK's `PreToolUse` hook is genuinely consulted for a live `WebFetch`/
+ * `WebSearch` call the same way a real, live, API-key-backed experiment already confirmed for
+ * `Read`/`Edit`/`Write` is NOT independently re-verified here -- no shipped role grants `network:
+ * 'full'` today, so there is no live fixture to run that experiment against
+ * (`SessionRequest.vetNetworkAccess`'s own doc comment).
+ */
+function buildNetworkAccessHook(req: SessionRequest): PreToolUseGate | undefined {
+  const vetNetworkAccess = req.vetNetworkAccess;
+  if (vetNetworkAccess === undefined) return undefined;
+  return async (input) => {
+    if (input.hook_event_name !== 'PreToolUse') return { continue: true };
+    const toolName = input.tool_name;
+    if (toolName !== 'WebFetch' && toolName !== 'WebSearch') {
+      return { continue: true };
+    }
+    if (toolName === 'WebSearch') {
+      const verdict = await vetNetworkAccess('WebSearch', undefined);
+      return verdict.allowed ? { continue: true } : denyPreToolUse(verdict.reason);
+    }
+    const url = stringField(input.tool_input, 'url');
+    if (url === undefined) {
+      return denyPreToolUse(
+        'refused: this WebFetch call carries no real "url" string to vet at all.',
+      );
+    }
+    const verdict = await vetNetworkAccess('WebFetch', url);
+    return verdict.allowed ? { continue: true } : denyPreToolUse(verdict.reason);
   };
 }
 
@@ -157,7 +257,9 @@ export function buildSdkOptions(
   mcp?: McpSessionExtras,
 ): Options {
   const canUseTool = buildCanUseTool(req);
-  const fileAccessHook = buildFileAccessHook(req);
+  const preToolUseGates = [buildFileAccessHook(req), buildNetworkAccessHook(req)].filter(
+    (gate): gate is PreToolUseGate => gate !== undefined,
+  );
   const options: Options = {
     cwd: req.cwd,
     model: req.model,
@@ -177,16 +279,22 @@ export function buildSdkOptions(
     // `buildCanUseTool` (above) returns `undefined` when `req.vetExecCommand` is unset, so this
     // spread adds nothing at all for every caller before critic round 4 -- strictly additive.
     ...(canUseTool === undefined ? {} : { canUseTool }),
-    // `buildFileAccessHook` (above) returns `undefined` when `req.vetFileAccess` is unset, so this
-    // spread adds nothing at all for every caller before this piece -- strictly additive, the
-    // identical discipline as `canUseTool` directly above. One matcher, no `matcher` pattern (every
-    // tool_use event is inspected; the callback itself narrows to `Read`/`Edit`/`Write`), mirroring
-    // the installed `.d.ts`'s own worked example shape (`hooks: { PreToolUse: [{ hooks: [...] }] }`).
-    ...(fileAccessHook === undefined
+    // `buildFileAccessHook`/`buildNetworkAccessHook` (above) each return `undefined` when their own
+    // `req.vet*` field is unset, so `preToolUseGates` is empty and this spread adds nothing at all for
+    // every caller that sets neither -- strictly additive, the identical discipline as `canUseTool`
+    // directly above. Exactly one real matcher, holding exactly one real `HookCallback`
+    // (`composePreToolUseHooks`'s own doc comment explains why the active gates are combined in plain
+    // JS here rather than registered as separate array entries), no `matcher` pattern (every tool_use
+    // event is inspected; the composed callback itself narrows to `Read`/`Edit`/`Write`/`WebFetch`/
+    // `WebSearch`), mirroring the installed `.d.ts`'s own worked example shape (`hooks: { PreToolUse:
+    // [{ hooks: [...] }] }`).
+    ...(preToolUseGates.length === 0
       ? {}
       : {
           hooks: {
-            PreToolUse: [{ hooks: [fileAccessHook] } satisfies HookCallbackMatcher],
+            PreToolUse: [
+              { hooks: [composePreToolUseHooks(preToolUseGates)] } satisfies HookCallbackMatcher,
+            ],
           },
         }),
     // `07` §7.3's own mapping table names `--bare` for the CLI transport; the SDK has no literal

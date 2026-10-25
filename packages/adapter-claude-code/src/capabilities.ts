@@ -87,6 +87,13 @@ export function staticCapabilities(
     // cli transport has no documented hooks equivalent either (that function's own doc comment).
     // Fixed by this adapter's own construction, never a remote-environment unknown.
     fileAccessGating: transport === 'sdk',
+    // `SPEC-QUESTIONS.md` Q350 (found while fixing Q347): the identical transport asymmetry as
+    // `fileAccessGating` immediately above, for the identical reason -- `build-options.ts`'s own
+    // `buildNetworkAccessHook` only ever reaches the sdk transport's real `Options.hooks.PreToolUse`
+    // (composed into the SAME callback `fileAccessHook` uses, `composePreToolUseHooks`); the cli
+    // transport has no documented hooks equivalent either. Fixed by this adapter's own construction,
+    // never a remote-environment unknown.
+    networkAccessGating: transport === 'sdk',
   };
 }
 

@@ -134,9 +134,10 @@ export interface SessionRequest {
    * against the installed SDK's own shadowing-warning source: it actually flags ANY bare
    * `allowedTools` entry, not only these three, but `mapToolGrantToAllowedTools` is the one place
    * that could ever emit a bare non-exec, non-network tool name today, and it only ever does so for
-   * these three -- `WebFetch`/`WebSearch` only ever appear bare for `network: 'full'`, a separate,
-   * undisclosed finding this field deliberately does not attempt to close, matching the owner's own
-   * explicit "stay focused on Read/Edit/Write" scope for this piece).
+   * these three -- `WebFetch`/`WebSearch` only ever appear bare for `network: 'full'`, a separate
+   * finding this field deliberately does not attempt to close, matching the owner's own explicit "stay
+   * focused on Read/Edit/Write" scope for this piece (disclosed as `SPEC-QUESTIONS.md` Q350, closed by
+   * `vetNetworkAccess` below).
    *
    * **Known gap, disclosed rather than assumed closed**, mirroring `vetExecCommand`'s own identical
    * disclosure: only the SDK transport (`@forge/adapter-claude-code`'s `buildSdkOptions`) can honour
@@ -145,6 +146,49 @@ export interface SessionRequest {
   readonly vetFileAccess?: (
     toolName: 'Read' | 'Edit' | 'Write',
     filePath: string,
+  ) => Promise<ExecCommandVerdict>;
+  /**
+   * An optional, per-call gate on the session's own LIVE, in-turn `WebFetch`/`WebSearch` tool use —
+   * called with the tool name and (for `WebFetch` only) the real `url` argument a live network-tool
+   * call is about to reach, BEFORE the adapter lets it execute (`SPEC-QUESTIONS.md` Q350). `undefined`
+   * when the caller has no such gate: the adapter falls back to its own native tool-grant mapping
+   * alone (a bare `WebFetch`/`WebSearch` entry, emitted whenever `tools.network` is `'full'`), exactly
+   * as before this field existed -- purely additive, never a replacement for `tools`.
+   *
+   * **Why this exists at all.** `SPEC-QUESTIONS.md` Q347 already found, and fixed, this exact defect
+   * class for `Read`/`Edit`/`Write` (`vetFileAccess`'s own doc comment immediately above has the full
+   * story): `tool-grant.ts`'s own `mapToolGrantToAllowedTools` pushes bare tool-name strings onto
+   * `allowedTools`, and the real, installed Claude Code SDK auto-approves any bare `allowedTools`
+   * entry before `canUseTool` is ever consulted (`CLAUDE_SDK_CAN_USE_TOOL_SHADOWED`). That same
+   * function pushes bare `'WebFetch'`/`'WebSearch'` whenever a grant's `network` is `'full'` — the
+   * identical shape, deliberately left out of Q347's own fix to stay focused (disclosed as `Q350`
+   * instead, "safe today only because nothing exercises it, not because the mechanism is actually
+   * confined"). This field is Q350's own fix, built the identical way as `vetFileAccess`.
+   *
+   * **Scope.** Project-neutral by design, mirroring `vetFileAccess`'s own reasoning exactly: `toolName`
+   * is always `'WebFetch'` or `'WebSearch'` — the complete real bare-shadowed set `tool-grant.ts`'s own
+   * mapping ever produces for network access. `url` carries the real `WebFetchInput.url` (confirmed
+   * against the installed SDK's own `sdk-tools.d.ts`) for a `'WebFetch'` call; `WebSearchInput` has no
+   * comparable field at all (only a `query` and two MODEL-chosen, not FORGE-chosen, `allowed_domains`/
+   * `blocked_domains` hints — a scoping request to the search backend, never a request to one specific
+   * host the way `WebFetch.url` is), so `url` is always `undefined` for a `'WebSearch'` call, and a
+   * caller's own gate is expected to decide that call on `toolName`/the grant alone — mirroring
+   * `tool-grant.ts`'s own documented precedent that `WebSearch` has no domain-scoped grant form at all.
+   *
+   * **Known gap, disclosed rather than assumed closed**, mirroring `vetFileAccess`'s own identical
+   * disclosure: only the SDK transport can honour this at all. Additionally, and unlike
+   * `vetFileAccess` (which a real, live, API-key-backed experiment confirmed fires for `Read`/`Edit`/
+   * `Write` regardless of bare-listing), whether the real SDK's `PreToolUse` hook is genuinely
+   * consulted for a live `WebFetch`/`WebSearch` call the same way is NOT independently, empirically
+   * re-verified here: no shipped FORGE role grants `network: 'full'` today (`SPEC-QUESTIONS.md` Q350's
+   * own disclosure), so there is no live fixture to run that experiment against. A caller relying on
+   * this field as its ONLY network defence, with no other layer backing it, is relying on the same
+   * documented-but-not-live-confirmed SDK contract `vetExecCommand`'s own doc comment already names
+   * for Bash.
+   */
+  readonly vetNetworkAccess?: (
+    toolName: 'WebFetch' | 'WebSearch',
+    url: string | undefined,
   ) => Promise<ExecCommandVerdict>;
 }
 

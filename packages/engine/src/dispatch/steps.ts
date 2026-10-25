@@ -32,7 +32,7 @@ import { artifactTypeById } from '@forge/schemas';
 import { readEvents } from '@forge/telemetry/events';
 import { minimatch } from 'minimatch';
 
-import { createLiveFileAccessGate } from './confined-command.ts';
+import { createLiveFileAccessGate, createLiveNetworkAccessGate } from './confined-command.ts';
 import { recordChecks } from '../gates/index.ts';
 import { parseReviewVerdict, type ReviewVerdict } from '../interaction/review-report.ts';
 import { deriveStoryId, mergeLandingScope, upstreamOf, type StepNode } from '../plan/index.ts';
@@ -637,7 +637,13 @@ export async function runLaneLifecycle(
  * this SAME `cwd` -- never only `adopt-tests`'s own rounds, which is where the identical Bash-side
  * gate (`vetExecCommand`) is, by contrast, still confined to today (a real, disclosed asymmetry this
  * one does not repeat: the file-access gate costs nothing beyond `cwd`, already a required field on
- * every `SessionRequest`, unlike the Bash gate's own richer, caller-specific vet logic). */
+ * every `SessionRequest`, unlike the Bash gate's own richer, caller-specific vet logic).
+ *
+ * `vetNetworkAccess: createLiveNetworkAccessGate(assembled.tools)` (`SPEC-QUESTIONS.md` Q350): the
+ * identical "every real `kind: agent` step, not only a narrower caller" reasoning, now for the
+ * step's own live `WebFetch`/`WebSearch` tool use -- built from `assembled.tools` (the step's own
+ * resolved grant), not `cwd`, since the gate's own decision is about a REQUESTED HOST, never a
+ * filesystem path. */
 function buildSessionRequest(
   node: StepNode,
   ctx: ExecuteStepContext,
@@ -669,6 +675,7 @@ function buildSessionRequest(
     },
     abortSignal,
     vetFileAccess: createLiveFileAccessGate(cwd),
+    vetNetworkAccess: createLiveNetworkAccessGate(assembled.tools),
   };
 }
 

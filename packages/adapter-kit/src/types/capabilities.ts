@@ -67,4 +67,22 @@ export interface AdapterCapabilities {
    * capability's own doc comment names where it is consumed) now requires this flag `true` as well,
    * not only `execCommandGating`. */
   readonly fileAccessGating: boolean;
+  /** Whether a real, per-call gate on live, in-turn `WebFetch`/`WebSearch` tool use is actually active
+   * for this adapter in its CURRENT configuration — `SessionRequest.vetNetworkAccess`, when a caller
+   * sets one, is genuinely consulted before a live network-tool call executes, never merely accepted
+   * and silently ignored. The network sibling of `fileAccessGating` immediately above, added for the
+   * identical reason (`SPEC-QUESTIONS.md` Q350, found while fixing `Q347`): `@forge/adapter-claude-code`'s
+   * SDK transport is not merely a config choice — it is the automatic fallback whenever the real,
+   * installed `@anthropic-ai/claude-agent-sdk` module fails to import (`adapter.ts`'s own transport-
+   * selection logic). If that fallback ever triggers, an ordinary `kind: agent` step's own
+   * `SessionRequest.vetNetworkAccess` would be silently accepted and never actually consulted — the
+   * exact "a safety guarantee with no real gate behind it is not a guarantee" failure
+   * `execCommandGating`/`fileAccessGating`'s own doc comments already name, now for `WebFetch`/
+   * `WebSearch`. No shipped role grants `network: 'full'` today (`SPEC-QUESTIONS.md` Q350's own
+   * disclosure), so this flag has no live production consumer yet — added for the identical "build the
+   * honest capability flag alongside the gate it describes, before a real caller needs it" discipline
+   * `fileAccessGating` already established, not because `forge test adopt --agent`'s own `RUN-162`
+   * currently requires it (it does, mirroring `execCommandGating`/`fileAccessGating`, since that
+   * command's own grant could in principle include `network: 'full'` even though none does today). */
+  readonly networkAccessGating: boolean;
 }

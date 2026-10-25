@@ -239,6 +239,7 @@ import {
   ADOPT_TESTS_EXEC_PATTERNS,
   assembleAgentSession,
   createLiveFileAccessGate,
+  createLiveNetworkAccessGate,
   grantWithAdoptTestsExec,
   readProjectAgent,
   vetProposedCommand,
@@ -935,8 +936,8 @@ function shouldRetainLane(config: ForgeConfig, roundOutcome: 'passed' | 'failed'
  * doc comment for the full design.
  *
  * @throws {ForgeError} `RUN-056` when `test-architect` has no real materialized agent definition;
- * `RUN-162` when the adapter has no real per-call exec gate OR no real per-call file-access gate;
- * `RUN-161` when the round's own FINAL
+ * `RUN-162` when the adapter has no real per-call exec gate OR no real per-call file-access gate OR
+ * no real per-call network-access gate; `RUN-161` when the round's own FINAL
  * proposed command is refused by the vet -- deliberately never retried, see the round loop's own
  * `catch` for why; whatever `assembleAgentSession`/`createLaneWorktree` themselves refuse with for a
  * config or VCS problem this project has (an unmapped model tier, a grant above the agent's own
@@ -958,16 +959,24 @@ export async function runAdoptTestsAgent(
 ): Promise<AdoptTestsAgentResult> {
   // Refused upfront, before a lane, a session, or even the agent definition is ever touched
   // (`specs/22` M17 P7, critic round 5; extended for `fileAccessGating` by `SPEC-QUESTIONS.md` Q347's
-  // own fix-round critics): a transport with no real per-call exec gate
-  // (`AdapterCapabilities.execCommandGating`, its own doc comment has the full reasoning) OR no real
-  // per-call file-access gate (`AdapterCapabilities.fileAccessGating`, the identical reasoning, for
-  // this round's own live `Read`/`Edit`/`Write` tool use via `vetFileAccess` below) has no real safety
-  // guarantee for the live investigation phase this command's own exec AND write grant exist to run at
+  // own fix-round critics; extended again for `networkAccessGating` by `SPEC-QUESTIONS.md` Q350): a
+  // transport with no real per-call exec gate (`AdapterCapabilities.execCommandGating`, its own doc
+  // comment has the full reasoning) OR no real per-call file-access gate
+  // (`AdapterCapabilities.fileAccessGating`, the identical reasoning, for this round's own live
+  // `Read`/`Edit`/`Write` tool use via `vetFileAccess` below) OR no real per-call network-access gate
+  // (`AdapterCapabilities.networkAccessGating`, the identical reasoning again, for this round's own
+  // live `WebFetch`/`WebSearch` tool use via `vetNetworkAccess` below -- no round grants `network:
+  // 'full'` today, so this is a future-proofing requirement, not a live gap this round closes) has no
+  // real safety guarantee for the live investigation phase this command's own grant exists to run at
   // all -- a hard refusal here, never a warning a human could miss, is the DELIBERATE choice: see
   // `createLiveExecGate`'s own doc comment for why the exec half of this gate matters at all, and this
   // function's top doc comment for the KEPT-lane-isolation DECISION this refusal does not change.
   const adapterCapabilities = await deps.adapter.capabilities();
-  if (!adapterCapabilities.execCommandGating || !adapterCapabilities.fileAccessGating) {
+  if (
+    !adapterCapabilities.execCommandGating ||
+    !adapterCapabilities.fileAccessGating ||
+    !adapterCapabilities.networkAccessGating
+  ) {
     throw new ForgeError('RUN-162', { adapterId: deps.adapter.id });
   }
 
@@ -1025,6 +1034,7 @@ export async function runAdoptTestsAgent(
       await assembled.persist();
 
       const abortController = new AbortController();
+      const roundTools = grantWithAdoptTestsExec(assembled.tools);
       const sessionRequest: SessionRequest = {
         runId: ctx.runId,
         stepId: assembled.stepKey,
@@ -1033,7 +1043,7 @@ export async function runAdoptTestsAgent(
         prompt: assembled.prompt,
         model: assembled.model,
         thinking: assembled.thinking,
-        tools: grantWithAdoptTestsExec(assembled.tools),
+        tools: roundTools,
         permissionMode: 'deny-unlisted',
         limits: agentStepLimits(agent),
         env: {
@@ -1052,6 +1062,10 @@ export async function runAdoptTestsAgent(
         // to, built by the SAME shared `createLiveFileAccessGate` every other real `kind: agent` step
         // now uses too, not a second, independently-maintained gate for this one round.
         vetFileAccess: createLiveFileAccessGate(lane.path),
+        // The real, per-call gate on this round's own live `WebFetch`/`WebSearch` tool use
+        // (`SPEC-QUESTIONS.md` Q350) -- built from this SAME round's own `roundTools` grant, the
+        // identical reasoning as `vetFileAccess` immediately above, now for the network side.
+        vetNetworkAccess: createLiveNetworkAccessGate(roundTools),
       };
       const handle = await ctx.adapter.startSession(sessionRequest);
       const session = await handle.result();

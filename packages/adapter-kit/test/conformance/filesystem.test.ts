@@ -81,6 +81,7 @@ const CAPABILITIES: AdapterCapabilities = {
   turnLimitEnforcement: true,
   execCommandGating: true,
   fileAccessGating: true,
+  networkAccessGating: true,
 };
 
 describe('checkC3ToolRestriction — refusal signalled only via result.ok', () => {

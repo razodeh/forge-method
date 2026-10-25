@@ -57,6 +57,11 @@ describe('staticCapabilities', () => {
     expect(staticCapabilities([], 'sdk').fileAccessGating).toBe(true);
     expect(staticCapabilities([], 'cli').fileAccessGating).toBe(false);
   });
+
+  it('networkAccessGating is true for sdk and false for cli -- the identical transport asymmetry as fileAccessGating, for the identical reason (SPEC-QUESTIONS.md Q350): buildNetworkAccessHook only ever reaches the sdk transport', () => {
+    expect(staticCapabilities([], 'sdk').networkAccessGating).toBe(true);
+    expect(staticCapabilities([], 'cli').networkAccessGating).toBe(false);
+  });
 });
 
 describe('confirmedCapabilities', () => {
@@ -89,5 +94,10 @@ describe('confirmedCapabilities', () => {
   it('still reports fileAccessGating per-transport once confirmed', () => {
     expect(confirmedCapabilities([], 'sdk').fileAccessGating).toBe(true);
     expect(confirmedCapabilities([], 'cli').fileAccessGating).toBe(false);
+  });
+
+  it('still reports networkAccessGating per-transport once confirmed', () => {
+    expect(confirmedCapabilities([], 'sdk').networkAccessGating).toBe(true);
+    expect(confirmedCapabilities([], 'cli').networkAccessGating).toBe(false);
   });
 });
