@@ -394,10 +394,19 @@ async function parseLaneWorktrees(
     const resolvedPath = path.resolve(worktreePathValue);
     const relative = path.relative(worktreesRoot, resolvedPath);
     // Must be a direct child of worktreesRoot -- not worktreesRoot itself (relative === ''), not
-    // outside it (relative starting with '..'), and not nested deeper under it (a real path separator
-    // remaining in `relative`) -- `worktreesRootFor`'s own construction never produces anything but a
-    // direct child, so anything else here is not a forge-managed lane worktree at all.
-    if (relative === '' || relative.startsWith('..') || relative.includes(path.sep)) continue;
+    // outside it (relative === '..', or starting with the '..' SEGMENT '..' + path.sep -- not a raw
+    // string prefix: path.relative can return a literal '...' for a real worktree path git reports
+    // whose own leaf happens to be named '...'/'..foo', and that string coincidentally starts with
+    // '..' without naming a real parent-directory escape at all), and not nested deeper under it (a
+    // real path separator remaining in `relative`) -- `worktreePath`'s own construction never produces
+    // anything but a direct child, so anything else here is not a forge-managed lane worktree at all.
+    if (
+      relative === '' ||
+      relative === '..' ||
+      relative.startsWith('..' + path.sep) ||
+      relative.includes(path.sep)
+    )
+      continue;
     handles.push({
       laneId: relative as LaneId,
       path: worktreePathValue,

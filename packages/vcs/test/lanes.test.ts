@@ -865,6 +865,19 @@ describe('listOrphanedWorktrees', () => {
     expect(await listOrphanedWorktrees(cwd, new Set([handle.laneId]))).toEqual([]);
     expect(await listOrphanedWorktrees(cwd)).toHaveLength(1);
   });
+
+  it('finds a forge-managed worktree whose own lane id is literally named with a leading ".." (not a real escape) -- parseLaneWorktrees\' own raw string-prefix check used to misread this as one and silently drop it', async () => {
+    const cwd = await createTempRepo();
+    const target = path.join(cwd, '.forge', 'state', 'worktrees', '..weird-00000000');
+    await execa('git', ['worktree', 'add', '-b', 'forge/run-1/weird-00000000', target, 'HEAD'], {
+      cwd,
+    });
+
+    const orphans = await listOrphanedWorktrees(cwd);
+    expect(orphans).toHaveLength(1);
+    expect(orphans[0]?.laneId).toBe('..weird-00000000');
+    expect(orphans[0]?.branch).toBe('forge/run-1/weird-00000000');
+  });
 });
 
 describe('removeLaneWorktree recovers from a worktree git itself refuses to plain-remove', () => {
