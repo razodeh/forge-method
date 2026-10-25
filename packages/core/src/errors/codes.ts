@@ -3810,6 +3810,33 @@ export const ERROR_CODES = {
       `Linking the project's own node_modules into the reference's scratch worktree at ${show(d.path)} failed: ${show(d.detail)}`,
     remedy: 'Fix the underlying filesystem problem named above, then re-run the capture.',
   },
+  // `specs/22` M17 P14 follow-up (`process/SPEC-QUESTIONS.md` Q317 Decision 8): the new `redact-
+  // json-pointers` normalise rule accepts an author-supplied, unconstrained regular expression
+  // `pattern`, the identical property that makes `replace` alone (among the rules `13` F-TEST-9
+  // already named) capable of depending on absolute position or length, and so alone capable of
+  // being shifted by the always-on root-path rewrite's own length-asymmetric substitution into
+  // cutting at a different offset on each side of a comparison (`CFG-516`'s own doc comment,
+  // `replace-lint.ts`'s `assertNoReplaceRuleOnRootRewrittenSurface`). This widens the identical
+  // refusal to the new rule rather than trying to prove a pointer-scoped pattern is somehow immune
+  // to it: `replace-lint.ts`'s own `assertNoRedactJsonPointersRuleOnRootRewrittenSurface` is this
+  // code's one throw site. Reuses `CFG-510`/`CFG-511`/`CFG-512`/`CFG-513`/`CFG-516`'s identical
+  // `file`/`key`/`detail`/`more` shape (so, like `CFG-517`/`CFG-518` before it, needs no new
+  // `SAMPLE_DETAILS` key in `errors.test.ts`), with its own dedicated remedy — `CFG-513`'s own
+  // neighbouring comment already explains why a new code, not a reuse of `CFG-516`, is right here:
+  // the two refusals name a different offending rule by name.
+  'CFG-519': {
+    severity: 'error',
+    exitCode: EXIT_CODES.usage,
+    message: (d: { file: string; key: string; detail: string; more?: number }) =>
+      `Parity file ${show(d.file)} is invalid at ${show(d.key)}: ${show(d.detail)}` +
+      (typeof d.more === 'number' && d.more > 0
+        ? ` (${String(d.more)} more problem(s) follow it)`
+        : '.'),
+    remedy:
+      'Remove this "redact-json-pointers" rule (the always-on root-path rewrite cannot be proven ' +
+      'safe combined with any author-supplied pattern on this surface) -- it is meaningful only on ' +
+      'the "library" surface, which the rewrite never reaches.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

@@ -30,9 +30,24 @@ export type ProcessStream = 'stdout' | 'stderr';
 
 /**
  * One declarative normalisation rule, run in the order a declaration lists them (`13` F-TEST-9).
- * `rule` discriminates; `replace` and `ignore-json-pointers` are the only two with their own extra
- * fields. Applying a rule is P4's job (`PLAN-M16.md` P4) — this package only carries the declared
- * shape through, unmodified, into the digest.
+ * `rule` discriminates; `replace`, `ignore-json-pointers` and `redact-json-pointers` are the only
+ * three with their own extra fields. Applying a rule is P4's job (`PLAN-M16.md` P4) — this package
+ * only carries the declared shape through, unmodified, into the digest.
+ *
+ * **`redact-json-pointers` (`specs/22` M17 P14 follow-up, `process/SPEC-QUESTIONS.md` Q317 Decision
+ * 8).** `ignore-json-pointers` can only DELETE the whole member a pointer names; this rule instead
+ * replaces every match of `pattern` within the STRING found at each named pointer with `replacement`
+ * (the identical literal-replacement semantics `replace` already has), leaving the rest of that
+ * string, and every other field, untouched. It exists for exactly the gap `replace` cannot close on
+ * its own: `replace` runs against a stream/file's raw TEXT, which a `library` case's structured
+ * result has none of (`capture.ts`'s own `LibraryObservation` doc comment), so there was previously
+ * no way to redact a real filesystem path embedded inside one specific field (an error message, a
+ * `stack`, a `__dirname`-derived value) without deleting that field outright. `declaration.ts`'s
+ * loader validates its shape identically to the union of `ignore-json-pointers`' `pointers` and
+ * `replace`'s `pattern`/`replacement`; `replace-lint.ts`'s own `CFG-519` refuses it on every surface
+ * the always-on root-path rewrite reaches (`process`/`file`/`http`) for the identical
+ * unprovable-safety reason `CFG-516` already refuses `replace` there — it is meaningful only on
+ * `library`, which the rewrite never touches.
  */
 export type NormalizeRule =
   | { readonly rule: 'line-endings' }
@@ -47,6 +62,12 @@ export type NormalizeRule =
       readonly replacement: string;
       readonly stream?: ProcessStream;
       readonly file?: string;
+    }
+  | {
+      readonly rule: 'redact-json-pointers';
+      readonly pointers: readonly string[];
+      readonly pattern: string;
+      readonly replacement: string;
     };
 
 /** A case's overlaid input: `from` is a source identifier under `.forge/parity/` (where the trust

@@ -14,12 +14,15 @@ import {
 } from '../../../src/commands/parity/normalize.ts';
 import {
   assertNoConflictingContentDiscardingRules,
+  assertNoRedactJsonPointersRuleOnRootRewrittenSurface,
   assertNoReplaceRuleOnRootRewrittenSurface,
   assertNoRepeatedRuleKindInScope,
   assertParityDeclarationPatternsSafe,
   collectContentDiscardingConflicts,
+  collectRedactJsonPointersOnRootRewrittenSurfaceConflicts,
   collectReplaceOnRootRewrittenSurfaceConflicts,
   collectRepeatedRuleKindConflicts,
+  firstNormalizeRuleSafetyProblem,
   hasConflictingContentDiscardingRules,
   hasRepeatedRuleKindInScope,
   isPathologicalReplacePattern,
@@ -130,6 +133,37 @@ describe('lintParityDeclarationReplacePatterns: walks every surface/case/rule (s
       },
     });
     expect(lintParityDeclarationReplacePatterns(declaration)).toHaveLength(2);
+  });
+
+  // `specs/22` M17 P14 follow-up (Q317 Decision 8): `redact-json-pointers`' own `pattern` is run
+  // through the identical `new RegExp`+`.replace()` `replace` uses, and -- unlike `replace` -- has NO
+  // runtime wall-clock budget backing it up on the one surface (`library`) it is allowed on
+  // (`compare.ts`'s own `normalizeLibraryOrThrow` doc comment has the full account), so this lint is
+  // its ONLY real protection against a catastrophic pattern.
+  it('locates a pathological pattern in a "redact-json-pointers" rule exactly as it would in a "replace" rule', () => {
+    const declaration = minimalDeclaration({
+      surfaces: {
+        library: minimalSurface({
+          run: 'node probe.mjs',
+          cases: [
+            minimalCase({
+              normalize: [
+                {
+                  rule: 'redact-json-pointers',
+                  pointers: ['/message'],
+                  pattern: '(a+)+',
+                  replacement: '',
+                },
+              ],
+            }),
+          ],
+        }),
+      },
+    });
+    const problems = lintParityDeclarationReplacePatterns(declaration);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]?.key).toBe('surfaces.library.cases[0].normalize[0].pattern');
+    expect(problems[0]?.pattern).toBe('(a+)+');
   });
 });
 
@@ -900,5 +934,171 @@ describe(
         }).toThrow(ForgeError);
       },
     );
+  },
+);
+
+describe(
+  '(specs/22 M17 P14 follow-up, Q317 Decision 8) collectRedactJsonPointersOnRootRewrittenSurfaceConflicts ' +
+    '/ assertNoRedactJsonPointersRuleOnRootRewrittenSurface: the new rule gets the identical ' +
+    'root-rewritten-surface refusal "replace" already has',
+  () => {
+    it.each(['process', 'file', 'http'] as const)(
+      'flags a "redact-json-pointers" rule on the %s surface, which the always-on root rewrite reaches',
+      (kind) => {
+        const normalize = [
+          {
+            rule: 'redact-json-pointers' as const,
+            pointers: ['/x'],
+            pattern: '.{3}$',
+            replacement: '',
+          },
+        ];
+        const surfaceOverrides =
+          kind === 'http'
+            ? {
+                run: 'node server.mjs',
+                port: 4100,
+                readiness: { path: '/health', timeoutMs: 1000 },
+                network: 'loopback' as const,
+                cases: [{ request: { method: 'GET', path: '/' }, normalize }],
+              }
+            : { cases: [minimalCase({ normalize })] };
+        const declaration = minimalDeclaration({
+          surfaces: { [kind]: minimalSurface(surfaceOverrides) },
+        });
+        expect(collectRedactJsonPointersOnRootRewrittenSurfaceConflicts(declaration)).toEqual([
+          { key: `surfaces.${kind}.cases[0].normalize` },
+        ]);
+      },
+    );
+
+    it('does NOT flag a "redact-json-pointers" rule on the library surface, which the rewrite never reaches', () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          library: minimalSurface({
+            run: 'node probe.mjs',
+            cases: [
+              minimalCase({
+                normalize: [
+                  {
+                    rule: 'redact-json-pointers',
+                    pointers: ['/x'],
+                    pattern: '.{3}$',
+                    replacement: '',
+                  },
+                ],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(collectRedactJsonPointersOnRootRewrittenSurfaceConflicts(declaration)).toEqual([]);
+    });
+
+    it('does not flag a case with no "redact-json-pointers" rule, however many other rules it declares', () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          process: minimalSurface({
+            cases: [
+              minimalCase({
+                normalize: [
+                  { rule: 'line-endings' },
+                  { rule: 'ignore-json-pointers', pointers: ['/x'] },
+                ],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(collectRedactJsonPointersOnRootRewrittenSurfaceConflicts(declaration)).toEqual([]);
+    });
+
+    it('returns normally for a declaration with no "redact-json-pointers" rule on a root-rewritten surface', () => {
+      const declaration = minimalDeclaration();
+      expect(() => {
+        assertNoRedactJsonPointersRuleOnRootRewrittenSurface(declaration);
+      }).not.toThrow();
+    });
+
+    it('throws a typed ForgeError CFG-519, never a bare exception, naming the conflicting case', () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          process: minimalSurface({
+            cases: [
+              minimalCase({
+                normalize: [
+                  {
+                    rule: 'redact-json-pointers',
+                    pointers: ['/x'],
+                    pattern: '.{3}$',
+                    replacement: '',
+                  },
+                ],
+              }),
+            ],
+          }),
+        },
+      });
+      let caught: unknown;
+      try {
+        assertNoRedactJsonPointersRuleOnRootRewrittenSurface(declaration);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(ForgeError);
+      expect((caught as ForgeError).code).toBe('CFG-519');
+      expect((caught as ForgeError).details['key']).toBe('surfaces.process.cases[0].normalize');
+    });
+
+    it(
+      'firstNormalizeRuleSafetyProblem reports CFG-519 for a "redact-json-pointers" rule on a ' +
+        'root-rewritten surface, the identical non-throwing wrapper "replace" already uses',
+      () => {
+        const declaration = minimalDeclaration({
+          surfaces: {
+            process: minimalSurface({
+              cases: [
+                minimalCase({
+                  normalize: [
+                    {
+                      rule: 'redact-json-pointers',
+                      pointers: ['/x'],
+                      pattern: '.{3}$',
+                      replacement: '',
+                    },
+                  ],
+                }),
+              ],
+            }),
+          },
+        });
+        const problem = firstNormalizeRuleSafetyProblem(declaration);
+        expect(problem?.code).toBe('CFG-519');
+        expect(problem?.key).toBe('surfaces.process.cases[0].normalize');
+      },
+    );
+
+    it('a "redact-json-pointers" rule on the library surface passes every safety check, including firstNormalizeRuleSafetyProblem', () => {
+      const declaration = minimalDeclaration({
+        surfaces: {
+          library: minimalSurface({
+            run: 'node probe.mjs',
+            cases: [
+              minimalCase({
+                normalize: [
+                  {
+                    rule: 'redact-json-pointers',
+                    pointers: ['/message'],
+                    pattern: '/real/root',
+                    replacement: '<ROOT>',
+                  },
+                ],
+              }),
+            ],
+          }),
+        },
+      });
+      expect(firstNormalizeRuleSafetyProblem(declaration)).toBeUndefined();
+    });
   },
 );

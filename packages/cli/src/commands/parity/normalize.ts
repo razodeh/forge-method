@@ -1,5 +1,5 @@
 /**
- * The seven declarative normalisation rules (`13` F-TEST-9) plus the erase-everything guard, applied
+ * The eight declarative normalisation rules (`13` F-TEST-9) plus the erase-everything guard, applied
  * to one text target (a stream, or a declared output file's text content) in the order a declaration
  * lists them — never a fixed canonical order. No code from a declaration runs: every rule below is a
  * pure, bounded text transform.
@@ -15,6 +15,14 @@
  * side) is a silent no-op rather than a thrown error, so a declaration excusing a field that is not
  * always present does not become its own point of failure — this piece's own DECISION, reported
  * alongside the search above that found nothing more.
+ *
+ * `redact-json-pointers` (`specs/22` M17 P14 follow-up, `process/SPEC-QUESTIONS.md` Q317 Decision 8)
+ * is the eighth: the structural, pointer-targeted SUBSTRING redaction `ignore-json-pointers` cannot
+ * provide (it can only delete a whole member). It shares `removeAtPointer`'s own recursive,
+ * copy-on-write pointer-navigation shape ({@link redactAtPointer}) and `replace`'s own literal,
+ * global regex substitution ({@link applyReplace}), composed at a named pointer instead of over a
+ * whole text — see {@link redactJsonPointerSubstring}'s own doc comment for the full account, and
+ * `declaration-types.ts`'s own `NormalizeRule` doc comment for why it exists at all.
  *
  * @see specs/13-frameworks-testing-and-debugging.md F-TEST-9
  * @see process/plans/PLAN-M16.md P4
@@ -369,6 +377,192 @@ export function applyReplace(text: string, pattern: string, replacement: string)
   return text.replace(new RegExp(pattern, 'g'), literalReplacement);
 }
 
+/**
+ * `redact-json-pointers` (`specs/22` M17 P14 follow-up, `process/SPEC-QUESTIONS.md` Q317 Decision 8):
+ * at each named pointer whose resolved value is a STRING, replaces it via `redact` — never removes
+ * the member (`removeAtPointer`'s own job), never touches a non-string member, and is a silent no-op
+ * for a pointer that does not resolve at all (the identical convention {@link removeAtPointer}
+ * already established for an absent/wrong-shaped target, so a declaration excusing a field that is
+ * not always present, or not always a string, does not become its own point of failure). Mirrors
+ * `removeAtPointer`'s own recursive, copy-on-write structure exactly — leaving every untouched
+ * sibling the same reference — but REPLACES the leaf it finds instead of splicing/deleting it.
+ *
+ * The root pointer (`""`) redacts the whole value only when the whole value IS itself a string
+ * (unlike `removeJsonPointer`'s root case, there is no "value gone" state to route into a shared
+ * sentinel: a root pointer against a non-string root — an object or array, the common case for a
+ * `library` result — is simply a no-op, exactly as a non-root pointer resolving to a non-string
+ * member already is).
+ */
+function redactAtPointer(
+  value: unknown,
+  tokens: readonly string[],
+  redact: (text: string) => string,
+): unknown {
+  const [head, ...rest] = tokens;
+  if (head === undefined) return typeof value === 'string' ? redact(value) : value;
+  if (Array.isArray(value)) {
+    if (!isArrayIndexToken(head)) return value;
+    const index = Number(head);
+    if (index >= value.length) return value;
+    if (rest.length === 0) {
+      // `Array.isArray`'s own type predicate narrows `value` to `any[]` (a known, long-standing
+      // lib.es5.d.ts imprecision, not something this module can fix) -- an explicit `: unknown`
+      // annotation here is what keeps `target` sound rather than silently `any`, the identical
+      // reason `removeAtPointer`'s own object branch below never needs one (its `record[head]` is
+      // already `unknown` by construction, via the `Readonly<Record<string, unknown>>` cast).
+      const target: unknown = value[index];
+      if (typeof target !== 'string') return value;
+      const next = value.slice();
+      next[index] = redact(target);
+      return next;
+    }
+    const child = redactAtPointer(value[index], rest, redact);
+    if (child === value[index]) return value;
+    const next = value.slice();
+    next[index] = child;
+    return next;
+  }
+  if (typeof value === 'object' && value !== null) {
+    // Sound by the identical reasoning {@link removeAtPointer}'s own comment gives for its matching
+    // branch: every caller of this module-private function only ever passes a value that descends
+    // from `JSON.parse`'s own result, or from `LibraryObservation.result.value` (already a parsed
+    // `CanonicalValue`), neither of which can produce a `Date`, `Map`, `RegExp` or other exotic
+    // object this reasoning was not written for — only a plain `Record<string, unknown>`.
+    const record = value as Readonly<Record<string, unknown>>;
+    if (!Object.hasOwn(record, head)) return value;
+    if (rest.length === 0) {
+      const target = record[head];
+      if (typeof target !== 'string') return value;
+      return { ...record, [head]: redact(target) };
+    }
+    const child = redactAtPointer(record[head], rest, redact);
+    if (child === record[head]) return value;
+    return { ...record, [head]: child };
+  }
+  return value; // a scalar has no member `head` could ever name: the pointer does not resolve.
+}
+
+/**
+ * Redacts the STRING at one RFC 6901 JSON Pointer within `value`, via `redact` — the shared
+ * pointer-navigation primitive both {@link applyRedactJsonPointers} (the text-shape path, over a
+ * `process`/`file`/`http` case's parsed-JSON target) and `compare.ts`'s own `normalizeLibraryOrThrow`
+ * (the structural path, directly over a `library` case's already-parsed result) apply their own
+ * `redact-json-pointers` rule through — the identical "one shared primitive, two call sites" shape
+ * {@link removeJsonPointer} and `reorderPointersForSafeRemoval` already use for `ignore-json-pointers`.
+ *
+ * @see specs/13-frameworks-testing-and-debugging.md F-TEST-9 (names neither `ignore-json-pointers`
+ * nor this rule beyond the bare name; see this module's own file header for the reading that fills
+ * the gap for both)
+ */
+export function redactJsonPointerSubstring(
+  value: unknown,
+  pointer: string,
+  redact: (text: string) => string,
+): unknown {
+  if (pointer === '') return typeof value === 'string' ? redact(value) : value;
+  if (!pointer.startsWith('/')) return value;
+  const tokens = pointer.slice(1).split('/').map(unescapePointerToken);
+  return redactAtPointer(value, tokens, redact);
+}
+
+/**
+ * Builds the one `redact` callback {@link redactJsonPointerSubstring} needs for one `redact-json-
+ * pointers` rule: every match of `pattern` becomes `replacement`, taken LITERALLY — exactly
+ * {@link applyReplace}'s own semantics, scoped to the one targeted field's string instead of a whole
+ * text. Guards against the field-granularity version of the "whole match" hazard `13` F-TEST-9 already
+ * refuses for `replace` over a whole stream ("a replace whose match is the entire content of a
+ * non-empty stream" is refused identically to one whose result is empty): a pattern whose match
+ * covers the ENTIRE non-empty target field is refused outright, reported via `onWholeFieldMatch`,
+ * regardless of what the declared (possibly non-empty) `replacement` would actually produce — the
+ * identical "replace with the empty string first, independent of the declared replacement" technique
+ * `applyNormalizeRulesToText`'s own `replace` case already uses, for the identical reason: a
+ * non-empty replacement defeats a plain "is the result empty" check even when the match covered
+ * everything.
+ *
+ * Exported (not module-private, unlike {@link redactAtPointer}) because `compare.ts`'s own
+ * `normalizeLibraryOrThrow` needs the IDENTICAL whole-field-match guard for the structural `library`
+ * path — sharing this builder is what makes the text-shape path ({@link applyRedactJsonPointers},
+ * above) and the structural path provably apply the same rule, not two independently-written copies
+ * of this reasoning that could quietly drift.
+ */
+export function fieldRedactor(
+  pattern: string,
+  replacement: string,
+  onWholeFieldMatch: (target: string) => void,
+): (text: string) => string {
+  return (target) => {
+    if (target.length > 0 && applyReplace(target, pattern, '') === '') {
+      onWholeFieldMatch(target);
+      return target;
+    }
+    return applyReplace(target, pattern, replacement);
+  };
+}
+
+/**
+ * `redact-json-pointers`, the text-shape path: parses `text` as JSON, and at each named pointer in
+ * `pointers` (in the declaration's own order — unlike `ignore-json-pointers`, no reordering is ever
+ * needed here: redacting a string's own content never changes an array's length, so one pointer's
+ * own redaction can never shift a LATER pointer's target the way `removeAtPointer`'s splice does),
+ * redacts the string found there via {@link fieldRedactor}, then re-serialises in canonical form.
+ * Shares `json-canonical`'s own content-free failure `detail` for the identical information-boundary
+ * reason, and the identical `rule-failed` kind for the "whole field matched" refusal.
+ *
+ * In practice this path is unreachable from a real declaration today: `replace-lint.ts`'s own
+ * `CFG-519` refuses `redact-json-pointers` on every surface (`process`/`file`/`http`) whose case text
+ * would ever reach here, for the identical unprovable-safety-against-the-root-rewrite reason
+ * `CFG-516` already refuses `replace` there (`declaration-types.ts`'s own `NormalizeRule` doc comment
+ * has the full account). It is implemented for real anyway, rather than left to throw if ever
+ * reached: `applyNormalizeRulesToText`'s own exhaustiveness switch needs a real case for every
+ * `NormalizeRule` member regardless, and a genuine, correct implementation here is strictly safer
+ * than a placeholder that would crash unpredictably if that refusal is ever loosened or has its own
+ * gap.
+ */
+export function applyRedactJsonPointers(
+  text: string,
+  pointers: readonly string[],
+  pattern: string,
+  replacement: string,
+): TextRuleOutcome {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return { ok: false, detail: 'does not parse as JSON' };
+  }
+  let working: unknown = parsed;
+  // A mutable BOX, never a bare `let` flag: a `let` boolean set only from inside a callback this
+  // function passes onward (never calls itself) is exactly the shape TypeScript's own control-flow
+  // narrowing mishandles — it narrows every later read back to the literal `false` the declaration
+  // started with, since nothing in THIS function's own visible control flow looks like an assignment
+  // to it, which makes `@typescript-eslint/no-unnecessary-condition` (correctly, by its own lights)
+  // call the later `if` unreachable. A one-property object sidesteps it: TypeScript never narrows a
+  // property read across an intervening function call the way it narrows a bare local, so
+  // `match.wholeField` stays genuinely `boolean` at both reads below.
+  const match: { wholeField: boolean } = { wholeField: false };
+  for (const pointer of pointers) {
+    working = redactJsonPointerSubstring(
+      working,
+      pointer,
+      fieldRedactor(pattern, replacement, () => {
+        match.wholeField = true;
+      }),
+    );
+    if (match.wholeField) break;
+  }
+  if (match.wholeField) {
+    return {
+      ok: false,
+      detail:
+        'the pattern matches the entire content of a non-empty targeted field, which is refused',
+    };
+  }
+  // Sound by the same reasoning as `applyIgnoreJsonPointers`: `working` descends from valid-JSON
+  // `parsed` through only string-replacing steps, which can only replace a string with another
+  // string, never introduce a value JSON cannot represent.
+  return { ok: true, text: toCanonicalJson(working as CanonicalValue) };
+}
+
 /** Which text target a `replace` rule's optional `stream`/`file` scope names — the generalisation
  * `applyNormalizeRulesToText` matches a rule's scope against, for whichever surface it is normalising
  * a target for (a `process`/`library` stream, or a `file` surface's declared output path). */
@@ -439,6 +633,30 @@ export function applyNormalizeRulesToText(
         working = outcome.text;
         break;
       }
+      case 'redact-json-pointers': {
+        // `specs/22` M17 P14 follow-up, Q317 Decision 8: unconditional on every target, the
+        // identical "no `stream`/`file` field at all" shape `ignore-json-pointers` already has, for
+        // the identical reason — see this function's own `case 'ignore-json-pointers'` just above.
+        // `replace-lint.ts`'s own `CFG-519` refuses this rule on every surface that ever reaches this
+        // function, so this branch is unreachable from a real declaration today (`applyRedactJson
+        // Pointers`'s own doc comment has the full account); it is still a real implementation,
+        // never a throw, for the identical defence-in-depth reason that doc comment gives.
+        const outcome = applyRedactJsonPointers(
+          working,
+          rule.pointers,
+          rule.pattern,
+          rule.replacement,
+        );
+        if (!outcome.ok) {
+          return {
+            ok: false,
+            kind: 'rule-failed',
+            failure: { rule: rule.rule, detail: outcome.detail },
+          };
+        }
+        working = outcome.text;
+        break;
+      }
       case 'replace': {
         const inScope =
           rule.file !== undefined
@@ -468,13 +686,15 @@ export function applyNormalizeRulesToText(
       default: {
         // Compiler-enforced exhaustiveness (round 6's own fix): assigning `rule` to an explicitly
         // `never`-typed binding makes `tsc` itself -- the one check `pnpm typecheck` runs, which this
-        // piece's own methodology treats as authoritative -- refuse to compile this file the day an
-        // 8th `NormalizeRule` variant is added to `declaration-types.ts` without a matching `case`
-        // above. Confirmed directly before this fix: adding an unhandled variant and running the real
-        // `tsc` command produced zero errors, because a `switch` with no `default` enforces nothing
-        // at the type level on its own; only a separately-run ESLint rule
+        // piece's own methodology treats as authoritative -- refuse to compile this file the day a
+        // 9th `NormalizeRule` variant is added to `declaration-types.ts` without a matching `case`
+        // above (confirmed when the 8th, `redact-json-pointers`, was added by `specs/22` M17 P14's
+        // own follow-up: omitting its `case` here, as a direct check, produced a real `tsc` error).
+        // Confirmed directly before the round-6 fix itself: adding an unhandled variant and running
+        // the real `tsc` command produced zero errors, because a `switch` with no `default` enforces
+        // nothing at the type level on its own; only a separately-run ESLint rule
         // (`@typescript-eslint/switch-exhaustiveness-check`, itself per-line-suppressible) caught it.
-        // Not reachable today — all seven real kinds are handled above — and if it is ever reached
+        // Not reachable today — all eight real kinds are handled above — and if it is ever reached
         // despite that (an unsound cast past the type system), this throws rather than silently
         // falling through as a no-op, matching this whole piece's own "refuse outright, never a
         // silent pass" rule for anything unrecognised.
@@ -516,7 +736,7 @@ export const ROOT_PATH_TOKEN = '<PARITY-ROOT>';
 /**
  * Rewrites every occurrence of `root.asGiven` and `root.real` in `text` to {@link ROOT_PATH_TOKEN}.
  * Always on, unconditional, and run BEFORE any declared rule (`13` F-TEST-9) — this is not one of the
- * seven declared rules and is never listed in a declaration's own `normalize` array.
+ * eight declared rules and is never listed in a declaration's own `normalize` array.
  *
  * Replaces the LONGER of the two candidate strings first (when they differ): a shorter path that
  * happens to be a substring of the longer one must not be allowed to partially consume a match that
@@ -539,9 +759,13 @@ export const ROOT_PATH_TOKEN = '<PARITY-ROOT>';
  * `normalizeObservationOrThrow`). So no declaration can ever reach the combination described below
  * in the first place, in production. **Do not remove `CFG-516` thinking it is redundant with
  * anything in this file — this function's own safety depends entirely on it, not the other way
- * around.** `replace-lint.ts`'s own doc comment, and `SPEC-QUESTIONS.md`'s M17 P14 entry, have the
- * full account of why this fix is a structural refusal rather than a cleverer detector, and why the
- * other six normalise rules did not need the identical restriction. This function runs
+ * around.** The identical reasoning now ALSO covers the eighth rule, `redact-json-pointers`
+ * (Q317 Decision 8's own follow-up): it too accepts an author-supplied, unconstrained `pattern`, so
+ * `replace-lint.ts`'s own `CFG-519` refuses it on the identical three surfaces for the identical
+ * unprovable-safety reason, leaving it meaningful only on `library` (which this function never
+ * reaches either). `replace-lint.ts`'s own doc comment, and `SPEC-QUESTIONS.md`'s M17 P14 entry, have
+ * the full account of why this fix is a structural refusal rather than a cleverer detector, and why
+ * the other six normalise rules did not need the identical restriction. This function runs
  * unconditionally, before any declared rule, and the two sides' root strings are essentially
  * never the same length (different checkout paths, a symlinked candidate root, different tmp-dir
  * naming). Substituting them for the fixed-length {@link ROOT_PATH_TOKEN} therefore shifts the

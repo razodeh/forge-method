@@ -352,7 +352,7 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   of the three satisfies the requirement, and the build is proven against a real repro of the masking
   behaviour (and a new adversarial round beyond it), not merely asserted safe. The rules are
   `strip-ansi`, `line-endings`, `trim-trailing-whitespace`, `sort-lines`, `json-canonical` (parse, sort
-  keys, re-serialise; a non-JSON observation is an error, not a pass), `ignore-json-pointers` and
+  keys, re-serialise; a non-JSON observation is an error, not a pass), `ignore-json-pointers`,
   `replace` (a regular-expression source with a literal replacement, scoped to a stream or an output
   file, linted at load for catastrophic-backtracking shapes — conservative, not a proof of linear time —
   and run, together with every other rule a declaration lists for one case, under a single stated
@@ -360,13 +360,22 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   application for that case, not merely one `replace` rule's own match), exceeding which makes the
   case `error`, a typed refusal, never a hang — the lint at load is advisory defence in depth against
   a known catastrophic shape, never a substitute for this runtime bound, which also catches a
-  pathological shape the lint's own heuristic misses or a merely large observation). The rules run in the
+  pathological shape the lint's own heuristic misses or a merely large observation) and
+  `redact-json-pointers` (post-v1.0, `specs/22` M17, `process/SPEC-QUESTIONS.md` Q317 Decision 8: at
+  each of its own named pointers, replaces every match of a regular-expression `pattern` found within
+  the STRING there with a literal `replacement`, never deleting the member the way `ignore-json-
+  pointers` does — the one mechanism that can redact a real filesystem path, or any other substring,
+  embedded inside a `library` surface's own structured result, which carries no raw text for `replace`
+  to run against at all. Refused outright on every surface the root-path rewrite above reaches
+  (`process`/`file`/`http`), for the identical reason `replace` already is there, and so meaningful
+  only on `library`, which the rewrite never touches). The rules run in the
   order a declaration lists them: `line-endings` rewrites CRLF and a lone CR as LF; `strip-ansi` removes CSI
   escape sequences (`ESC [`, parameter and intermediate bytes, then a final byte);
   `trim-trailing-whitespace` removes the spaces and tabs at the end of each line; `sort-lines`
   orders lines by UTF-16 code unit; and `replace` replaces every match. A rule that would erase a
-  non-empty observation entirely is refused, and so is a `replace` whose match is the entire content of
-  a non-empty stream: a surface that does not want a stream says so with `streams` (below) rather than
+  non-empty observation entirely is refused, and so is a `replace` (or a `redact-json-pointers`
+  pointer's own match) whose match is the entire content of a non-empty stream or field: a surface
+  that does not want a stream says so with `streams` (below) rather than
   erasing it. **Equality is decided on the full normalised content**, never on a truncated display:
   a mismatch report shows the first differing line with context under a byte cap, labelled as
   display only, and printed only without `--json`: an envelope and a `ParityEvidence` record carry

@@ -256,6 +256,194 @@ describe('decideCaseVerdict: match and mismatch on the full normalised content (
     expect(outcome.verdict).toBe('error');
   });
 
+  // `specs/22` M17 P14 follow-up (`process/SPEC-QUESTIONS.md` Q317 Decision 8): the library-surface
+  // path-redaction gap this piece closes. Q317's own adversarial repro: two `library` observations
+  // differing ONLY in which of two real, physical root paths a probe's own returned value embeds (an
+  // error message, a `stack`, a `__dirname`-derived value AS DATA inside an otherwise-successful
+  // `ok: true` result — `LibraryObservation`'s own `ok: false` thrown-error shape is a SEPARATE,
+  // deliberately never-normalised branch, `normalizeLibraryOrThrow`'s very first line, unrelated to
+  // this gap) read `mismatch` with zero rules, and STILL read `mismatch` after adding a `replace`
+  // rule aimed at the path (a complete no-op on `library`) — the only thing that was ever live there,
+  // `ignore-json-pointers`, could only delete the whole field, never redact a substring inside it.
+  describe('redact-json-pointers closes the library path-redaction gap (Q317 Decision 8)', () => {
+    // `referenceNormalized` is given ALREADY in its post-capture-normalised form throughout this
+    // block (`CaseComparisonInput`'s own doc comment: "ALREADY normalised ... never re-normalised
+    // here"), exactly as the pre-existing `ignore-json-pointers` test above does; only
+    // `candidateRawRuns` is raw and gets normalised by `decideCaseVerdict` itself through the SAME
+    // rules a real capture would have applied to the reference once, up front.
+    it(
+      'BEFORE this fix existed, the exact repro: two differently-rooted library results read ' +
+        'mismatch with no rules at all',
+      () => {
+        const outcome = decideCaseVerdict(
+          input({
+            surface: 'library',
+            rules: [],
+            referenceNormalized: {
+              surface: 'library',
+              result: { ok: true, value: { message: 'at /checkout-one/lib/file.js:1:1' } },
+            },
+            candidateRawRuns: [
+              {
+                surface: 'library',
+                result: { ok: true, value: { message: 'at /checkout-two/lib/file.js:1:1' } },
+              },
+            ],
+          }),
+        );
+        expect(outcome.verdict).toBe('mismatch');
+      },
+    );
+
+    it(
+      'a redact-json-pointers rule naming the embedded path now reads match, closing the exact ' +
+        'gap Q317 Decision 8 disclosed',
+      () => {
+        const outcome = decideCaseVerdict(
+          input({
+            surface: 'library',
+            rules: [
+              {
+                rule: 'redact-json-pointers',
+                pointers: ['/message'],
+                pattern: '(/checkout-one|/checkout-two)',
+                replacement: '<ROOT>',
+              },
+            ],
+            // The reference's own capture-time normalisation already redacted its checkout root --
+            // this is what a real capture file would store.
+            referenceNormalized: {
+              surface: 'library',
+              result: { ok: true, value: { message: 'at <ROOT>/lib/file.js:1:1' } },
+            },
+            // The candidate's checkout root is genuinely DIFFERENT text and genuinely different
+            // length from the reference's -- exactly Decision 8's own repro -- and is raw here,
+            // normalised by `decideCaseVerdict` itself via the identical rule.
+            candidateRawRuns: [
+              {
+                surface: 'library',
+                result: { ok: true, value: { message: 'at /checkout-two/lib/file.js:1:1' } },
+              },
+            ],
+          }),
+        );
+        expect(outcome).toEqual({ verdict: 'match' });
+      },
+    );
+
+    it(
+      'the SAME redaction rule still reads mismatch when an UNRELATED, genuine difference exists ' +
+        'elsewhere in the result -- the redaction never masks real signal it was not told to touch',
+      () => {
+        const outcome = decideCaseVerdict(
+          input({
+            surface: 'library',
+            rules: [
+              {
+                rule: 'redact-json-pointers',
+                pointers: ['/message'],
+                pattern: '(/checkout-one|/checkout-two)',
+                replacement: '<ROOT>',
+              },
+            ],
+            referenceNormalized: {
+              surface: 'library',
+              result: { ok: true, value: { message: 'at <ROOT>/lib/file.js:1:1: PASS' } },
+            },
+            candidateRawRuns: [
+              {
+                surface: 'library',
+                result: { ok: true, value: { message: 'at /checkout-two/lib/file.js:1:1: FAIL' } },
+              },
+            ],
+          }),
+        );
+        expect(outcome.verdict).toBe('mismatch');
+      },
+    );
+
+    it('redacts only the named pointer, leaving an unrelated sibling field fully intact', () => {
+      const outcome = decideCaseVerdict(
+        input({
+          surface: 'library',
+          rules: [
+            {
+              rule: 'redact-json-pointers',
+              pointers: ['/path'],
+              pattern: '/real/root',
+              replacement: '<R>',
+            },
+          ],
+          referenceNormalized: {
+            surface: 'library',
+            result: { ok: true, value: { path: '<R>/a.js', version: '1.2.3' } },
+          },
+          candidateRawRuns: [
+            {
+              surface: 'library',
+              result: { ok: true, value: { path: '/real/root/a.js', version: '9.9.9' } },
+            },
+          ],
+        }),
+      );
+      // `version` differs genuinely and was never named by the redaction rule, so this is still a
+      // real mismatch, not masked by the unrelated `path` redaction.
+      expect(outcome.verdict).toBe('mismatch');
+    });
+
+    it('a redact-json-pointers rule combines with ignore-json-pointers on the same case without conflict (proven-safe, both pointer-addressed)', () => {
+      const outcome = decideCaseVerdict(
+        input({
+          surface: 'library',
+          rules: [
+            { rule: 'ignore-json-pointers', pointers: ['/timestamp'] },
+            {
+              rule: 'redact-json-pointers',
+              pointers: ['/message'],
+              pattern: '/real/root',
+              replacement: '<R>',
+            },
+          ],
+          referenceNormalized: {
+            surface: 'library',
+            result: { ok: true, value: { message: '<R>/a.js', kept: 1 } },
+          },
+          candidateRawRuns: [
+            {
+              surface: 'library',
+              result: { ok: true, value: { message: '/real/root/a.js', kept: 1, timestamp: 999 } },
+            },
+          ],
+        }),
+      );
+      expect(outcome).toEqual({ verdict: 'match' });
+    });
+
+    it('a redact-json-pointers pattern matching the ENTIRE non-empty field is refused as error, not silently applied', () => {
+      const outcome = decideCaseVerdict(
+        input({
+          surface: 'library',
+          rules: [
+            {
+              rule: 'redact-json-pointers',
+              pointers: ['/message'],
+              pattern: '.*',
+              replacement: 'X',
+            },
+          ],
+          referenceNormalized: {
+            surface: 'library',
+            result: { ok: true, value: { message: 'a' } },
+          },
+          candidateRawRuns: [
+            { surface: 'library', result: { ok: true, value: { message: 'secret-value' } } },
+          ],
+        }),
+      );
+      expect(outcome.verdict).toBe('error');
+    });
+  });
+
   it('normalises a file-surface case through the orchestrator (not merely compares it)', () => {
     const outcome = decideCaseVerdict(
       input({

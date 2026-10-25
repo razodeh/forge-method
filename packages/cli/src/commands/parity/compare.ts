@@ -34,7 +34,13 @@ import {
   DEFAULT_NORMALIZE_BUDGET_MS,
 } from './normalize-budget.ts';
 import type { ObservedRoot } from './normalize.ts';
-import { removeJsonPointer, reorderPointersForSafeRemoval, rewriteRootPaths } from './normalize.ts';
+import {
+  fieldRedactor,
+  redactJsonPointerSubstring,
+  removeJsonPointer,
+  reorderPointersForSafeRemoval,
+  rewriteRootPaths,
+} from './normalize.ts';
 import type { StabilityOutcome } from './stability.ts';
 import { decideStability } from './stability.ts';
 
@@ -136,54 +142,50 @@ function normalizeTextOrThrow(
 }
 
 /**
- * `ignore-json-pointers` is the one normalise rule with a defined meaning against `library`'s own
- * STRUCTURED result (`capture.ts`'s `LibraryObservation.result.value` is already a parsed
- * `CanonicalValue`, never raw text): it removes the named pointers directly, with no parse/serialise
- * round trip needed. The other six rules — line-endings, strip-ansi, trim-trailing-whitespace,
- * sort-lines, json-canonical, and, in particular, `replace` — have no text to run against here and
- * are no-ops; a thrown error's `name`/`message` are likewise untouched.
+ * `ignore-json-pointers` and `redact-json-pointers` are the two normalise rules with a defined
+ * meaning against `library`'s own STRUCTURED result (`capture.ts`'s `LibraryObservation.result.value`
+ * is already a parsed `CanonicalValue`, never raw text): each operates on the named pointers
+ * directly, with no parse/serialise round trip needed. The other six rules — line-endings,
+ * strip-ansi, trim-trailing-whitespace, sort-lines, json-canonical, and, in particular, `replace` —
+ * have no text to run against here and are no-ops; a thrown error's `name`/`message` are likewise
+ * untouched.
  *
- * **Disclosed with its real consequence, not just as "untested."** An explicit, reviewed REDACTION
- * rule on a `library` case — `{rule: 'replace', pattern: 'tok-[A-Z0-9]+', replacement: 'REDACTED'}`,
- * say — has ZERO effect here: two candidate results differing only by which token they embed still
- * read `mismatch` (the comparison in `observationsEqual` sees the raw, un-redacted values), and, more
- * to the point, the UNREDACTED value is exactly what a future capture-writer (P6) would store in the
- * content-addressed, human-reviewable, NEVER-pruned capture file (`13` F-TEST-9: "Captures are never
- * pruned") — the reviewer who wrote the redaction rule, trusting the declaration they reviewed, would
- * not see the value land there unredacted unless they separately audited the capture's own bytes.
- * This is not a defect this piece's own code could have avoided: P2's already-landed `capture.ts`
- * gives `LibraryObservation` no raw-text field at all (`result` is only `{ok, value}` or `{ok,
- * error}`, both already-parsed/structured), so there is structurally nothing for a text-shaped rule
- * to apply to on this surface — confirmed by reading that type, not assumed. Neither this module's own
- * test table nor this piece's brief exercises the `library` surface's normalise combinatorics at all;
- * whether this needs a load-time refusal in P2's `declaration.ts` (refusing a `replace`/`line-endings`
- * /etc. rule declared on a `library` case outright, rather than silently accepting and then ignoring
- * it) is the orchestrator's own call when writing this piece's `Q` entry, not a code fix made here.
+ * **The library-surface path-redaction gap `process/SPEC-QUESTIONS.md` Q317 Decision 8 disclosed is
+ * CLOSED here, by `redact-json-pointers` (`specs/22` M17 P14 follow-up).** Decision 8's own repro: two
+ * `library` observations differing ONLY in which of two real, physical root paths the probe ran under
+ * (an error message, a `stack`, a `__dirname`-derived value embedded in the returned structure) read
+ * `mismatch` with zero declared rules, and **still** read `mismatch` after adding an explicit,
+ * reviewed `replace` rule written specifically to redact the path — because `replace` is a complete
+ * no-op on `library` (confirmed directly above: `LibraryObservation` has no raw-text field for it to
+ * act on), and `ignore-json-pointers`, the one rule that WAS live here, can only delete a whole field
+ * by its structural path, never redact a substring embedded inside one. `redact-json-pointers` is the
+ * real, new mechanism Decision 8 called for: a structural, pointer-targeted SUBSTRING redaction,
+ * never a field-deletion one — a reviewer names the field by its RFC 6901 pointer, exactly as
+ * `ignore-json-pointers` already does, and a pattern/replacement to run against the string found
+ * there, exactly as `replace` already does over a whole stream. The same adversarial case now reads
+ * `match` once a `redact-json-pointers` rule names the offending pointer and a pattern that matches
+ * the embedded root path, while an UNRELATED genuine difference elsewhere in the same result (a real
+ * behaviour difference the redaction rule was never told to touch) still correctly reads `mismatch` —
+ * this module's own test file has both cases, independently confirmed, not merely asserted.
  *
- * **`specs/22` M17 P14, MAJOR disclosed gap, NOT fixed here (tracked for a dedicated follow-up
- * piece — `reference-node-modules.ts`'s own doc comment has the account of the identical-shaped
- * `node_modules` regression M17 P8 found, `SPEC-QUESTIONS.md` Q314, since closed by its own such
- * piece): `library` has no mechanism at all to redact an embedded root/absolute path.**
- * `CFG-516` (`replace-lint.ts`) correctly excludes
- * `library` from the root-token-masking fix, because this function confirms (directly above, not
- * merely assumed) that the automatic root-rewrite genuinely never reaches a `library` result — but
- * that exclusion closes a DIFFERENT problem (a length-anchored `replace` interacting with a rewrite
- * that never applies here) than the one this paragraph names. A real, adversarially-constructed case
- * a gauntlet round built: two `library` observations differing ONLY in which of two real, physical
- * root paths the probe ran under (an error message, a `stack`, a `__dirname`-derived value embedded
- * in the returned structure) read `mismatch` with zero declared rules, and **still** read `mismatch`
- * after adding an explicit, reviewed `replace` rule written specifically to redact the path — because
- * (as this function's own doc comment above already states) `replace` is a complete no-op on
- * `library`, and the one rule that IS live here, `ignore-json-pointers`, can only delete a whole
- * field by its structural path, never partially redact a path embedded inside a larger string value.
- * The practical consequence: any `library` probe whose result legitimately touches the filesystem
- * (an error whose message or stack names a real path, say) is either permanently `mismatch` between
- * two differently-rooted checkouts, or a reviewer's own redaction rule silently does nothing, with no
- * typed refusal either way to say so. Closing this needs a real mechanism — likely a structural,
- * `ignore-json-pointers`-style rule that redacts a MATCHED SUBSTRING within a string value at a named
- * pointer, not merely removes the whole field — which is real, substantial engineering scope this
- * piece's own time did not allow; recorded as a new `SPEC-QUESTIONS.md` entry alongside this piece's
- * own report rather than attempted here half-built.
+ * `replace-lint.ts`'s own `CFG-519` refuses `redact-json-pointers` on every surface the always-on
+ * root-path rewrite reaches (`process`/`file`/`http`), for the identical unprovable-safety-against-
+ * a-length-anchored-pattern reason `CFG-516` already refuses `replace` there — this rule is
+ * meaningful, and permitted, only on `library`, which is exactly the surface this gap was in.
+ *
+ * **Disclosed, not fixed here: `redact-json-pointers`' own regex runs with NO wall-clock budget on
+ * this path.** `normalizeTextOrThrow` (above, this file) routes a `process`/`file`/`http` case's
+ * normalisation through `normalize-budget.ts`'s own worker-thread-bounded
+ * `applyNormalizeRulesToTextBounded`, specifically so a catastrophic `replace` pattern cannot hang
+ * the process. This function has never been routed through that bound — it had nothing regex-shaped
+ * to protect before `redact-json-pointers` existed — and still is not: `fieldRedactor`'s own
+ * `applyReplace` call, below, runs synchronously, on this thread, with no timeout. `replace-lint.ts`'s
+ * own `collectReplacePatterns` doc comment has the full account of why this makes its STATIC
+ * catastrophic-backtracking lint (`CFG-511`) the only real protection `redact-json-pointers` has
+ * today, not merely "advisory defence in depth" the way it is for `replace`. Routing `library`'s own
+ * normalisation through the identical worker-thread budget is real, separable engineering scope —
+ * the structured value would need to cross the worker boundary instead of a plain string — tracked
+ * as a follow-up, not attempted here half-built, the identical treatment Decision 8's own repro got.
  */
 function normalizeLibraryOrThrow(
   observation: LibraryObservation,
@@ -193,21 +195,65 @@ function normalizeLibraryOrThrow(
   if (!observation.result.ok) return observation;
   let working: unknown = observation.result.value;
   for (const rule of rules) {
-    if (rule.rule !== 'ignore-json-pointers') continue;
-    // Reordered first (round 6's own fix, `normalize.ts`'s own `reorderPointersForSafeRemoval` doc
-    // comment has the full account): two or more array-index pointers into the SAME parent array
-    // must apply descending, or a later one resolves against the earlier removal's already-shifted
-    // array -- this call site shares the identical fix with `normalize.ts`'s own text-path caller
-    // rather than risking a second, independently-written (and independently wrong) copy.
-    for (const pointer of reorderPointersForSafeRemoval(rule.pointers)) {
-      working = removeJsonPointer(working, pointer);
+    if (rule.rule === 'ignore-json-pointers') {
+      // Reordered first (round 6's own fix, `normalize.ts`'s own `reorderPointersForSafeRemoval` doc
+      // comment has the full account): two or more array-index pointers into the SAME parent array
+      // must apply descending, or a later one resolves against the earlier removal's already-shifted
+      // array -- this call site shares the identical fix with `normalize.ts`'s own text-path caller
+      // rather than risking a second, independently-written (and independently wrong) copy.
+      for (const pointer of reorderPointersForSafeRemoval(rule.pointers)) {
+        working = removeJsonPointer(working, pointer);
+      }
+      continue;
     }
+    if (rule.rule === 'redact-json-pointers') {
+      // Unlike `ignore-json-pointers`, redacting a string's own content can never change an array's
+      // length, so no pointer here can ever shift a LATER pointer's own target the way a splice-based
+      // removal can -- no reordering is needed (`normalize.ts`'s own `applyRedactJsonPointers` doc
+      // comment states the identical reasoning for its text-shape sibling call site).
+      for (const pointer of rule.pointers) {
+        // A mutable BOX, not a bare `let` flag -- `normalize.ts`'s own `applyRedactJsonPointers` doc
+        // comment has the full account of why (TypeScript's control-flow narrowing mishandles a
+        // `let` boolean set only from inside a callback this function passes onward).
+        const match: { wholeField: boolean } = { wholeField: false };
+        working = redactJsonPointerSubstring(
+          working,
+          pointer,
+          fieldRedactor(rule.pattern, rule.replacement, () => {
+            match.wholeField = true;
+          }),
+        );
+        if (match.wholeField) {
+          // The field-granularity "whole match" guard (`normalize.ts`'s own `fieldRedactor` doc
+          // comment): a pattern that matches the ENTIRE non-empty string at this pointer is refused
+          // outright, regardless of what the declared `replacement` would actually produce, the
+          // identical reason `replace`'s own whole-stream guard exists.
+          throw new ForgeError('RUN-130', {
+            surface: context.surface,
+            index: context.index,
+            rule: 'redact-json-pointers',
+            detail:
+              `the pattern's match at pointer ${JSON.stringify(pointer)} is the entire content ` +
+              'of a non-empty field, which is refused',
+          });
+        }
+      }
+      continue;
+    }
+    // Every other rule kind (`line-endings`, `strip-ansi`, `trim-trailing-whitespace`, `sort-lines`,
+    // `json-canonical`, `replace`) remains a no-op on `library` for the identical reason this
+    // function's own doc comment already states.
   }
   if (typeof working === 'symbol') {
-    // The root pointer (`""`) was applied: the whole value is gone, which this piece treats as the
-    // identical erase-everything violation a text target's non-empty-to-empty transition is, for the
-    // same reason (`normalize.ts`'s own `removeJsonPointer` doc comment) -- never silently coerced to
-    // `null`, which would hide a declaration that excuses its entire result from comparison.
+    // The root pointer (`""`) was applied by an `ignore-json-pointers` rule: the whole value is gone,
+    // which this piece treats as the identical erase-everything violation a text target's
+    // non-empty-to-empty transition is, for the same reason (`normalize.ts`'s own `removeJsonPointer`
+    // doc comment) -- never silently coerced to `null`, which would hide a declaration that excuses
+    // its entire result from comparison. Checked once, after the whole loop (not inline per rule): a
+    // `redact-json-pointers` rule that runs against an already-root-removed `working` is a provably
+    // safe no-op (`redactJsonPointerSubstring` never resolves a pointer against the `ROOT_REMOVED`
+    // symbol -- it is neither an array, a plain object, nor a string), so the only thing this check
+    // needs to detect is whether root removal EVER happened, anywhere in the rule list.
     throw new ForgeError('RUN-130', {
       surface: context.surface,
       index: context.index,
@@ -216,9 +262,10 @@ function normalizeLibraryOrThrow(
     });
   }
   // Sound: `working` descends from the already-validated `CanonicalValue` in `observation.result.value`
-  // through only RFC 6902 "remove" steps (`removeJsonPointer`), which can only narrow a value, never
-  // introduce one JSON cannot represent -- and the one case that could ("the whole value is gone") was
-  // excluded by the `typeof working === 'symbol'` check immediately above.
+  // through only RFC 6902 "remove" steps (`removeJsonPointer`) and string-replacing steps
+  // (`redactJsonPointerSubstring`), neither of which can introduce a value JSON cannot represent -- and
+  // the one case that could ("the whole value is gone") was excluded by the `typeof working ===
+  // 'symbol'` check immediately above.
   return { surface: 'library', result: { ok: true, value: working as CanonicalValue } };
 }
 

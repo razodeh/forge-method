@@ -1479,6 +1479,139 @@ describe('validateParityDeclaration — every remaining type-mismatch branch (sp
     ]);
   });
 
+  // `specs/22` M17 P14 follow-up (`process/SPEC-QUESTIONS.md` Q317 Decision 8): `redact-json-
+  // pointers` validates the union of `ignore-json-pointers`' own `pointers` shape and `replace`'s own
+  // `pattern`/`replacement` shape.
+  it(
+    'is invalid when "redact-json-pointers" has no, an empty, or a non-string-entry "pointers" ' +
+      'list',
+    () => {
+      for (const bad of [undefined, [], [42]]) {
+        const rule: Record<string, unknown> = {
+          rule: 'redact-json-pointers',
+          pattern: 'a',
+          replacement: 'b',
+        };
+        if (bad !== undefined) rule['pointers'] = bad;
+        const { problems } = validateParityDeclaration(
+          rawDeclaration({ surfaces: { process: { run: 'x', cases: [{ normalize: [rule] }] } } }),
+          FILE,
+        );
+        expect(
+          problems.some((p) => p.key === 'surfaces.process.cases[0].normalize[0].pointers'),
+        ).toBe(true);
+      }
+    },
+  );
+
+  it(
+    'is invalid when a "redact-json-pointers" rule\'s pattern is missing, blank, or not a valid ' +
+      'regular expression',
+    () => {
+      for (const pattern of [undefined, '', '[']) {
+        const rule: Record<string, unknown> = {
+          rule: 'redact-json-pointers',
+          pointers: ['/a'],
+          replacement: 'x',
+        };
+        if (pattern !== undefined) rule['pattern'] = pattern;
+        const { problems } = validateParityDeclaration(
+          rawDeclaration({ surfaces: { process: { run: 'x', cases: [{ normalize: [rule] }] } } }),
+          FILE,
+        );
+        expect(
+          problems.some((p) => p.key === 'surfaces.process.cases[0].normalize[0].pattern'),
+        ).toBe(true);
+      }
+    },
+  );
+
+  it('is invalid when a "redact-json-pointers" rule\'s replacement is not a string', () => {
+    const { problems } = validateParityDeclaration(
+      rawDeclaration({
+        surfaces: {
+          process: {
+            run: 'x',
+            cases: [
+              {
+                normalize: [
+                  { rule: 'redact-json-pointers', pointers: ['/a'], pattern: 'x', replacement: 1 },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+      FILE,
+    );
+    expect(
+      problems.some((p) => p.key === 'surfaces.process.cases[0].normalize[0].replacement'),
+    ).toBe(true);
+  });
+
+  it('is invalid when a "redact-json-pointers" rule carries an unknown extra key', () => {
+    const { problems } = validateParityDeclaration(
+      rawDeclaration({
+        surfaces: {
+          process: {
+            run: 'x',
+            cases: [
+              {
+                normalize: [
+                  {
+                    rule: 'redact-json-pointers',
+                    pointers: ['/a'],
+                    pattern: 'x',
+                    replacement: 'y',
+                    stream: 'stdout',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+      FILE,
+    );
+    expect(problems.some((p) => p.key === 'surfaces.process.cases[0].normalize[0].stream')).toBe(
+      true,
+    );
+  });
+
+  it('accepts a well-formed "redact-json-pointers" rule', () => {
+    const { problems, declaration } = validateParityDeclaration(
+      rawDeclaration({
+        surfaces: {
+          library: {
+            run: 'x',
+            cases: [
+              {
+                normalize: [
+                  {
+                    rule: 'redact-json-pointers',
+                    pointers: ['/error/stack'],
+                    pattern: '/real/root/path',
+                    replacement: '<PATH>',
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+      FILE,
+    );
+    expect(problems).toEqual([]);
+    expect(declaration?.surfaces.library?.cases[0]?.normalize).toEqual([
+      {
+        rule: 'redact-json-pointers',
+        pointers: ['/error/stack'],
+        pattern: '/real/root/path',
+        replacement: '<PATH>',
+      },
+    ]);
+  });
+
   it('is invalid when an unobservable entry itself is not a mapping', () => {
     const { problems } = validateParityDeclaration(
       rawDeclaration({ unobservable: ['nope'] }),

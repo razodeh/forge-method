@@ -199,6 +199,7 @@ const NORMALIZE_RULE_NAMES = [
   'json-canonical',
   'ignore-json-pointers',
   'replace',
+  'redact-json-pointers',
 ] as const;
 const TOP_KEYS = ['name', 'reference', 'review', 'expires', 'surfaces', 'unobservable'] as const;
 
@@ -366,6 +367,54 @@ function readNormalizeRule(raw: unknown, out: Collector, at: string): NormalizeR
       ...(stream === undefined ? {} : { stream }),
       ...(file === undefined ? {} : { file }),
     };
+  }
+  if (rule === 'redact-json-pointers') {
+    // `specs/22` M17 P14 follow-up (`process/SPEC-QUESTIONS.md` Q317 Decision 8): the union of
+    // `ignore-json-pointers`' own `pointers` shape and `replace`'s own `pattern`/`replacement` shape
+    // — this rule redacts a MATCHED SUBSTRING within the string found at each named pointer, rather
+    // than deleting the whole member (`declaration-types.ts`'s own doc comment has the full account).
+    out.strictKeys(raw, ['rule', 'pointers', 'pattern', 'replacement'], at);
+    const pointers = raw['pointers'];
+    if (!Array.isArray(pointers) || pointers.length === 0 || !pointers.every(isNonBlankString)) {
+      out.add(
+        'invalid-value',
+        `${at}.pointers`,
+        'must be a non-empty list of non-blank JSON pointers',
+      );
+      return undefined;
+    }
+    const pattern = raw['pattern'];
+    const replacement = raw['replacement'];
+    if (!isNonBlankString(pattern)) {
+      out.add(
+        'invalid-value',
+        `${at}.pattern`,
+        `must be a non-blank string, found ${describeValue(pattern)}`,
+      );
+      return undefined;
+    }
+    try {
+      // Identical "compiles at all" check `replace`'s own branch above runs, for the identical
+      // reason (a catastrophic-backtracking shape lint is `replace-lint.ts`'s own job, not this pure
+      // loader's).
+      new RegExp(pattern);
+    } catch (cause) {
+      out.add(
+        'invalid-value',
+        `${at}.pattern`,
+        `is not a valid regular expression (${cause instanceof Error ? cause.message : 'unknown error'})`,
+      );
+      return undefined;
+    }
+    if (typeof replacement !== 'string') {
+      out.add(
+        'invalid-value',
+        `${at}.replacement`,
+        `must be a string, found ${describeValue(replacement)}`,
+      );
+      return undefined;
+    }
+    return { rule, pointers, pattern, replacement };
   }
   out.strictKeys(raw, ['rule'], at);
   return { rule };

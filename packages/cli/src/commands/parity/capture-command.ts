@@ -56,6 +56,7 @@ import type { ParityCase, ParityDeclaration, SurfaceKind } from './declaration-t
 import { SURFACE_KINDS } from './declaration-types.ts';
 import {
   assertNoConflictingContentDiscardingRules,
+  assertNoRedactJsonPointersRuleOnRootRewrittenSurface,
   assertNoReplaceRuleOnRootRewrittenSurface,
   assertNoRepeatedRuleKindInScope,
   assertParityDeclarationPatternsSafe,
@@ -430,15 +431,18 @@ async function captureOneDeclaration(
   );
   const loaded = await loadParityDeclarationText(yamlText, file, projectRoot, vet);
   const declaration = assertParityDeclarationValid(loaded, file);
-  // `specs/22` M17 P14: these four checks (`CFG-511`/`512`/`513`/`516`) were built and gauntleted by
-  // M16 P4 but never wired into either real parity command (this piece's own report has the full
-  // account) -- a genuinely dangerous declaration shape was never actually refused by a real
-  // `forge parity capture` run. Run in this fixed order so the FIRST hazard found is always the one
-  // reported, never a later one that happens to be cheaper to detect.
+  // `specs/22` M17 P14: the first four of these checks (`CFG-511`/`512`/`513`/`516`) were built and
+  // gauntleted by M16 P4 but never wired into either real parity command (that piece's own report has
+  // the full account) -- a genuinely dangerous declaration shape was never actually refused by a real
+  // `forge parity capture` run. `CFG-519` (`specs/22` M17 P14 follow-up, Q317 Decision 8) is the fifth,
+  // the identical root-rewritten-surface refusal for the new `redact-json-pointers` rule. Run in this
+  // fixed order so the FIRST hazard found is always the one reported, never a later one that happens
+  // to be cheaper to detect.
   assertParityDeclarationPatternsSafe(declaration);
   assertNoConflictingContentDiscardingRules(declaration);
   assertNoRepeatedRuleKindInScope(declaration);
   assertNoReplaceRuleOnRootRewrittenSurface(declaration);
+  assertNoRedactJsonPointersRuleOnRootRewrittenSurface(declaration);
 
   const today = clock.now().slice(0, 10);
   if (isExpired(declaration.expires, clock)) {

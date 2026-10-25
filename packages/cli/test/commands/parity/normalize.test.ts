@@ -15,10 +15,13 @@ import {
   applyJsonCanonical,
   applyLineEndings,
   applyNormalizeRulesToText,
+  applyRedactJsonPointers,
   applyReplace,
   applySortLines,
   applyStripAnsi,
   applyTrimTrailingWhitespace,
+  fieldRedactor,
+  redactJsonPointerSubstring,
   removeJsonPointer,
   reorderPointersForSafeRemoval,
   rewriteRootPaths,
@@ -249,6 +252,140 @@ describe('ignore-json-pointers: RFC 6901 + RFC 6902 "remove", this piece’s own
     expect(outcome).toEqual({ ok: true, text: '{"list":["D","E"]}' });
   });
 });
+
+describe(
+  'redact-json-pointers: a structural, pointer-targeted SUBSTRING redaction, never a field ' +
+    'deletion (specs/22 M17 P14 follow-up, Q317 Decision 8)',
+  () => {
+    function redact(pattern: string, replacement: string): (text: string) => string {
+      return fieldRedactor(pattern, replacement, () => {
+        throw new Error('unexpected whole-field match');
+      });
+    }
+
+    it('redacts a matched substring inside a string value at a top-level pointer, leaving siblings alone', () => {
+      const value = redactJsonPointerSubstring(
+        { message: 'failed at /real/root/path/file.js', kept: 1 },
+        '/message',
+        redact('/real/root/path', '<PATH>'),
+      );
+      expect(value).toEqual({ message: 'failed at <PATH>/file.js', kept: 1 });
+    });
+
+    it('redacts inside a NESTED pointer, through both an object and an array', () => {
+      const value = redactJsonPointerSubstring(
+        { error: { stack: ['at /a/b/c/one.js:1:1', 'at /a/b/c/two.js:2:2'] } },
+        '/error/stack/1',
+        redact('/a/b/c', '<ROOT>'),
+      );
+      expect(value).toEqual({
+        error: { stack: ['at /a/b/c/one.js:1:1', 'at <ROOT>/two.js:2:2'] },
+      });
+    });
+
+    it('never removes the member, unlike ignore-json-pointers: a pattern that matches nothing leaves the string untouched', () => {
+      const value = redactJsonPointerSubstring(
+        { message: 'all clear' },
+        '/message',
+        redact('nope', 'X'),
+      );
+      expect(value).toEqual({ message: 'all clear' });
+    });
+
+    it('is a silent no-op when the pointer does not resolve (the identical convention removeJsonPointer already uses)', () => {
+      expect(redactJsonPointerSubstring({ a: 1 }, '/missing', redact('x', 'y'))).toEqual({ a: 1 });
+      expect(redactJsonPointerSubstring({ a: 1 }, '/a/too/deep', redact('x', 'y'))).toEqual({
+        a: 1,
+      });
+      expect(redactJsonPointerSubstring([1, 2], '/9', redact('x', 'y'))).toEqual([1, 2]);
+    });
+
+    it('is a silent no-op when the pointer resolves to a non-string (a number, here)', () => {
+      expect(redactJsonPointerSubstring({ a: 42 }, '/a', redact('4', 'X'))).toEqual({ a: 42 });
+    });
+
+    it('is a silent no-op for malformed syntax (does not start with "/") rather than throwing', () => {
+      expect(redactJsonPointerSubstring({ a: 'x' }, 'a', redact('x', 'y'))).toEqual({ a: 'x' });
+    });
+
+    it('the root pointer ("") redacts the whole value only when the whole value IS itself a string', () => {
+      // A plain uppercasing transform here, deliberately not `redact()` (built on `fieldRedactor`):
+      // this test is about `redactJsonPointerSubstring`'s own root-pointer handling, independent of
+      // `fieldRedactor`'s separate whole-field-match guard -- which this exact input would otherwise
+      // trip, since the pattern below matches the ENTIRE root string by construction.
+      const upper = (text: string): string => text.toUpperCase();
+      expect(redactJsonPointerSubstring('/real/root/path', '', upper)).toBe('/REAL/ROOT/PATH');
+      // An object root is a no-op, never coerced or unwrapped -- there is no string there to redact.
+      expect(redactJsonPointerSubstring({ a: 1 }, '', upper)).toEqual({ a: 1 });
+    });
+
+    it('fieldRedactor: a $-prefixed replacement is taken literally, the identical applyReplace semantics', () => {
+      expect(redact('a', '$1-$$')('bab')).toBe('b$1-$$b');
+    });
+
+    it(
+      'fieldRedactor: a pattern matching the ENTIRE non-empty field is refused via its own callback, ' +
+        'regardless of what the (possibly non-empty) replacement would actually produce',
+      () => {
+        let wholeFieldMatch: string | undefined;
+        const onWholeFieldMatch = fieldRedactor('.*', 'REDACTED', (target) => {
+          wholeFieldMatch = target;
+        });
+        const result = onWholeFieldMatch('secret-value');
+        expect(wholeFieldMatch).toBe('secret-value');
+        // The field is left untouched when the whole-match callback fires -- the caller (`applyRedact
+        // JsonPointers`/`compare.ts`'s own `normalizeLibraryOrThrow`) is the one that turns this into
+        // a refusal; `fieldRedactor` itself never silently substitutes anyway.
+        expect(result).toBe('secret-value');
+      },
+    );
+
+    it('fieldRedactor: a partial match on an otherwise non-empty field is never treated as whole-field', () => {
+      let wholeFieldMatch = false;
+      const onWholeFieldMatch = fieldRedactor('tok-[A-Z0-9]+', 'REDACTED', () => {
+        wholeFieldMatch = true;
+      });
+      expect(onWholeFieldMatch('prefix tok-ABC123 suffix')).toBe('prefix REDACTED suffix');
+      expect(wholeFieldMatch).toBe(false);
+    });
+
+    it('end to end: redacts the pointer from parsed JSON text and re-serialises canonically', () => {
+      const outcome = applyRedactJsonPointers(
+        '{"keep":1,"message":"at /real/root/path/x.js"}',
+        ['/message'],
+        '/real/root/path',
+        '<PATH>',
+      );
+      expect(outcome).toEqual({ ok: true, text: '{"keep":1,"message":"at <PATH>/x.js"}' });
+    });
+
+    it('fails on non-JSON text, content-free, the same as ignore-json-pointers/json-canonical', () => {
+      const outcome = applyRedactJsonPointers('not json', ['/x'], 'a', 'b');
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) throw new Error('unreachable');
+      expect(outcome.detail).not.toContain('not json');
+    });
+
+    it('end to end: a whole-field match is refused with a content-free detail, not silently applied', () => {
+      const outcome = applyRedactJsonPointers('{"message":"secret"}', ['/message'], '.*', 'X');
+      expect(outcome).toEqual({
+        ok: false,
+        detail:
+          'the pattern matches the entire content of a non-empty targeted field, which is refused',
+      });
+    });
+
+    it('applies every named pointer, independent of declaration order (no reordering needed, unlike ignore-json-pointers)', () => {
+      const outcome = applyRedactJsonPointers(
+        '{"list":["/root/one","/root/two","/root/three"]}',
+        ['/list/2', '/list/0', '/list/1'],
+        '/root',
+        '<R>',
+      );
+      expect(outcome).toEqual({ ok: true, text: '{"list":["<R>/one","<R>/two","<R>/three"]}' });
+    });
+  },
+);
 
 describe('replace: every match, literal replacement, $1 not expanded (specs/22 M16 P4)', () => {
   it('replaces every match, not just the first', () => {
@@ -561,6 +698,57 @@ describe('applyNormalizeRulesToText: every rule kind reachable through the orche
       ok: false,
       kind: 'rule-failed',
       failure: { rule: 'ignore-json-pointers', detail: 'does not parse as JSON' },
+    });
+  });
+
+  it(
+    'runs a succeeding redact-json-pointers rule through the orchestrator (specs/22 M17 P14 ' +
+      'follow-up, Q317 Decision 8)',
+    () => {
+      expect(
+        applyNormalizeRulesToText(
+          '{"message":"at /real/root/x.js"}',
+          [
+            {
+              rule: 'redact-json-pointers',
+              pointers: ['/message'],
+              pattern: '/real/root',
+              replacement: '<R>',
+            },
+          ],
+          {},
+        ),
+      ).toEqual({ ok: true, text: '{"message":"at <R>/x.js"}' });
+    },
+  );
+
+  it('propagates a failing redact-json-pointers rule through the orchestrator as rule-failed', () => {
+    const outcome = applyNormalizeRulesToText(
+      'not json',
+      [{ rule: 'redact-json-pointers', pointers: ['/x'], pattern: 'a', replacement: 'b' }],
+      {},
+    );
+    expect(outcome).toEqual({
+      ok: false,
+      kind: 'rule-failed',
+      failure: { rule: 'redact-json-pointers', detail: 'does not parse as JSON' },
+    });
+  });
+
+  it('propagates a whole-field-match redact-json-pointers refusal through the orchestrator as rule-failed', () => {
+    const outcome = applyNormalizeRulesToText(
+      '{"message":"secret"}',
+      [{ rule: 'redact-json-pointers', pointers: ['/message'], pattern: '.*', replacement: 'X' }],
+      {},
+    );
+    expect(outcome).toEqual({
+      ok: false,
+      kind: 'rule-failed',
+      failure: {
+        rule: 'redact-json-pointers',
+        detail:
+          'the pattern matches the entire content of a non-empty targeted field, which is refused',
+      },
     });
   });
 

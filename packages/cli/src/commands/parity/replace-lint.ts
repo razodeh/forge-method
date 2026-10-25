@@ -224,7 +224,7 @@ export function isPathologicalReplacePattern(pattern: string, depth = 0): boolea
   });
 }
 
-/** One `replace` rule's pattern, located within a declaration — the unit
+/** One `replace`-OR-`redact-json-pointers` rule's pattern, located within a declaration — the unit
  * {@link lintParityDeclarationReplacePatterns} reports a problem against. `key` follows
  * `declaration.ts`'s own dotted-path convention (`surfaces.<kind>.cases[<i>].normalize[<j>].pattern`)
  * so a problem reads the identical shape a structural loader problem does. */
@@ -233,8 +233,33 @@ export interface ReplacePatternLocation {
   readonly pattern: string;
 }
 
-/** Every `replace` rule's pattern in `declaration`, in a fixed, sorted order (surface kind, then case
- * index, then rule index — `QUALITY-BAR.md` R10: never dependent on object-key enumeration order). */
+/**
+ * Every `replace` AND `redact-json-pointers` rule's own `pattern` in `declaration`, in a fixed,
+ * sorted order (surface kind, then case index, then rule index — `QUALITY-BAR.md` R10: never
+ * dependent on object-key enumeration order).
+ *
+ * **`specs/22` M17 P14 follow-up (Q317 Decision 8): widened to `redact-json-pointers` too, the day
+ * that rule was introduced, not left for a later gauntlet round to find.** The catastrophic-
+ * backtracking shape this lint flags is a property of a bare REGEX SOURCE STRING, independent of
+ * which named rule carries it — `redact-json-pointers`' own `pattern` is run through the identical
+ * `new RegExp(pattern, 'g')` + `.replace()` `applyReplace` already uses for `replace` (`normalize.ts`'s
+ * own `fieldRedactor`), so it is exactly as capable of hanging the engine. The gap this closes is
+ * sharper than it looks: `redact-json-pointers` is refused outright on every surface `CFG-519` covers
+ * (`process`/`file`/`http` — the identical root-rewritten set `replace` itself is refused on), so the
+ * ONLY surface it can ever actually run against is `library` — and `library`'s own normalisation
+ * path (`compare.ts`'s `normalizeLibraryOrThrow`) runs this rule's regex SYNCHRONOUSLY, with NO
+ * worker-thread wall-clock budget at all (`normalize-budget.ts`'s own bounded worker wraps
+ * `applyNormalizeRulesToText`, the TEXT-shaped path `normalizeTextOrThrow` alone calls — `library`'s
+ * structural path was never routed through it, before or after this rule existed, because it had
+ * nothing regex-shaped to protect until now). So, for `redact-json-pointers` specifically, THIS lint
+ * is not merely "advisory defence in depth" the way it is for `replace` (which also has the runtime
+ * budget as a real backstop) — until a future piece gives `library`'s own path the identical
+ * worker-thread bound (real, separable engineering scope, honestly disclosed rather than attempted
+ * half-built here, the identical treatment Decision 8's own repro got), this STATIC check is the
+ * ONLY thing standing between a pathological `redact-json-pointers` pattern and a genuine hang on the
+ * one surface that rule is allowed on. Recorded here, not hidden, so a reader does not mistake this
+ * for the same "merely advisory" posture the sibling text-shaped rule enjoys.
+ */
 export function collectReplacePatterns(
   declaration: ParityDeclaration,
 ): readonly ReplacePatternLocation[] {
@@ -244,7 +269,7 @@ export function collectReplacePatterns(
     if (surface === undefined) continue;
     surface.cases.forEach((parityCase, caseIndex) => {
       (parityCase.normalize ?? []).forEach((rule, ruleIndex) => {
-        if (rule.rule !== 'replace') return;
+        if (rule.rule !== 'replace' && rule.rule !== 'redact-json-pointers') return;
         locations.push({
           key: `surfaces.${kind}.cases[${String(caseIndex)}].normalize[${String(ruleIndex)}].pattern`,
           pattern: rule.pattern,
@@ -397,20 +422,37 @@ export function assertParityDeclarationPatternsSafe(declaration: ParityDeclarati
  * fourth clever carve-out. Left refused on purpose; this is not an oversight.
  *
  * **The `library` surface needs no special case, confirmed rather than assumed — re-confirmed after
- * round 6 widened the set.** `compare.ts`'s own `normalizeLibraryOrThrow` applies ONLY
- * `ignore-json-pointers` to a `library` case's result — EVERY other rule, now including
- * `json-canonical` (round 6's own addition) alongside `replace`/`sort-lines`/
- * `trim-trailing-whitespace`, is already a complete no-op there (re-checked by reading that function
- * again for this round: it `continue`s past any rule whose `rule` is not `'ignore-json-pointers'`).
- * So even after widening, at most ONE content-discarding rule (`ignore-json-pointers` itself) can
- * ever actually do anything on a `library` case — two of them can never actually compound, since the
- * other four members of the now-five-strong set have nothing there to discard in the first place.
+ * round 6 widened the set, and again after `specs/22` M17 P14's own follow-up (Q317 Decision 8) gave
+ * `library` a SECOND rule that does something real.** `compare.ts`'s own `normalizeLibraryOrThrow`
+ * applies `ignore-json-pointers` AND `redact-json-pointers` to a `library` case's result — EVERY
+ * other rule, `json-canonical` (round 6's own addition) and `replace`/`sort-lines`/
+ * `trim-trailing-whitespace` alike, is already a complete no-op there (re-checked by reading that
+ * function again for this round: it `continue`s past any rule whose `rule` is neither of those two).
+ * So among this set's own five members, at most ONE (`ignore-json-pointers`) can ever actually do
+ * anything on a `library` case — two of ITS OWN members can never actually compound, since the other
+ * four have nothing there to discard in the first place.
+ *
+ * **`redact-json-pointers` is deliberately NOT a member of this set, even though it is the one other
+ * rule that does something real on `library`.** Adding it would trip this very check the moment a
+ * reviewer combines it with `ignore-json-pointers` on the same (unscoped, library has no
+ * stream/file targets) case — exactly the combination `redact-json-pointers` exists to be combined
+ * with (name an embedded path's own pointer with one rule, redact a substring inside a DIFFERENT
+ * field's string with the other). That combination is provably safe by the IDENTICAL reasoning the
+ * "Proof, `json-canonical` + `ignore-json-pointers`" paragraph above already gives: both rules are
+ * addressed by an explicit RFC 6901 POINTER — a name/index chain, never a text position — so neither
+ * can make the other's own target depend on anything but the field it was itself told to name. Two
+ * documents that differ in any field neither rule was told to touch still differ after either order
+ * of the two (`compare.ts`'s own test file confirms this directly, not merely by this argument).
+ * `redact-json-pointers` on its own, applied twice to the SAME scope (two separate rule entries
+ * rather than one with two pointers), is still caught: {@link hasRepeatedRuleKindInScope} groups by
+ * `rule.rule` generically, needing no update for an 8th kind.
+ *
  * This function still does not skip `library` cases: it remains simpler and more consistent
  * (matching `collectReplacePatterns`'s own surface-agnostic walk) to apply the identical structural
- * check everywhere, and doing so here is never harmful — no legitimate declaration needs two
- * content-discarding rules on a surface where at most one of them does anything, so refusing that
- * combination costs nothing real and catches a confused declaration (one that copied rules from a
- * `process` case without noticing they are inert here).
+ * check everywhere, and doing so here is never harmful — no legitimate declaration needs two OF THIS
+ * SET'S OWN content-discarding rules on a surface where at most one of them does anything, so
+ * refusing that combination costs nothing real and catches a confused declaration (one that copied
+ * rules from a `process` case without noticing they are inert here).
  */
 const CONTENT_DISCARDING_RULES: ReadonlySet<NormalizeRule['rule']> = new Set([
   'replace',
@@ -550,7 +592,7 @@ export function hasConflictingContentDiscardingRules(rules: readonly NormalizeRu
 }
 
 /**
- * True when the SAME normalise rule KIND — any of the seven, not only the three content-discarding
+ * True when the SAME normalise rule KIND — any of the eight, not only the three content-discarding
  * ones — appears two or more times over the same effective scope in `rules`. Groups `rules` by kind
  * first, then asks {@link hasOverlappingScopes} of each kind's own occurrences independently: two
  * `replace` rules scoped to different streams never conflict with each other through THIS check (nor
@@ -585,7 +627,7 @@ export function hasConflictingContentDiscardingRules(rules: readonly NormalizeRu
  * identical scrutiny a dedicated adversarial round would need, rather than assumed here under time
  * pressure. Refusing repetition uniformly costs nothing a reviewed declaration plausibly needs (no
  * legitimate case applies the SAME rule twice to the SAME scope on purpose), and removes the need to
- * separately prove idempotency for all seven kinds under every future angle.
+ * separately prove idempotency for all eight kinds under every future angle.
  */
 export function hasRepeatedRuleKindInScope(rules: readonly NormalizeRule[]): boolean {
   const byKind = new Map<NormalizeRule['rule'], NormalizeRule[]>();
@@ -821,6 +863,93 @@ export function assertNoReplaceRuleOnRootRewrittenSurface(declaration: ParityDec
   });
 }
 
+/**
+ * True when `rules` declares at least one `redact-json-pointers` rule — the identical per-case check
+ * {@link hasReplaceRule} runs for `replace`, needed here for the identical reason.
+ */
+function hasRedactJsonPointersRule(rules: readonly NormalizeRule[]): boolean {
+  return rules.some((rule) => rule.rule === 'redact-json-pointers');
+}
+
+/** One case whose `normalize` list declares a `redact-json-pointers` rule on a surface the
+ * always-on root-path rewrite reaches — the unit
+ * {@link assertNoRedactJsonPointersRuleOnRootRewrittenSurface} reports against, named the identical
+ * way {@link ReplaceOnRootRewrittenSurfaceConflict} is. */
+export interface RedactJsonPointersOnRootRewrittenSurfaceConflict {
+  readonly key: string;
+}
+
+/**
+ * Every case, on a {@link ROOT_REWRITTEN_SURFACES} member, whose `normalize` list declares a
+ * `redact-json-pointers` rule, in the identical fixed, sorted order every sibling `collect*` function
+ * in this module uses.
+ *
+ * **`specs/22` M17 P14 follow-up (`process/SPEC-QUESTIONS.md` Q317 Decision 8): `redact-json-
+ * pointers` carries the identical hazard `replace` does, for the identical reason, so it gets the
+ * identical treatment.** Like `replace`, it accepts an author-supplied, unconstrained regular
+ * expression `pattern` — the one property {@link collectReplaceOnRootRewrittenSurfaceConflicts}'s
+ * own doc comment names as what makes `replace` alone (among the first seven rules) capable of
+ * depending on absolute position or length, and so alone capable of being shifted by the always-on
+ * root-path rewrite's own length-asymmetric substitution into cutting at a different offset on each
+ * side of a comparison. Rather than try to prove a POINTER-SCOPED pattern is somehow immune to this —
+ * a reviewer can still write a length-anchored pattern (`.{5}$`, say) against whatever string a named
+ * pointer resolves to, and nothing here can tell that shape apart from a harmless one any more
+ * reliably than `isPathologicalReplacePattern`'s own file header already says a static shape lint
+ * can for `replace` — this widens the identical "coarse but provably sufficient" structural refusal
+ * `CFG-516` already chose, rather than inventing a second, pattern-aware detector this piece's own
+ * history (`SPEC-QUESTIONS.md` Q298 Decisions 1 and 4) has twice already found a gap in. In practice
+ * this costs nothing real: `redact-json-pointers` is meaningful only against `library`'s own
+ * structured result (`compare.ts`'s own `normalizeLibraryOrThrow` doc comment), which this set never
+ * contains, so a reviewer who wants it has exactly one place to put it regardless of this refusal.
+ */
+export function collectRedactJsonPointersOnRootRewrittenSurfaceConflicts(
+  declaration: ParityDeclaration,
+): readonly RedactJsonPointersOnRootRewrittenSurfaceConflict[] {
+  const conflicts: RedactJsonPointersOnRootRewrittenSurfaceConflict[] = [];
+  for (const kind of SURFACE_KINDS) {
+    if (!ROOT_REWRITTEN_SURFACES.has(kind)) continue;
+    const surface = declaration.surfaces[kind];
+    if (surface === undefined) continue;
+    surface.cases.forEach((parityCase, caseIndex) => {
+      if (hasRedactJsonPointersRule(parityCase.normalize ?? [])) {
+        conflicts.push({ key: `surfaces.${kind}.cases[${String(caseIndex)}].normalize` });
+      }
+    });
+  }
+  return conflicts;
+}
+
+/**
+ * Throws `CFG-519` naming the first case
+ * {@link collectRedactJsonPointersOnRootRewrittenSurfaceConflicts} finds whose `normalize` list
+ * declares a `redact-json-pointers` rule on a surface the always-on root-path rewrite reaches, or
+ * returns normally when there is none. The identical "load-adjacent, owned by this piece" timing
+ * every sibling assertion in this module already uses.
+ *
+ * A NEW code, not a reuse of `CFG-516`: the two refusals name a DIFFERENT offending rule, and
+ * `CFG-516`'s own fixed remedy string ('Remove this "replace" rule... use one of the other six
+ * normalize rules instead') is specific to `replace` by name — `CFG-512`/`CFG-513`'s own precedent
+ * (a new code per distinct remedy) applies identically here. The live ceiling was checked immediately
+ * before taking this number: `CFG-518` is this project's own highest at the time (a different piece's
+ * code, for a wholly unrelated staged test-adopt proposal), so `CFG-519` is free.
+ */
+export function assertNoRedactJsonPointersRuleOnRootRewrittenSurface(
+  declaration: ParityDeclaration,
+): void {
+  const conflicts = collectRedactJsonPointersOnRootRewrittenSurfaceConflicts(declaration);
+  const first = conflicts[0];
+  if (first === undefined) return;
+  throw new ForgeError('CFG-519', {
+    file: `.forge/parity/${declaration.name}.parity.yaml`,
+    key: first.key,
+    detail:
+      'declares a "redact-json-pointers" rule on a surface the always-on root-path rewrite ' +
+      'reaches, which cannot be proven safe against a length-anchored pattern (specs/13 F-TEST-9); ' +
+      'this rule is meaningful only on the "library" surface',
+    more: conflicts.length - 1,
+  });
+}
+
 /** One problem {@link firstNormalizeRuleSafetyProblem} found — plain data, carrying the already-
  * rendered `ForgeError.message` so a caller never has to re-derive or duplicate the code's own
  * message/remedy text (`codes.ts` is the one place that renders it). */
@@ -833,27 +962,29 @@ export interface NormalizeRuleSafetyProblem {
 /**
  * Runs every normalize-rule-shape safety check this module owns — `CFG-511` (catastrophic-
  * backtracking shape), `CFG-512` (conflicting content-discarding rules), `CFG-513` (a repeated rule
- * kind) and `CFG-516` (`specs/22` M17 P14: `replace` on a root-rewritten surface) — in that fixed
- * order, and returns the FIRST problem found as plain data, never throwing.
+ * kind), `CFG-516` (`specs/22` M17 P14: `replace` on a root-rewritten surface) and `CFG-519`
+ * (`specs/22` M17 P14 follow-up, Q317 Decision 8: `redact-json-pointers` on a root-rewritten
+ * surface) — in that fixed order, and returns the FIRST problem found as plain data, never throwing.
  *
- * **Why this exists, beside the four throwing `assert*` functions above.** `capture-command.ts`'s
+ * **Why this exists, beside the five throwing `assert*` functions above.** `capture-command.ts`'s
  * own `captureOneDeclaration` already lets a `ForgeError` propagate (it throws `CFG-515` inline
- * itself), so it calls the four `assert*` functions directly, in this identical order, needing no
+ * itself), so it calls the five `assert*` functions directly, in this identical order, needing no
  * wrapper. `check-command.ts`'s own `processDeclaration` has the opposite contract — every outcome
  * is a returned `ProcessedDeclaration`, never a thrown exception (`declaration.ts`'s own
  * `loadParityDeclaration` doc comment: "Never throws") — so THIS function exists for it: one
  * non-throwing call that still reports each hazard under its own real code and its own real,
  * already-rendered message, rather than a generic one.
  *
- * **Why these four checks were never reachable from either real command before `specs/22` M17 P14.**
- * Confirmed by reading every call site in this package before this piece's own build: none of the
- * four `assert*`/`collect*` functions above had ANY caller outside this module's own test file —
+ * **Why the first four checks were never reachable from either real command before `specs/22` M17
+ * P14.** Confirmed by reading every call site in this package before that piece's own build: none of
+ * the four `assert*`/`collect*` functions above had ANY caller outside this module's own test file —
  * `capture-command.ts`/`check-command.ts`/`declaration.ts` never imported `replace-lint.ts` at all.
  * Six real gauntlet rounds (`GAUNTLET-LOG.md`'s own `## M16 P4` entry) built and proved these checks
  * against the primitive directly; nothing wired them into `forge parity capture`/`check` itself, so a
  * real declaration with a genuinely dangerous shape was never actually refused by either command —
- * only by a test calling the function in isolation. This piece wires both commands to this module for
- * the first time; see this piece's own report for the full account.
+ * only by a test calling the function in isolation. That piece wired both commands to this module for
+ * the first time; see its own report for the full account. `CFG-519` is wired in from the moment the
+ * `redact-json-pointers` rule itself is introduced, so it has no such gap to disclose.
  */
 export function firstNormalizeRuleSafetyProblem(
   declaration: ParityDeclaration,
@@ -863,6 +994,7 @@ export function firstNormalizeRuleSafetyProblem(
     assertNoConflictingContentDiscardingRules,
     assertNoRepeatedRuleKindInScope,
     assertNoReplaceRuleOnRootRewrittenSurface,
+    assertNoRedactJsonPointersRuleOnRootRewrittenSurface,
   ]) {
     try {
       assertSafe(declaration);
