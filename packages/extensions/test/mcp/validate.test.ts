@@ -48,6 +48,24 @@ describe('validateMcpConfig — schema boundary', () => {
     const finding = outcome.findings.find((f) => f.code === 'schema');
     expect(finding?.message).toMatch(/^\(root\):/);
   });
+
+  it(
+    'rejects a grant value matching neither toolGrantValueSchema union member, naming each ' +
+      'candidate\'s own reason, not zod\'s generic "Invalid input" (SPEC-QUESTIONS.md Q325)',
+    () => {
+      const outcome = validateMcpConfig(
+        { servers: [JIRA], grants: { pm: { 'acme-jira': 'everything' } } },
+        { environment: 'dev' },
+      );
+      expect(outcome.valid).toBe(false);
+      const finding = outcome.findings.find((f) => f.code === 'schema');
+      expect(finding, JSON.stringify(outcome.findings)).toBeDefined();
+      expect(finding?.message).not.toContain('Invalid input');
+      expect(finding?.message).toContain('did not match any of the 2 allowed shapes');
+      expect(finding?.message).toContain('Expected array, received string');
+      expect(finding?.message).toContain('Invalid literal value');
+    },
+  );
 });
 
 describe('validateMcpConfig — unknown-server', () => {

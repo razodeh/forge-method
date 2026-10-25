@@ -23,7 +23,7 @@
  * @see PLAN-M8.md P1
  * @see PLAN-M14.md P25
  */
-import { readTextFile, type ProjectPaths } from '@forge/core';
+import { formatZodIssueMessage, readTextFile, type ProjectPaths } from '@forge/core';
 import { parse as parseYaml } from 'yaml';
 
 import { parseExpression } from '../expr.ts';
@@ -103,7 +103,7 @@ export function loadDodProfile(source: string, sourcePath: string): DodParseResu
       issues: withSourceContext(
         result.error.issues.map((issue) => ({
           path: issue.path.join('.') || '(root)',
-          message: issue.message,
+          message: formatZodIssueMessage(issue),
         })),
         sourcePath,
       ),

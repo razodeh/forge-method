@@ -251,6 +251,35 @@ describe('parseWorkflow', () => {
     expect(result.issues.length).toBeGreaterThan(0);
   });
 
+  it(
+    "rejects a produces value matching neither union member, naming each candidate's own " +
+      'reason, not zod\'s generic "Invalid input" (SPEC-QUESTIONS.md Q325)',
+    () => {
+      const badProduces = [
+        'id: w',
+        'name: W',
+        'version: "1.0.0"',
+        'description: d',
+        'steps:',
+        '  - id: a',
+        '    kind: agent',
+        '    agent: architect',
+        '    produces: 123',
+      ].join('\n');
+
+      const result = parseWorkflow(badProduces);
+
+      if (result.success) {
+        throw new Error('expected parseWorkflow to fail: produces is neither a string nor array');
+      }
+      const message = result.issues.map((issue) => issue.message).join('; ');
+      expect(message).not.toContain('Invalid input');
+      expect(message).toContain('did not match any of the 2 allowed shapes');
+      expect(message).toContain('Expected string, received number');
+      expect(message).toContain('Expected array, received number');
+    },
+  );
+
   it('resolves the real source line for a present-but-wrong-typed field specifically', () => {
     const wrongType = [
       'id: w',

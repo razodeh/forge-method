@@ -8,6 +8,8 @@
  * @see PLAN-M2.md P5
  * @see SPEC-QUESTIONS.md Q34
  */
+import { formatZodIssue } from '@forge/core';
+
 import { SECRET_PATTERNS } from '../skills/patterns.ts';
 import {
   SECRET_REFERENCE_PATTERN,
@@ -95,7 +97,7 @@ export function validateMcpConfig(
     const findings: McpValidationFinding[] = parsed.error.issues.map((issue) => ({
       severity: 'error',
       code: 'schema',
-      message: `${issue.path.join('.') || '(root)'}: ${issue.message}`,
+      message: formatZodIssue(issue),
     }));
     return { valid: false, findings, effectiveGrants: {} };
   }

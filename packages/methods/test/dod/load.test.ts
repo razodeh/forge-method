@@ -97,6 +97,31 @@ profiles:
     expect(result.warnings[0]?.path).toContain('no-verify');
   });
 
+  it(
+    "rejects a check entry matching neither dodCheckSchema union member, naming each candidate's " +
+      'own reason, not zod\'s generic "Invalid input" (SPEC-QUESTIONS.md Q325)',
+    () => {
+      const source = `
+profiles:
+  p:
+    ready:
+      - bogus: true
+    done: []
+`;
+      const result = loadDodProfile(source, 'p.yaml');
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error('expected failure');
+      const message = result.issues.map((issue) => issue.message).join('; ');
+      expect(message).not.toContain('Invalid input');
+      expect(message).toContain('did not match any of the 2 allowed shapes');
+      // Each of the two candidates' own distinct reason is named: the plain-string branch's type
+      // mismatch, and the `{ check: id }` branch's own missing field plus the key neither recognises.
+      expect(message).toContain('Expected string, received object');
+      expect(message).toContain('check: Required');
+      expect(message).toContain("Unrecognized key(s) in object: 'bogus'");
+    },
+  );
+
   it('rejects an unknown phase key inside a profile (the schema is strict)', () => {
     const source = `
 profiles:

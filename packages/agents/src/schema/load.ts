@@ -5,20 +5,19 @@
  * @see specs/05 §5.3
  * @see PLAN-M6.md A1
  */
-import { readTextFile, type ProjectPaths } from '@forge/core';
+import { formatZodIssueMessage, readTextFile, type ProjectPaths } from '@forge/core';
 import { ARTIFACT_SCHEMAS } from '@forge/schemas/json-schema';
 import { artifactTypeById, registryTail } from '@forge/schemas/registry';
 import { parse as parseYaml } from 'yaml';
+import type { ZodIssue } from 'zod';
 
 import { agentDefinitionSchema } from './schema.ts';
 import type { AgentDefinition, AgentIssue, AgentParseResult } from './types.ts';
 
-function zodIssuesToAgentIssues(
-  issues: readonly { readonly path: readonly (string | number)[]; readonly message: string }[],
-): readonly AgentIssue[] {
+function zodIssuesToAgentIssues(issues: readonly ZodIssue[]): readonly AgentIssue[] {
   return issues.map((issue) => ({
     path: issue.path.join('.') || '(root)',
-    message: issue.message,
+    message: formatZodIssueMessage(issue),
   }));
 }
 

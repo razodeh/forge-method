@@ -66,11 +66,38 @@ describe('loadAgentDefinition', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects an input ref naming neither artifact nor kb', () => {
-    const source = ARCHITECT.replace('- artifact: DomainModel', '- notrealkey: DomainModel');
-    const result = loadAgentDefinition(source, 'x.agent.yaml');
-    expect(result.success).toBe(false);
-  });
+  it(
+    'rejects an input ref naming neither artifact nor kb, naming each inputRefSchema union ' +
+      'member\'s own reason, not zod\'s generic "Invalid input" (SPEC-QUESTIONS.md Q325)',
+    () => {
+      const source = ARCHITECT.replace('- artifact: DomainModel', '- notrealkey: DomainModel');
+      const result = loadAgentDefinition(source, 'x.agent.yaml');
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error('expected failure');
+      const message = result.issues.map((issue) => issue.message).join('; ');
+      expect(message).not.toContain('Invalid input');
+      expect(message).toContain('did not match any of the 2 allowed shapes');
+      expect(message).toContain('artifact: Required');
+      expect(message).toContain('kb: Required');
+      expect(message).toContain("Unrecognized key(s) in object: 'notrealkey'");
+    },
+  );
+
+  it(
+    'rejects tools.network with neither a boolean nor a known level, naming both union ' +
+      'members\' own reasons, not zod\'s generic "Invalid input" (SPEC-QUESTIONS.md Q325)',
+    () => {
+      const source = ARCHITECT.replace('network: false', 'network: sometimes');
+      const result = loadAgentDefinition(source, 'x.agent.yaml');
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error('expected failure');
+      const message = result.issues.map((issue) => issue.message).join('; ');
+      expect(message).not.toContain('Invalid input');
+      expect(message).toContain('did not match any of the 2 allowed shapes');
+      expect(message).toContain('Expected boolean, received string');
+      expect(message).toContain('Invalid enum value');
+    },
+  );
 
   it('accepts an entry with no extends, mcp, ceiling, frameworks, or skills -- all optional', () => {
     // Removes a whole top-level YAML block by key name: the key's own line plus every subsequent

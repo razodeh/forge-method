@@ -9,6 +9,7 @@
  * @see specs/10 §10.1
  * @see PLAN-M5.md P8
  */
+import { formatZodIssue } from '@forge/core/errors';
 import { LineCounter, parseDocument, type Document, type YAMLError } from 'yaml';
 import type { ZodIssue } from 'zod';
 
@@ -69,7 +70,7 @@ function zodIssueToParseIssue(
   issue: ZodIssue,
 ): ParseIssue {
   const position = resolvePosition(doc, lineCounter, issue.path);
-  const message = `${issue.path.join('.') || '(root)'}: ${issue.message}`;
+  const message = formatZodIssue(issue);
   return position === undefined ? { message } : { message, ...position };
 }
 
