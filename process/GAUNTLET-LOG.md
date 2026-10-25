@@ -24994,3 +24994,21 @@ test.ts` flake, re-confirmed clean in isolation.
 **Net result**: four rounds on what started as "two CI script bugs" — the deepest finding (the release-blocking bundling regression) only surfaced because a critic insisted on testing the real built artifact rather than trusting source-level verification, a discipline worth carrying forward.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q340` and `## Q341` (both updated in place).
+
+---
+
+## M17 P16 — #18's own Windows-hardening fix (Q353), 4 rounds (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** M17's own Windows-hardening piece (#18): `execa`'s `shell: true` resolves to `cmd.exe` on Windows, but this codebase ships command text (workflow steps, module checks, vetted debug/kb-verify/adopt commands) authored assuming a POSIX shell.
+
+**Round 1.** A new `resolvePosixShell` searches `PATH` for a real `bash.exe` on win32, falling back to `true` otherwise. Found and fixed along the way: `scrubbedEnvironment`'s allowlist check was case-sensitive against `'PATH'` (Windows often spells it `Path`) — a confined child would have gotten no PATH at all. Added Windows equivalents of the POSIX allowlist entries, and a `GIT_NULL_DEVICE` constant (getting this wrong could silently reopen the credential-helper hole `GIT_CONFIG_GLOBAL=/dev/null` closes).
+
+**Rounds 2-3 — two critics each, each round finding more as the base moved forward.** Round 2: two more "env can be undefined" sites in `migrate/run.ts`; a second, untouched `execa` call site `main` had grown in the meantime (`confined-command.ts`'s `preserveRawOutput` branch); a hardcoded-POSIX test assertion that would fail on the very Windows leg this piece exists to turn green. Round 3, after a real rebase onto `main`'s current tip: a test left RED by the round-2 fix itself (`shell-sinks-inventory.test.ts`, never reconciled after `migrate/run.ts` lost its shell); a live, untouched gap in `parity/http-server.ts`; and the most severe finding of the whole piece — a CONFIRMED LIVE REGRESSION, reproduced directly: the `migrate/run.ts` rewrite's own timeout-kill dropped the full descendant-process walk this exact file's sibling function already provides, reintroducing the precise orphan-process bug (`Q296`, M16 P10) that mechanism was built to close.
+
+**Round 4 fixed everything.** Restored the full descendant-walk kill by reusing the existing exported primitive. An exhaustive env-threading sweep went from 2 named sites to 8 real ones, requiring a new `env` field on 5 different context/input types. Fixed the failing test. Wired the fix into `http-server.ts`, honestly upgrading an adjacent "unreachable" throw to a real typed error now that it's no longer provably unreachable. A critic's own from-scratch sweep — the first round of this piece not to find a live 5th site — confirmed the pattern was finally closed.
+
+**Disclosed, not fixed.** A security question neither 2 nor 4 critic rounds could close from source/documentation alone: whether Node's Windows argv-escaping and Git-for-Windows bash.exe's own MSYS2 argv-recovery compose safely for the adversarial inputs `confined-command.ts`'s own vet cares about. Needs a real Windows host with Git-for-Windows to settle; until then the Windows leg of that vet is unverified for exactly these shapes, not confirmed-safe.
+
+**Net result**: the deepest, most severe finding (a confirmed live orphan-process regression) was introduced by this piece's OWN earlier round's fix, not inherited — found only because a critic insisted on constructing the exact adversarial repro rather than trusting that a rewrite preserving the same test suite also preserved the same semantics.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q353` (new).
