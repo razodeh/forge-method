@@ -31,6 +31,17 @@
  * below resolves `tsx/esm` to an absolute path ONCE, anchored at this file's own location (where
  * `tsx` is a real, installed devDependency), so the child's own `cwd` can never matter.
  *
+ * **A plain OS-native absolute path is ALSO wrong on Windows, fixed before this ever landed either**:
+ * `--import`'s value goes through the same WHATWG-URL-based ESM specifier algorithm `import()` uses,
+ * and on Windows a path beginning with a drive letter (`C:\Users\...`) parses `C:` as a URL *scheme*,
+ * not a filesystem root. Confirmed live on a real Node 20.19.6 binary: `node
+ * --import='C:\...\index.mjs' noop.mjs` throws `ERR_UNSUPPORTED_ESM_URL_SCHEME ... protocol 'c:'`.
+ * `ci.yml`'s own `floor` job runs `windows-latest` x node 20 with no `continue-on-error` — this is the
+ * identical bug class `preflight.cjs` (`SPEC-QUESTIONS.md`, commit `1597ab0`) and `scripts/run-tests.
+ * mjs` (its own `guardUrl`, line 20) already fix the same way: `pathToFileURL(...).href` turns the
+ * OS-native path into a real `file://` URL first, so there is no drive letter sitting where a URL
+ * parser looks for a scheme.
+ *
  * Resolved once per process from `process.versions.node` (the CURRENTLY RUNNING node, i.e. the
  * parent's own binary) — every real call site in this repository spawns a child with either
  * `process.execPath` or the bare string `'node'` resolved via `PATH`, which in every real environment
@@ -42,6 +53,7 @@
  * @see PLAN-M17.md P16
  */
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
@@ -69,10 +81,11 @@ export const SUPPORTS_NATIVE_STRIP_TYPES = supportsNativeStripTypes(process.vers
 
 /** The single `node` CLI argv element that makes a child `node <TS_NODE_FLAG> some-file.ts`
  * invocation understand TypeScript syntax, chosen for the Node binary this process is actually
- * running under. On Node 20.x, `tsx/esm` is resolved to an absolute path HERE (not left as a bare
- * specifier for the spawned child to resolve on its own, which would depend on that child's own
- * `cwd` — see the module doc comment above) so this works regardless of where a caller spawns its
- * child from. */
+ * running under. On Node 20.x, `tsx/esm` is resolved to an absolute `file://` URL HERE (not left as
+ * a bare specifier for the spawned child to resolve on its own, which would depend on that child's
+ * own `cwd`, and not left as a plain OS-native path, which breaks on Windows — see the module doc
+ * comment above) so this works regardless of where a caller spawns its child from, or which OS it
+ * runs on. */
 export const TS_NODE_FLAG = SUPPORTS_NATIVE_STRIP_TYPES
   ? '--experimental-strip-types'
-  : `--import=${require.resolve('tsx/esm')}`;
+  : `--import=${pathToFileURL(require.resolve('tsx/esm')).href}`;
