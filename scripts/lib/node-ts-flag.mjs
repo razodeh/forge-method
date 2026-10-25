@@ -89,3 +89,23 @@ export const SUPPORTS_NATIVE_STRIP_TYPES = supportsNativeStripTypes(process.vers
 export const TS_NODE_FLAG = SUPPORTS_NATIVE_STRIP_TYPES
   ? '--experimental-strip-types'
   : `--import=${pathToFileURL(require.resolve('tsx/esm')).href}`;
+
+/**
+ * The `execArgv` a `node:worker_threads.Worker` needs to understand real TypeScript syntax in its
+ * own entry file, chosen for the Node binary this process is actually running under.
+ *
+ * NOT simply `[TS_NODE_FLAG]`: confirmed live, empirically, that `tsx` does not work for a `Worker`'s
+ * own module loading on Node 20.x — `tsx`'s own hooks module silently installs nothing when loaded
+ * via `--import` through a `Worker`'s own `execArgv` (the `.ts` load then fails downstream with
+ * `ERR_UNKNOWN_FILE_EXTENSION`, as if no loader were registered at all). `./worker-ts-strip-
+ * loader.mjs` is a hand-written, generic `--import`-registered `load` hook (using the real
+ * TypeScript compiler, `ts.transpileModule`, for the actual syntax stripping) that IS confirmed to
+ * work for a `Worker`'s own `execArgv` on a real Node 20.19.6 binary — the one call site in this
+ * repository that genuinely needs a different mechanism from every other real spawn site.
+ *
+ * @see scripts/lib/worker-ts-strip-loader.mjs
+ * @see packages/cli/src/commands/parity/normalize-budget.ts
+ */
+export const WORKER_TS_EXEC_ARGV = SUPPORTS_NATIVE_STRIP_TYPES
+  ? ['--experimental-strip-types']
+  : [`--import=${pathToFileURL(require.resolve('./worker-ts-strip-loader.mjs')).href}`];

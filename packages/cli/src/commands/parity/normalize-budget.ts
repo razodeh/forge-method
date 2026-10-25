@@ -65,6 +65,7 @@ import { Worker } from 'node:worker_threads';
 
 import { ForgeError } from '@forge/core/errors';
 
+import { WORKER_TS_EXEC_ARGV } from '../../../../../scripts/lib/node-ts-flag.mjs';
 import type { NormalizeRule } from './declaration-types.ts';
 import type { NormalizeTargetScope, NormalizeTextOutcome } from './normalize.ts';
 import {
@@ -82,13 +83,17 @@ export const DEFAULT_NORMALIZE_BUDGET_MS = 5000;
 
 const WORKER_URL = new URL('./normalize-worker.ts', import.meta.url);
 
-/** The worker's own execution flags — `--experimental-strip-types` so a `.ts` worker file loads with
- * no build step, matching this repository's own established pattern for running a `.ts` file as a
- * real `node` subprocess (`package.json`'s `bench`/`verify-success-criteria` scripts) — confirmed
- * directly (not assumed) that a freshly started worker thread accepts this flag via `execArgv`
- * regardless of which flags started the CALLING process, before this module reached its current
- * form. */
-const WORKER_EXEC_ARGV = ['--experimental-strip-types', '--no-warnings'];
+/** The worker's own execution flags — Node-version-aware so a `.ts` worker file loads with no build
+ * step on every Node this repository supports, not only the versions where
+ * `--experimental-strip-types` happens to exist (`Q340`, `SPEC-QUESTIONS.md`): `WORKER_TS_EXEC_ARGV`
+ * resolves to the native flag on Node >=22.6, or a hand-written `--import`-registered `load` hook
+ * (using the real TypeScript compiler) on Node 20.x, where neither `--experimental-strip-types` nor
+ * `tsx` (this repo's own general Node-20 stand-in) work for a `Worker`'s own module loading —
+ * confirmed directly (not assumed) that a freshly started worker thread accepts either real
+ * mechanism via `execArgv` regardless of which flags started the CALLING process. `--no-warnings`
+ * stays a separate, always-present argv element: harmless and unaffected by which TS mechanism is
+ * in play. */
+const WORKER_EXEC_ARGV = [...WORKER_TS_EXEC_ARGV, '--no-warnings'];
 
 /** How many bytes of shared memory are reserved for the worker's own JSON-encoded result, beyond the
  * 8-byte header (`normalize-worker.ts`'s own doc comment has the exact layout) — generous relative to
