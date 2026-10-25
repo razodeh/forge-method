@@ -28,6 +28,7 @@
  * @see specs/01 §1.8
  * @see PLAN-M12.md P9
  */
+import { stripVTControlCharacters } from 'node:util';
 
 /**
  * @typedef {object} SCCommand
@@ -470,10 +471,25 @@ function isVitestCommand(argv) {
  * `verify-success-criteria.test.ts` can assert this directly against real vitest output strings
  * captured from this repository, not a guessed format.
  *
+ * `Q341` (`SPEC-QUESTIONS.md`): a real `next` CI run reported a genuinely-passing SC3
+ * (`crash-resume.test.ts`) as FAIL. Confirmed live (not merely inferred): vitest's own default
+ * reporter wraps the "N passed" segment in ANSI bold/green escape codes whenever it decides color is
+ * supported (`getStateString`, `tinyrainbow`) -- which it does under a real, non-interactive GitHub
+ * Actions runner (vitest's own `isAgent` check, which disables color, is `std-env`'s AI-coding-agent
+ * detection, not a TTY check; a plain CI runner is not an agent, so color stays on even though stdout
+ * is piped, not a TTY). The escape codes land BETWEEN the padded "Tests" label and the digit itself
+ * (e.g. `Tests \x1b[22m \x1b[1m\x1b[32m1 passed\x1b[39m\x1b[22m (1)`), which breaks `\s+` immediately
+ * before `(\d+)` -- confirmed by literally reproducing this exact output shape against this
+ * repository's own real `scripts/run-tests.mjs` under `CI=true` with every agent-detection
+ * environment variable this process normally carries removed. Stripping VT control characters before
+ * matching -- `node:util`'s own built-in, not a new dependency -- makes the check color-shape-
+ * agnostic instead of assuming a specific TTY/non-TTY rendering.
+ *
  * @param {string} output
  */
 export function hasRealPassedTests(output) {
-  const match = /\bTests\s+(\d+)\s+passed\b/.exec(output);
+  const plain = stripVTControlCharacters(output);
+  const match = /\bTests\s+(\d+)\s+passed\b/.exec(plain);
   return match !== null && Number(match[1]) > 0;
 }
 

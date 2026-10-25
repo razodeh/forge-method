@@ -214,6 +214,18 @@ describe('hasRealPassedTests — real vitest output strings (critic round-1 find
     expect(hasRealPassedTests('')).toBe(false);
     expect(hasRealPassedTests('some unrelated stdout')).toBe(false);
   });
+
+  it("accepts the real, ANSI-colorized output shape vitest prints when it decides color is supported (Q341) -- reproduced live from this repository's own real scripts/run-tests.mjs under CI=true with every agent-detection env var this process normally carries removed, not invented", () => {
+    // Exact bytes this repository's own vitest 4.1.11 produces for a passing run once color is on:
+    // the "N passed" segment is wrapped in bold/green escape codes that land BETWEEN the padded
+    // "Tests" label and the digit, breaking a regex that assumes plain whitespace there. A real,
+    // non-interactive GitHub Actions runner hits this (vitest's own color check is not a TTY check),
+    // this sandboxed dev process normally does not (its own agent-detection env vars disable color) --
+    // which is exactly why this exact byte sequence, not a guess, has to be the regression pin.
+    const colorizedTestsLine =
+      '\u001b[2m      Tests \u001b[22m \u001b[1m\u001b[32m10 passed\u001b[39m\u001b[22m\u001b[90m (10)\u001b[39m';
+    expect(hasRealPassedTests(colorizedTestsLine)).toBe(true);
+  });
 });
 
 describe('evaluateCriterion — vacuous `-t` match is a real FAIL, not a false PASS (critic round-1 finding)', () => {
@@ -273,11 +285,10 @@ describe('realExec + evaluateCriterion together — a real vacuous `-t` match, r
 
 describe('verify-success-criteria.mjs — real subprocess, real repository', () => {
   it('running with --only SC3 against the real repo passes for real (crash-resume.test.ts genuinely runs)', () => {
-    const output = execFileSync(
-      process.execPath,
-      ['--experimental-strip-types', scriptPath, '--only', 'SC3'],
-      { cwd: repoRoot, encoding: 'utf8' },
-    );
+    const output = execFileSync(process.execPath, [scriptPath, '--only', 'SC3'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
     expect(output).toContain('SC3 [PASS]');
     expect(output).toContain('Summary: 1 PASS, 0 FAIL, 0 DISCLOSED (of 1).');
     // 20 real, independent SIGKILL/resume cycles (E3) under this sandbox's own documented
@@ -288,7 +299,7 @@ describe('verify-success-criteria.mjs — real subprocess, real repository', () 
   it('an unknown --only id exits non-zero with a clear message rather than silently running everything', () => {
     let failure: { status?: number | null; stdout?: string; stderr?: string } | undefined;
     try {
-      execFileSync(process.execPath, ['--experimental-strip-types', scriptPath, '--only', 'SC99'], {
+      execFileSync(process.execPath, [scriptPath, '--only', 'SC99'], {
         cwd: repoRoot,
         encoding: 'utf8',
       });
