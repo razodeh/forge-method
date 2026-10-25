@@ -25051,3 +25051,27 @@ test.ts` flake, re-confirmed clean in isolation.
 **Net result**: nine rounds on a single schema field, the clearest demonstration this milestone has produced of why independent critics matter even on a seemingly-small, test-only tail — round 6's own live-output verification (not just unit tests) is what caught a real user-visible regression before it ever shipped.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q346` (updated in place).
+
+---
+## M17 P7 — `Q333`'s own disclosed `runnerVersion` freshness gap CLOSED (Q355), 7 full rounds plus a tiny test-only round 8 (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** `Q333` disclosed, but left unfixed: `runnerVersion` was a model's own self-report, never executed or verified. This piece's `captureRunnerVersion`/`runnerVersionCommand` closes that by actually running something and vetting it as a genuine fifth field.
+
+**Round 1** built the mechanism. **Rounds 2-3** fixed a stale test fixture, widened the allowlist across 6 ecosystems, scaled the timeout, and removed two dead-on-arrival cargo patterns.
+
+**Round 4 — a confirmed live bug with no workaround.** `confined-command.ts`'s `within()` used a raw prefix check that false-positived on the literal string `"..."`, hard-refusing `go test ./...` — the single most idiomatic whole-project Go test invocation, and the exact string this codebase's own `detect.ts` generates. Fixed by checking the first path segment, not a raw prefix (the identical bug turned out to live in two more files; see `Q354`). Same round added a real refusal for npm/pnpm/yarn `test --version` probes (previously disclosed-only, not blocked).
+
+**Rounds 5-7 — the npm/pnpm/yarn refusal itself had FOUR more distinct live bypasses, each a genuinely different mechanism, each found by a fresh critic adversarially probing the round before.** Round 5 rebuilt the whole thing from scratch on an empirically-derived real-execution table (closing an exact-tail-length bypass and an over-broad refusal of genuinely-safe shapes). Round 6 — two critics, two more bypasses, same round: an `=`-embedded flag form (`--version=foo`) and a `run`-form script-name near-miss (`npm run test-other --version`, since the refusal required an exact script-name match while the surrounding allowlist tolerates any `test`-prefixed name). Round 7 — a FIFTH bypass, a different mechanism entirely: real shell glob expansion. The refusal matched against unexpanded command text, but the command actually runs through a real shell that expands globs before npm ever sees argv — a file literally named `--version` sitting in cwd turns `npm test --vers*` into a verbatim leak, confirmed live. Fixed not with one more special case but by reusing the vet pipeline's own already-correct, quote-aware glob-detection primitive and refusing the whole shape outright — closing a CLASS of bypass, not one more shape. Two independent re-review critics each tried hard to find a sixth and found none, with every surface they constructed already covered by a different, independent layer of the same pipeline — a materially stronger result than rounds 4-6, where each bypass had nothing else behind it.
+
+**Round 8 (tiny, test-only)**: one round-7 test's own assertion couldn't actually distinguish its claimed causal mechanism from an unrelated explanation. Fixed by routing the test through a literal `--` separator so the real argv becomes checkable. Zero production code touched.
+
+**Two gaps remain deliberately disclosed, not fixed, both confirmed real and correctly out of this piece's own scope by two independent critics each**: pnpm's generic "any unrecognized flag errors" behavior (not version-specific — fixing it means matching arbitrary unrelated flags, reopening rounds 4-6's own over-broad mistake), and `captureRunnerVersion`'s own "any non-empty output accepted as a real version" contract (a different function's own scope).
+
+**Caught during landing, not by any round**: the stack's own actual prerequisite commit (introducing the feature itself) was never in the reviewed list — an earlier rebase had folded it into round 1's diff relative to a different base. Cherry-picking the approved list alone would have silently dropped real foundational code with zero conflict markers to flag it, since `main` had no independent drift in the affected files for git's 3-way merge to notice. Caught by a landing pass that verified every clean auto-merge against the real source tree rather than trusting the absence of conflict markers, confirmed concretely by a `pnpm typecheck` failure. Reconstructed, not redesigned.
+
+**Net result**: five distinct live bypasses across four rounds of a single detection function is the highest bypass count any piece this milestone produced — and also the clearest demonstration that a fix reusing an existing, correct, already-exercised primitive (round 7) is categorically more trustworthy than one more hand-rolled special case (rounds 4-6), confirmed not just argued: two independent critics tried hard to break round 7 from angles the builder never tested and could not.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q355` (new).
+
+---
+

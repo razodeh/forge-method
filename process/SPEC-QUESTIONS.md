@@ -31250,3 +31250,122 @@ especially, is a dedicated follow-up piece.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P14` entry's close-out addendum for this fix,
 dated 2026-10-25.
+## Q355 — `Q333`'s own disclosed `runnerVersion` freshness gap CLOSED, 7 full gauntlet rounds plus a tiny test-only round 8, each round finding a genuinely new live bypass of the last (M17 P7's own dedicated follow-up piece, owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** `Q333` (M17 P7) disclosed, but left deliberately unfixed: `runnerVersion`
+was never independently re-derived, only caller-supplied — a model's own self-reported version
+string for the test framework it just adopted, never executed or checked. The mechanism this piece
+builds (`captureRunnerVersion`, a new `runnerVersionCommand` field vetted as a genuine fifth field
+alongside `run`/`translate`/`scope`/`filter`) replaces that self-report with something FORGE
+actually executes and verifies. This round count is the deepest adversarial chain in M17 after
+`Q346`'s 9 rounds — not because the mechanism was poorly designed, but because each round's fix
+closed exactly the bypass found so far, and a fresh critic kept finding a DIFFERENT one, across
+five genuinely distinct mechanisms.
+
+**Round 1** — `captureRunnerVersion` executes the proposed `runnerVersionCommand` through the same
+vetted command path everything else in this dispatch surface uses, rather than trusting a model's
+self-report.
+
+**Round 2–3** — fixed a real test regression (a stale `runnerVersion: process.version` fixture),
+widened the version-command allowlist across Node/Go/Cargo/.NET/Django/Laravel, scaled the timeout
+to match `run`'s own 20-minute bound, and removed two cargo version patterns that were dead on
+arrival (blocked by a pre-existing, unconditional `program === 'cargo'` network refusal elsewhere
+in the vet pipeline — confirmed live, not assumed).
+
+**Round 4 — the `go test ./...` false-positive, a confirmed live bug with no workaround.**
+`confined-command.ts`'s own path-escape check, `within()`, used a raw string-prefix test
+(`relative.startsWith('..')`) to detect a `..` parent-directory escape. For the literal path
+`./...` — Go's own recursive-wildcard token, and the EXACT string this codebase's own `detect.ts`
+generates for a whole-project Go test run — `path.relative` returns the three-character string
+`"..."`, which happens to also start with `..`. The real, idiomatic Go test invocation was
+hard-refused with zero workaround (`go test ./pkg/...` only tests one subtree, not "all tests").
+Fixed by checking the first path *segment*, not a raw prefix (`relative === '..' ||
+relative.startsWith('..' + path.sep)`) — this exact bug, and its exact fix, turned out to be
+present in two more files elsewhere in the codebase; see `Q354`'s own entry for that sweep. Same
+round: added a real code-level refusal for npm/pnpm/yarn `test --version` probes (previously only
+disclosed in a doc comment, not actually blocked — silently captures the package manager's own
+version, not the test framework's), and fixed a cargo-refusal test that passed for the wrong reason
+(coincidentally, via an unrelated allowlist message, not the real refusal mechanism it claimed to
+prove).
+
+**Rounds 5–7 — the npm/pnpm/yarn refusal itself had FOUR more distinct live bypasses, each found by
+a fresh critic adversarially probing the one before it, not by continued staring at the same code:**
+- **Round 5**: the first refusal was never actually verified against real package-manager
+  execution — rebuilt from scratch on an empirically re-derived (program, form, flag) trap table
+  (real npm/pnpm/yarn, every combination), closing an exact-tail-length bypass and an over-broad
+  refusal of genuinely-safe shapes (`pnpm run test --version`, both yarn forms) the first version
+  wrongly blocked.
+- **Round 6**: two independent critics each found a DIFFERENT bypass the round-5 table didn't
+  cover: an `=`-embedded flag form (`--version=foo`, confirmed live to leak the real version exactly
+  like the bare flag), and a `run`-form script-name near-miss (`npm run test-other --version` —
+  the admitting allowlist and the surrounding vet both tolerate any script name merely *starting*
+  with `test`, but the refusal itself required an exact match). Both closed; the fix also ran a
+  224-case real-execution sweep of its own, finding nothing further — correctly, but not
+  completely; see round 7.
+- **Round 7 — a fifth bypass, a different MECHANISM entirely: real shell glob expansion.** The
+  refusal matched trap flags against the UNEXPANDED command text. `runnerVersionCommand` actually
+  runs through a real POSIX shell, which performs genuine glob expansion before npm/pnpm ever see
+  argv — and `vetGlob`'s own pre-existing logic deliberately skips any glob candidate starting with
+  `-` (flags aren't paths, by design), so a flag-SHAPED glob word (`--vers*`) was checked by
+  NOTHING. Confirmed live, reproducibly: a file literally named `--version` sitting in cwd turns
+  `npm test --vers*` into a verbatim `--version` the shell hands to npm, leaking npm's own version
+  undetected. Fixed with a structurally different mechanism than rounds 4–6's own string
+  heuristics: instead of one more special-cased pattern, the fix reuses the vet pipeline's own
+  already-correct, quote-aware glob-detection primitive (`syntaxOf`'s internal `globbed` index set,
+  previously computed but discarded by the public `commandWords` export) and refuses the whole
+  shape outright whenever a real, unquoted glob appears in the scanned tail — closing an entire
+  CLASS of bypass (anything depending on real shell expansion), not one more shape. Two independent
+  re-review critics each tried hard, from different angles, to find a sixth bypass (program-name
+  globs, verb aliases, ecosystem false-positives, the primitive's own correctness against its three
+  pre-existing callers) and found none — every adversarial surface either critic constructed turned
+  out to already be covered by a different, independent layer of the same vet pipeline, a
+  materially more reassuring result than rounds 4–6, where each bypass had nothing else behind it.
+
+**Round 8 (tiny, test-only)** — one of round 7's own new tests asserted a claim (a quoted glob
+reaches the real script as a literal, unexpanded string) via an assertion (`ARGV=[]`) that couldn't
+actually distinguish that claim from several other unrelated explanations; a critic caught that the
+test didn't meet this file's own "never assumption, always real execution" standard. Fixed by
+routing the same case through a literal `--` separator so the real argv becomes checkable
+(`ARGV=["--filter=*"]`), with zero production-code change.
+
+**Two gaps remain deliberately, explicitly disclosed, not fixed here — both confirmed real by two
+independent critics, both argued (and independently agreed) to be correctly out of this piece's own
+narrower scope:**
+1. **pnpm's generic "any unrecognized flag errors" behavior** (`pnpm test --Version`/`-vV`) is a
+   real hazard — the resulting parse-error text would be silently captured as if it were a real
+   version — but it is pnpm's own GENERIC flag-parsing behavior, not a version-specific one;
+   matching it would mean matching arbitrary unrelated flags too, reopening round 4-6's own
+   "over-broad" mistake from a different direction.
+2. **`captureRunnerVersion` itself accepts ANY non-empty stdout/stderr as a real `runnerVersion`,
+   with no sanity-checking of the content** — the broader, pre-existing reason either of the above,
+   or a `run`-form script-name near-miss landing on "Missing script" banner text, reads as a
+   plausible version string downstream. This is a different function's own contract, not this
+   probe-detection mechanism's.
+
+**Caught during landing, not by any gauntlet round.** `Q354`'s own entry already covers the
+`tsup.config.ts` missing-build-entry class of bug for a different piece's worker file; this piece's
+own landing surfaced a different, structural issue: the 8-commit stack's actual prerequisite
+commit (`1c160e2`, introducing `captureRunnerVersion`/the `runnerVersionCommand` schema field
+itself) was never part of the reviewed/approved commit list at all — an earlier rebase had folded
+its content into what became round 1's own diff relative to a DIFFERENT, already-landed base, so
+cherry-picking the approved list alone would have silently dropped the real feature's foundational
+code (a missing schema field rename across 6 test files, a missing `ADOPT_TESTS_VET_GRANT` export,
+a missing barrel re-export) with no conflict markers to flag it, since `main` had zero independent
+drift in any of the affected files to make git's 3-way merge notice. Caught by a careful landing
+pass that verified every "clean auto-merge" against the real source commit's own tree rather than
+trusting the absence of conflict markers, confirmed by a `pnpm typecheck` failure that caught the
+field-rename gap concretely. Reconstructed, not redesigned: every line restored was the original
+author's own already-written content.
+
+**Verification, final state.** All 8 commits landed on `main` as distinct commits with original
+messages intact. `node scripts/run-tests.mjs run` across the 6 directly-touched test files: clean.
+`pnpm typecheck`, `pnpm lint`, `pnpm emit-schemas` (no drift — the `runnerVersionCommand` schema is
+a local Zod schema inside `adopt-agent.ts`, confirmed not reachable through `@forge/schemas`):
+clean. An isolated, from-scratch backstop worktree surfaced 3 failing tests on first run — a
+process-kill-timing assertion, a 20-real-OS-process concurrency test, and a git-ref-lock-contention
+test — none in files this piece's own logic touches; all 3 re-ran clean in isolation (240/240),
+confirming transient host contention from this session's own heavy parallel dispatch, not a
+regression.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P7` entry's close-out addendum for this fix,
+dated 2026-10-25.
