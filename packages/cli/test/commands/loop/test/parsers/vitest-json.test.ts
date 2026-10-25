@@ -122,6 +122,9 @@ describe('parseVitestJson (specs/22 M17 P3)', () => {
       kind: 'load',
       file: '/fixture/broken/x.test.js',
     });
+    // `message` (Q346, round 6): the real captured load-failure text now reaches `message` too, not
+    // only `name` -- a round-6 critic found this branch alone still dropped it entirely.
+    expect(result.tests[0]?.message).toContain('this-module-does-not-exist-xyz');
   });
 
   it('a TOP-LEVEL thrown beforeAll reclassifies every "skipped" assertion in that file into fail/crash -- including one that was genuinely .skip()-ed, which this format cannot tell apart from the hook victim', () => {

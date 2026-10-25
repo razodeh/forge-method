@@ -191,12 +191,18 @@ function outcomesFromVitestFileResult(fileResult: VitestFileResult): readonly Te
     // tests would have proven is unverifiable, not silently absent from the report. `kind: 'load'`
     // (`specs/22` M16 P10): the file never got far enough to run a single test body, so this is the
     // "stillborn mutant" case `13` F-TEST-10's load-failure rule names, not an assertion failure.
-    const detail =
+    // `message` (Q346, round 6): `rawDetail` is the real, possibly-absent captured text -- a round-6
+    // critic found this branch, the exact structural twin of the JUnit collection-failure branch
+    // round 5 just fixed (same file, directly above it), still never threaded `message` at all: the
+    // 4-arg `makeOutcome` call below never passed a 5th. `outcomeName` deliberately keeps its own
+    // unqualified "file failed to load" shape (never the detail text), the same round-5 fix that
+    // closed the identical double-print bug for the JUnit branch, applied here from the start.
+    const rawDetail =
       typeof fileResult.message === 'string' && fileResult.message !== ''
         ? fileResult.message
-        : 'failed to load';
-    const outcomeName = `${fileName ?? '(unknown file)'} (file failed to load: ${detail})`;
-    return [makeOutcome(outcomeName, 'fail', fileName, 'load')];
+        : undefined;
+    const outcomeName = `${fileName ?? '(unknown file)'} (file failed to load)`;
+    return [makeOutcome(outcomeName, 'fail', fileName, 'load', rawDetail)];
   }
 
   const outcomes: TestOutcome[] = [];
@@ -429,15 +435,16 @@ function outcomesFromJunitXml(xml: string): readonly TestOutcome[] {
       // the module's baseline-passing tests exactly as a vitest run already does for the identical
       // shape (`13` F-TEST-10, Q294 Decision 8) — the asymmetry this piece fixes.
       if (classname === '' && testcase.error !== undefined) {
-        // `message` (Q346, round 5): `rawDetail` is the same real captured text the display name
-        // below already folds in -- a round-4 critic found it was computed here and then only ever
-        // used for `outcomeName`, never also threaded through as `makeOutcome`'s own `message`
-        // parameter the way the ordinary per-testcase branch just below it already is. `detail`
-        // (with its `'collection failure'` fallback) stays display-name-only, since `message` itself
-        // must stay honestly absent when there is nothing real to report, never a guessed fallback.
+        // `message` (Q346, round 5-6): `rawDetail` is the real captured text, honestly `undefined`
+        // when there is none to report (never a guessed fallback). Round 5 threaded it through as
+        // `makeOutcome`'s own `message` parameter but LEFT it folded into `outcomeName` too -- a
+        // round-6 critic caught this live: `story.ts`'s `namedOutcome` unconditionally appends
+        // `(${message})` after `name` for display, so the same detail text was printing TWICE,
+        // back-to-back, in real user-facing output. `outcomeName` now names only the unqualified
+        // "file failed to load" shape; the real detail (when there is one) reaches a consumer
+        // exactly once, via `message` alone.
         const rawDetail = detailOfJunitElement(testcase.error);
-        const detail = rawDetail ?? 'collection failure';
-        const outcomeName = `${name} (file failed to load: ${detail})`;
+        const outcomeName = `${name} (file failed to load)`;
         outcomes.push(makeOutcome(outcomeName, 'fail', name, 'load', rawDetail));
         continue;
       }
@@ -1152,7 +1159,13 @@ function isTestOutcome(value: unknown): value is TestOutcome {
       candidate['status'] === 'fail' ||
       candidate['status'] === 'skip') &&
     (candidate['file'] === undefined || typeof candidate['file'] === 'string') &&
-    (candidate['kind'] === undefined || isTestFailureKind(candidate['kind']))
+    (candidate['kind'] === undefined || isTestFailureKind(candidate['kind'])) &&
+    // `message` (Q346, round 6): added to `TestOutcome` back in round 2, but never added here -- a
+    // round-6 critic found a hand-edited or truncated `test-results.json` with a non-string
+    // `message` (e.g. a stray `42`) was silently ACCEPTED, read back with a type that promises
+    // `string | undefined` while actually holding a number at runtime. The exact class of corruption
+    // this function's own doc comment already names as its job to catch.
+    (candidate['message'] === undefined || typeof candidate['message'] === 'string')
   );
 }
 

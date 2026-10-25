@@ -577,6 +577,40 @@ describe('writeNormalizedReport / readNormalizedReport', () => {
 
     await expect(readNormalizedReport(paths)).rejects.toMatchObject({ code: 'RUN-058' });
   });
+
+  it("round-trips a 'fail' outcome's own message (Q346, round 6) — additive, so an old report with no message at all still reads back fine", async () => {
+    const dir = await tempDir();
+    const paths = new ProjectPaths(dir);
+    const report = {
+      outcomes: [
+        {
+          name: 'AC-600-1 has a message',
+          acId: 'AC-600-1',
+          status: 'fail' as const,
+          message: 'expected 4, got 5',
+        },
+        { name: 'a plain pre-Q346-shaped fail', acId: undefined, status: 'fail' as const },
+      ],
+    };
+
+    await writeNormalizedReport(paths, report);
+    const readBack = await readNormalizedReport(paths);
+
+    expect(readBack).toEqual(report);
+  });
+
+  it("rejects a non-string message with the same typed RUN-058 (Q346, round 6: isTestOutcome never checked message's own type until now)", async () => {
+    const dir = await tempDir();
+    const paths = new ProjectPaths(dir);
+    await mkdir(path.join(dir, 'docs/forge/reports'), { recursive: true });
+    await writeFile(
+      path.join(dir, 'docs/forge/reports/test-results.json'),
+      '{"v": 1, "outcomes": [{"name": "x", "status": "fail", "message": 42}]}',
+      'utf8',
+    );
+
+    await expect(readNormalizedReport(paths)).rejects.toMatchObject({ code: 'RUN-058' });
+  });
 });
 
 // --- specs/22 M16 P10: failure-kind classification, per-run timeouts, the load-failure asymmetry ---
@@ -653,6 +687,12 @@ describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F
     if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
     expect(result.report.outcomes).toHaveLength(1);
     expect(result.report.outcomes[0]).toMatchObject({ status: 'fail', kind: 'load' });
+    // `message` (Q346, round 6): this LEGACY path's own whole-file-load-failure branch
+    // (`outcomesFromVitestFileResult`) used to never thread `message` at all -- a round-6 critic
+    // found it was the exact structural twin of the JUnit collection-failure branch round 5 fixed,
+    // sitting in the very same file; this is the one real producer of that detail among this file's
+    // own fixtures, so its presence here closes the gap class rather than merely asserting "truthy."
+    expect(result.report.outcomes[0]?.message).toBeTruthy();
   });
 
   it('vitest: a beforeAll hook exception is kind "crash" — not "load" (the file loaded fine) and not "assertion" (the test body never ran)', async () => {

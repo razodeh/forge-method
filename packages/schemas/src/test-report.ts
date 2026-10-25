@@ -22,31 +22,36 @@
  * conventionally carries its own `message:` key, but no built-in `tap` parser in
  * `packages/cli/src/commands/loop/test/parsers/` reads that block today, still deferred). Of the
  * other built-in parsers there: `junit-xml.ts` reads this from `<failure>`/`<error>`/`<skipped>`'s
- * own `message` attribute or text content (round-3 critic: delivery was proven end to end, so this
- * capture -- the data was already sitting right there, unread -- was wired through rather than left
- * deferred); `vitest-json.ts` carries the hook's own already-computed message onto every entry its
- * top-level hook-throw reclassification touches (`parseVitestJson`'s own doc comment; round-2
- * critic). Jest's per-assertion `failureMessages` is still never read, and both Jest's and Vitest's
- * parsers still fold a captured file-level message into a synthetic entry's `name` instead, for an
- * unrelated, pre-existing reason (a whole file that failed to load) -- left as-is, real but smaller
- * gaps than the two just closed. This capture is not confined to the structured, opt-in
- * `packages/cli/.../parsers/` paths named above: `reporter.ts`'s own LEGACY, ecosystem-auto-detected
- * paths (`outcomesFromJunitXml`/`outcomesFromVitestFileResult`, reached by the default, bare-string
- * `testCommands.<layer>` form, not only a layer that opts into a structured `format`) populate
- * `message` the same way, round 4-5, via the identical shared `detailOfJunitElement`
- * (`packages/cli/.../junit-detail.ts`) for every one of JUnit's three fail-shaped branches
- * (assertion/crash/the whole-module collection-failure case) and the identical already-captured
- * hook text for vitest's own top-level hook-throw reclassification -- a round-3 critic found this
- * legacy/structured split had gone unfixed and undisclosed in both of those cases, and a round-4
- * critic found one more branch (JUnit's own collection-failure case) still missed inside the very
- * function round 4 had just fixed the other two branches of. The field exists and validates
- * regardless of which producer populates it; a future translator (hand-written, or `forge test
- * adopt` agent-authored) populates it directly, the same way `forge-json` already passes any entry
- * through unchanged, and
- * `reporter.ts`'s own `outcomeFromReportEntry` already carries it as far as `TestOutcome` for both
- * real call sites (`runTranslator`, `PARSERS[format]`) -- a human/agent-facing consumer reads it via
- * `packages/cli/src/commands/story.ts`'s own `namedOutcome`, for a `'fail'` AND, as of round 3, a
- * `'skip'` outcome too (its own "every test skipped?" message).
+ * own `message` attribute or text content, for every one of JUnit's three fail-shaped branches
+ * (an ordinary assertion/crash, and the whole-module collection-failure case); `vitest-json.ts`
+ * carries the hook's own already-computed message onto every entry its top-level hook-throw
+ * reclassification touches, AND onto its own synthetic whole-file-load-failure entry (both read off
+ * `fileResult.message`, round 2 and round 6 respectively). Jest's per-assertion `failureMessages` is
+ * still never read, and Jest's own parser still folds a captured file-level message into a synthetic
+ * entry's `name` instead of also carrying it as `message` -- real but smaller gaps than the ones
+ * already closed. `go-test-json.ts` never reads `go test -json`'s own `Output` event lines at all (a
+ * real, separately-disclosed limitation of that parser unrelated to `message` specifically --
+ * `go-test-json.ts`'s own doc comment), so it has no captured text to carry either; not the same
+ * "captured but dropped" shape the fixes above closed, since there is nothing already in hand here.
+ * This capture is not confined to the structured, opt-in `packages/cli/.../parsers/` paths named
+ * above: `reporter.ts`'s own LEGACY,
+ * ecosystem-auto-detected paths (`outcomesFromJunitXml`/`outcomesFromVitestFileResult`, reached by
+ * the default, bare-string `testCommands.<layer>` form, not only a layer that opts into a structured
+ * `format`) populate `message` the same way, via the identical shared `detailOfJunitElement`
+ * (`packages/cli/.../junit-detail.ts`) for every one of JUnit's own three fail-shaped branches, and
+ * the identical already-captured text for both of vitest's own synthesised cases (the top-level
+ * hook-throw reclassification, and the whole-file-load-failure entry). Five critic rounds (2 through
+ * 6) each found one more branch, in one more file, where this same capture-the-text-but-only-use-it-
+ * for-`name`-or-`status` pattern had been fixed in one sibling but not its twin -- every JUnit- and
+ * vitest-reading branch across both the legacy and structured paths is now covered; Jest's two named
+ * gaps and `go-test-json.ts`'s own absence of any captured text at all are what remain. The field
+ * exists and validates regardless of which producer populates it; a future translator (hand-written,
+ * or `forge test adopt` agent-authored) populates it
+ * directly, the same way `forge-json` already passes any entry through unchanged, and `reporter.ts`'s
+ * own `outcomeFromReportEntry` already carries it as far as `TestOutcome` for both real call sites
+ * (`runTranslator`, `PARSERS[format]`) -- a human/agent-facing consumer reads it via
+ * `packages/cli/src/commands/story.ts`'s own `namedOutcome`, for a `'fail'` AND a `'skip'` outcome
+ * alike (its own "every test skipped?" message).
  *
  * @see specs/09 §9.5
  * @see specs/22 M17 P3, M17 P21 (Q346)

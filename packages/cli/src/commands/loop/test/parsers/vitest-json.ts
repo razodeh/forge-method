@@ -11,7 +11,10 @@
  *
  * 1. A file that fails to load (an unresolved import, a syntax error) reports `assertionResults: []`
  *    with the file's own `status: 'failed'` — every AC that file's tests would have proven is
- *    unverifiable, not silently absent; read as one `kind: 'load'` failure.
+ *    unverifiable, not silently absent; read as one `kind: 'load'` failure. The file's own real
+ *    `message` (Q346, round 6) is carried onto that one synthetic entry too, not only folded into
+ *    its `name` — a round-6 critic found this branch alone still dropped it after round 2 wired
+ *    `message` into every OTHER branch this parser has.
  * 2. A **top-level** `beforeAll`/`afterAll` hook that throws (one declared outside any `describe()`)
  *    reports EVERY assertion in that file as `status: 'skipped'` — including one that was genuinely,
  *    deliberately `.skip()`-ed, which this format gives no way to tell apart from a hook's victim at
@@ -83,12 +86,27 @@ function entriesFromFile(fileResult: VitestFileResult): readonly ForgeTestReport
 
   if (assertions.length === 0) {
     if (!fileFailed) return [];
-    const detail =
+    // `message` (Q346, round 6): `rawDetail` is the real, possibly-absent captured text, threaded
+    // through separately rather than folded into `name` -- `reporter.ts`'s own identical branch
+    // (`outcomesFromVitestFileResult`) used to fold it into the name text alone, which round 6 fixed
+    // there after a critic found this structured parser's own twin had the identical gap: `name`
+    // never carried the detail AND `message` was never populated at all, dropping the real text
+    // silently. `name` keeps its own unqualified "file failed to load" shape so the real detail (when
+    // there is one) reaches a consumer exactly once, via `message` alone.
+    const rawDetail =
       typeof fileResult.message === 'string' && fileResult.message !== ''
         ? fileResult.message
-        : 'failed to load';
-    const name = `${file ?? '(unknown file)'} (file failed to load: ${detail})`;
-    return [{ name, status: 'fail', kind: 'load', ...(file === undefined ? {} : { file }) }];
+        : undefined;
+    const name = `${file ?? '(unknown file)'} (file failed to load)`;
+    return [
+      {
+        name,
+        status: 'fail',
+        kind: 'load',
+        ...(file === undefined ? {} : { file }),
+        ...(rawDetail === undefined ? {} : { message: rawDetail }),
+      },
+    ];
   }
 
   const entries: ForgeTestReportEntry[] = [];
