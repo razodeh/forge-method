@@ -24974,3 +24974,23 @@ test.ts` flake, re-confirmed clean in isolation.
 **Net result**: four rounds, each surfacing a real gap in the previous round's own "this matches the stated rationale" claim — the same discipline-justifying pattern as `Q325`'s three rounds, this time on a single, narrow filesystem-edge-case guard rather than a broad audit.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q352` (new; supersedes the builder's own stale, round-1-only draft that collided with `Q351`'s numbering).
+
+---
+
+## M17 P16 — Q340 + Q341's own fix: the two real CI-blocking root causes, 4 rounds (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** `Q340` (Node 20 `--experimental-strip-types` incompatibility) and `Q341` (an ANSI-stripping bug breaking `verify-success-criteria.mjs`'s own SC3 pass-detection) were the two real defects the first actual CI push to `next` surfaced, blocking a clean signal from the real matrix at all.
+
+**Round 1.** `scripts/lib/node-ts-flag.mjs`'s `TS_NODE_FLAG` resolves per-process: native flag on Node ≥22.6, a `tsx`-based fallback on Node 20.x. Migrated every real hardcoded occurrence found at the time. `Q341` fixed by stripping VT control characters before parsing vitest's pass count — root-caused by live reproduction (vitest's own color-detection distinguishes "an AI coding agent" from "a plain CI runner," keeping color on for the latter even though it's non-interactive).
+
+**Round 2 — two critics, two real findings.** One found two stale, user-facing doc examples (`CONTRIBUTING.md`, `getting-started.md`) still showing the broken flag literally. The other found something more severe: the `tsx` fallback's bare specifier (`--import=tsx/esm`) resolves relative to the spawned CHILD's own cwd, not the repo — meaning the real-world scenario Q340 exists to fix (running `forge` against an external project directory on Node 20) would still be broken, just with a different error.
+
+**Round 3 — rebased onto `main`'s real current tip, found ~20 more sites, found a new production crash.** Fixed the Windows path bug (the absolute-path fix from round 2 used an OS-native path string, which breaks `--import=` on Windows — a drive letter gets read as a URL scheme; fixed via `pathToFileURL`, matching an existing precedent already in this codebase). Migrated the newly-visible ~19 sites (only visible once rebased onto current `main`, since other already-landed M17 pieces had added them) plus a second, previously-missed occurrence inside an already-migrated file. Found, while fixing the one real production Worker-thread spawn: `tsx` does not work for Node `worker_threads` at all — closed with brand-new, hand-written loader/hook infrastructure using the real TypeScript compiler.
+
+**Round 4 — that very fix was itself found release-blocking.** A critic proved, against the REAL built, published artifact (not just raw source under a test runner): the new Worker-thread mechanism's `require.resolve` call sat in a top-level const in the same module as `TS_NODE_FLAG`, so importing either export ran the whole module body — and since the Worker-thread file is bundled into the single published `dist/forge.mjs`, this broke the ENTIRE published CLI, every command, on Node <22.6. Fixed with defense in depth across four independent layers (pure version-detection extraction, a lazy/memoized worker-flag function with no dependency on the eager module, a second real `tsup` build entry, a safe `existsSync` dev/dist branch) — each independently re-verified by two fresh critics, including one who deliberately reverted to the pre-fix state and reconfirmed the crash before re-confirming the fix, and one who built the real npm tarball and `npm install`'d it into a scratch project.
+
+**Found along the way, disclosed, explicitly out of scope**: a critic reviewing the round-4 bundling fix found that a separate, already-disclosed defect (`specs/23` decision #1 — the published CLI's eager `@forge/templates` resolution) is in practice worse than its own write-up states, confirmed live via a real tarball install — breaks every command, not only `forge init`. Recommended as its own dedicated future piece.
+
+**Net result**: four rounds on what started as "two CI script bugs" — the deepest finding (the release-blocking bundling regression) only surfaced because a critic insisted on testing the real built artifact rather than trusting source-level verification, a discipline worth carrying forward.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q340` and `## Q341` (both updated in place).

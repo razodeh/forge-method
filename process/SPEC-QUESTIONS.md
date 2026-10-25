@@ -30369,9 +30369,54 @@ content), and likely any sibling script using the identical spawn pattern. `spec
 Node >=20.10 as a tested, supported version (`floor` job's own OS/Node matrix tests 20/22/24) — this
 is a real, live violation of that pin, not a hypothetical one.
 
-**DECISION** — not fixed yet; folded into M17 P16's own mandate (`PLAN-M17.md`), since P16 is the
-piece whose own exit condition (a real, green `next` CI matrix) this blocks directly, and fixing it
-is a real prerequisite to getting ANY clean signal from the matrix at all, Windows included.
+**FIXED (owner-directed scope expansion, 2026-10-25), across 4 rounds, folded into M17 P16's own
+mandate.** A new `scripts/lib/node-ts-flag.mjs` resolves `TS_NODE_FLAG` per-process:
+`--experimental-strip-types` on Node ≥22.6, a `tsx`-based fallback on Node 20.x. Every real
+hardcoded occurrence migrated — scripts, real-child-process test fixtures across `packages/cli`,
+`packages/engine`, `packages/telemetry`, `packages/adapter-generic`, `packages/adapter-claude-code`,
+plus (found by a critic in a later round) ~19 more sites not visible until the fixing branch was
+rebased onto `main`'s then-current tip, plus a second, previously-missed occurrence inside a file
+the first migration pass had already (incompletely) touched.
+
+Two further rounds of critics each found the fallback mechanism itself broken in a new way: (1) the
+`tsx` fallback used a bare specifier (`--import=tsx/esm`) that resolves relative to the spawned
+CHILD's own cwd, not the repo — breaking the exact real-world scenario Q340 exists to fix (running
+`forge` against an external project directory on Node 20); fixed by resolving to an absolute path.
+(2) That absolute path was an OS-native path string, which breaks on Windows (`--import=C:\...`
+gets its drive letter read as a URL scheme) — fixed by wrapping in `pathToFileURL(...).href`,
+matching an existing precedent (`preflight.cjs`'s `distEntryUrl`) already established elsewhere in
+this codebase for the identical bug class.
+
+A separate, real production crash was found along the way: `tsx` does not work for Node
+`worker_threads` at all (confirmed empirically — its hooks silently install nothing via a Worker's
+own `execArgv`, and it explicitly refuses the `module.register()` alternative). Closed with
+brand-new, hand-written loader/hook infrastructure (`scripts/lib/worker-ts-strip-loader.mjs` +
+`worker-ts-strip-hooks.mjs`, using the real TypeScript compiler's `ts.transpileModule`), wired into
+`packages/cli/src/commands/parity/normalize-budget.ts`'s own Worker spawn.
+
+**That fix was itself found release-blocking by a further critic round**: the new mechanism's own
+`require.resolve` call, sitting in a top-level `const` in the same module as `TS_NODE_FLAG`, meant
+importing EITHER export ran the WHOLE module body — and since `normalize-budget.ts` is reachable
+from real command dispatch and bundled into the single published `dist/forge.mjs` artifact, this
+broke the entire published CLI, every command, on Node <22.6 (confirmed live: `node dist/forge.mjs
+--version` on real Node 20.19.6 crashed immediately). Fixed with defense in depth: the version-
+detection logic extracted into a new side-effect-free module; the worker-specific fallback turned
+into a lazy, memoized function (never a const) with no dependency on the eager-resolving module; a
+second `tsup` build entry producing a real precompiled `dist/normalize-worker.mjs` (closing a second,
+adjacent gap the same finding exposed — the worker's own source was never shipped at all, even on
+Node ≥22.6); and a safe `existsSync` check preferring the precompiled path when a real build exists.
+Verified against the real, built, published artifact on real Node 20.19.6 end to end, not merely
+against raw source under a test runner — the exact gap that let the original regression through.
+
+**Found along the way, disclosed, explicitly out of this piece's own scope**: a critic reviewing the
+bundling fix found a separate, more severe, already-disclosed defect (`specs/23-open-decisions.md`
+decision #1) is in practice worse than its own write-up states — the published CLI's eager
+`import.meta.resolve('@forge/templates')` pattern (4 files, predating M17 entirely) breaks every
+command, not only `forge init` as documented, confirmed live via a real `npm pack` + install into a
+scratch project. Recommended as its own dedicated M17 piece before any real publish/trial; not
+touched here.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P16` entry for this fix, dated 2026-10-25.
 
 ## Q341
 
@@ -30389,12 +30434,16 @@ real test passed; the script's own detection of that fact is what's broken — a
 assumption (TTY/color-code output shape, or similar) that holds in local interactive dev but not on
 a real, non-interactive GitHub Actions runner.
 
-**DECISION** — not fixed yet; folded into M17 P16's own mandate alongside Q340, for the identical
-reason (blocks a clean real-matrix signal; found only because real CI finally ran).
+**FIXED (owner-directed scope expansion, 2026-10-25).** Root-caused by live reproduction: vitest's
+own reporter wraps its "N passed" segment in ANSI color codes whenever it decides color is
+supported — which it does on a real, non-interactive GitHub Actions runner, since vitest's "disable
+color" check is an AI-coding-agent detection, not a TTY check, and a plain CI runner isn't an agent.
+`hasRealPassedTests`'s regex broke on the resulting byte sequence. Fixed by stripping VT control
+characters (`node:util`'s `stripVTControlCharacters`) before matching. A regression test pins the
+exact reproduced byte sequence; a critic independently re-derived it live and confirmed it's
+generic (strips any standard ANSI/VT sequence, not pattern-matched to the one reproduced string).
 
-**Gauntlet:** see `GAUNTLET-LOG.md` once P16's own fix piece lands (not yet built as of this entry —
-this records the disclosure, per the owner's own "every disclosed defect fixed first" standing
-instruction, same as Q314/Q317 before their own follow-up pieces landed).
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P16` entry for this fix, dated 2026-10-25.
 
 ## Q342
 
