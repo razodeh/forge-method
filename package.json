@@ -16,12 +16,12 @@
     "coverage:boundaries": "node scripts/run-tests.mjs run --config vitest.boundaries-coverage.config.ts --coverage",
     "test:watch": "node scripts/run-tests.mjs",
     "boundaries": "node scripts/check-boundaries.mjs",
-    "bench": "node --experimental-strip-types scripts/bench.mjs",
+    "bench": "node scripts/run-bench.mjs",
     "changeset": "changeset",
     "coverage:ratchet": "node scripts/check-coverage-ratchet.mjs",
     "emit-schemas": "node scripts/emit-schemas.mjs",
     "schema-drift": "node scripts/assert-schema-drift.mjs",
-    "verify-success-criteria": "node --experimental-strip-types scripts/verify-success-criteria.mjs",
+    "verify-success-criteria": "node scripts/verify-success-criteria.mjs",
     "forge": "node packages/cli/bin/forge.mjs"
   },
   "devDependencies": {
@@ -50,6 +50,7 @@
     "handlebars": "4.7.9",
     "prettier": "3.9.6",
     "tsup": "8.5.1",
+    "tsx": "4.23.15",
     "turbo": "2.10.12",
     "typescript": "5.9.3",
     "typescript-eslint": "8.69.0",

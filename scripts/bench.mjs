@@ -32,11 +32,11 @@
  * mark comparison. A real CI runner is dedicated and single-tenant, where this noise mostly does not
  * apply — this file does not pretend otherwise.
  *
- * Usage:
- *   node --experimental-strip-types scripts/bench.mjs           # record mode: run, warn/fail over
- *                                                                # budget, update marks on improvement
- *   node --experimental-strip-types scripts/bench.mjs --check   # CI gate: fail on any regression past
- *                                                                # the stricter of budget or mark
+ * Usage (via `pnpm bench`, which spawns this through `scripts/run-bench.mjs`'s own Node-version-aware
+ * flag -- Q340 -- rather than a bare `node scripts/bench.mjs`, since this file's own top-level imports
+ * are real TypeScript workspace source):
+ *   pnpm bench             # record mode: run, warn/fail over budget, update marks on improvement
+ *   pnpm bench --check     # CI gate: fail on any regression past the stricter of budget or mark
  *
  * @see specs/21 §21.5
  * @see scripts/lib/bench-ratchet.mjs
