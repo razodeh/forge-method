@@ -30,4 +30,5 @@ export {
   type ForgeErrorJson,
 } from './forge-error.ts';
 export { formatForTerminal, type FormatOptions } from './format.ts';
+export { formatZodIssues } from './format-zod-issues.ts';
 export { renderValue } from './render.ts';

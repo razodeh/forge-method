@@ -8,6 +8,7 @@
  * @see specs/02 §2.6
  */
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import {
   ERROR_CODES,
@@ -18,6 +19,7 @@ import {
   renderValue,
   exitCodeFor,
   formatForTerminal,
+  formatZodIssues,
   isForgeError,
 } from '../src/index.ts';
 
@@ -487,6 +489,93 @@ describe('formatForTerminal', () => {
   it('renders a non-Error cause without throwing', () => {
     const withCause = new ForgeError('CFG-001', { path: 'x' }, { cause: 'a bare string' });
     expect(formatForTerminal(withCause, { color: false, ascii: true })).toContain('a bare string');
+  });
+});
+
+describe('formatZodIssues', () => {
+  // `specs/02` §2.6 names no spec section for this convention directly -- it is the shared
+  // rendering `~16` pre-existing call sites across the codebase independently arrived at (`SPEC-
+  // QUESTIONS.md` Q325), not something a schema spec declares. These tests cover the convention
+  // itself: the pre-existing ordinary-issue behaviour, then the `z.union` branch Q325 disclosed as
+  // a latent weakness and this fix closes.
+
+  it('renders a single issue as "path: message"', () => {
+    const result = z.object({ title: z.string() }).safeParse({});
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(formatZodIssues(result.error.issues)).toBe('title: Required');
+  });
+
+  it('falls back to "(root)" for a path-less, root-level issue', () => {
+    const result = z.string().safeParse(42);
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(formatZodIssues(result.error.issues)).toBe('(root): Expected string, received number');
+  });
+
+  it('joins multiple issues with "; "', () => {
+    const result = z.object({ title: z.string(), count: z.number() }).safeParse({});
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(formatZodIssues(result.error.issues)).toBe('title: Required; count: Required');
+  });
+
+  it(
+    "names every union member's own failure for a z.union schema, not zod's fixed, generic " +
+      '"Invalid input" (SPEC-QUESTIONS.md Q325)',
+    () => {
+      const result = z.union([z.string(), z.number()]).safeParse({ nope: true });
+      expect(result.success).toBe(false);
+      if (result.success) return;
+
+      const message = formatZodIssues(result.error.issues);
+      // This is the exact weakness Q325 disclosed: before this fix, every `invalid_union` issue
+      // rendered as this one fixed, uninformative line, regardless of how many shapes were tried
+      // or how each one actually failed.
+      expect(message).not.toBe('(root): Invalid input');
+      expect(message).toContain('did not match any of the 2 allowed shapes');
+      // Each member's own, distinct reason for failing is actually named.
+      expect(message).toContain('Expected string, received object');
+      expect(message).toContain('Expected number, received object');
+    },
+  );
+
+  it("names each candidate's own failing field for a union of object shapes -- the exact shape of consent.ts's own overlayCapabilityEntrySchema, confirmed live, not merely hypothetical (SPEC-QUESTIONS.md Q325)", () => {
+    const schema = z.union([
+      z.object({ network: z.array(z.string().min(1)) }).strict(),
+      z.object({ exec: z.array(z.string().min(1)) }).strict(),
+      z.object({ 'mcp-write': z.boolean() }).strict(),
+    ]);
+    const result = schema.safeParse({ bogus: 1 });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+
+    const message = formatZodIssues(result.error.issues);
+    expect(message).not.toBe('(root): Invalid input');
+    expect(message).toContain('did not match any of the 3 allowed shapes');
+    // Every one of the three candidates' own concrete, distinguishing reason is named: the field
+    // each branch declares required, and the key none of them recognise.
+    expect(message).toContain('network: Required');
+    expect(message).toContain('exec: Required');
+    expect(message).toContain('mcp-write: Required');
+    expect(message.match(/Unrecognized key\(s\) in object: 'bogus'/g)).toHaveLength(3);
+  });
+
+  it('recurses through a union nested inside another union, naming the innermost failure rather than collapsing it to "Invalid input" at either level', () => {
+    const inner = z.union([z.literal('a'), z.literal('b')]);
+    const result = z.union([z.object({ kind: inner }).strict(), z.number()]).safeParse({
+      kind: 'c',
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+
+    const message = formatZodIssues(result.error.issues);
+    expect(message).not.toContain('Invalid input');
+    // The outer union (object-shape vs. number) and the inner union (literal "a" vs. "b") each
+    // report their own "did not match any of the N allowed shapes", not just the outer one.
+    expect(message.match(/did not match any of the 2 allowed shapes/g)).toHaveLength(2);
+    expect(message).toContain('Invalid literal value, expected "a"');
+    expect(message).toContain('Invalid literal value, expected "b"');
   });
 });
 

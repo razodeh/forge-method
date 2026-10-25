@@ -50,7 +50,7 @@ import { createInterface } from 'node:readline';
 
 import { z } from 'zod';
 
-import { ForgeError } from '@forge/core';
+import { ForgeError, formatZodIssues } from '@forge/core';
 
 import type { ModuleDefinition } from '../module/index.ts';
 
@@ -110,7 +110,14 @@ export type CapabilityManifestInput =
  * `.strict()` on every branch so an entry combining two keys (not the spec's own documented shape,
  * and ambiguous to render — which capability "wins" the entry's single line?) is refused at parse
  * time with a named reason, rather than one of the two keys silently winning on whichever `in` check
- * happens to run first. */
+ * happens to run first.
+ *
+ * This is a real, live `z.union` feeding `describeRequestedCapabilities`'s own `formatZodIssues`
+ * call below — an entry that matches none of the three branches (e.g. an unrecognised key, or none
+ * of the three) previously rendered zod's generic, unhelpful `"Invalid input"` through that
+ * convention's pre-Q325-fix form (`SPEC-QUESTIONS.md` Q325 disclosed this convention's `z.union`
+ * weakness as currently unreachable in production; this schema is the counterexample that fix's own
+ * research missed). */
 const overlayCapabilityEntrySchema = z.union([
   z.object({ network: z.array(z.string().min(1)) }).strict(),
   z.object({ exec: z.array(z.string().min(1)) }).strict(),
@@ -135,12 +142,6 @@ const overlayCapabilityManifestSchema = z
   .passthrough();
 
 export type OverlayCapabilityManifest = z.infer<typeof overlayCapabilityManifestSchema>;
-
-function formatZodIssues(
-  issues: readonly { readonly path: readonly (string | number)[]; readonly message: string }[],
-): string {
-  return issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ');
-}
 
 /** Appends `entry` only if an entry with the identical `kind`/`text` is not already present — the
  * "repeated verbatim across roles/entries is folded to one" rule `CapabilityDescription.entries`'

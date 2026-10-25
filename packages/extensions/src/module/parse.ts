@@ -4,17 +4,11 @@
  * @see specs/19 §19.1
  * @see PLAN-M10.md P2
  */
-import { ForgeError, readTextFile, type AbsolutePath } from '@forge/core';
+import { ForgeError, formatZodIssues, readTextFile, type AbsolutePath } from '@forge/core';
 import { parse as parseYaml } from 'yaml';
 
 import { moduleSchema } from './schema.ts';
 import type { ModuleDefinition } from './types.ts';
-
-function formatZodIssues(
-  issues: readonly { readonly path: readonly (string | number)[]; readonly message: string }[],
-): string {
-  return issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`).join('; ');
-}
 
 /**
  * Reads `path` as a `module.yaml` document and validates it against `moduleSchema`.
