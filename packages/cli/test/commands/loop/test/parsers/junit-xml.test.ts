@@ -134,6 +134,9 @@ describe('parseJunitXml (specs/22 M17 P3)', () => {
     expect(pass?.[1].kind, 'the pass entry').toBeUndefined();
     expect(fail?.[1].status, 'the fail entry').toBe('fail');
     expect(fail?.[1].kind, 'the fail entry').toBe('assertion');
+    // `message` (Q346, round 3): every one of these five real dialects' own `<failure>` carries
+    // either real text or a real attribute, so every one is captured, non-empty.
+    expect(fail?.[1].message, 'the fail entry').toBeTruthy();
   });
 
   it('never attributes a file from classname: pytest/node/jest-junit/vitest set no <testsuite file> attribute at all, so every entry omits file', () => {
@@ -181,7 +184,11 @@ describe('parseJunitXml (specs/22 M17 P3)', () => {
       '<testsuites><testsuite><testcase classname="m" name="t1"><error message="boom">traceback</error></testcase></testsuite></testsuites>';
     const result = parseJunitXml(xml);
     if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
-    expect(result.tests).toEqual([{ name: 't1', status: 'fail', kind: 'crash' }]);
+    // `message` (Q346, round 3): "traceback" (the real text content), not "boom" (the attribute) --
+    // `detailOfJunitElement` prefers text, confirmed directly against fast-xml-parser's own shape.
+    expect(result.tests).toEqual([
+      { name: 't1', status: 'fail', kind: 'crash', message: 'traceback' },
+    ]);
   });
 
   it('a real @_time attribute (seconds) is converted to durationMs (confirmed present in every real dialect above)', () => {
@@ -234,7 +241,11 @@ describe('parseJunitXml (specs/22 M17 P3)', () => {
     if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
     expect(result.tests).toEqual([
       { name: 'p1', status: 'pass' },
-      { name: 'f1', status: 'fail', kind: 'assertion' },
+      // `<failure>boom</failure>` (no attributes at all) parses to the bare string "boom" -- read as
+      // `message` too (Q346, round 3), confirmed directly against fast-xml-parser's own real shape.
+      { name: 'f1', status: 'fail', kind: 'assertion', message: 'boom' },
+      // `<skipped/>` (self-closing, no attributes, no text) parses to `''`, which `detailOfJunitElement`
+      // reads as honestly absent, not an empty message -- `s1` carries no `message` field at all.
       { name: 's1', status: 'skip' },
     ]);
   });
@@ -244,7 +255,64 @@ describe('parseJunitXml (specs/22 M17 P3)', () => {
       '<testsuites><testsuite><testcase name="e1" time="0.5"><error message="boom">trace</error></testcase></testsuite></testsuites>';
     const result = parseJunitXml(xml);
     if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
-    expect(result.tests).toEqual([{ name: 'e1', status: 'fail', kind: 'crash', durationMs: 500 }]);
+    expect(result.tests).toEqual([
+      { name: 'e1', status: 'fail', kind: 'crash', durationMs: 500, message: 'trace' },
+    ]);
+  });
+
+  describe('message (specs/22 M17 P21) (Q346, round 3): read from <failure>/<error>/<skipped>', () => {
+    it('prefers the real text content over the "message" attribute, when both are present -- pytest\'s own collection-failure convention (reporter.ts\'s pre-existing detailOfJunitError), confirmed to apply here too', () => {
+      const xml =
+        '<testsuites><testsuite><testcase name="f1">' +
+        '<failure message="short summary">the real, fuller traceback text</failure>' +
+        '</testcase></testsuite></testsuites>';
+      const result = parseJunitXml(xml);
+      if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+      expect(result.tests[0]?.message).toBe('the real, fuller traceback text');
+    });
+
+    it('falls back to the "message" attribute when there is no real text content at all', () => {
+      const xml =
+        '<testsuites><testsuite><testcase name="f1">' +
+        '<failure message="assert 1 == 2"></failure>' +
+        '</testcase></testsuite></testsuites>';
+      const result = parseJunitXml(xml);
+      if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+      expect(result.tests[0]?.message).toBe('assert 1 == 2');
+    });
+
+    it('a real skip reason (pytest\'s own <skipped message="...">...) IS captured -- message is valid on skip, not only fail (09 §9.5, Q346)', () => {
+      const result = parseJunitXml(PYTEST_XML);
+      if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+      const skip = result.tests.find((entry) => entry.status === 'skip');
+      // The real fixture's own text content ("test_sample.py:12: demo") wins over the "demo"
+      // attribute, the identical text-preferred-over-attribute rule as the fail/crash cases above.
+      expect(skip?.message).toBe('test_sample.py:12: demo');
+    });
+
+    it("a bare <skipped/> (no attributes, no text -- jest-junit, this monorepo's own vitest) carries no message at all, never a fabricated empty string", () => {
+      for (const xml of [VITEST_JUNIT_XML, JEST_JUNIT_XML]) {
+        const result = parseJunitXml(xml);
+        if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+        const skip = result.tests.find((entry) => entry.status === 'skip');
+        expect(skip, xml.slice(0, 40)).toBeDefined();
+        expect(skip?.message).toBeUndefined();
+      }
+    });
+
+    it('node --test-reporter=junit\'s own real skip is NOT bare: <skipped type="skipped" message="true"/> carries the literal, not-very-useful string "true" -- transcribed honestly, not filtered out', () => {
+      const result = parseJunitXml(NODE_TEST_XML);
+      if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+      const skip = result.tests.find((entry) => entry.status === 'skip');
+      expect(skip?.message).toBe('true');
+    });
+
+    it('a real pass carries no message at all -- there is no <failure>/<error>/<skipped> element to read one from', () => {
+      const result = parseJunitXml(PYTEST_XML);
+      if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+      const pass = result.tests.find((entry) => /AC.?014.?2/.test(entry.name));
+      expect(pass?.message).toBeUndefined();
+    });
   });
 
   it('describeCause: a non-Error thrown value (forced: XMLParser.parse mocked for this one call) still produces a real message, never a crash', () => {

@@ -728,6 +728,26 @@ describe('storyVerify: build and test checks', () => {
     expect(report.passed).toBe(false);
   });
 
+  it('a skipped test\'s own forge-test-report "message" (a real skip reason, Q346 round 3) reaches this check\'s message too -- the gap a round-3 critic found: the schema allows it, but nothing read it for a skip', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(project, profileWithVerify('{ check: test:unit }'));
+    const outcomes: TestOutcome[] = [
+      {
+        name: 'AC-2 needs a live database',
+        acId: 'AC-2',
+        status: 'skip',
+        message: 'requires a live database',
+      },
+    ];
+    const { runner } = recorder(() => ({ ...CLEAN, outcomes }));
+    const report = await verify(project, { unit: 'u' }, runner);
+    expect(report.checks[0]?.status).toBe('unverifiable');
+    expect(report.checks[0]?.message).toContain(
+      'AC-2 needs a live database (requires a live database)',
+    );
+  });
+
   it('a failing test names itself in the report (self-verify attaches output the implementer can act on)', async () => {
     const project = await createTestProject();
     await writeStory(project);

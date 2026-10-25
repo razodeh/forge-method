@@ -6151,6 +6151,12 @@ describe('pinned sentences (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313, PLAN-M17.m
     ]);
   });
 
+  it('M17 P21 specs/09 (Q346, round 3): junit-xml and vitest-json are the two built-in formats that populate message so far', () => {
+    expectPinned(spec09(), [
+      "Present only when the project's own test command (or a translator reading it) actually has this text to report; of the built-in formats, `junit-xml` reads a real one straight off `<failure>`/`<error>`/`<skipped>` when the dialect gives one, and `vitest-json` carries one through for its own hook-throw reclassification, but no other built-in format does yet — so its absence on a real failure or skip is not itself a signal of anything.",
+    ]);
+  });
+
   // --- specs/13 F-TEST-1/6/7: consumers re-stated in terms of forge-test-report ---------------------
 
   it('M17 specs/13 F-TEST-1 point 4: the single layer command is the testCommands entry either form', () => {

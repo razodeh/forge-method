@@ -491,16 +491,34 @@ async function resolveScopedTestFiles(
   return { kind: 'scoped', files: sorted };
 }
 
-/** At most this many failing test names are quoted in a message: enough to act on, not a transcript. */
+/** At most this many failing (or skipped, below) test names are quoted in a message: enough to act
+ * on, not a transcript. */
 const NAMED_FAILURES = 5;
 
-/** A failing test's own name, with its `TestOutcome.message` (Q346, post-v1.0, `specs/22` M17 P21)
- * appended when present -- this is the one real human/agent-facing surface a failing test's error
- * text reaches today; a `forge-test-report` entry/translator that populates `message` is otherwise
+/** One outcome's own name, with its `TestOutcome.message` (Q346, post-v1.0, `specs/22` M17 P21)
+ * appended when present -- the one real human/agent-facing surface a test's own free-text detail
+ * reaches today; a `forge-test-report` entry/translator that populates `message` is otherwise
  * invisible past `outcomeFromReportEntry` (`reporter.ts`), which carries it only as far as
- * `TestOutcome`. */
-function namedFailure(outcome: TestOutcome): string {
+ * `TestOutcome`. Used for both a failing test's error text (below, in `outcomeFromRun`'s own "fail"
+ * branch) and a skipped test's own skip reason (its "every test skipped" branch) -- `09` §9.5's
+ * `message` is valid on `'fail'` OR `'skip'`, never `'pass'`, so this helper reads either alike. */
+function namedOutcome(outcome: TestOutcome): string {
   return outcome.message === undefined ? outcome.name : `${outcome.name} (${outcome.message})`;
+}
+
+/** Formats at most `NAMED_FAILURES` of `outcomes`, comma/semicolon-joined via `namedOutcome`, with a
+ * trailing "and N more" when there are more than that -- the identical cap/format `outcomeFromRun`'s
+ * own "fail" branch already applies to failing names, now shared so a skip-reason listing (below)
+ * does not grow its own, silently-diverging convention. Returns `''` (not `': '`) for an empty list,
+ * so a caller can splice the result in without a stray leading separator. */
+function namedOutcomesList(outcomes: readonly TestOutcome[]): string {
+  if (outcomes.length === 0) return '';
+  const names = outcomes.slice(0, NAMED_FAILURES).map(namedOutcome);
+  const more =
+    outcomes.length > NAMED_FAILURES
+      ? `, and ${String(outcomes.length - NAMED_FAILURES)} more`
+      : '';
+  return `: ${names.join('; ')}${more}`;
 }
 
 /**
@@ -519,9 +537,19 @@ function outcomeFromRun(
   const failing = outcomes.filter((outcome) => outcome.status === 'fail');
   if (problems.length === 0 && result.failed === 0 && result.errors === 0) {
     if (requirePass && !outcomes.some((outcome) => outcome.status === 'pass')) {
+      // Only `status: 'skip'` outcomes are named here -- deliberately, this branch's own question is
+      // "every test skipped?", not a general outcome dump (a quarantined-flaky `status: 'fail'`
+      // could also be present in `outcomes` here, F-TEST-6, since `result.failed === 0` excludes it
+      // from the COUNT but not from the list; unrelated to this fix, left exactly as unnamed here as
+      // it already was). A skip's own reason (Q346, post-v1.0, `specs/22` M17 P21: `message` is valid
+      // on 'skip', not only 'fail') IS named here, the real surface for it a round-3 critic found
+      // missing: the schema allows it, `outcomeFromReportEntry` already carries it this far, but
+      // nothing read it for a skip until now.
+      const skipped = outcomes.filter((outcome) => outcome.status === 'skip');
+      const namedSkips = namedOutcomesList(skipped);
       return {
         status: 'unverifiable',
-        message: `${what} ran but no test passed (every test skipped?), so nothing was verified.`,
+        message: `${what} ran but no test passed (every test skipped?)${namedSkips}, so nothing was verified.`,
       };
     }
     // `testRun` leaves a test already quarantined as flaky out of `failed` (F-TEST-6, "excluded from the gate").
@@ -536,12 +564,7 @@ function outcomeFromRun(
       result.failed > 0
         ? `${String(result.failed)} failing`
         : `${String(result.errors)} diagnostics`;
-    const names = failing.slice(0, NAMED_FAILURES).map(namedFailure);
-    const more =
-      failing.length > NAMED_FAILURES
-        ? `, and ${String(failing.length - NAMED_FAILURES)} more`
-        : '';
-    const named = names.length > 0 ? `: ${names.join('; ')}${more}` : '';
+    const named = namedOutcomesList(failing);
     return { status: 'fail', message: `${what}: ${counts}${named}${scopeNote}.` };
   }
   return {

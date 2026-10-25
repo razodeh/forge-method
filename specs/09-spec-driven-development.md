@@ -237,9 +237,11 @@ P21, Q346) is free-text detail about why a test did not pass, valid on `'fail'` 
 skip reason, e.g. JUnit's `<skipped message="...">` or pytest's `skip(reason=...)`) but refused on
 `'pass'` — unlike `kind`, which classifies only a failure and has no "kind of skip," so the two
 fields are NOT restricted to the same statuses. Present only when the project's own test command (or
-a translator reading it) actually has this text to report; no built-in translator populates it yet,
-so its absence on a real failure or skip is not itself a signal of anything. This is what every
-OTHER format a project's test command can produce — JUnit XML, TAP, a runner's own native JSON, or a
+a translator reading it) actually has this text to report; of the built-in formats, `junit-xml`
+reads a real one straight off `<failure>`/`<error>`/`<skipped>` when the dialect gives one, and
+`vitest-json` carries one through for its own hook-throw reclassification, but no other built-in
+format does yet — so its absence on a real failure or skip is not itself a signal of anything. This
+is what every OTHER format a project's test command can produce — JUnit XML, TAP, a runner's own native JSON, or a
 hand- or agent-written translator's output (`13` F-TEST-11, `18` §18.3) — is converted INTO before any FORGE
 command reads it: `forge-test-report` is the one shape the rest of this spec pack, and the rest of the
 codebase, actually reasons about.

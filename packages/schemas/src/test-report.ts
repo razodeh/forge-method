@@ -20,20 +20,22 @@
  * `'pass'` (enforced below) — a passing test has nothing to explain. Optional throughout: not every
  * translator can recover this text from its underlying format at all (TAP13's YAML diagnostic block
  * conventionally carries its own `message:` key, but no built-in `tap` parser in
- * `packages/cli/src/commands/loop/test/parsers/` reads that block today). Of the other built-in
- * parsers there: JUnit XML never reads its own `<failure message="...">` text at all; Jest never
- * reads its own per-assertion `failureMessages`; both Jest's and Vitest's parsers fold a captured
- * file-level message into a synthetic entry's `name` instead, for an unrelated, pre-existing reason
- * (a whole file that failed to load) — all three left untouched here, since wiring any of them up is
- * new capture logic this fix does not add. `vitest-json.ts` is the one exception: its own top-level
- * hook-throw reclassification (`parseVitestJson`'s own doc comment) already computed the hook's
- * message to decide `status`, so THAT one capture-already-in-hand case is wired straight through to
- * every entry it reclassifies (Q346's own round-2 critic). The field exists and validates regardless;
- * a future translator (hand-written, or `forge test adopt` agent-authored) populates it directly, the
- * same way `forge-json` already passes any entry through unchanged, and `reporter.ts`'s own
- * `outcomeFromReportEntry` already carries it as far as `TestOutcome` for both real call sites
- * (`runTranslator`, `PARSERS[format]`) — a human/agent-facing consumer reads it via
- * `packages/cli/src/commands/story.ts`'s own `namedFailure`.
+ * `packages/cli/src/commands/loop/test/parsers/` reads that block today, still deferred). Of the
+ * other built-in parsers there: `junit-xml.ts` reads this from `<failure>`/`<error>`/`<skipped>`'s
+ * own `message` attribute or text content (round-3 critic: delivery was proven end to end, so this
+ * capture -- the data was already sitting right there, unread -- was wired through rather than left
+ * deferred); `vitest-json.ts` carries the hook's own already-computed message onto every entry its
+ * top-level hook-throw reclassification touches (`parseVitestJson`'s own doc comment; round-2
+ * critic). Jest's per-assertion `failureMessages` is still never read, and both Jest's and Vitest's
+ * parsers still fold a captured file-level message into a synthetic entry's `name` instead, for an
+ * unrelated, pre-existing reason (a whole file that failed to load) -- left as-is, real but smaller
+ * gaps than the two just closed. The field exists and validates regardless of which producer
+ * populates it; a future translator (hand-written, or `forge test adopt` agent-authored) populates
+ * it directly, the same way `forge-json` already passes any entry through unchanged, and
+ * `reporter.ts`'s own `outcomeFromReportEntry` already carries it as far as `TestOutcome` for both
+ * real call sites (`runTranslator`, `PARSERS[format]`) -- a human/agent-facing consumer reads it via
+ * `packages/cli/src/commands/story.ts`'s own `namedOutcome`, for a `'fail'` AND, as of round 3, a
+ * `'skip'` outcome too (its own "every test skipped?" message).
  *
  * @see specs/09 §9.5
  * @see specs/22 M17 P3, M17 P21 (Q346)

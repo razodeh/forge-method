@@ -22,6 +22,12 @@
  * directly to never set it at all (absent, not merely empty) — this parser attributes nothing by file
  * for those, exactly as the degradation rule requires; it reads the one case that is real.
  *
+ * `message` (Q346, post-v1.0, `specs/22` M17 P21) IS read from `<failure>`/`<error>`/`<skipped>`'s
+ * own `message` attribute or text content (`detailOfJunitElement`, below) — unlike this field's own
+ * first cut, which deferred every built-in parser's own capture of it; wired here once delivery past
+ * the schema was proven end to end, since the data was already sitting right there, read the same
+ * way `durationMs`'s own `@_time` already is.
+ *
  * @see specs/09 §9.5
  * @see specs/13 F-TEST-7 point 2, point 5
  * @see specs/22 M17 P3
@@ -72,6 +78,28 @@ function durationMsFrom(testcase: JunitTestCase): number | undefined {
   return Number.isFinite(seconds) ? seconds * 1000 : undefined;
 }
 
+/** The detail text inside a `<failure>`/`<error>`/`<skipped>` element — read exactly the way
+ * `fast-xml-parser`'s own `ignoreAttributes: false` shapes one with both a `message` attribute and
+ * text content: `{ '@_message': string, '#text': string }` (mirrors `reporter.ts`'s own, pre-existing
+ * `detailOfJunitError`, for the legacy path: "pytest's own collection-failure element sets
+ * `@_message` to the fixed, uninformative literal 'collection failure' while `#text` carries the
+ * real traceback, so `#text` is preferred when present" — confirmed directly there, re-used here
+ * rather than re-derived, since the real shape is identical). `value` can also be a bare string (an
+ * element with no attributes at all, confirmed directly against this parser's own fixtures: e.g.
+ * `<failure>boom</failure>`) or `undefined` (no such child) — both handled defensively. Q346, post-
+ * v1.0, `specs/22` M17 P21 (round-3 critic): this is the one capture this parser's own doc comment
+ * used to disclose as unread; wired through now that delivery (`outcomeFromReportEntry` ->
+ * `TestOutcome` -> `story.ts`'s `namedOutcome`) is proven end to end. */
+function detailOfJunitElement(value: unknown): string | undefined {
+  if (typeof value === 'string' && value !== '') return value;
+  if (typeof value !== 'object' || value === null) return undefined;
+  const candidate = value as Readonly<Record<string, unknown>>;
+  const text = candidate['#text'];
+  if (typeof text === 'string' && text !== '') return text;
+  const message = candidate['@_message'];
+  return typeof message === 'string' && message !== '' ? message : undefined;
+}
+
 /** `file`, when given, is the enclosing `<testsuite file="...">` attribute (confirmed real for
  * Mocha's own `mocha-junit-reporter`, confirmed absent for every other dialect this parser was built
  * against) — never derived from `classname`, this file's own doc comment has the full reasoning. */
@@ -88,29 +116,45 @@ function entryFrom(
   const durationMs = durationMsFrom(testcase);
   const fileField = file === undefined ? {} : { file };
   if (testcase.failure !== undefined) {
+    const message = detailOfJunitElement(testcase.failure);
     return {
       name,
       status: 'fail',
       kind: 'assertion',
       ...(durationMs === undefined ? {} : { durationMs }),
       ...fileField,
+      ...(message === undefined ? {} : { message }),
     };
   }
   if (testcase.error !== undefined) {
+    const message = detailOfJunitElement(testcase.error);
     return {
       name,
       status: 'fail',
       kind: 'crash',
       ...(durationMs === undefined ? {} : { durationMs }),
       ...fileField,
+      ...(message === undefined ? {} : { message }),
     };
   }
   if (testcase.skipped !== undefined) {
+    // `message` (Q346) is valid on `'skip'` too (09 §9.5): a real skip reason, when the dialect
+    // gives one. Confirmed directly across all five dialects this parser's own fixtures capture:
+    // pytest gives a real reason (`message="demo"`, text "test_sample.py:12: demo" -- text wins);
+    // Node's own `--test-reporter=junit` gives the literal, not-very-useful string `"true"`
+    // (`<skipped type="skipped" message="true"/>`) -- transcribed honestly, the identical "real but
+    // unhelpful" shape `reporter.ts`'s own `detailOfJunitError` already discloses for pytest's
+    // collection-failure message; jest-junit's and this monorepo's own Vitest's `<skipped/>` carry
+    // neither an attribute nor text at all, so `message` is honestly `undefined` there, never
+    // guessed; Mocha drops a deliberate skip from the report entirely (this file's own top doc
+    // comment), so there is no `<skipped>` element to read from at all.
+    const message = detailOfJunitElement(testcase.skipped);
     return {
       name,
       status: 'skip',
       ...(durationMs === undefined ? {} : { durationMs }),
       ...fileField,
+      ...(message === undefined ? {} : { message }),
     };
   }
   return {
