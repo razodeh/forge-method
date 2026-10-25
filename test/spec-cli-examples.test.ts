@@ -1714,10 +1714,31 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
     ]);
   });
 
-  it('M16 specs/13 F-TEST-9: once M17 P8 moved the reference tree outside the project, directory-walk dependency resolution no longer reaches it — a disclosed gap (Q314) — so anything built from the tracked files takes vetted `setup` commands whose install-refusal and registry-allowlist absence vetting narrows but does not enforce', () => {
+  it("M17 P8/Q352: once P8 moved the reference tree outside the project, the harness now bridges the candidate's top-level node_modules into it explicitly, closing the disclosed Q314 regression", () => {
     const section = parity();
     expectPinned(section, [
-      "Before M17 P8, this tree lived beneath the project directory, so a runtime that finds dependencies by walking up the directory tree (Node's `node_modules`) reached the candidate's own installed copy from both sides as an emergent property of that nesting, never something the engine itself implemented. Once P8 moved it outside the project's own working tree, that walk-up no longer reaches the candidate's installed packages — a disclosed, open gap for any reference-side command that is a Node program importing a third-party package this way (`SPEC-QUESTIONS.md` Q314); for any runtime, and for anything that must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an agent that needs one, so `setup` is meant to build from what is tracked, which vetting narrows and does not enforce: see the honest boundary), whose bytes are in the declaration digest and which run only in the scratch tree, before the reference is observed (so only at capture: a check observes the candidate alone and runs no `setup`).",
+      "Once P8 moved it outside the project's own working tree, that walk-up stopped reaching the candidate's installed packages at all — a disclosed regression (`SPEC-QUESTIONS.md` Q314) the harness now closes explicitly: before any surface's `setup` or `run` reaches the scratch tree, the project's own top-level `node_modules` is symlinked into the scratch tree's root, restoring the identical \"both sides run against one installed copy\" reach the old nesting gave by accident, now as a reviewable mechanism rather than one.",
+    ]);
+  });
+
+  it('M17 P8/Q352: NODE_PATH and a declaration-authored setup command were both considered and rejected as the fix mechanism', () => {
+    const section = parity();
+    expectPinned(section, [
+      "`NODE_PATH` was considered and rejected (Node's own ESM resolver never consults it, so an `import`-based command would still fail), as was a declaration-authored `setup` command (`network: none` already refuses a package-manager install verb, below, so a declaration has no vetted way to populate `node_modules` itself).",
+    ]);
+  });
+
+  it("M17 P8/Q352: the bridge still reaches only the project's top-level node_modules, matching the old accidental mechanism's own real reach", () => {
+    const section = parity();
+    expectPinned(section, [
+      "This still reaches only the project's top-level `node_modules`, matching the old mechanism's own real reach — a workspace package's own nested `node_modules` was never found by the pre-P8 walk-up either.",
+    ]);
+  });
+
+  it('M16 specs/13 F-TEST-9: for any runtime other than Node, anything built from the tracked files takes vetted `setup` commands whose install-refusal and registry-allowlist absence vetting narrows but does not enforce', () => {
+    const section = parity();
+    expectPinned(section, [
+      'For any runtime other than Node, and for anything that must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an agent that needs one, so `setup` is meant to build from what is tracked, which vetting narrows and does not enforce: see the honest boundary), whose bytes are in the declaration digest and which run only in the scratch tree, before the reference is observed (so only at capture: a check observes the candidate alone and runs no `setup`).',
     ]);
   });
 
@@ -4938,7 +4959,10 @@ describe('pinned sentences (specs/22 M16 P1) (SPEC-QUESTIONS.md Q294, PLAN-M16.m
       "Which of the two mechanisms is used is this milestone's own BUILD decision; either makes a case's own `run` unable to write or restore anything under `.forge/parity/` for the duration of its run (a read-only mechanism still permits a read, which the honest boundary below states), which the anchor's own boundary sentence below is corrected to state.",
       "The scratch tree holds the ref's tracked files and nothing installed or built.",
       "Before M17 P8, this tree lived beneath the project directory, so a runtime that finds dependencies by walking up the directory tree (Node's `node_modules`) reached the candidate's own installed copy from both sides as an emergent property of that nesting, never something the engine itself implemented.",
-      "Once P8 moved it outside the project's own working tree, that walk-up no longer reaches the candidate's installed packages — a disclosed, open gap for any reference-side command that is a Node program importing a third-party package this way (`SPEC-QUESTIONS.md` Q314); for any runtime, and for anything that must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an agent that needs one, so `setup` is meant to build from what is tracked, which vetting narrows and does not enforce: see the honest boundary), whose bytes are in the declaration digest and which run only in the scratch tree, before the reference is observed (so only at capture: a check observes the candidate alone and runs no `setup`).",
+      "Once P8 moved it outside the project's own working tree, that walk-up stopped reaching the candidate's installed packages at all — a disclosed regression (`SPEC-QUESTIONS.md` Q314) the harness now closes explicitly: before any surface's `setup` or `run` reaches the scratch tree, the project's own top-level `node_modules` is symlinked into the scratch tree's root, restoring the identical \"both sides run against one installed copy\" reach the old nesting gave by accident, now as a reviewable mechanism rather than one.",
+      "`NODE_PATH` was considered and rejected (Node's own ESM resolver never consults it, so an `import`-based command would still fail), as was a declaration-authored `setup` command (`network: none` already refuses a package-manager install verb, below, so a declaration has no vetted way to populate `node_modules` itself).",
+      "This still reaches only the project's top-level `node_modules`, matching the old mechanism's own real reach — a workspace package's own nested `node_modules` was never found by the pre-P8 walk-up either.",
+      'For any runtime other than Node, and for anything that must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an agent that needs one, so `setup` is meant to build from what is tracked, which vetting narrows and does not enforce: see the honest boundary), whose bytes are in the declaration digest and which run only in the scratch tree, before the reference is observed (so only at capture: a check observes the candidate alone and runs no `setup`).',
       'With none, a surface that needs more than the tracked files cannot be observed on the reference side, and the declaration must say how to get it.',
       'FORGE builds nothing for the candidate.',
       "A case's command is the same on both sides, so one that reads build output must build it itself: ignored build output is outside the declaration digest, the anchor and the snapshot below, so a stale build of the candidate is not detected and can read as `match`.",

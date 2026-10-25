@@ -677,7 +677,7 @@ describe('runConfinedCommand: what actually reaches the child', () => {
   });
 });
 
-describe('runConfinedCommand: resolvePosixShell on Windows (M17 #18) reaches BOTH execa call sites', () => {
+describe('runConfinedCommand: resolvePosixShell on Windows (specs/22 M17 P16) reaches BOTH execa call sites', () => {
   // `resolvePosixShell` always returns `true` (the OS default) on every platform but Windows
   // (`posix-shell.ts`'s own doc comment) -- there is no observable macOS/Linux-side behavioural
   // difference between `shell: true` and `shell: resolvePosixShell(env)` for this test runner to
