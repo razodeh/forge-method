@@ -35,6 +35,8 @@ import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 import { listOrphanedWorktrees, removeLaneWorktree } from '@forge/vcs';
 
+import { TS_NODE_FLAG } from '../../../../../../scripts/lib/node-ts-flag.mjs';
+
 const FIXTURE_CHILD_PATH = fileURLToPath(
   new URL('./fixtures/binding-check-child.ts', import.meta.url),
 );
@@ -95,15 +97,7 @@ async function spawnKillAndWait(
 ): Promise<{ readonly killed: boolean }> {
   const child = spawn(
     'node',
-    [
-      '--experimental-strip-types',
-      FIXTURE_CHILD_PATH,
-      projectRoot,
-      runId,
-      storyId,
-      baseRevision,
-      TEST_COMMAND,
-    ],
+    [TS_NODE_FLAG, FIXTURE_CHILD_PATH, projectRoot, runId, storyId, baseRevision, TEST_COMMAND],
     { detached: true },
   );
   const pid = child.pid;
@@ -208,15 +202,7 @@ async function measureUninterruptedDurationMs(
   // for it to finish on its own.
   const child = spawn(
     'node',
-    [
-      '--experimental-strip-types',
-      FIXTURE_CHILD_PATH,
-      dir,
-      runId,
-      'STORY-TIMING-PROBE',
-      baseSha,
-      TEST_COMMAND,
-    ],
+    [TS_NODE_FLAG, FIXTURE_CHILD_PATH, dir, runId, 'STORY-TIMING-PROBE', baseSha, TEST_COMMAND],
     { detached: true },
   );
   // From "STARTED," not from spawn: `spawnKillAndWait`'s own kill-delay countdown starts there too

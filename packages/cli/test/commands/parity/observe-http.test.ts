@@ -17,6 +17,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../../../scripts/lib/node-ts-flag.mjs';
 import type { HttpObservation } from '../../../src/commands/parity/capture.ts';
 import { decideCaseVerdict } from '../../../src/commands/parity/compare.ts';
 import type {
@@ -622,7 +623,7 @@ setInterval(() => {}, 1000);
       'utf8',
     );
     const { spawn } = await import('node:child_process');
-    const harness = spawn('node', ['--experimental-strip-types', harnessScriptPath], {
+    const harness = spawn('node', [TS_NODE_FLAG, harnessScriptPath], {
       detached: true,
     });
     const harnessPid = harness.pid;

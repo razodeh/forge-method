@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { ForgeError } from '@forge/core/errors';
 
+import { TS_NODE_FLAG } from '../../../../../scripts/lib/node-ts-flag.mjs';
 import {
   recoverOrphanedParityDir,
   withParityDirHidden,
@@ -230,11 +231,9 @@ describe(
           'utf8',
         );
 
-        const child = execa(
-          'node',
-          ['--experimental-strip-types', '--no-warnings', SIGNAL_HARNESS_PATH, root],
-          { reject: false },
-        );
+        const child = execa('node', [TS_NODE_FLAG, '--no-warnings', SIGNAL_HARNESS_PATH, root], {
+          reject: false,
+        });
         // Waits for the child's own real proof that the window is open (never a fixed sleep guessing
         // at timing): it prints `HIDDEN` the instant `withParityDirHidden`'s callback starts.
         await new Promise<void>((resolve, reject) => {

@@ -16,6 +16,7 @@ import { listOrphanedWorktrees, removeLaneWorktree, worktreesRootFor } from '@fo
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../../../scripts/lib/node-ts-flag.mjs';
 import { computeParityDeclarationDigest } from '../../../src/commands/parity/digest.ts';
 import { observeParityDeclaration } from '../../../src/commands/parity/observe.ts';
 import type { ParityDeclaration } from '../../../src/commands/parity/declaration-types.ts';
@@ -1121,7 +1122,7 @@ await observeParityDeclaration({ declaration: ${declarationLiteral}, side: 'refe
       'utf8',
     );
     const { spawn } = await import('node:child_process');
-    const child = spawn('node', ['--experimental-strip-types', scriptPath], { detached: true });
+    const child = spawn('node', [TS_NODE_FLAG, scriptPath], { detached: true });
     const pid = child.pid;
     if (pid === undefined) throw new Error('failed to spawn');
     await new Promise<void>((resolve, reject) => {

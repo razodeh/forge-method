@@ -787,7 +787,7 @@ describe('appendEvent — resilience', () => {
         (_unused, index) =>
           new Promise<void>((resolve, reject) => {
             const child = spawn('node', [
-              '--experimental-strip-types',
+              TS_NODE_FLAG,
               fixturePath,
               projectRoot,
               runId,

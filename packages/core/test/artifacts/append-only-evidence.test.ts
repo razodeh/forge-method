@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
 import {
   evidenceBundleSchema,
   mutationEvidenceSchema,
@@ -249,7 +250,7 @@ describe('ParityEvidence — real cross-process concurrency on the IDENTICAL tar
       execFileAsync(
         process.execPath,
         [
-          '--experimental-strip-types',
+          TS_NODE_FLAG,
           '--disable-warning=ExperimentalWarning',
           workerPath,
           targetPath,

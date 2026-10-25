@@ -17,6 +17,7 @@ import { exemptionsFileSchema } from '@forge/schemas';
 import { afterEach, describe, expect, it } from 'vitest';
 import * as YAML from 'yaml';
 
+import { TS_NODE_FLAG } from '../../../../../../scripts/lib/node-ts-flag.mjs';
 import {
   applyExemptions,
   appendExemption,
@@ -501,8 +502,9 @@ const EXEMPTIONS_MODULE_PATH = fileURLToPath(
  * a test crashes before its own cleanup runs. */
 const REPO_ROOT = fileURLToPath(new URL('../../../../../..', import.meta.url));
 
-/** A real, separate `node --experimental-strip-types` process -- the identical flag `bin/forge.mjs`
- * itself launches with -- that calls `appendExemption` directly and waits on a shared `gatePath` file
+/** A real, separate `node` process, launched via `TS_NODE_FLAG` -- the identical Node-version-aware
+ * mechanism `bin/forge.mjs` itself launches with (`Q340`) -- that calls `appendExemption` directly
+ * and waits on a shared `gatePath` file
  * before doing so, tightening every worker's own race window as far as possible without a native
  * barrier primitive. `bin-exempt.test.ts`'s own "5 real processes" test goes through the full CLI
  * (a real mutation-based binding check first), which a round-1 gauntlet critic's own repro did NOT:
@@ -559,7 +561,7 @@ describe('appendExemption — real cross-process concurrency', () => {
       execFileAsync(
         process.execPath,
         [
-          '--experimental-strip-types',
+          TS_NODE_FLAG,
           '--disable-warning=ExperimentalWarning',
           workerPath,
           projectDir,

@@ -26,6 +26,7 @@ import { pathExists, ProjectPaths } from '@forge/core/fs';
 import * as YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../../../scripts/lib/node-ts-flag.mjs';
 import { runEvidencePrune } from '../../../src/commands/evidence/prune-command.ts';
 import { readTombstone } from '../../../src/commands/evidence/tombstone.ts';
 import { getSharedIdAllocator } from '../../../src/commands/shared.ts';
@@ -350,7 +351,7 @@ describe('forge evidence prune — real cross-process concurrency (specs/22 M16 
       execFileAsync(
         process.execPath,
         [
-          '--experimental-strip-types',
+          TS_NODE_FLAG,
           '--disable-warning=ExperimentalWarning',
           workerPath,
           dir,
@@ -415,25 +416,12 @@ describe('forge evidence prune — real cross-process concurrency (specs/22 M16 
 
     const pruneLaunch = execFileAsync(
       process.execPath,
-      [
-        '--experimental-strip-types',
-        '--disable-warning=ExperimentalWarning',
-        prunePath,
-        dir,
-        '0',
-        gatePath,
-      ],
+      [TS_NODE_FLAG, '--disable-warning=ExperimentalWarning', prunePath, dir, '0', gatePath],
       { cwd: workerDir },
     );
     const appendLaunch = execFileAsync(
       process.execPath,
-      [
-        '--experimental-strip-types',
-        '--disable-warning=ExperimentalWarning',
-        appendPath,
-        dir,
-        gatePath,
-      ],
+      [TS_NODE_FLAG, '--disable-warning=ExperimentalWarning', appendPath, dir, gatePath],
       { cwd: workerDir },
     );
     await writeFile(gatePath, 'go', 'utf8');
@@ -495,19 +483,13 @@ describe('forge evidence prune — a late gate citation from a genuinely separat
 
     const pruneLaunch = execFileAsync(
       process.execPath,
-      [
-        '--experimental-strip-types',
-        '--disable-warning=ExperimentalWarning',
-        prunePath,
-        dir,
-        gatePath,
-      ],
+      [TS_NODE_FLAG, '--disable-warning=ExperimentalWarning', prunePath, dir, gatePath],
       { cwd: workerDir },
     );
     const racerLaunch = execFileAsync(
       process.execPath,
       [
-        '--experimental-strip-types',
+        TS_NODE_FLAG,
         '--disable-warning=ExperimentalWarning',
         racerPath,
         dir,
