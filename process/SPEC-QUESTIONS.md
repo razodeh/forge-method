@@ -29449,12 +29449,18 @@ this live (reverting each line in isolation left every existing test green); 2 n
 close it, re-confirmed via the identical mutation method. A stale `hasChanges` doc comment that still
 framed the agent self-report as trustworthy is corrected.
 
-**Disclosed, not fixed, minor**: the new two-ref diff leg's own `--no-renames` flag isn't
-independently test-pinned — a mutation removing it left all tests green, because the one existing
-rename test is independently covered by the unaffected one-ref leg (it commits its own rename, so the
-worktree ends up clean). Low severity: the one-ref leg already covers the committed-and-clean case
-this exercises, and a collapsed rename would still surface the new path via at least one leg, never
-neither.
+**FIXED (owner-directed scope expansion, 2026-10-25)**: the two-ref diff leg's own `--no-renames`
+flag is now independently test-pinned. Two new tests in `claims.test.ts`'s "history-relative
+detection" block construct a same-commit rename+edit with the worktree manually reset to its exact
+`baseSha` state afterward (no second commit) — the one case where only the two-ref leg, neither the
+one-ref leg nor the untracked-files listing, can see the old out-of-claim path. Mutation-kill
+independently confirmed three times (the builder, then both critics separately): stripping the flag
+makes exactly these two new tests fail, with the precise silent-bypass symptom this disclosure named
+(`outOfClaim`/`reverted` coming back empty), never the rest of the suite. One critic's own
+adversarial scrutiny, going beyond the stated scope, found two further real, disclosed-but-open gaps
+of the identical shape on sibling legs (`claims.ts`'s own one-ref leg; `facades.ts`'s `changedFiles`
+two-ref legs) — tracked separately, see `Q351`. Gauntlet: `GAUNTLET-LOG.md`'s `## M17 P21 — Q320's
+own fix` entry, dated 2026-10-25.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P15`.
 
