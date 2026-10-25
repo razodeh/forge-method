@@ -60,6 +60,21 @@ describe('listArtifactFiles', () => {
     expect(await listArtifactFiles(paths)).toEqual(['specs/stories/STORY-001-a.md']);
   });
 
+  it('recurses into a directory legitimately named "..cache", not refused as a parent-directory escape', async () => {
+    // Regression for `relativePosixWithin` (`packages/core/src/fs/paths.ts`): `listArtifactFiles`
+    // recurses by calling `paths.resolveWithin(relativeChild)` again for each subdirectory it finds.
+    // A real directory named `..cache` (not ignored by `IGNORED_DIRECTORY_NAMES`, which only covers
+    // `.git`/`.forge`/`node_modules`) used to make that recursive `resolveWithin` call throw
+    // `CFG-003` purely because `"..cache".startsWith('..')` was true, even though nothing escaped
+    // the project root. End to end through the real scan call site, not `relativePosixWithin` in
+    // isolation.
+    const paths = freshProject();
+    const root = paths.resolveWithin('.');
+    write(root, '..cache/notes/STORY-001-a.md', story('STORY-001'));
+    write(root, 'README.md', '# not an artifact\n');
+    expect(await listArtifactFiles(paths)).toEqual(['..cache/notes/STORY-001-a.md', 'README.md']);
+  });
+
   it('ignores files that are not Markdown', async () => {
     const paths = freshProject();
     const root = paths.resolveWithin('.');

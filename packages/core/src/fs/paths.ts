@@ -75,7 +75,20 @@ function isDenied(relativePosix: string): boolean {
 function relativePosixWithin(base: string, resolved: string): string | undefined {
   const relative = path.relative(base, resolved);
   if (relative === '') return '';
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+  // `path.relative` returns a path in the *host's* separator (`path.sep`: `\` on Windows, `/`
+  // elsewhere), not POSIX-normalised yet — that only happens on the `return` below once this escape
+  // check has already passed. So the escape check itself must split on `path.sep`, the same
+  // separator `relative` actually uses, not a literal "/". A raw `relative.startsWith('..')` is a
+  // false positive for any real segment that merely *starts* with two dots and is not a `..`
+  // parent-directory reference at all — e.g. a directory legitimately named `..cache` resolves to a
+  // `relative` of exactly `..cache`, and `"..cache".startsWith('..')` is true even though nothing
+  // climbed out of `base`. Checking the first *segment* (`relative === '..'`, or `relative` starting
+  // with `'..' + path.sep`) instead of a raw string prefix fixes that, the same way
+  // `dispatch/confined-command.ts` and `dispatch/test-path.ts`'s own `within()` helpers were fixed for
+  // the identical bug.
+  if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) {
+    return undefined;
+  }
   return relative.split(path.sep).join('/');
 }
 

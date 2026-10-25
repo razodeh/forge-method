@@ -45,6 +45,28 @@ describe('readArtifact', () => {
       (error: unknown) => isForgeError(error) && error.code === 'CFG-003',
     );
   });
+
+  it('reads a file inside a directory legitimately named "..cache", not refused as an escape', async () => {
+    // Regression for `relativePosixWithin`'s `..` prefix check (`packages/core/src/fs/paths.ts`):
+    // `..cache` is an ordinary directory name, not a parent-directory reference, and must resolve
+    // through the real `resolveWithin` gate `readArtifact` calls, end to end.
+    const paths = freshProject();
+    const absolute = paths.resolveWithin('..cache/specs/vision.md');
+    mkdirSync(path.dirname(absolute), { recursive: true });
+    writeFileSync(absolute, '---\nid: X\ntitle: Hello\n---\nbody\n');
+
+    const doc = await readArtifact(paths, '..cache/specs/vision.md');
+    expect(doc.get(['title'])).toBe('Hello');
+  });
+
+  it('still rejects a real ".." escape through the same real call site', async () => {
+    // Paired with the test above: the fix must not have widened the check into accepting real
+    // traversal, only the false-positive "merely starts the same way" case.
+    const paths = freshProject();
+    await expect(readArtifact(paths, '../../etc/passwd')).rejects.toSatisfy(
+      (error: unknown) => isForgeError(error) && error.code === 'CFG-003',
+    );
+  });
 });
 
 describe('writeArtifact', () => {
@@ -75,6 +97,21 @@ describe('writeArtifact', () => {
     await writeArtifact(paths, doc);
 
     expect(readFileSync(absolute, 'utf8')).toBe(original);
+  });
+
+  it('writes to a path inside a directory legitimately named "..cache", not refused as an escape', async () => {
+    // Same regression as `readArtifact`'s, exercised on the write side: `writeArtifact` resolves
+    // `doc.path` through the identical `resolveWithin` gate before handing it to `writeFileAtomic`.
+    const paths = freshProject();
+    const absolute = paths.resolveWithin('..cache/notes.md');
+    mkdirSync(path.dirname(absolute), { recursive: true });
+    writeFileSync(absolute, '---\nid: X\ntitle: Hello\n---\nbody\n');
+
+    const doc = await readArtifact(paths, '..cache/notes.md');
+    doc.set(['title'], 'Goodbye');
+    await writeArtifact(paths, doc);
+
+    expect(readFileSync(absolute, 'utf8')).toBe('---\nid: X\ntitle: "Goodbye"\n---\nbody\n');
   });
 
   it('writes atomically — a partial write never observed by a later read', async () => {

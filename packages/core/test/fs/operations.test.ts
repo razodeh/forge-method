@@ -174,6 +174,17 @@ describe('ensureDir', () => {
       expect((error as { cause?: { code?: string } }).cause?.code).toBe('EACCES');
     }
   });
+
+  it('creates a directory legitimately named "..cache", real resolveWithin call site included', async () => {
+    // Regression for `relativePosixWithin` (`packages/core/src/fs/paths.ts`): a nested path through
+    // an ordinary directory named `..cache` used to be wrongly refused by `resolveWithin` itself
+    // (the gate `ensureDir`'s `AbsolutePath` argument is required to have already passed) as if it
+    // were a parent-directory escape, before `ensureDir` ever ran.
+    const paths = freshProject();
+    const target = paths.resolveWithin('..cache/nested/dir');
+    await ensureDir(target);
+    expect(await pathExists(target)).toBe(true);
+  });
 });
 
 describe('listDirSorted', () => {

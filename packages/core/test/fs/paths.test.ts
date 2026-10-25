@@ -174,6 +174,51 @@ describe('resolveWithin — symlink escapes', () => {
   );
 });
 
+describe('resolveWithin — dot-dot-prefixed names that are not a parent-directory escape', () => {
+  // `relativePosixWithin`'s escape check used to be `relative.startsWith('..')`, a raw string
+  // prefix test. `path.relative(root, path.resolve(root, '..cache'))` returns the literal string
+  // `"..cache"`, and `"..cache".startsWith('..')` is true purely because the first two characters
+  // happen to coincide with the parent-directory marker — even though `..cache` is a single,
+  // ordinary path segment that never climbs out of `root`. A real project can legitimately have a
+  // directory or file named this way (a cache directory, a snapshot directory, dotfile-style
+  // tooling output); this must resolve exactly like any other name, not be refused as an escape.
+  it.each(['..cache', '...snapshots', '....deep', '..d', '..', '.....'])(
+    'resolves %s as an ordinary name, not a parent-directory escape, when it does not actually climb out',
+    (name) => {
+      const root = freshRoot();
+      const paths = new ProjectPaths(root);
+      // `..` alone *is* a real escape (it literally is the parent directory) and must still be
+      // rejected — only tested here for the segments that are not `..` itself.
+      if (name === '..') {
+        expect(() => paths.resolveWithin(name)).toThrow(
+          expect.objectContaining({ code: 'CFG-003' }) as Error,
+        );
+      } else {
+        expect(paths.resolveWithin(name)).toBe(path.join(root, name));
+      }
+    },
+  );
+
+  it('resolves a nested path through an intermediate directory named "..cache"', () => {
+    const root = freshRoot();
+    const paths = new ProjectPaths(root);
+    expect(paths.resolveWithin('..cache/notes.md')).toBe(path.join(root, '..cache', 'notes.md'));
+  });
+
+  it('still rejects a real traversal that merely starts the same way (".." itself, then climbing)', () => {
+    // Distinguishes the fix from an overly-narrow one that stopped rejecting traversal altogether:
+    // a *real* escape — an actual ".." segment followed by a path separator — must still throw.
+    const root = freshRoot();
+    const paths = new ProjectPaths(root);
+    expect(() => paths.resolveWithin('../escape.md')).toThrow(
+      expect.objectContaining({ code: 'CFG-003' }) as Error,
+    );
+    expect(() => paths.resolveWithin('a/../../escape.md')).toThrow(
+      expect.objectContaining({ code: 'CFG-003' }) as Error,
+    );
+  });
+});
+
 describe('resolveWithin — the deny list', () => {
   it('documents exactly the three prefixes specs/02 §2.5 names', () => {
     expect([...DENIED_PREFIXES].sort()).toEqual(['.forge/state/', '.git/', 'node_modules/'].sort());
@@ -266,6 +311,16 @@ describe('resolveState', () => {
     const root = freshRoot();
     const paths = new ProjectPaths(root);
     expect(() => paths.resolveState('gitignore-like-cache.json')).not.toThrow();
+  });
+
+  it('resolves a name starting with two dots that is not a parent-directory escape', () => {
+    // Same `relativePosixWithin` the ".." fix covers above, exercised through `resolveState`'s own
+    // base rather than `resolveWithin`'s — both call the same helper, and both must get the fix.
+    const root = freshRoot();
+    const paths = new ProjectPaths(root);
+    expect(paths.resolveState('..cache.json')).toBe(
+      path.join(root, '.forge', 'state', '..cache.json'),
+    );
   });
 
   it.runIf(canCreateSymlinks(mkdtempSync(path.join(tmpdir(), 'forge-symlink-probe-'))))(
