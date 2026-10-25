@@ -50,7 +50,7 @@ version this repo is tested against). The CLI runs directly from source, no buil
 local development:
 
 ```bash
-pnpm forge status               # or: node --experimental-strip-types packages/cli/bin/forge.mjs status
+pnpm forge status               # or: node packages/cli/bin/forge.mjs status
 ```
 
 ## The floor — every change must pass this before review

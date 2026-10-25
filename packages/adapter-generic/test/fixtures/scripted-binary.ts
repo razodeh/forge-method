@@ -1,10 +1,12 @@
-#!/usr/bin/env node --experimental-strip-types
+#!/usr/bin/env node
 /**
  * The scripted external binary fixture `07` §7.5/§7.6's own conformance suite needs and no existing
  * precedent covers (`@forge/testkit`'s `FakePlatformAdapter` is in-process, never a spawned process).
- * A real, standalone process — run via `node --experimental-strip-types` (this repository's own
- * no-build-step convention; see `packages/engine/test/e2e/fixtures/run-engine-child.ts` and
- * `packages/adapter-claude-code/test/conformance/fixtures/mcp-server.ts` for the identical pattern) —
+ * A real, standalone process — run via `TS_NODE_FLAG` (`../../../../scripts/lib/node-ts-flag.mjs`,
+ * this repository's own no-build-step, Node-version-aware convention -- `Q340`; never via this file's
+ * own shebang line above, which cannot be made Node-version-aware; see `packages/engine/test/e2e/
+ * fixtures/run-engine-child.ts` and `packages/adapter-claude-code/test/conformance/fixtures/
+ * mcp-server.ts` for the identical pattern) —
  * that stands in for the real external CLI tool a `07` §7.5 `adapter.yaml` names as `binary`.
  *
  * Invocation shape mirrors a real `07` §7.5 target binary as closely as this fixture can, plus exactly

@@ -41,7 +41,7 @@ directly:
 
 ```bash
 pnpm install
-node --experimental-strip-types packages/cli/bin/forge.mjs <command>
+node packages/cli/bin/forge.mjs <command>
 # equivalently, from the repo root only: pnpm forge <command>
 ```
 

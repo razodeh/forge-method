@@ -46,8 +46,8 @@ const MCP_DENIED_TOOL = 'forge_conformance_denied';
 /** `command: process.execPath` (this process's own real, absolute `node` binary path), not the bare
  * string `'node'` — the granted server is spawned by Claude Code itself, under whatever minimal `env`
  * (and its own `PATH`) the adapter under test actually passed it, which this fixture has no business
- * assuming resolves `node` at all. `--experimental-strip-types` (this repository's own established,
- * no-build-step convention for a real, standalone fixture script written in TypeScript --
+ * assuming resolves `node` at all. `TS_NODE_FLAG` (`../../../../scripts/lib/node-ts-flag.mjs`, this
+ * repository's own established, no-build-step, Node-version-aware convention --
  * `packages/cli/test/commands/run/fixtures/run-child.ts`'s own identical precedent) runs the real
  * `mcp-server.ts` directly, with no separate compile step. */
 const MCP_SERVER: GrantedMcpServer = {
