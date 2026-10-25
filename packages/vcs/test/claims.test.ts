@@ -119,6 +119,59 @@ describe('diffLaneChanges', () => {
     expect([...changed].sort()).toEqual(['docs/secret_plan.md', 'src/secret_plan.md']);
   });
 
+  // A sibling gap to Q320, found by the same adversarial scrutiny but on the OTHER leg: Q320 pinned the
+  // two-ref, history-relative leg's own `--no-renames` (see "history-relative detection" below). The
+  // mirror-image gap sits on the ONE-ref leg above (`git diff --no-renames -z --name-only <baseSha>`, no
+  // second ref) -- it has no test of its own that would notice its `--no-renames` being removed, because
+  // the pre-existing rename test (just above) COMMITS its own rename, so the unaffected two-ref leg
+  // already reports both paths on its own and completely masks a collapsed one-ref leg. This test closes
+  // it the mirror-image way: forcing detection through the ONE-ref leg ALONE by renaming a tracked file
+  // with `git mv` and leaving the worktree UNCOMMITTED -- HEAD never moves (confirmed directly below, via
+  // the exact two-ref invocation `diffLaneChanges` itself uses), so the two-ref leg has nothing to report;
+  // and the rename is staged by `git mv`, not untracked, so the untracked-files listing (confirmed empty
+  // below too) has nothing either. Only the one-ref leg, which diffs `baseSha` against the live
+  // worktree/index directly, can see this rename at all -- and without `--no-renames` (the mutation this
+  // test exists to kill), git's own default rename detection collapses it to the new path alone, the
+  // identical collapse this module's own doc comment already documents, just on the other leg.
+  it('reports BOTH the old and new path of an uncommitted, in-lane rename that only the one-ref leg can see (its own --no-renames)', async () => {
+    const cwd = await createTempRepo();
+    await mkdir(path.join(cwd, 'docs'), { recursive: true });
+    await writeFile(path.join(cwd, 'docs', 'secret_plan.md'), 'a fairly ordinary file\n');
+    const baseSha = await commitAll(cwd, 'seed');
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
+
+    // Renamed, never committed: HEAD stays at baseSha for the whole test.
+    await mkdir(path.join(handle.path, 'src'), { recursive: true });
+    await execa('git', ['mv', 'docs/secret_plan.md', 'src/secret_plan.md'], { cwd: handle.path });
+
+    // Confirmed directly, rather than assumed: the two-ref leg (the exact invocation `diffLaneChanges`
+    // itself uses for it) reports nothing -- HEAD never moved, so there is nothing in committed history
+    // for it to see.
+    const { stdout: twoRefDiff } = await execa(
+      'git',
+      ['diff', '--no-renames', '-z', '--name-only', baseSha, 'HEAD', '--'],
+      { cwd: handle.path },
+    );
+    expect(twoRefDiff).toBe('');
+    // And the rename is staged by `git mv`, not untracked, so the untracked-files listing sees nothing
+    // for it either.
+    const { stdout: untracked } = await execa(
+      'git',
+      ['ls-files', '-z', '--others', '--exclude-standard'],
+      { cwd: handle.path },
+    );
+    expect(untracked).toBe('');
+
+    const changed = await diffLaneChanges(handle, baseSha);
+
+    expect(changed).toContain('docs/secret_plan.md');
+    expect(changed).toContain('src/secret_plan.md');
+  });
+
   it('reports a file with a non-ASCII name intact, not C-quoted/escaped', async () => {
     const cwd = await createTempRepo();
     await writeFile(path.join(cwd, 'a.txt'), 'a');
@@ -547,6 +600,43 @@ describe('enforceClaim', () => {
     expect(result.reverted).toEqual([]);
     await expect(readFile(path.join(handle.path, 'src', '.eslintrc.json'), 'utf8')).resolves.toBe(
       '{}',
+    );
+  });
+
+  // The `enforceClaim`-level consequence of the sibling-to-Q320 gap the matching `diffLaneChanges` test
+  // above closes (see its own comment for the full construction). An in-lane rename moves an out-of-claim
+  // file INTO the claimed directory via `git mv`, left UNCOMMITTED -- HEAD never moves, so only the
+  // one-ref leg can see it at all. With `--no-renames` present on that leg (the real, shipped behaviour),
+  // the old path correctly surfaces as out-of-claim and gets restored. Without it (the mutation this test
+  // exists to kill), git's own default rename detection collapses the one-ref diff to the new, in-claim
+  // path alone: the old path never appears in `changed`, `outOfClaim` comes back empty, and nothing is
+  // reverted -- a complete, silent bypass of claim enforcement, uncommitted rather than self-committed.
+  it("strict: still restores an uncommitted in-lane rename's own out-of-claim old path, even though HEAD never moved (sibling gap to Q320: the one-ref leg's own --no-renames)", async () => {
+    const cwd = await createTempRepo();
+    await mkdir(path.join(cwd, 'src'), { recursive: true });
+    await writeFile(path.join(cwd, 'src', 'a.ts'), 'in claim');
+    await mkdir(path.join(cwd, 'docs'), { recursive: true });
+    await writeFile(path.join(cwd, 'docs', 'secret_plan.md'), 'a fairly ordinary file\n');
+    const baseSha = await commitAll(cwd, 'seed');
+    const handle = await createLaneWorktree(cwd, {
+      runId: 'run-1',
+      stepId: 'a',
+      integrationBase: baseSha,
+    });
+
+    // Renamed into the claimed directory, never committed: HEAD stays at baseSha for the whole test.
+    await execa('git', ['mv', 'docs/secret_plan.md', 'src/secret_plan.md'], { cwd: handle.path });
+
+    const result = await enforceClaim(handle, baseSha, ['src/**'], 'strict');
+
+    expect(result.outOfClaim).toEqual(['docs/secret_plan.md']);
+    expect(result.reverted).toEqual(['docs/secret_plan.md']);
+    // Restored to its exact baseSha content; the in-claim new path is untouched by the revert.
+    await expect(readFile(path.join(handle.path, 'docs', 'secret_plan.md'), 'utf8')).resolves.toBe(
+      'a fairly ordinary file\n',
+    );
+    await expect(readFile(path.join(handle.path, 'src', 'secret_plan.md'), 'utf8')).resolves.toBe(
+      'a fairly ordinary file\n',
     );
   });
 

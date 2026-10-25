@@ -1053,6 +1053,68 @@ describe('VcsFacade.changedFiles reports entries that are not regular files', ()
   });
 });
 
+// `changedFiles`' two `git diff` legs (`facades.ts`) each carry their own `--no-renames`, and each has had
+// no DELIBERATE mutation-killing test of its own. A fresh adversarial review found: the name-only leg
+// (feeding `committed`) is only INCIDENTALLY covered -- two existing tests above ("a valid new artifact
+// does not license deleting an existing one of the same type" and the Diagram sidecar deletion test)
+// happen to delete one artifact and add a similarly-templated one of the same type in the same lane
+// commit, which is close enough in content for git's own rename heuristic to fire if `--no-renames` were
+// ever removed; nothing in either test comments on that flag, or would survive a change to their own
+// fixture content that drops the similarity below git's threshold. The raw leg (feeding `nonRegular`) had
+// ZERO coverage of its own flag at all -- removing it left every test in this file green. Both get a real,
+// commented, deliberately-constructed test here instead of relying on incidental similarity elsewhere.
+describe("changedFiles' own --no-renames, pinned deliberately on each leg (not left to incidental fixture similarity)", () => {
+  it("committed: a same-commit, in-lane rename reports BOTH the old and new path, not the single path git's default rename detection would collapse it to (the name-only leg's own --no-renames)", async () => {
+    const projectRoot = await createTempRepo('rename-name-only');
+    await mkdir(path.join(projectRoot, 'docs'), { recursive: true });
+    await writeFile(path.join(projectRoot, 'docs', 'secret_plan.md'), 'a fairly ordinary file\n');
+    await execa('git', ['add', '-A'], { cwd: projectRoot });
+    await execa('git', ['commit', '--quiet', '-m', 'base'], { cwd: projectRoot });
+    const ctx = createTestContext({ projectRoot, adapter: new FakePlatformAdapter() });
+    const baseSha = await ctx.vcs.resolveRevision('main');
+    const lane = await ctx.vcs.createLane('wf:rename-name-only', 'main');
+    await mkdir(path.join(lane.path, 'src'), { recursive: true });
+    await execa('git', ['mv', 'docs/secret_plan.md', 'src/secret_plan.md'], { cwd: lane.path });
+    await execa('git', ['commit', '--quiet', '-m', 'rename'], { cwd: lane.path });
+
+    const { committed } = await ctx.vcs.changedFiles(lane, baseSha);
+
+    // Without `--no-renames` (the mutation this test exists to kill), the name-only leg collapses this
+    // to `src/secret_plan.md` alone, and `docs/secret_plan.md` silently disappears from `committed` --
+    // exactly the path `checkDeclaredOutputs` (`outputs.ts`) reads to decide a pre-existing artifact of a
+    // declared type was removed (`files.committed.filter(inClaim)`, the same check the incidental tests
+    // above exercise end to end). A collapsed `committed` here would miss that deletion entirely.
+    expect(committed).toContain('docs/secret_plan.md');
+    expect(committed).toContain('src/secret_plan.md');
+  });
+
+  it("nonRegular: a same-commit rename of an existing symlink reports its NEW path, not a stale path the rename leaves nothing behind at (the raw leg's own --no-renames)", async () => {
+    const projectRoot = await createTempRepo('rename-raw');
+    await symlink('some/target/path', path.join(projectRoot, 'old-link.md'));
+    await execa('git', ['add', '-A'], { cwd: projectRoot });
+    await execa('git', ['commit', '--quiet', '-m', 'base'], { cwd: projectRoot });
+    const ctx = createTestContext({ projectRoot, adapter: new FakePlatformAdapter() });
+    const baseSha = await ctx.vcs.resolveRevision('main');
+    const lane = await ctx.vcs.createLane('wf:rename-raw', 'main');
+    await execa('git', ['mv', 'old-link.md', 'new-link.md'], { cwd: lane.path });
+    await execa('git', ['commit', '--quiet', '-m', 'rename symlink'], { cwd: lane.path });
+
+    const { nonRegular } = await ctx.vcs.changedFiles(lane, baseSha);
+
+    // Without `--no-renames` (the mutation this test exists to kill), git's `--raw` format reports a
+    // detected rename as ONE three-field record (`:<oldmode> <newmode> <oldsha> <newsha> R100`, oldpath,
+    // newpath) instead of two independent two-field records -- confirmed directly against real git. This
+    // function's own parsing loop steps through `fields` two at a time assuming every record is exactly
+    // that shape, so a three-field rename record desyncs it: the merged record's correct `newMode`
+    // (120000) gets paired with `fields[index + 1]`, which for a rename record is the OLD path, not the
+    // new one. The result is `nonRegular` naming the stale path the rename leaves nothing behind at
+    // (`old-link.md`, which no longer exists at all), while the real symlink's actual, live, in-claim path
+    // (`new-link.md`) is never flagged -- a silent miss of exactly the entry `checkDeclaredOutputs`'s own
+    // nonRegular check exists to catch.
+    expect(nonRegular).toEqual(['new-link.md']);
+  });
+});
+
 describe('the existing output contract still applies inside the widened claim', () => {
   it('an invalid artifact at the registry path is kept by the claim and then fails validation, not silently dropped', async () => {
     const { outcome } = await run({
