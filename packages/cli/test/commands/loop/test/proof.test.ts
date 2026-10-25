@@ -1161,14 +1161,14 @@ describe("captureRunnerVersion -- round 7: the fifth bypass, real shell GLOB EXP
     }
   });
 
-  it('does NOT refuse a QUOTED, genuinely literal glob character -- "npm test --filter=\'*\'" -- the real shell never expands a single-quoted "*" at all, and `commandWordsWithGlobs`\' own `globbed` set correctly excludes it (unlike a bare textual "does this word\'s string contain an asterisk" rescan, which could not tell the two apart): the real script runs, receiving the literal three-character string "--filter=*" as one genuine argv token, proving this was never glob-expanded', async () => {
+  it('does NOT refuse a QUOTED, genuinely literal glob character -- "npm test -- --filter=\'*\'" -- the real shell never expands a single-quoted "*" at all, and `commandWordsWithGlobs`\' own `globbed` set correctly excludes it (unlike a bare textual "does this word\'s string contain an asterisk" rescan, which could not tell the two apart): the real script runs, receiving the literal three-character string "--filter=*" as its own genuine argv token, proving this was never glob-expanded. Routed through a literal "--" (never bare "npm test --filter=\'*\'") because npm silently swallows any unrecognised "--key=value" token into its own internal config regardless of whether it contains a glob character -- a bare run would produce the identical empty argv whether or not the quote-suppression logic preserved the literal string, proving only that the command was not refused, never the more specific claim that the literal three-character token actually reached the script. "--" forwards everything after it to the real script verbatim (confirmed live), which is also exactly why `isPackageManagerVersionProbe` only ever scans the tail UP TO a literal "--" (this round\'s own `literalSeparatorIndex` design, above): this command\'s scanned portion is empty, so it is never refused by the glob check either, for the same real reason', async () => {
     const dir = await tempDir();
     await writeArgvEchoProject(dir);
     await writeVersionDecoyFile(dir);
-    const result = await captureRunnerVersion("npm test --filter='*'", dir, 30_000);
+    const result = await captureRunnerVersion("npm test -- --filter='*'", dir, 30_000);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.runnerVersion).toContain('REAL_SCRIPT_RAN ARGV=[]');
+      expect(result.runnerVersion).toContain('REAL_SCRIPT_RAN ARGV=["--filter=*"]');
     }
   }, 60_000);
 
