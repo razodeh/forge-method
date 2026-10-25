@@ -58,7 +58,9 @@ describe('runEmitSchemas', () => {
       execFileSync(
         process.execPath,
         [
-          '--experimental-strip-types',
+          // No type-stripping flag needed here at all (unlike `runEmitSchemas`'s own internal spawn,
+          // fixed for Q340 above): this `-e` script only ever `import()`s the plain, already-`.mjs`
+          // `schema-drift.mjs`, never a `.ts` file directly.
           '-e',
           `
           import('./scripts/lib/schema-drift.mjs').then((m) => {

@@ -12,9 +12,15 @@
  * keeps the constraint local to one function, rather than requiring every caller of this file to
  * somehow already be running with the flag.
  *
+ * The flag itself is Node-version-aware (`SPEC-QUESTIONS.md` Q340): `--experimental-strip-types`
+ * does not exist at all on Node 20.x, only from Node 22.6 onward, so `./node-ts-flag.mjs`'s own
+ * `TS_NODE_FLAG` picks the real, working equivalent for whichever Node this process is actually
+ * running under.
+ *
  * @see specs/02 §2.1
  * @see specs/22 M1 exit test
  * @see PLAN-M1.md P9
+ * @see SPEC-QUESTIONS.md Q340
  */
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -24,6 +30,8 @@ import { readFileSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { TS_NODE_FLAG } from './node-ts-flag.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const emitChildScript = path.join(scriptDir, 'emit-schemas-child.mjs');
@@ -40,7 +48,7 @@ const emitChildScript = path.join(scriptDir, 'emit-schemas-child.mjs');
  * @returns {Map<string, string>}
  */
 export function runEmitSchemas() {
-  const output = execFileSync(process.execPath, ['--experimental-strip-types', emitChildScript], {
+  const output = execFileSync(process.execPath, [TS_NODE_FLAG, emitChildScript], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });

@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { BENCHMARK_NAMES } from './lib/bench-ratchet.mjs';
+import { TS_NODE_FLAG } from './lib/node-ts-flag.mjs';
 
 const benchScript = fileURLToPath(new URL('bench.mjs', import.meta.url));
 const repoRoot = path.resolve(import.meta.dirname, '..');
@@ -42,7 +43,7 @@ function run(args: readonly string[], marksPath: string) {
   try {
     return {
       status: 0,
-      output: execFileSync(process.execPath, ['--experimental-strip-types', benchScript, ...args], {
+      output: execFileSync(process.execPath, [TS_NODE_FLAG, benchScript, ...args], {
         cwd: repoRoot,
         encoding: 'utf8',
         env: {
@@ -136,7 +137,7 @@ describe('bench.mjs — a stale/broken CLI entry (round-1 critic finding)', () =
       try {
         return {
           status: 0,
-          output: execFileSync(process.execPath, ['--experimental-strip-types', benchScript], {
+          output: execFileSync(process.execPath, [TS_NODE_FLAG, benchScript], {
             cwd: repoRoot,
             encoding: 'utf8',
             env: {
