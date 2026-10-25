@@ -76,7 +76,14 @@ function refusal(problem: TestPathProblem, detail: string): Extract<TestPathChec
 
 function within(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  // The first path SEGMENT must be checked, not a raw string prefix: `path.relative` can return a
+  // literal `'...'` (e.g. for a candidate ending in a file or directory named `...`, or `..foo`), and
+  // `'...'.startsWith('..')` is `true` purely because the first two characters coincidentally match,
+  // even though `...`/`..foo` name a real sibling, never a `..` parent-directory escape.
+  return (
+    relative === '' ||
+    (relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative))
+  );
 }
 
 /** Whether `relPath` (already `..`-free and project-relative) sits under `testRoot`, at a segment

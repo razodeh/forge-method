@@ -77,6 +77,33 @@ describe('validateTestPath: the validator matrix', () => {
     expect(await problemOf('tests/../x.test.ts', root)).toBe('path-escape');
   });
 
+  it('deeper and absolute-shaped ".." escapes are refused as path-escape (../.., ../../etc/passwd)', async () => {
+    const root = await lane();
+    expect(await problemOf('../../x.test.ts', root)).toBe('path-escape');
+    expect(await problemOf('../../etc/passwd', root)).toBe('path-escape');
+    expect(await problemOf('tests/../../x.test.ts', root)).toBe('path-escape');
+  });
+
+  it(
+    'within()s own substring bug (fixed alongside confined-command.ts own identical one): a real file ' +
+      'literally named ... or starting with two dots (never a parent-directory escape) is not a false ' +
+      'path-escape -- path.relative can return a string like "..." whose first two characters only ' +
+      'coincidentally match the two-character ".." prefix check',
+    async () => {
+      const root = await lane();
+      await mkdir(path.join(root, 'tests'));
+      await writeFile(path.join(root, 'tests', '...'), '');
+      await writeFile(path.join(root, 'tests', '..foo.test.ts'), '');
+      // Neither name holds a literal ".." path SEGMENT (checked by `rawPath.split('/').includes('..')` --
+      // confirmed independently here, not just asserted), so both reach `within()` itself.
+      expect('tests/...'.split('/').includes('..')).toBe(false);
+      expect('tests/..foo.test.ts'.split('/').includes('..')).toBe(false);
+      expect(await problemOf('tests/...', root)).toBeUndefined();
+      const checked = await validateTestPath('tests/..foo.test.ts', { root });
+      expect(checked.ok, JSON.stringify(checked)).toBe(true);
+    },
+  );
+
   it('an absolute path is refused as path-escape', async () => {
     const root = await lane();
     expect(await problemOf('/etc/passwd', root)).toBe('path-escape');
