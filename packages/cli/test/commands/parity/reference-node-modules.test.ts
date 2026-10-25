@@ -9,7 +9,7 @@
  * @see process/SPEC-QUESTIONS.md Q314
  */
 import { execFile } from 'node:child_process';
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -246,5 +246,43 @@ describe('linkReferenceNodeModules: a genuine failure (RUN-163) (specs/22, Q314 
     } finally {
       await chmod(worktreeRoot, 0o755);
     }
+  });
+
+  it('fails typed (RUN-163), never a silent no-op, when a plain FILE occupies the destination (EEXIST, but not a directory -- critic round 2)', async () => {
+    const projectRoot = await freshDir('forge-q314-fail-file-project-');
+    await mkdir(path.join(projectRoot, 'node_modules'), { recursive: true });
+    const worktreeRoot = await freshDir('forge-q314-fail-file-worktree-');
+    // A plain file at the destination raises EEXIST too, exactly like a real tracked directory does
+    // -- but a file could never have made module resolution work, so the no-op's own stated
+    // rationale does not apply here, and this must still raise RUN-163 (this is the real scenario a
+    // critic found the bare-EEXIST version of this function would have wrongly swallowed).
+    await writeFile(
+      path.join(worktreeRoot, 'node_modules'),
+      'a stray file, not a real checkout',
+      'utf8',
+    );
+
+    await expect(linkReferenceNodeModules(projectRoot, worktreeRoot)).rejects.toSatisfy(
+      (error: unknown) => isForgeError(error) && error.code === 'RUN-163',
+    );
+    // Untouched: still the stray file, never silently adopted or replaced.
+    const destinationStat = await lstat(path.join(worktreeRoot, 'node_modules'));
+    expect(destinationStat.isDirectory()).toBe(false);
+  });
+
+  it('fails typed (RUN-163), never a silent no-op, when a SYMLINK (even a broken one) occupies the destination (EEXIST, but lstat reports isSymbolicLink, never isDirectory, regardless of target)', async () => {
+    const projectRoot = await freshDir('forge-q314-fail-symlink-project-');
+    await mkdir(path.join(projectRoot, 'node_modules'), { recursive: true });
+    const worktreeRoot = await freshDir('forge-q314-fail-symlink-worktree-');
+    // A tracked `node_modules` checked in as a symlink, not a real directory -- confirmed directly
+    // that `lstat` on a symlink itself reports `isSymbolicLink()`, never `isDirectory()`, regardless
+    // of what it points to (even a target that does not exist at all, as here), so this still raises
+    // RUN-163 -- the clearer attribution being preferable to a silent no-op this function cannot
+    // actually verify works.
+    await symlink('/path/does/not/exist/at/all', path.join(worktreeRoot, 'node_modules'));
+
+    await expect(linkReferenceNodeModules(projectRoot, worktreeRoot)).rejects.toSatisfy(
+      (error: unknown) => isForgeError(error) && error.code === 'RUN-163',
+    );
   });
 });

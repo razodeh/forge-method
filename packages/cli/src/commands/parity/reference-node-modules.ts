@@ -51,22 +51,35 @@
  * project) — `13` F-TEST-9's own `setup` escape hatch already covers "needs more than the tracked
  * files" generically for anything this narrower mechanism does not reach.
  *
- * **Also a no-op when the destination already exists (`EEXIST`) — a real, not merely theoretical,
- * case.** A project that intentionally tracks its own `node_modules` in git (rare, but real: airgapped
- * or compliance setups — `specs/20` §20.2's deny list names `node_modules/` as its own, separate
- * bullet from "anything in `.gitignore`", which only makes sense if a tracked `node_modules` is an
+ * **Also a no-op when the destination already exists AS A REAL DIRECTORY — a real, not merely
+ * theoretical, case, but narrowed to exactly that shape, not to the `EEXIST` code generically.** A
+ * project that intentionally tracks its own `node_modules` in git (rare, but real: airgapped or
+ * compliance setups — `specs/20` §20.2's deny list names `node_modules/` as its own, separate bullet
+ * from "anything in `.gitignore`", which only makes sense if a tracked `node_modules` is an
  * anticipated case) means `createLaneWorktree`'s own ordinary checkout already populated the scratch
  * worktree's `node_modules` with real, tracked content before this function ever runs — module
  * resolution there already works, with no symlink needed, exactly as it did immediately after M17 P8
  * landed and before this piece existed. Refusing with `RUN-163` here would be a genuine regression
  * (confirmed by direct execution, not assumed): it would convert a working scenario into a permanent,
  * unrecoverable failure with no actionable remedy, since the "problem" is the project's own
- * intentionally-tracked dependencies, not anything wrong. `EEXIST` is therefore the one error code
- * this function treats as the identical no-op as "nothing to link" — anything else (a permissions
- * problem, say) still raises `RUN-163`.
+ * intentionally-tracked dependencies, not anything wrong.
+ *
+ * **`EEXIST` alone is not enough to decide that — confirmed by a critic via direct execution, not
+ * assumed.** A plain FILE, or a broken symlink, or an empty junk directory occupying the destination
+ * (a crashed-run leftover, a filesystem oddity) also raises `EEXIST` from `symlink()`, but none of
+ * those shapes make the stated justification above true: a stray file could never have made module
+ * resolution work, so silently no-opping there would trade a clear `RUN-163` pointing at the real
+ * problem for a confusing, unattributed Node crash deep inside the reference run instead. So on
+ * `EEXIST`, this function `lstat`s the destination itself and no-ops ONLY when it `isDirectory()` —
+ * matching the stated rationale exactly, never the bare error code. Everything else at that path,
+ * `EEXIST` or not, still raises `RUN-163`. (A tracked `node_modules` checked in as a SYMLINK, not a
+ * real directory, is therefore NOT covered by this no-op either — `lstat` on a symlink reports
+ * `isSymbolicLink()`, never `isDirectory()`, regardless of what it points to, confirmed directly —
+ * which still raises `RUN-163` for it, the clearer attribution being preferable there too.)
  *
  * @throws {ForgeError} `RUN-163` if a `node_modules` symlink genuinely cannot be created for a reason
- * other than the destination already existing — not either no-op above, which is not a failure.
+ * other than the destination already existing as a real directory — not either no-op above, neither
+ * of which is a failure.
  *
  * @see specs/13-frameworks-testing-and-debugging.md F-TEST-9
  * @see process/SPEC-QUESTIONS.md Q314
@@ -113,10 +126,13 @@ export async function linkReferenceNodeModules(
   try {
     await symlink(source, destination, 'dir');
   } catch (cause) {
-    // A destination that already exists (a real, tracked `node_modules` the checkout itself already
-    // populated -- see this module's own doc comment) means resolution there already works with no
-    // symlink needed: the identical no-op as "nothing to link", never a failure.
-    if (cause instanceof Error && 'code' in cause && cause.code === 'EEXIST') return;
+    if (cause instanceof Error && 'code' in cause && cause.code === 'EEXIST') {
+      // `EEXIST` alone does not justify the no-op -- only a REAL DIRECTORY at the destination does
+      // (a tracked `node_modules` the checkout itself already populated -- see this module's own doc
+      // comment for why a bare file, broken symlink or junk directory must NOT take this path).
+      const destinationStat = await lstat(destination);
+      if (destinationStat.isDirectory()) return;
+    }
     throw new ForgeError(
       'RUN-163',
       { path: destination, detail: cause instanceof Error ? cause.message : String(cause) },
