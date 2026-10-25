@@ -7,6 +7,8 @@
  */
 import { ARTIFACT_SCHEMAS, type ArtifactTypeId } from '@forge/schemas';
 
+import { formatZodIssue } from '@forge/core';
+
 import { checkTemplateRequiredFields } from '../workflows/index.ts';
 import { KIND_SCHEMAS, presetSchema } from './schema.ts';
 import type {
@@ -95,7 +97,7 @@ export function validatePreset(preset: PresetDefinition): PresetValidationOutcom
         findings.push({
           severity: 'error',
           path: file.path,
-          message: `${issue.path.join('.') || '(root)'}: ${issue.message}`,
+          message: formatZodIssue(issue),
         });
       }
       continue;

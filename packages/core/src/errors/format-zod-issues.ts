@@ -9,14 +9,24 @@
  * and roughly a dozen further call sites across the codebase (`SPEC-QUESTIONS.md` Q325) — the same
  * convention arrived at independently everywhere, never imported from one place. This file is now
  * that one place for the call sites migrated to it here: `CFG-021`'s `parseModule`, `CFG-036`'s
- * `describeRequestedCapabilities` (both via `formatZodIssues`, a single joined line), and four more
+ * `describeRequestedCapabilities`, and `@forge/extensions/presets`'s `validatePreset` (its own
+ * `KIND_SCHEMAS` dispatch loop only — `checkTemplateOverlay`'s separate inline duplicate, and
+ * `validatePreset`'s own top-level `presetSchema.safeParse`, are both confirmed union-free and left
+ * alone) — all three via `formatZodIssue`/`formatZodIssues`, a single joined line — plus four more
  * confirmed-live sites Q325's own research missed, each of which keeps `path` and `message` as two
  * separate record fields rather than one joined line, so they use the finer-grained
  * `formatZodIssue`/`formatZodIssueMessage` exports instead: `@forge/methods`'s `loadDodProfile`
  * (`dodCheckSchema`), `@forge/agents`'s `loadAgentDefinition` (`inputRefSchema`, `tools.network`),
  * `@forge/engine`'s `parseWorkflow` (`produces`), and `@forge/extensions`'s `validateMcpConfig`
- * (`toolGrantValueSchema`). The remaining pre-existing inline occurrences elsewhere are unchanged —
- * see this fix's own commit message for which of those were actually audited (confirmed
+ * (`toolGrantValueSchema`). `validatePreset`'s own `KIND_SCHEMAS` dispatch reaches a union through a
+ * *composed* schema a shared helper builds (`@forge/extensions/merge`'s own `overlayArrayField`,
+ * used by both `agentOverlaySchema.limits` and `frameworkOverlaySchema`'s `criteria`/`options`/
+ * `rules`, plus `workflowOverlaySchema`'s own `workflowStepsFieldSchema` and `mcpConfigSchema`'s own
+ * `toolGrantValueSchema`) rather than a literal `z.union` written in `presets/schema.ts` itself —
+ * exactly the shape a plain text-grep of the file under review would miss, and did miss once already
+ * (round 2's audit of this same file wrongly concluded "no union at all" from that grep). The
+ * remaining pre-existing inline occurrences elsewhere are unchanged — see this fix's own commit
+ * messages for which of those were actually traced through every import/composition (confirmed
  * `z.discriminatedUnion`, confirmed not a union at all) versus genuinely left unaudited, rather than
  * repeating Q325's own mistake of an unverified blanket "currently unreachable" claim.
  *

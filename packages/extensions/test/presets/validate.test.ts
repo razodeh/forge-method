@@ -105,6 +105,100 @@ describe('validatePreset — schema dispatch', () => {
   });
 });
 
+describe('validatePreset — z.union-aware schema dispatch (SPEC-QUESTIONS.md Q325)', () => {
+  // Four of the seven `KIND_SCHEMAS` compose a real `z.union` somewhere in their own shape (traced
+  // through an imported/shared helper, not a literal `z.union` in this package's own schema.ts files
+  // -- `mcpConfigSchema`'s own `toolGrantValueSchema`, `agentOverlaySchema`'s own `limitsSchema`,
+  // `workflowOverlaySchema`'s own `workflowStepsFieldSchema`, and `frameworkOverlaySchema`'s own
+  // `overlayArrayField(...)` helper). Each of these was confirmed live through this exact function
+  // before the fix (rendering zod's generic "Invalid input"), not merely a hypothetical schema shape.
+
+  it('names every toolGrantValueSchema union member\'s own reason for a malformed mcpConfig grant, not "Invalid input"', () => {
+    const preset: PresetDefinition = {
+      id: 'fixture-mcp-bad-grant',
+      posture: 'A fixture preset with a malformed mcp grant value.',
+      files: [
+        {
+          path: 'mcp.yaml',
+          kind: 'mcpConfig',
+          data: { servers: [], grants: { pm: { 'acme-jira': 'everything' } } },
+        },
+      ],
+    };
+    const outcome = validatePreset(preset);
+    expect(outcome.valid).toBe(false);
+    const message = outcome.findings[0]?.message;
+    expect(message).not.toContain('Invalid input');
+    expect(message).toContain('did not match any of the 2 allowed shapes');
+    expect(message).toContain('Expected array, received string');
+    expect(message).toContain('Invalid literal value');
+  });
+
+  it('names every limitsSchema union member\'s own reason for a malformed agentOverlay limit, not "Invalid input"', () => {
+    const preset: PresetDefinition = {
+      id: 'fixture-agent-bad-limit',
+      posture: 'A fixture preset with a malformed agent-overlay limit value.',
+      files: [
+        {
+          path: 'agent.yaml',
+          kind: 'agentOverlay',
+          data: { limits: { max_turns: [1, 2, 3] } },
+        },
+      ],
+    };
+    const outcome = validatePreset(preset);
+    expect(outcome.valid).toBe(false);
+    const message = outcome.findings[0]?.message;
+    expect(message).not.toContain('Invalid input');
+    expect(message).toContain('did not match any of the 3 allowed shapes');
+    expect(message).toContain('Expected number, received array');
+    expect(message).toContain('Expected string, received array');
+    expect(message).toContain('Expected boolean, received array');
+  });
+
+  it('names every workflowStepsFieldSchema union member\'s own reason for a malformed workflowOverlay steps value, not "Invalid input"', () => {
+    const preset: PresetDefinition = {
+      id: 'fixture-workflow-bad-steps',
+      posture: 'A fixture preset with a malformed workflow-overlay steps value.',
+      files: [
+        {
+          path: 'workflow.yaml',
+          kind: 'workflowOverlay',
+          data: { steps: 'not-an-array-or-directive' },
+        },
+      ],
+    };
+    const outcome = validatePreset(preset);
+    expect(outcome.valid).toBe(false);
+    const message = outcome.findings[0]?.message;
+    expect(message).not.toContain('Invalid input');
+    expect(message).toContain('did not match any of the 2 allowed shapes');
+    expect(message).toContain('Expected array, received string');
+    expect(message).toContain('Expected object, received string');
+  });
+
+  it('names every overlayArrayField union member\'s own reason for a malformed frameworkOverlay criteria value, not "Invalid input"', () => {
+    const preset: PresetDefinition = {
+      id: 'fixture-framework-bad-criteria',
+      posture: 'A fixture preset with a malformed framework-overlay criteria value.',
+      files: [
+        {
+          path: 'framework.yaml',
+          kind: 'frameworkOverlay',
+          data: { criteria: 'not-an-array-or-directive' },
+        },
+      ],
+    };
+    const outcome = validatePreset(preset);
+    expect(outcome.valid).toBe(false);
+    const message = outcome.findings[0]?.message;
+    expect(message).not.toContain('Invalid input');
+    expect(message).toContain('did not match any of the 2 allowed shapes');
+    expect(message).toContain('Expected array, received string');
+    expect(message).toContain('Expected object, received string');
+  });
+});
+
 describe('validatePreset — templateOverlay', () => {
   const COMPLETE_ADR_FRONT_MATTER = {
     id: 'ADR-0001',
