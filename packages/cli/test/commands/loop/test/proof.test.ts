@@ -968,3 +968,127 @@ describe('captureRunnerVersion -- exactly the CONFIRMED-TRAP "(npm|pnpm|yarn) (r
     }
   }, 60_000);
 });
+
+describe("captureRunnerVersion -- round 6: two independent critics, two independent live bypasses of round 5's own table (SPEC-QUESTIONS.md Q333, critic round 6)", () => {
+  it('Bypass A, closed: refuses every confirmed trap flag with an "=" -embedded value -- "--version=foo"/"-v=foo" for npm (both forms) and pnpm bare, plus pnpm bare\'s "-V=foo" (the identical unrecognised-option parse-error hazard bare "-V" already closes) -- confirmed live, each of these leaked/erred exactly like the bare flag before this round\'s fix', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const command of [
+      'npm test --version=foo',
+      'npm test -v=foo',
+      'npm run test --version=foo',
+      'npm run test -v=foo',
+      'pnpm test --version=foo',
+      'pnpm test -v=foo',
+      'pnpm test -V=foo',
+      // the empty-value edge: still a "<flag>=" prefix, still a real live leak (confirmed: "npm
+      // test --version=" prints npm's own "11.1.0" the identical way the non-empty-value form does).
+      'npm test --version=',
+      'pnpm test --version=',
+    ]) {
+      const result = await captureRunnerVersion(command, dir, 5_000);
+      expect(result.ok, command).toBe(false);
+      if (!result.ok) {
+        expect(result.reason, command).toContain('ITS OWN version');
+        expect(result.timedOut, command).toBeUndefined();
+      }
+    }
+  });
+
+  it('Bypass A, not over-widened: "--versionX" (a token that merely STARTS WITH the flag, with no "=" right after it) stays unmatched and unrefused for npm, in both forms -- confirmed live the real script still runs with an EMPTY argv (npm silently drops the flag it does not recognise rather than forwarding it) -- re-matching this would be round 4\'s own over-broad bug again, just spelled differently', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const command of ['npm test --versionX', 'npm run test --versionX']) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      expect(result.ok, command).toBe(true);
+      if (result.ok) {
+        expect(result.runnerVersion, command).toContain('REAL_SCRIPT_RAN ARGV=[]');
+      }
+    }
+  }, 60_000);
+
+  it('Bypass A, pnpm\'s explicit "run test" form stays safe for every "=" -embedded flag too -- round 5\'s own "run test forwards correctly" finding is unchanged by this round\'s widened match: confirmed live, the real script runs and receives the flag as one genuine argv token', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const [command, expectedArg] of [
+      ['pnpm run test --version=foo', '"--version=foo"'],
+      ['pnpm run test -v=foo', '"-v=foo"'],
+      ['pnpm run test -V=foo', '"-V=foo"'],
+    ] as const) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      expect(result.ok, command).toBe(true);
+      if (result.ok) {
+        expect(result.runnerVersion, command).toContain('REAL_SCRIPT_RAN');
+        expect(result.runnerVersion, command).toContain(expectedArg);
+      }
+    }
+  }, 60_000);
+
+  it('Bypass B, closed: refuses npm\'s "run" form for a script name that merely STARTS WITH "test" ("testXtra"/"test-other"/"test:unit"/...) -- the exact shape both the admitting exec-pattern allowlist (a raw startsWith, no word boundary) and vetNetworkAndArguments\'s own run-form PACKAGE_TEST_VERBS check (which only ever inspects the literal "run" token, never what follows it) already tolerate, confirmed live to still leak npm\'s own real version regardless of the suffix', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const command of [
+      'npm run testXtra --version',
+      'npm run testXtra -v',
+      'npm run test-other --version',
+      'npm run test-other -v',
+      'npm run test:unit --version',
+      'npm run test:unit -v',
+      // combined with Bypass A's own "=" -embedded form, to confirm the two fixes compose rather
+      // than accidentally depending on each other's absence.
+      'npm run testXtra --version=foo',
+      'npm run testXtra -v=foo',
+    ]) {
+      const result = await captureRunnerVersion(command, dir, 5_000);
+      expect(result.ok, command).toBe(false);
+      if (!result.ok) {
+        expect(result.reason, command).toContain('ITS OWN version');
+        expect(result.timedOut, command).toBeUndefined();
+      }
+    }
+  });
+
+  it('Bypass B\'s own bare-form near miss ("npm testXtra --version") was never this function\'s gap in the first place -- it is refused earlier, by vetNetworkAndArguments\'s own PACKAGE_TEST_VERBS check rejecting "testXtra" itself as an unrecognised verb -- still refused the same way after this round\'s fix, with a DIFFERENT reason (never reaching, let alone being refused by, the version-probe check at all)', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    const result = await captureRunnerVersion('npm testXtra --version', dir, 5_000);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).not.toContain('ITS OWN version');
+      expect(result.timedOut).toBeUndefined();
+    }
+  });
+
+  it('dimensions swept and confirmed still SAFE, round 6: neither flag case variants ("--Version"/"--VERSION") nor a bundled-looking short flag ("-vV") turn a safe npm shape into a trap -- confirmed live the real script still runs with an empty argv, exactly like any other flag npm itself does not recognise', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const command of [
+      'npm test --Version',
+      'npm test --VERSION',
+      'npm test -vV',
+      'npm run test --Version',
+      'npm run test -vV',
+    ]) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      expect(result.ok, command).toBe(true);
+      if (result.ok) {
+        expect(result.runnerVersion, command).toContain('REAL_SCRIPT_RAN ARGV=[]');
+      }
+    }
+  }, 60_000);
+
+  it('disclosed, not fixed here (pre-existing, broader than this one mechanism, unchanged by this round): pnpm\'s own case-sensitive bare-form parser hard-errors on ANY flag it does not recognise by exact lowercase spelling, not only version-shaped ones -- "--Version"/"-vV" are generalised instances of the SAME "Unknown option" parse-error-as-fake-output hazard bare "-V" is already special-cased for, confirmed live to still reach and pass through runShellCommand (never refused by isPackageManagerVersionProbe, since neither is a version-shaped flag this table names) and still get silently captured as if it were a real runnerVersion -- the broader "any non-empty output is accepted as-is" gap captureRunnerVersion itself would need to close, not this function', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const command of ['pnpm test --Version', 'pnpm test -vV']) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      // Not refused by the version-probe check (neither flag is in its table) -- but also never a
+      // real runnerVersion: pnpm's own parse-error text is what gets captured, the disclosed gap.
+      expect(result.ok, command).toBe(true);
+      if (result.ok) {
+        expect(result.runnerVersion, command).toContain('Unknown option');
+        expect(result.runnerVersion, command).not.toContain('REAL_SCRIPT_RAN');
+      }
+    }
+  }, 60_000);
+});

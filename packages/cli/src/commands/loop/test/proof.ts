@@ -323,6 +323,76 @@ const PACKAGE_MANAGER_VERSION_PROBE_VERBS: ReadonlySet<string> = new Set(['npm',
  * usability regression with no actual safety behind it, now corrected. Round 4 also refused pnpm's
  * `run test` form outright, which round 5 found is equally wrong: pnpm forwards all three flags
  * correctly in that form too.
+ *
+ * **Round 6 (two independent critics, two independent live bypasses of round 5's own table -- the
+ * table above was never wrong, the MATCHING against it was):**
+ *
+ * Bypass A -- the `=`-embedded flag form. The match was exact-string set membership, so
+ * `--version=foo`/`-v=foo` (and, pnpm bare only, `-V=foo`) were each a different string from the bare
+ * flag and never matched, even though confirmed live every one trips the identical mechanism the bare
+ * flag does: `npm test --version=foo`, `npm run test --version=foo`, `npm test -v=foo`, `npm run test
+ * -v=foo` all print npm's own `11.1.0`; `pnpm test --version=foo`/`pnpm test -v=foo` print pnpm's own
+ * `9.15.5`; `pnpm test -V=foo` hits the identical "unrecognised option" parse-error-as-leaked-version
+ * hazard bare `-V` already closes (`ERROR Unknown option: 'V=foo'`) -- in every case the real script
+ * never runs. `pnpm run test --version=foo`/`-v=foo`/`-V=foo` were separately reconfirmed to stay SAFE
+ * (forwarded, received as one genuine `argv` token, e.g. `["--version=foo"]`) -- the `=`-embedded
+ * shape changes which STRING the trap shows up as, never which (program, form) cell traps. Fixed by
+ * matching each trap flag as an exact token OR a `<flag>=`-prefixed token, deliberately never a wider
+ * heuristic: `--versionX` is still untouched on purpose (confirmed live it is not one of npm's own
+ * flags; the real script still runs with an empty `argv`) -- matching anything merely starting with
+ * `--version` would be round 4's own over-broad bug again.
+ *
+ * Bypass B -- the `run`-form script-name-prefix near miss. This function gated recognition on
+ * `afterRun[0] !== 'test'`, an EXACT match -- but the allowlist that actually admits a command to
+ * reach this function at all (`ADOPT_TESTS_EXEC_PATTERNS`'s `'npm run test*'`/`'pnpm run test*'`,
+ * matched by `matchesExecPattern`'s raw `command.startsWith(pattern)`) and
+ * `vetNetworkAndArguments`'s own `PACKAGE_TEST_VERBS` check (which, for the `run` form, only ever
+ * inspects the LITERAL `'run'` token at `args[0]`, never what follows it) both tolerate any script
+ * name that merely STARTS WITH `test`. `npm run testXtra --version`/`npm run test-other -v`/`npm run
+ * test:unit --version` therefore sailed through both of those gates and this function's own exact
+ * check, and real npm genuinely still leaks its own version regardless of the suffix (confirmed live:
+ * the named script never runs at all, whether or not it even exists). The BARE-form near miss (`npm
+ * testXtra --version`) is not a gap in this function -- it is already refused earlier, by
+ * `vetNetworkAndArguments`'s own `PACKAGE_TEST_VERBS` check rejecting `testXtra` itself as an
+ * unrecognised verb at `args[0]` -- only the `run` form's own, separate, suffix-blind check lets it
+ * through to here. Fixed by widening this function's own gate to the identical prefix semantics the
+ * admitting allowlist already uses (`afterRun[0]?.startsWith('test')`) -- safe to widen because, by
+ * construction, nothing reaches this function without first having matched a `*test*`-prefixed exec
+ * pattern, so `afterRun[0]` already starts with `test` whenever this function is actually reached.
+ *
+ * **Dimensions swept, round 6, and left deliberately unchanged:** program/script-name CASE
+ * (`NPM test --version`, `npm run Test --version`) is refused earlier, by the admitting allowlist's
+ * own case-sensitive `startsWith`, before this function ever runs -- confirmed unreachable, not
+ * merely assumed. npm's own flag parser is case-sensitive, and `--Version`/`--VERSION`/capital `-V`
+ * are confirmed live to be no different from any other flag npm does not recognise: npm silently
+ * drops them and the real script still runs with an empty `argv` -- genuinely safe. pnpm's BARE form
+ * is different: confirmed live, it hard-errors ("Unknown option: '<name>'", real script never
+ * running) on `--Version`/`-vV`/literally any flag it does not recognise by its own exact lowercase
+ * spelling -- not a version-probe-specific gap, but the same generic "any unrecognised pnpm-bare flag
+ * parse-errors instead of running the script" behaviour `-V` was already special-cased for (note 2,
+ * above) precisely because `-V` looks like a version probe a model might plausibly write, where
+ * `--Version`/`-vV` do not; generalising the trap set to catch every possible unrecognised pnpm flag
+ * would also refuse `pnpm test --filter foo`-shaped commands that have nothing to do with versions at
+ * all -- round 4's own over-broad mistake again, by a different route. Left unflagged here on
+ * purpose; see the disclosed, broader, pre-existing gap immediately below, which already covers it.
+ * FLAG BUNDLING does not exist for either CLI to exploit: `npm test -vV`/`pnpm test -vV` are both
+ * confirmed live to be parsed as one unrecognised flag literally spelled `"vV"`, never as `-v` plus
+ * `-V`. Every (program, form) cell in the table above, and every one of its flags and `=`-suffixed
+ * forms, was independently reconfirmed live, in both the bare and `run` forms, after this round's own
+ * fix -- no safe cell became a trap and no trap cell became safe.
+ *
+ * **Disclosed, not fixed here (pre-existing, broader than this one mechanism):** `pnpm run testXtra
+ * -V` does NOT leak pnpm's real version -- pnpm prints `"Missing script: testXtra"` to STDOUT before
+ * ever parsing `-V` (confirmed live) -- but `captureRunnerVersion`'s own stdout-then-stderr fallback
+ * would still silently accept that error text as `runnerVersion`, because it is merely non-empty.
+ * This is not this function's own hazard (the package manager's own version never leaks here) and is
+ * not specific to the `run` form, a script-name typo, or even a version flag's presence at all: ANY
+ * typo'd `pnpm run`/`yarn run` script name produces non-empty output (pnpm's own error text on
+ * stdout; yarn additionally always prints its own `"yarn run v1.22.22"` banner to stdout first,
+ * confirmed live, on every invocation whether it succeeds or fails) that `captureRunnerVersion` would
+ * accept uncritically regardless. A genuinely general fix belongs in `captureRunnerVersion` itself
+ * (some sanity check on the captured text), not here, where the only question asked is narrower: does
+ * this exact shape ask the PACKAGE MANAGER for ITS OWN version.
  */
 const PACKAGE_MANAGER_VERSION_TRAP_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['npm bare', new Set(['--version', '-v'])],
@@ -334,19 +404,34 @@ const PACKAGE_MANAGER_VERSION_TRAP_FLAGS: ReadonlyMap<string, ReadonlySet<string
 ]);
 
 /**
- * Whether `command` is `(npm|pnpm|yarn) (run )?test ...` with one of that EXACT `(program, form)`
- * pair's own confirmed trap flags (`PACKAGE_MANAGER_VERSION_TRAP_FLAGS` above) appearing anywhere
- * among the tokens between `test` and either the end of the command or a literal `--` separator,
- * whichever comes first -- never merely the immediately-following token, and never a fixed tail
- * length, so one harmless extra token on either side of the flag (`npm test --version --extra`,
- * `npm test --extra --version`, `npm run test a b -v c`) can never silently evade this (round 4's own
- * bypass, closed here). A literal `--` ends the scan because everything after it is forwarded
- * verbatim to the real script by the package manager itself, never parsed as the package manager's
- * own flag (confirmed live for every one of npm/pnpm/yarn, both forms: `npm test -- --version` runs
- * the real script with `--version` as a genuine `argv` token, never npm's own version). Parsed with
- * `commandWords` (`confined-command.ts`'s own syntax stage, already run by `vetProposedCommand`
- * above) rather than a raw string match, so this cannot be fooled by extra whitespace or a quoting
- * shape the real vet itself would not have accepted either.
+ * Whether `command` is `(npm|pnpm|yarn) (run )?test<anything> ...` with one of that EXACT
+ * `(program, form)` pair's own confirmed trap flags (`PACKAGE_MANAGER_VERSION_TRAP_FLAGS` above)
+ * appearing anywhere among the tokens between the script-name word and either the end of the command
+ * or a literal `--` separator, whichever comes first -- never merely the immediately-following
+ * token, and never a fixed tail length, so one harmless extra token on either side of the flag
+ * (`npm test --version --extra`, `npm test --extra --version`, `npm run test a b -v c`) can never
+ * silently evade this (round 4's own bypass, closed round 5). A literal `--` ends the scan because
+ * everything after it is forwarded verbatim to the real script by the package manager itself, never
+ * parsed as the package manager's own flag (confirmed live for every one of npm/pnpm/yarn, both
+ * forms: `npm test -- --version` runs the real script with `--version` as a genuine `argv` token,
+ * never npm's own version). Parsed with `commandWords` (`confined-command.ts`'s own syntax stage,
+ * already run by `vetProposedCommand` above) rather than a raw string match, so this cannot be
+ * fooled by extra whitespace or a quoting shape the real vet itself would not have accepted either.
+ *
+ * Two widenings from round 6 (this function's own doc comment above has the full live-execution
+ * evidence for both):
+ *
+ * The script-name word is matched by PREFIX (`startsWith('test')`), never exact equality --
+ * `afterRun[0]` is guaranteed, by construction, to already start with `test` whenever this function
+ * is reached at all (the admitting exec-pattern allowlist requires it), so widening to match what
+ * that allowlist already tolerates (`testXtra`, `test-other`, `test:unit`, ...) closes Bypass B
+ * without opening anything the allowlist itself had not already opened first.
+ *
+ * Each trap flag is matched as an exact token OR a `<flag>=`-prefixed token (`--version=foo`,
+ * `-v=foo`, pnpm bare's `-V=foo`) -- closing Bypass A -- while anything merely starting with the flag
+ * WITHOUT a `=` right after it (`--versionX`) stays deliberately unmatched: npm's own parser drops
+ * that silently and the real script still runs, so matching it would be round 4's own over-broad bug
+ * again, just spelled differently.
  */
 function isPackageManagerVersionProbe(command: string): boolean {
   const words = commandWords(command);
@@ -355,7 +440,7 @@ function isPackageManagerVersionProbe(command: string): boolean {
   if (program === undefined || !PACKAGE_MANAGER_VERSION_PROBE_VERBS.has(program)) return false;
   const isRunForm = rest[0] === 'run';
   const afterRun = isRunForm ? rest.slice(1) : rest;
-  if (afterRun[0] !== 'test') return false;
+  if (afterRun[0]?.startsWith('test') !== true) return false;
   const trapFlags = PACKAGE_MANAGER_VERSION_TRAP_FLAGS.get(
     `${program} ${isRunForm ? 'run' : 'bare'}`,
   );
@@ -363,7 +448,9 @@ function isPackageManagerVersionProbe(command: string): boolean {
   const tail = afterRun.slice(1);
   const literalSeparatorIndex = tail.indexOf('--');
   const scanned = literalSeparatorIndex === -1 ? tail : tail.slice(0, literalSeparatorIndex);
-  return scanned.some((word) => trapFlags.has(word));
+  return scanned.some((word) =>
+    [...trapFlags].some((flag) => word === flag || word.startsWith(`${flag}=`)),
+  );
 }
 
 /**
