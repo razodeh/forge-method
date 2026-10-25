@@ -53,14 +53,17 @@ const DIST_WORKER_URL = new URL('./normalize-library-worker.mjs', import.meta.ur
 
 const WORKER_URL = existsSync(DIST_WORKER_URL) ? DIST_WORKER_URL : SRC_WORKER_URL;
 
-/** How many bytes of shared memory are reserved for the worker's own JSON-encoded result, beyond
- * the 8-byte header — the structural counterpart to `normalize-budget.ts`'s own
- * `payloadCapacityBytesFor`, sized off the VALUE's own serialised length (there is no raw `text`
- * length to size against here) with the identical generous-but-bounded `*8 + 65_536` margin, for the
- * identical reason: a `redact-json-pointers` rule whose own `replacement` is far longer than its
- * match, repeated enough times, could still exceed this -- disclosed, not chased further; see that
- * function's own doc comment for the full account of why this is an honest, typed refusal
- * (`status: 'ok', ok: false, kind: 'too-large'`, below), never a crash or a silent truncation. */
+/** How many bytes of shared memory are reserved for the worker's own `node:v8`-serialised result,
+ * beyond the 8-byte header — the structural counterpart to `normalize-budget.ts`'s own
+ * `payloadCapacityBytesFor`, sized off a JSON-stringified ESTIMATE of the VALUE's own length (there
+ * is no raw `text` length to size against here, and `JSON.stringify` is used only as a rough size
+ * proxy here, never for the real payload itself — see `NormalizeLibraryWorkerMessage`'s own doc
+ * comment for why the real payload uses `v8.serialize` instead) with the identical
+ * generous-but-bounded `*8 + 65_536` margin, for the identical reason: a `redact-json-pointers` rule
+ * whose own `replacement` is far longer than its match, repeated enough times, could still exceed
+ * this -- disclosed, not chased further; see that function's own doc comment for the full account
+ * of why this is an honest, typed refusal (`status: 'ok', ok: false, kind: 'too-large'`, below),
+ * never a crash or a silent truncation. */
 function payloadCapacityBytesFor(value: unknown): number {
   const serializedLength = JSON.stringify(value).length;
   return Math.max(1_000_000, serializedLength * 8 + 65_536);
