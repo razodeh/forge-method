@@ -86,20 +86,30 @@ describe('validateTestPath: the validator matrix', () => {
 
   it(
     'within()s own substring bug (fixed alongside confined-command.ts own identical one): a real file ' +
-      'literally named ... or starting with two dots (never a parent-directory escape) is not a false ' +
-      'path-escape -- path.relative can return a string like "..." whose first two characters only ' +
-      'coincidentally match the two-character ".." prefix check',
+      'literally named ... or starting with two dots is not a false path-escape, when the dotted name is ' +
+      'the FIRST path segment under root -- path.relative(root, candidate) then returns that leading-dot ' +
+      'string itself (e.g. "..." or "..foo.test.ts"), whose first two characters only coincidentally match ' +
+      'the two-character ".." prefix check. (Nesting the dotted name one level under a subdirectory such as ' +
+      '"tests/" can never reach the bug either way: path.relative then returns a string starting with the ' +
+      'subdirectory\'s own name, not "..", so neither the buggy nor the fixed within() treats it specially.)',
     async () => {
       const root = await lane();
-      await mkdir(path.join(root, 'tests'));
-      await writeFile(path.join(root, 'tests', '...'), '');
-      await writeFile(path.join(root, 'tests', '..foo.test.ts'), '');
+      await writeFile(path.join(root, '...'), '');
+      await writeFile(path.join(root, '..foo.test.ts'), '');
       // Neither name holds a literal ".." path SEGMENT (checked by `rawPath.split('/').includes('..')` --
-      // confirmed independently here, not just asserted), so both reach `within()` itself.
-      expect('tests/...'.split('/').includes('..')).toBe(false);
-      expect('tests/..foo.test.ts'.split('/').includes('..')).toBe(false);
-      expect(await problemOf('tests/...', root)).toBeUndefined();
-      const checked = await validateTestPath('tests/..foo.test.ts', { root });
+      // confirmed independently here, not just asserted), so both reach `within()` itself, each as the
+      // FIRST segment relative to root -- the only shape the substring bug can misfire on.
+      expect('...'.split('/').includes('..')).toBe(false);
+      expect('..foo.test.ts'.split('/').includes('..')).toBe(false);
+      // "..." alone matches no naming convention `isTestPath` knows, so it is accepted here via a
+      // configured `testRoots: ['.']` (a directory allowlist of the whole project, `underTestRoot`'s own
+      // documented "DIRECTORY-scoped, not filename-scoped" rule below) -- otherwise this would only ever
+      // prove the `within()` fix together with an unrelated `outside-test-roots` refusal, not on its own.
+      expect(await problemOf('...', root, ['.'])).toBeUndefined();
+      // "..foo.test.ts" instead relies on `isTestPath`'s own `.test.ts`-suffix rule (no testRoots
+      // configured), the identical default-fallback path every unconfigured caller of `validateTestPath`
+      // already takes.
+      const checked = await validateTestPath('..foo.test.ts', { root });
       expect(checked.ok, JSON.stringify(checked)).toBe(true);
     },
   );
