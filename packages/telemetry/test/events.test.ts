@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../scripts/lib/node-ts-flag.mjs';
 import { TelemetryError } from '../src/errors.ts';
 import {
   appendEvent,
@@ -235,7 +236,7 @@ describe('appendEvent', () => {
     const fixturePath = fileURLToPath(new URL('./fixtures/append-and-hang.ts', import.meta.url));
 
     await new Promise<void>((resolve, reject) => {
-      const child = spawn('node', ['--experimental-strip-types', fixturePath, projectRoot, runId]);
+      const child = spawn('node', [TS_NODE_FLAG, fixturePath, projectRoot, runId]);
       let stderr = '';
       let killed = false;
       child.stderr.on('data', (chunk: Buffer) => {

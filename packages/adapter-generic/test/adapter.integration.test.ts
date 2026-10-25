@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../scripts/lib/node-ts-flag.mjs';
 import { GenericAdapter } from '../src/adapter.ts';
 import { parseAdapterConfig } from '../src/config/parse.ts';
 import type { ScriptedBinaryTable } from './fixtures/scripted-binary-protocol.ts';
@@ -52,7 +53,7 @@ id: integration-fixture
 displayName: Integration Fixture
 binary: "${process.execPath}"
 minimumVersion: "1.4.0"
-versionCommand: ["--experimental-strip-types", "${SCRIPTED_BINARY_PATH}", "--forge-fixture-table", "${tablePath}", "--version"]
+versionCommand: ["${TS_NODE_FLAG}", "${SCRIPTED_BINARY_PATH}", "--forge-fixture-table", "${tablePath}", "--version"]
 versionRegex: "v?(\\\\d+\\\\.\\\\d+\\\\.\\\\d+)"
 
 capabilities:
@@ -65,7 +66,7 @@ capabilities:
 
 invoke:
   args:
-    - "--experimental-strip-types"
+    - "${TS_NODE_FLAG}"
     - "${SCRIPTED_BINARY_PATH}"
     - "--forge-fixture-table"
     - "${tablePath}"

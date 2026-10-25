@@ -12,6 +12,7 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { describe, expect, it } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
 import { runShellCommand } from '../../src/dispatch/shell.ts';
 
 describe('runShellCommand', () => {
@@ -207,7 +208,7 @@ describe('runShellCommand limits (M13 P25: a caller that must not hang on, or bu
       const child = spawn(
         process.execPath,
         [
-          '--experimental-strip-types',
+          TS_NODE_FLAG,
           '--disable-warning=ExperimentalWarning',
           '--input-type=module',
           '-e',

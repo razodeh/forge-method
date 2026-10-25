@@ -28,6 +28,8 @@ import {
 } from '@forge/adapter-kit/conformance';
 import type { GrantedMcpServer, ResolvedSkill } from '@forge/adapter-kit/types';
 
+import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MCP_FIXTURE_SERVER_SCRIPT = path.join(HERE, 'fixtures', 'mcp-server.ts');
 
@@ -52,7 +54,7 @@ const MCP_SERVER: GrantedMcpServer = {
   id: MCP_SERVER_ID,
   transport: 'stdio',
   command: process.execPath,
-  args: ['--experimental-strip-types', MCP_FIXTURE_SERVER_SCRIPT],
+  args: [TS_NODE_FLAG, MCP_FIXTURE_SERVER_SCRIPT],
   // Bare tool name here, deliberately -- `GrantedMcpServer.grantedTools`' own real, established
   // contract (`mcp.ts`'s own `mapGrantedMcpServersToAllowedTools`, P7) already adds the real
   // `mcp__<server>__<tool>` prefix internally when building the actual `--allowedTools`/

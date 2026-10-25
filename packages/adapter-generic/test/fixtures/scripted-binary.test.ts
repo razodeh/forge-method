@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
 import type { ScriptedBinaryTable } from './scripted-binary-protocol.ts';
 
 // Not a shared helper: node:os's tmpdir is R10-restricted in production code
@@ -60,7 +61,7 @@ async function writeTable(table: ScriptedBinaryTable): Promise<string> {
 /** Spawns the real fixture process to completion and collects its full stdout/stderr/exit — used by
  * every test except the hang test, which needs to observe the process while it is still running. */
 async function run(tablePath: string, options: RunOptions = {}, stdin?: string): Promise<RunResult> {
-  const args = ['--experimental-strip-types', FIXTURE_PATH, '--forge-fixture-table', tablePath];
+  const args = [TS_NODE_FLAG, FIXTURE_PATH, '--forge-fixture-table', tablePath];
   if (options.promptFile !== undefined) args.push('--prompt-file', options.promptFile);
   if (options.cwd !== undefined) args.push('--cwd', options.cwd);
   if (options.model !== undefined) args.push('--model', options.model);
@@ -453,7 +454,7 @@ describe('scripted-binary.ts: hang / abort (07 §7.6 C5)', () => {
     });
     const child = spawn(
       process.execPath,
-      ['--experimental-strip-types', FIXTURE_PATH, '--forge-fixture-table', tablePath],
+      [TS_NODE_FLAG, FIXTURE_PATH, '--forge-fixture-table', tablePath],
       { stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const pid = child.pid;

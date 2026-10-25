@@ -28,6 +28,8 @@ import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
 
+import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
+
 const FIXTURE_CHILD_PATH = fileURLToPath(
   new URL('./fixtures/run-engine-child.ts', import.meta.url),
 );
@@ -63,11 +65,9 @@ export async function spawnAndKillAfter(
   seed: string,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      'node',
-      ['--experimental-strip-types', FIXTURE_CHILD_PATH, projectRoot, runId, seed],
-      { detached: true },
-    );
+    const child = spawn('node', [TS_NODE_FLAG, FIXTURE_CHILD_PATH, projectRoot, runId, seed], {
+      detached: true,
+    });
     const pid = child.pid;
     if (pid === undefined) {
       reject(new Error('child process failed to spawn (no pid)'));

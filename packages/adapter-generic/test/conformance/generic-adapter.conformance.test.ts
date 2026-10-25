@@ -26,6 +26,8 @@ import { fileURLToPath } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
+
 import {
   CONFORMANCE_ENV_PROBE_VAR,
   CONFORMANCE_EXEC_ALLOWED_COMMAND,
@@ -164,7 +166,7 @@ id: generic-conformance-fixture
 displayName: Generic Conformance Fixture
 binary: "${binary}"
 minimumVersion: "1.4.0"
-versionCommand: ["--experimental-strip-types", "${fixturePath}", "--forge-fixture-table", "${tablePath}", "--version"]
+versionCommand: ["${TS_NODE_FLAG}", "${fixturePath}", "--forge-fixture-table", "${tablePath}", "--version"]
 versionRegex: "v?(\\\\d+\\\\.\\\\d+\\\\.\\\\d+)"
 
 capabilities:
@@ -177,7 +179,7 @@ capabilities:
 
 invoke:
   args:
-    - "--experimental-strip-types"
+    - "${TS_NODE_FLAG}"
     - "${fixturePath}"
     - "--forge-fixture-table"
     - "${tablePath}"

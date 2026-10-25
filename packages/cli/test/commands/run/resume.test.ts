@@ -18,6 +18,7 @@ import * as planIndexModule from '@forge/engine/plan';
 import { worktreesRootFor } from '@forge/vcs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../../../scripts/lib/node-ts-flag.mjs';
 import { acquireRunLock, readRunLock } from '../../../src/commands/run/lock.ts';
 import { currentLauncher } from '../../../src/commands/run/launcher-shim.ts';
 import { resumeWorkflow } from '../../../src/commands/run/resume.ts';
@@ -73,13 +74,7 @@ async function spawnAndKill(
   projectRoot: string,
   runId: string,
 ): Promise<void> {
-  const child = spawn('node', [
-    '--experimental-strip-types',
-    CHILD_PATH,
-    projectRoot,
-    runId,
-    'test-host',
-  ]);
+  const child = spawn('node', [TS_NODE_FLAG, CHILD_PATH, projectRoot, runId, 'test-host']);
   const pid = child.pid;
   if (pid === undefined) throw new Error('child process failed to spawn (no pid)');
 

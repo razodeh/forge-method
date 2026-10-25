@@ -4,17 +4,20 @@
  * prove nothing about the actual message or the actual exit code a real invocation produces — an
  * exit code is a process-level fact, observable only by actually spawning a process and reading
  * what it did. `../fixtures/node-version-guard.ts` is that real caller; this test spawns it as a
- * genuine child `node` process (the same `--experimental-strip-types` pattern
- * `@forge/telemetry/test/events.test.ts` already uses) and asserts on its real exit code and stderr.
+ * genuine child `node` process (the same real-child-process pattern `@forge/telemetry/test/
+ * events.test.ts` already uses, via `../../../../scripts/lib/node-ts-flag.mjs`'s own Node-version-
+ * aware type-stripping flag — `SPEC-QUESTIONS.md` Q340) and asserts on its real exit code and stderr.
  *
  * @see specs/03 §3.1
  * @see PLAN-M6.md C1
+ * @see SPEC-QUESTIONS.md Q340
  */
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
 import { MIN_NODE_VERSION } from '../../src/entry/node-version.ts';
 
 const fixturePath = fileURLToPath(new URL('./fixtures/node-version-guard.ts', import.meta.url));
@@ -23,7 +26,7 @@ function runGuard(
   fakeVersion: string,
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn('node', ['--experimental-strip-types', fixturePath, fakeVersion]);
+    const child = spawn('node', [TS_NODE_FLAG, fixturePath, fakeVersion]);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => {

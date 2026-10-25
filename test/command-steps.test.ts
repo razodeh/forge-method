@@ -57,6 +57,7 @@ import { DEFAULT_CONFIG } from '@forge/schemas/config';
 import { WORKFLOW_INDEX } from '@forge/templates';
 
 import { NON_FORGE_STEPS } from './non-forge-steps.ts';
+import { TS_NODE_FLAG } from '../scripts/lib/node-ts-flag.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const modulesDir = path.join(repoRoot, 'modules');
@@ -212,7 +213,7 @@ async function ask(command: string): Promise<Verdict> {
   const args = command.split(' ').slice(1);
   const child = await execa(
     process.execPath,
-    ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', BIN, ...args],
+    [TS_NODE_FLAG, '--disable-warning=ExperimentalWarning', BIN, ...args],
     { cwd: dir, reject: false, timeout: 60_000, env: { NO_COLOR: '1' } },
   );
   const exitCode = child.exitCode ?? -1;
