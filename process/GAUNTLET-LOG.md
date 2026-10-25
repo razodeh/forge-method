@@ -24920,3 +24920,21 @@ test.ts` flake, re-confirmed clean in isolation.
 **Landed.** `a32e29d` plus this doc update, cherry-picked onto `main`'s then-current tip.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q351` (new).
+
+---
+
+## M17 P21 — Q350's own fix: WebFetch/WebSearch lane confinement, mirroring Q347's architecture (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** `Q350`, found incidentally while building `Q347`'s own fix: `mapToolGrantToAllowedTools` pushes bare `WebFetch`/`WebSearch` strings onto the SDK's allowed-tools list whenever a role is granted `network: 'full'` — the identical bare-shadowing bug `Q347` fixed for `Read`/`Edit`/`Write`. No shipped role grants `network: 'full'` today, so this closes a latent gap, not a confirmed-live incident the way `Q347`'s own `Read`/`Edit`/`Write` bug was.
+
+**Builder.** Mirrored `Q347`'s architecture exactly: a new `SessionRequest.vetNetworkAccess` field, `createLiveNetworkAccessGate` (`packages/engine/src/dispatch/confined-command.ts`) — `WebFetch` checked via the URL's hostname against the same `isHostAllowed` function already used for Bash-originated URLs; `WebSearch` (no per-call URL) allowed only under `network: 'full'`. A new `composePreToolUseHooks` combines the file-access and network-access `PreToolUse` hooks into one JS-level callback with short-circuit-on-first-denial, deliberately avoiding any dependency on undocumented SDK behavior for how multiple hook callbacks on one event combine. Threaded through all 6 real `kind: agent` construction sites `vetFileAccess` already reaches, plus `AdapterCapabilities.networkAccessGating` and a matching `RUN-162` extension.
+
+**Round 1's two critics each found a real, independently-confirmed gap.** Both found the same typecheck/lint failure (3 new test closures in `packages/testkit/test/scripting.test.ts` fell back to implicit `any`, missing the file's own established annotation convention). One critic also found a real security gap: `createLiveNetworkAccessGate`'s WebFetch branch let non-http(s) schemes (`file://`, `javascript:`, `data:`, ...) bypass hostname checking entirely under `network: 'full'` — the builder's own reasoning ("'full' is intentionally unrestricted anyway") conflated "unrestricted about which host" with "unrestricted about what kind of resource a tool named for web fetches may read," resting on an unverified assumption about the real (closed-source) WebFetch tool's own behavior.
+
+**Round 2 fixed both.** Annotated the 3 closures. Added a scheme check (http(s) only, running before the host check, unconditional on grant level including `'full'`) with 3 new tests proving it's a fixed allowlist (not a `file:`-specific denylist) and that it narrows rather than blanket-denies (a real http(s) host is still allowed under `'full'`).
+
+**Two fresh critics on round 2, both APPROVE AS-IS**, each going well beyond the specific fixes: one adversarially probed the scheme check with uppercase schemes, no-slash authority forms, query/fragment substring tricks, and `about:`/`chrome:`/`javascript:` schemes — all correctly denied via the real parsed `.protocol`, never a substring match. The other confirmed the scheme policy structurally cannot bleed into the `WebSearch` branch (an early return makes the WebFetch-only code unreachable for WebSearch), confirmed the fix makes no overclaim about controlling redirect behavior (out of a pre-flight vet's scope by construction), and confirmed the classic SSRF-adjacent concern (metadata endpoints/localhost allowed under `'full'`) is a pre-existing, already-documented `isHostAllowed` contract predating this piece entirely, not a gap this fix introduces or needs to address — if anything, this fix is a strict improvement there too, since before `Q347`'s own fix `canUseTool` was bare-shadowed entirely, so `isHostAllowed` was never even consulted.
+
+**Net result**: same rigor and 2-round critic discipline as `Q347`'s own fix (shorter, since the core architecture was already proven), closing the sibling instance of the single most severe disclosed defect this milestone.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q350` (updated in place).

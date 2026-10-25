@@ -30884,18 +30884,21 @@ confirmed by grep, not assumed. This is the identical shape `Q347`'s own fix fou
 `NotebookEdit`/`ToolGrant.extra` (a real, latent landmine with no current production trigger): safe
 today only because nothing exercises it, not because the mechanism is actually confined.
 
-**DECISION** — disclosed, not fixed. Given it mirrors `Q347`'s own now-fixed mechanism almost
-exactly, the real fix is likely small once undertaken (extend `vetFileAccess`'s own `PreToolUse`
-hook — or a sibling hook for the same event — to also validate `WebFetch`/`WebSearch`'s own real
-`tool_input` shape, presumably a `url` field, against whatever domain-scoping the grant actually
-intended, the same way `safeWebFetchDomainRule` already tries to do at the `allowedTools`-string
-level for the narrower `'allowlist'` case). Left for a future piece rather than built now, given
-`Q347`'s own fix already took three full rounds and this one has no current production trigger to
-make it urgent — but it should be fixed before any real role is ever given `network: 'full'`, not
-discovered the hard way the way `Q347`'s own Read/Edit/Write gap was.
+**FIXED (owner-directed scope expansion, 2026-10-25)**, mirroring `Q347`'s own architecture exactly:
+a new `SessionRequest.vetNetworkAccess` field and `createLiveNetworkAccessGate` (`packages/engine/
+src/dispatch/confined-command.ts`), wired through a `composePreToolUseHooks`-combined `PreToolUse`
+hook alongside `Q347`'s own `vetFileAccess`, threaded through every real `kind: agent` construction
+site `vetFileAccess` already reaches. `WebFetch` is checked via the URL's hostname against the same
+`isHostAllowed` function already used for Bash-originated URLs; `WebSearch` (which has no per-call
+URL at all) is allowed only under `network: 'full'`. A 2-round critic process found and closed a
+real gap round 1 missed: non-http(s) schemes (`file://`, `javascript:`, `data:`, ...) bypassed
+hostname checking entirely under `network: 'full'` — fixed with a scheme check (http(s) only,
+unconditional on grant level) that runs before the host check. As with `Q347`'s own fix, there is
+no current production role granting `network: 'full'`, so this closes a latent gap with no live
+exploit history, verified at the wiring/unit/integration level (no live SDK round-trip was possible
+for the same reason it wasn't possible to trigger the original bug live).
 
-**Gauntlet:** see `GAUNTLET-LOG.md` once a dedicated follow-up piece lands (not yet built as of this
-entry — same precedent as `Q314`/`Q317`/`Q340`/`Q341` before their own follow-up pieces landed).
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P21` entry for this fix, dated 2026-10-25.
 
 ## Q351 — two sibling mutation-testing gaps found while landing Q320's own fix — FIXED (owner-directed scope expansion, 2026-10-25)
 
