@@ -1164,6 +1164,34 @@ describe("createLiveNetworkAccessGate (SPEC-QUESTIONS.md Q350): the network anal
       await expect(gate('WebFetch', undefined)).resolves.toMatchObject({ allowed: false });
       await expect(gate('WebFetch', '')).resolves.toMatchObject({ allowed: false });
     });
+
+    it("denies a file: URL even under network: 'full' -- 'full' is a promise about which HOST may be reached, never about what KIND of resource a tool named for fetching WEB content may read; new URL('file:///etc/passwd').hostname is '' and isHostAllowed('full', '') would otherwise return true unconditionally without ever inspecting the scheme", async () => {
+      const gate = createLiveNetworkAccessGate({ network: 'full' });
+      const verdict = await gate('WebFetch', 'file:///etc/passwd');
+      expect(verdict).toMatchObject({ allowed: false });
+      if (verdict.allowed) throw new Error('unreachable');
+      expect(verdict.reason).toContain('file:');
+    });
+
+    it("denies javascript: and data: URLs too, under network: 'full' -- the scheme refusal is a fixed allowlist of http:/https: only, not a denylist of file: alone", async () => {
+      const gate = createLiveNetworkAccessGate({ network: 'full' });
+      await expect(gate('WebFetch', 'javascript:alert(1)')).resolves.toMatchObject({
+        allowed: false,
+      });
+      await expect(gate('WebFetch', 'data:text/plain;base64,SGVsbG8=')).resolves.toMatchObject({
+        allowed: false,
+      });
+    });
+
+    it("still allows a real http(s) host under network: 'full' after the scheme check -- the scheme check narrows, it does not blanket-deny every WebFetch call", async () => {
+      const gate = createLiveNetworkAccessGate({ network: 'full' });
+      await expect(gate('WebFetch', 'https://example.com/page')).resolves.toEqual({
+        allowed: true,
+      });
+      await expect(gate('WebFetch', 'http://example.com/page')).resolves.toEqual({
+        allowed: true,
+      });
+    });
   });
 
   describe('WebSearch', () => {

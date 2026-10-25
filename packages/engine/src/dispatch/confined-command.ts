@@ -1615,11 +1615,15 @@ export type LiveNetworkAccessToolName = 'WebFetch' | 'WebSearch';
  * session's own `WebFetch`/`WebSearch` tool use rather than its `Read`/`Edit`/`Write` calls.
  *
  * **Policy, grounded in the grant's own already-documented semantics, not invented here.** `WebFetch`:
- * the real `url` argument's hostname is checked against `isHostAllowed(grant, hostname)`
+ * first, the url's own SCHEME must be `http:`/`https:` -- refused for every other scheme (`file:`,
+ * `javascript:`, `data:`, ...) regardless of `grant.network`, including `'full'` (see the inline
+ * comment at that check for why: `'full'` is a promise about which HOST may be reached, never about
+ * what KIND of resource a tool literally named for fetching WEB content may read). Only once the
+ * scheme passes is the real `url` argument's hostname checked against `isHostAllowed(grant, hostname)`
  * (`@forge/adapter-kit/grants`) -- the EXACT SAME function `vetNetworkAndArguments` (above, this file)
  * already uses to judge a Bash-originated URL against the identical grant, so this is one, shared
  * reading of "what network: 'full'/'allowlist'/'none' means," not a second, independently-invented
- * one. Concretely: a `network: 'full'` session's `WebFetch` calls are allowed for any host at all
+ * one. Concretely: a `network: 'full'` session's `WebFetch` calls are allowed for any HOST at all
  * (`isHostAllowed`'s own "'full' allows every host" contract) -- the only currently-reachable case
  * (`SPEC-QUESTIONS.md` Q350: no shipped role grants `network: 'full'` today), so wiring this gate in is
  * a zero-behaviour-change consultation, not a new restriction on anything live. A `network: 'allowlist'`
@@ -1669,12 +1673,32 @@ export function createLiveNetworkAccessGate(
     // all -- and destructuring sidesteps the selector's own `MemberExpression`-only AST match rather
     // than suppressing the rule.
     let hostname: string;
+    let protocol: string;
     try {
-      ({ hostname } = new URL(url));
+      ({ hostname, protocol } = new URL(url));
     } catch {
       return Promise.resolve({
         allowed: false,
         reason: `refused: WebFetch url "${url}" could not be parsed as a real URL at all.`,
+      });
+    }
+    // Scheme check, BEFORE the host check and independent of `grant.network` (including `'full'`):
+    // a gauntlet critic found that `new URL('file:///etc/passwd').hostname === ''`, and `isHostAllowed`
+    // returns `true` unconditionally for `'full'` without ever inspecting the host -- so a `file://`
+    // (or `javascript:`/`data:`/any other non-http(s)) URL would otherwise sail through whenever
+    // `network: 'full'` is granted. `'full'` is this grant's own promise about which HOST may be
+    // reached, never about what KIND of resource a tool literally named for fetching WEB content may
+    // read -- conflating the two rests on an unverified assumption about the real, closed-source
+    // WebFetch tool's own scheme handling, exactly the category of "disclosed, not assumed closed"
+    // risk this file's own module comment already holds every other check in this gate to. Denied for
+    // every grant level, not only non-'full' ones: a non-http(s) scheme is refused on its own terms,
+    // never reaching the host-scoping policy below at all.
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      return Promise.resolve({
+        allowed: false,
+        reason:
+          `refused: WebFetch url "${url}" uses the "${protocol}" scheme, not http: or https: -- ` +
+          `denied regardless of this session's own network grant.`,
       });
     }
     // `isHostAllowed`'s own declared parameter type is the full `ToolGrant` even though its body only

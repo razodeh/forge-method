@@ -329,7 +329,7 @@ describe('FakeSessionScript.webFetchAttempts/webSearchAttempts + SessionRequest.
         // Matches the grant (`network: 'full'` allows every host) but is refused by the gate anyway --
         // the exact "grant-native check passes, live gate still decides" shape `vetExecCommand`'s own
         // identical case above already proves for Bash.
-        vetNetworkAccess: (_toolName, url) =>
+        vetNetworkAccess: (_toolName: 'WebFetch' | 'WebSearch', url: string | undefined) =>
           Promise.resolve(
             url?.includes('evil')
               ? { allowed: false, reason: 'refused: this host is denied regardless of the grant' }
@@ -357,7 +357,7 @@ describe('FakeSessionScript.webFetchAttempts/webSearchAttempts + SessionRequest.
         cwd,
         prompt: 'fetch',
         tools: { read: true, write: false, exec: false, network: 'full' },
-        vetNetworkAccess: (_toolName, url) =>
+        vetNetworkAccess: (_toolName: 'WebFetch' | 'WebSearch', url: string | undefined) =>
           Promise.resolve(
             url?.includes('evil') ? { allowed: false, reason: 'refused' } : { allowed: true },
           ),
@@ -402,7 +402,7 @@ describe('FakeSessionScript.webFetchAttempts/webSearchAttempts + SessionRequest.
         cwd,
         prompt: 'search',
         tools: { read: true, write: false, exec: false, network: 'full' },
-        vetNetworkAccess: (toolName, url) => {
+        vetNetworkAccess: (toolName: 'WebFetch' | 'WebSearch', url: string | undefined) => {
           receivedArgs = [toolName, url];
           return Promise.resolve({ allowed: true });
         },
