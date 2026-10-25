@@ -18,6 +18,7 @@ import type { StructuredTestCommand, TestCommandEntry } from '@forge/schemas/con
 import { XMLParser } from 'fast-xml-parser';
 
 import { extractAcId } from './ac-binding.ts';
+import { detailOfJunitElement } from './junit-detail.ts';
 import { PARSERS } from './parsers/index.ts';
 import { containsShellChaining } from './shell-safety.ts';
 
@@ -47,10 +48,13 @@ export type TestFailureKind = 'assertion' | 'load' | 'timeout' | 'crash';
  * ADDITIVE field (`specs/22` M16 P10): present only for `status: 'fail'`, absent for `'pass'`/`'skip'`
  * — an existing caller that reads only `status` (every M15 caller) keeps working unchanged. `message`
  * (Q346, post-v1.0, `specs/22` M17 P21) is likewise additive: a `forge-test-report` entry's own
- * `message` text, carried through unchanged by `outcomeFromReportEntry` below — never populated for
- * the legacy vitest/pytest `outcomesFromVitestJson`/`outcomesFromJunitXml` paths above, which predate
- * the field and have no equivalent captured text to carry (`09` §9.5: `message` is meaningful for
- * `'fail'` or `'skip'`, never `'pass'`). */
+ * `message` text, carried through unchanged by `outcomeFromReportEntry` below. This file's own
+ * LEGACY `outcomesFromVitestJson`/`outcomesFromJunitXml` paths above populate it too, round 4, not
+ * merely the structured `PARSERS[format]` path — they read the identical underlying JSON/XML shape
+ * `parsers/vitest-json.ts`/`parsers/junit-xml.ts` already do (a round-3 critic found the opposite
+ * claim here was demonstrably false the moment those structured parsers started reading real
+ * captured text off the SAME data these legacy functions also receive) (`09` §9.5: `message` is
+ * meaningful for `'fail'` or `'skip'`, never `'pass'`). */
 export interface TestOutcome {
   readonly name: string;
   readonly acId: string | undefined;
@@ -60,17 +64,18 @@ export interface TestOutcome {
   readonly message?: string;
 }
 
-/** Builds a `TestOutcome`, omitting `file`/`kind` entirely rather than setting them `undefined` —
- * `exactOptionalPropertyTypes` treats the two differently, and this project's own convention (already
- * established by this file's pre-existing `file === undefined ? {...} : {...file}` branches) is to
- * omit, never to assign `undefined` to an optional key. One shared builder rather than four duplicated
- * ternaries (one per vitest/pytest call site, now that `kind` doubles the branching), so the omission
- * rule is enforced in one place. */
+/** Builds a `TestOutcome`, omitting `file`/`kind`/`message` entirely rather than setting them
+ * `undefined` — `exactOptionalPropertyTypes` treats the two differently, and this project's own
+ * convention (already established by this file's pre-existing `file === undefined ? {...} : {...file}`
+ * branches) is to omit, never to assign `undefined` to an optional key. One shared builder rather
+ * than four duplicated ternaries (one per vitest/pytest call site, now that `kind` doubles the
+ * branching), so the omission rule is enforced in one place. */
 function makeOutcome(
   name: string,
   status: 'pass' | 'fail' | 'skip',
   file?: string,
   kind?: TestFailureKind,
+  message?: string,
 ): TestOutcome {
   return {
     name,
@@ -78,6 +83,7 @@ function makeOutcome(
     status,
     ...(file === undefined ? {} : { file }),
     ...(kind === undefined ? {} : { kind }),
+    ...(message === undefined ? {} : { message }),
   };
 }
 
@@ -171,6 +177,13 @@ function outcomesFromVitestFileResult(fileResult: VitestFileResult): readonly Te
   // sitting next to an unrelated failing test in the same file is never wrongly reclassified.
   const hookThrew =
     fileFailed && typeof fileResult.message === 'string' && fileResult.message !== '';
+  // Guaranteed a non-empty string whenever `hookThrew` is true (its own condition just above);
+  // re-checked rather than cast, matching `parsers/vitest-json.ts`'s own identical `hookMessage`
+  // (Q346, round 2 there, round 4 here: the same already-captured text this file's own `hookThrew`
+  // was already computing, carried onto the entries it reclassifies instead of only deciding
+  // `status` with it and discarding it).
+  const hookMessage =
+    hookThrew && typeof fileResult.message === 'string' ? fileResult.message : undefined;
 
   if (assertions.length === 0) {
     if (!fileFailed) return [];
@@ -204,7 +217,8 @@ function outcomesFromVitestFileResult(fileResult: VitestFileResult): readonly Te
     const status = hookReclassified ? 'fail' : rawStatus;
     const kind: TestFailureKind | undefined =
       status !== 'fail' ? undefined : hookReclassified ? 'crash' : 'assertion';
-    outcomes.push(makeOutcome(name, status, fileName, kind));
+    const message = hookReclassified ? hookMessage : undefined;
+    outcomes.push(makeOutcome(name, status, fileName, kind, message));
   }
   return outcomes;
 }
@@ -354,23 +368,6 @@ interface JunitTestCase {
   readonly skipped?: unknown;
 }
 
-/** The detail text inside a junit-xml `<failure>`/`<error>` element, read exactly the way
- * `fast-xml-parser`'s own `ignoreAttributes: false` shapes one with both a `message` attribute and
- * text content: `{ '@_message': string, '#text': string }` (confirmed directly: pytest's own
- * collection-failure element sets `@_message` to the fixed, uninformative literal `"collection
- * failure"` while `#text` carries the real traceback, so `#text` is preferred when present).
- * `value` can also be a bare string (an element with no attributes at all) or `undefined` (no such
- * child) — both handled defensively, the same "never assume a shape sight-unseen" stance this file's
- * `VitestFileResult`/`JunitTestCase` fields already take. */
-function detailOfJunitError(value: unknown): string | undefined {
-  if (typeof value === 'string' && value !== '') return value;
-  if (typeof value !== 'object' || value === null) return undefined;
-  const candidate = value as Readonly<Record<string, unknown>>;
-  const text = candidate['#text'];
-  if (typeof text === 'string' && text !== '') return text;
-  const message = candidate['@_message'];
-  return typeof message === 'string' && message !== '' ? message : undefined;
-}
 interface JunitTestSuite {
   readonly testcase?: unknown;
 }
@@ -432,7 +429,7 @@ function outcomesFromJunitXml(xml: string): readonly TestOutcome[] {
       // the module's baseline-passing tests exactly as a vitest run already does for the identical
       // shape (`13` F-TEST-10, Q294 Decision 8) — the asymmetry this piece fixes.
       if (classname === '' && testcase.error !== undefined) {
-        const detail = detailOfJunitError(testcase.error) ?? 'collection failure';
+        const detail = detailOfJunitElement(testcase.error) ?? 'collection failure';
         const outcomeName = `${name} (file failed to load: ${detail})`;
         outcomes.push(makeOutcome(outcomeName, 'fail', name, 'load'));
         continue;
@@ -453,7 +450,19 @@ function outcomesFromJunitXml(xml: string): readonly TestOutcome[] {
           : testcase.error !== undefined
             ? 'crash'
             : undefined;
-      outcomes.push(makeOutcome(name, status, classname, kind));
+      // `message` (Q346, round 4): read from whichever of `failure`/`error`/`skipped` is actually
+      // present, the identical `detailOfJunitElement` the structured `parsers/junit-xml.ts` parser
+      // uses for the same elements -- this legacy path reads the same real XML the structured one
+      // does, so it carries the same real text, not a narrower subset of it.
+      const message =
+        testcase.failure !== undefined
+          ? detailOfJunitElement(testcase.failure)
+          : testcase.error !== undefined
+            ? detailOfJunitElement(testcase.error)
+            : testcase.skipped !== undefined
+              ? detailOfJunitElement(testcase.skipped)
+              : undefined;
+      outcomes.push(makeOutcome(name, status, classname, kind, message));
     }
   }
   return outcomes;

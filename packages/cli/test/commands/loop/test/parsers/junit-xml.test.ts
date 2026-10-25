@@ -261,7 +261,7 @@ describe('parseJunitXml (specs/22 M17 P3)', () => {
   });
 
   describe('message (specs/22 M17 P21) (Q346, round 3): read from <failure>/<error>/<skipped>', () => {
-    it('prefers the real text content over the "message" attribute, when both are present -- pytest\'s own collection-failure convention (reporter.ts\'s pre-existing detailOfJunitError), confirmed to apply here too', () => {
+    it('prefers the real text content over the "message" attribute, when both are present -- pytest\'s own collection-failure convention (detailOfJunitElement\'s own doc comment, ../junit-detail.ts), confirmed to apply here too', () => {
       const xml =
         '<testsuites><testsuite><testcase name="f1">' +
         '<failure message="short summary">the real, fuller traceback text</failure>' +

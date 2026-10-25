@@ -351,6 +351,11 @@ def test_a_skipped_test():
       status: 'pass',
     });
     expect(byName.get('test_a_skipped_test')?.status).toBe('skip');
+    // `message` (Q346, round 4): a real skip's own reason (`@pytest.mark.skip(reason="demo")`)
+    // reaches `TestOutcome` through this LEGACY path too -- `message` is valid on `'skip'`, not only
+    // `'fail'` (09 §9.5), and this is the one real producer of a genuine skip reason among this
+    // file's own fixtures.
+    expect(byName.get('test_a_skipped_test')?.message).toContain('demo');
   });
 
   it('reports a real setup/fixture error as fail, not pass — pytest emits <error>, not <failure>', async () => {
@@ -625,6 +630,11 @@ describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F
     if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
     expect(result.report.outcomes).toHaveLength(1);
     expect(result.report.outcomes[0]).toMatchObject({ status: 'fail', kind: 'assertion' });
+    // `message` (Q346, round 4): an ORDINARY (non-reclassified) vitest assertion failure still
+    // carries none here either -- vitest's own per-assertion JSON never exposes `failureMessages`
+    // to this reader (the same, deliberate scope boundary `parsers/vitest-json.ts`'s own round-2 test
+    // already states); only the hook-reclassified "crash" case below has real text already in hand.
+    expect(result.report.outcomes[0]?.message).toBeUndefined();
   });
 
   it('vitest: a whole-file load failure (an unresolved import) is kind "load"', async () => {
@@ -661,6 +671,10 @@ describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F
     if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
     const outcome = result.report.outcomes.find((candidate) => candidate.acId === 'AC-500-3');
     expect(outcome).toMatchObject({ status: 'fail', kind: 'crash' });
+    // `message` (Q346, round 4): the hook's own real error text, already computed to decide
+    // `status`/`kind` here, is now carried onto the entry it reclassified instead of discarded --
+    // this legacy path's own identical gap to the one round 2 fixed in `parsers/vitest-json.ts`.
+    expect(outcome?.message).toBe('setup exploded');
   });
 
   it('pytest: an ordinary assertion failure (the test ran and lost) is kind "assertion"', async () => {
@@ -676,6 +690,11 @@ describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F
     if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
     expect(result.report.outcomes).toHaveLength(1);
     expect(result.report.outcomes[0]).toMatchObject({ status: 'fail', kind: 'assertion' });
+    // `message` (Q346, round 4): this LEGACY path (`outcomesFromJunitXml`, reached by the default,
+    // bare-string `testCommands.<layer>` form) now carries the real pytest traceback too, via the
+    // SAME `detailOfJunitElement` the structured `parsers/junit-xml.ts` path round 3 already used --
+    // a round-3 critic found this legacy path had been silently left out.
+    expect(result.report.outcomes[0]?.message).toBeTruthy();
   });
 
   it('pytest: a per-test setup/fixture error on a real, named, COLLECTED test is kind "crash" — distinct from a whole-module collection failure', async () => {
@@ -691,6 +710,7 @@ describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F
     if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
     const outcome = result.report.outcomes.find((candidate) => candidate.acId === 'AC-501-2');
     expect(outcome).toMatchObject({ status: 'fail', kind: 'crash' });
+    expect(outcome?.message).toBeTruthy();
   });
 
   it('pytest: a whole-MODULE collection failure (a broken import) is kind "load", with `file` set to the module\'s own dotted path — the asymmetry fix itself', async () => {
