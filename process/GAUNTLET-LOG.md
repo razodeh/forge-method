@@ -24960,3 +24960,17 @@ test.ts` flake, re-confirmed clean in isolation.
 **Net result**: three full rounds, each surfacing a real, independently-reproduced gap in the previous round's own "this is exhaustive" claim — a direct demonstration of why this milestone's gauntlet discipline insists on independent critics rather than trusting a builder's own audit, even a careful one.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q325` (DECISION 1 updated in place).
+
+---
+
+## M17 P8 — Q314's own follow-up fix (Q352): node_modules bridging, 4 rounds (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** `Q314` (M17 P8) disclosed, but left unfixed, a regression P8's own worktree relocation caused: a reference-side `run`/`setup` command importing a third-party package lost Node's module-resolution walk-up once the parity reference's scratch worktree moved outside the project tree.
+
+**Round 1 — the fix.** A new `linkReferenceNodeModules` symlinks the project's top-level `node_modules` into the scratch worktree root. Investigated and rejected `NODE_PATH` (ESM resolver never consults it) and a declaration-authored `setup` command (`network: none` refuses any install verb) before confirming a harness-created symlink actually works, via a direct repro proving both CJS `require()` and ESM `import` follow it correctly.
+
+**Rounds 2-4 — the EEXIST edge case, narrowed three times, each round independently critic-found.** Round 1 had no handling for a destination that already has something at it; round 2 added an unconditional `EEXIST`-as-no-op (closing the "project tracks its own node_modules" case) but two critics found this too broad — a plain file or broken symlink also hit `EEXIST` and silently no-opped, losing test coverage the original suite had; round 3 narrowed to `isDirectory()` only, but two more critics found THIS still too broad — an empty junk directory also satisfies `isDirectory()` and no-ops, even though it can never make resolution work either, exactly the "confusing, unattributed crash" scenario the whole design exists to avoid; round 4 required both `isDirectory()` and a non-empty `readdir()`, plus hardened the lstat/readdir pair in its own try/catch and corrected a stale error-code comment. A critic explicitly tasked with finding a 5th gap, from two independent angles, found none that was real rather than theoretical (a dotfile-only directory correctly no-ops since `readdir` includes dotfiles by default; a hollow multi-level empty-subdirectory tree was judged impossible to arise from either of the function's real-world causes, since git cannot track an empty directory at all).
+
+**Net result**: four rounds, each surfacing a real gap in the previous round's own "this matches the stated rationale" claim — the same discipline-justifying pattern as `Q325`'s three rounds, this time on a single, narrow filesystem-edge-case guard rather than a broad audit.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q352` (new; supersedes the builder's own stale, round-1-only draft that collided with `Q351`'s numbering).
