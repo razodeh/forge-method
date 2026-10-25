@@ -145,7 +145,15 @@ export function protectedFixGlobs(roots: DocRoots): readonly string[] {
     // A configured root that opens with `!` or `#` is a literal path, never a negation or a comment (`outputClaimGlobs` escapes it too).
     // A root with glob characters (`docs/[kb]`, `a{b}`) is a literal path: escaped as `outputClaimGlobs` escapes it.
     .map((root) => escapeGlob(root, { magicalBraces: true }).replace(/^[!#]/, '\\$&'))
-    .filter((root) => root !== '' && !root.startsWith('..'))
+    // A root that escapes the project (`..`, `../elsewhere`) contributes no glob: it can match no real
+    // path inside a lane diff, so adding it here would protect nothing anyway. This checks the first PATH
+    // SEGMENT, not a raw string prefix: a root that merely starts with the two characters `..` without
+    // that being a `..` segment (a literal sibling directory named `..cache`, say) is not an escape, and
+    // dropping it here would wrongly leave it OUT of the protected set -- under-protection, the opposite
+    // failure from a raw-prefix check's usual false-positive shape. The identical first-segment check
+    // (`escapesRepository`, `dispatch/outputs.ts`) already applies to this same kind of configured-root
+    // string, just before it is turned into a glob.
+    .filter((root) => root !== '' && root !== '..' && !root.startsWith('../'))
     .flatMap((root) => [root, `${root}/**`]);
   return [...PROTECTED_GLOBS, ...rootGlobs];
 }

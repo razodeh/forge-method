@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import type { DocRoots } from '../../src/dispatch/types.ts';
 import { protectedFixGlobs, scanFixDiff, type FixChange } from '../../src/rca/fix-scan.ts';
 
 const ROOTS = {
@@ -109,6 +110,45 @@ describe('scanFixDiff: paths', () => {
     });
     expect(moved).toHaveLength(1);
     expect(protectedFixGlobs({ ...ROOTS, kb: './records/kb/' })).toContain('records/kb/**');
+  });
+
+  // A root that merely STARTS WITH the two characters `..` is not a `..` path-segment escape (the same
+  // string-prefix-vs-path-segment bug this session's sibling fixes closed elsewhere, here with the risk
+  // direction inverted: under-protection, not an over-strict refusal). `..cache` is a real, literal
+  // sibling-looking name one level under the project root, never a parent-directory climb.
+  it('a configured root that merely starts with ".." (not a real ".." escape) is still protected', () => {
+    const odd: DocRoots = { ...ROOTS, kb: '..cache' };
+    expect(protectedFixGlobs(odd)).toContain('..cache/**');
+    const found = scanFixDiff({
+      changes: [change('..cache/decisions/ADR-0001.md')],
+      docRoots: odd,
+    });
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      rule: 'protected-path',
+      path: '..cache/decisions/ADR-0001.md',
+    });
+  });
+
+  it('a configured root nested under a literal ".."-prefixed directory is also protected', () => {
+    const odd: DocRoots = { ...ROOTS, specs: '..cache/specs' };
+    const found = scanFixDiff({
+      changes: [change('..cache/specs/stories/STORY-002.md')],
+      docRoots: odd,
+    });
+    expect(found).toHaveLength(1);
+  });
+
+  // A root that IS a genuine escape (a real ".." path segment) must stay excluded from the protected set:
+  // the fix above must not flip the bug into its own opposite failure mode (wrongly including an escape).
+  it('a configured root that really is a ".." escape contributes no glob, and is not itself writable', () => {
+    for (const escaping of ['..', '../elsewhere', '../../elsewhere']) {
+      const odd: DocRoots = { ...ROOTS, reports: escaping };
+      const globs = protectedFixGlobs(odd);
+      expect(globs.some((glob) => glob === escaping || glob.startsWith(`${escaping}/`))).toBe(
+        false,
+      );
+    }
   });
 });
 
