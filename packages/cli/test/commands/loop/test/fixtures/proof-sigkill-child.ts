@@ -50,6 +50,7 @@ try {
       expectedName: 'irrelevant',
     },
     runnerVersion: '1.0.0',
+    runnerVersionCommand: 'ls -d .',
     now: () => new Date(0).toISOString(),
   });
   process.stdout.write('DONE\n');

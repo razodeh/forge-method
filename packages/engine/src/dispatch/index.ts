@@ -88,7 +88,11 @@ export {
   type LandLaneResult,
   type ResolvedLaneChecks,
 } from './integrate.ts';
-export { ADOPT_TESTS_EXEC_PATTERNS, grantWithAdoptTestsExec } from './adopt-tests-grant.ts';
+export {
+  ADOPT_TESTS_EXEC_PATTERNS,
+  ADOPT_TESTS_VET_GRANT,
+  grantWithAdoptTestsExec,
+} from './adopt-tests-grant.ts';
 export {
   AGENT_RUN_LAYERS,
   checkTestCommand,

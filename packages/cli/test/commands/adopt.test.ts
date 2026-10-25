@@ -539,6 +539,7 @@ describe('adopt test-adoption hook — already-proven guard, a gauntlet critic f
       ok: true,
       subjectHash: 'fixture-hash',
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'ls -d .',
       checkedAt: '2026-01-01T00:00:00.000Z',
     },
   };

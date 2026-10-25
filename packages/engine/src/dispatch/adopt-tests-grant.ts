@@ -127,6 +127,17 @@ export const ADOPT_TESTS_EXEC_PATTERNS: readonly string[] = [
   'pnpm run test*',
   'yarn test*',
   'yarn run test*',
+  // `node --test*`'s own runner IS node itself, so a `runnerVersionCommand` proposal for it needs
+  // node's OWN version flag, never a widening of `node --test*` (`--version`/`-v` share no prefix
+  // with `--test` at all) -- two EXACT patterns (no trailing `*`: neither flag takes an argument),
+  // added after a gauntlet critic round confirmed live that `node --version`/`node -v` are both
+  // refused under the pre-existing grant, which only ever anchored "node" to "--test".
+  // `npx vitest*`/`npx jest*`/`npx mocha*`/`pytest*`/`phpunit*`/`rspec*`/`./gradlew *`/`./mvnw *`/
+  // `make *`/`rake *` all already cover their own `--version` the identical way, for free -- none of
+  // those bake a verb like "test" into the matched prefix the way `node --test*`/`go test*`/
+  // `cargo test*`/`dotnet test*`/the Django/Laravel entrypoints below do.
+  'node --version',
+  'node -v',
   // Python (`detect.ts`'s own `pytestCommand`, plus Django's own conventional entrypoint).
   'pytest*',
   'python -m pytest*',
@@ -134,13 +145,28 @@ export const ADOPT_TESTS_EXEC_PATTERNS: readonly string[] = [
   'python manage.py test*',
   'python3 manage.py test*',
   './manage.py test*',
-  // Go (`detect.ts`'s own `goTestCommand`).
+  // Django's own `manage.py` resolves `--version` to the installed Django version (built into its
+  // `argparse`-based command framework) -- `test*` above never matches it, the identical "verb
+  // baked into the prefix" gap `node --test*` has (same critic round).
+  'python manage.py --version',
+  'python3 manage.py --version',
+  './manage.py --version',
+  // Go (`detect.ts`'s own `goTestCommand`). `go test` has no `--version`/`-version` flag of its own
+  // at all (confirmed against `go help test`) -- the toolchain version is a wholly separate
+  // subcommand, `go version`, never an extension of `go test*`'s own prefix; an agent investigating a
+  // Go project had NO legitimate command it could propose under the pre-existing grant (same critic
+  // round, flagged as a real, not merely theoretical, gap for this one ecosystem).
   'go test*',
+  'go version',
   // PHP (`detect.ts`'s own `phpunitCommand`, plus Laravel's own conventional entrypoint).
   'phpunit*',
   './vendor/bin/phpunit*',
   'php artisan test*',
   './artisan test*',
+  // Laravel's `artisan` (built on Symfony Console) resolves `--version` to the framework version --
+  // `test*` above never matches it, the identical gap `node --test*`/Django's `manage.py` have.
+  'php artisan --version',
+  './artisan --version',
   // Generic, project-defined recipes (Makefile-only and polyglot-monorepo hand-offs, `detect.ts`'s own
   // `'makefile-only'`/`'workspace-no-root-command'` ecosystems) — every TARGET, not only `test`: the
   // recipe body is the project's own committed text, never the agent's (this file's own doc comment).
@@ -156,6 +182,12 @@ export const ADOPT_TESTS_EXEC_PATTERNS: readonly string[] = [
   'rspec*',
   './gradlew *',
   './mvnw *',
+  // `cargo test*`/`dotnet test*` bake "test" into their own matched prefix the identical way
+  // `node --test*`/`go test*` do -- their own version flags need the same explicit, EXACT patterns
+  // (same critic round; `cargo` accepts either spelling, `dotnet` only the long one).
+  'cargo --version',
+  'cargo -V',
+  'dotnet --version',
   // The agent's own translator, once written — one pattern per interpreter it may reasonably be
   // written in (this file's own brief: "Node by default, or the project's own language"). Safe only
   // because `.forge/test-translators/` is the agent's own sole write claim; see this file's own doc
@@ -166,6 +198,23 @@ export const ADOPT_TESTS_EXEC_PATTERNS: readonly string[] = [
   'ruby .forge/test-translators/*',
   'php .forge/test-translators/*',
 ];
+
+/**
+ * The one grant every caller that re-vets a model-reported, really-executed `adopt-tests` command
+ * string against `ADOPT_TESTS_EXEC_PATTERNS` holds it to — `adopt-agent.ts`'s own `vetProposedTestCommand`
+ * (the session's own FINAL reported `run`/`translate`/`scope`/`filter`/`runnerVersionCommand`) and
+ * `createLiveExecGate` (every LIVE, in-turn Bash call during a round), plus `proof.ts`'s own
+ * `captureRunnerVersion` and `adopt.ts`'s own `evaluateTestAdoptionApproval` (the SAME command,
+ * re-vetted again at `G-TestAdopt` check time, against the real project root rather than a lane).
+ * Defined here, once, rather than as a local constant in each of those files, so none of them can
+ * ever accidentally drift out of sync with `ADOPT_TESTS_EXEC_PATTERNS` itself or with each other —
+ * `adopt-agent.ts`'s own earlier doc comment on its own now-removed local copy already named this
+ * exact risk.
+ */
+export const ADOPT_TESTS_VET_GRANT: Pick<ToolGrant, 'exec' | 'network'> = {
+  exec: ADOPT_TESTS_EXEC_PATTERNS,
+  network: 'none',
+};
 
 /**
  * `grant` with `ADOPT_TESTS_EXEC_PATTERNS` added to its exec patterns — the identical shape

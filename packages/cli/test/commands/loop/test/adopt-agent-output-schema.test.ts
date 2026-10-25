@@ -5,7 +5,7 @@
  * `required` array at any level and no structure reflecting the real two-branch `z.union` the
  * session's own response is validated against afterward. A real, billed live run hit this on BOTH of
  * `proposalResponseSchema`'s own branches -- the `noTestsFound` branch (a genuinely test-less fixture)
- * and the ordinary `command`/`probe`/`runnerVersion`/`reason` branch (a fixture with real, working
+ * and the ordinary `command`/`probe`/`runnerVersionCommand`/`reason` branch (a fixture with real, working
  * tests) -- exhausting all 3 rounds with the identical generic, field-path-less `"(root): Invalid
  * input."` every time, because the schema steering every round's own prompt never changed.
  *
@@ -135,12 +135,12 @@ function expectBothAgree(sample: unknown, expectAccepted: boolean): void {
 }
 
 describe('ADOPT_TESTS_OUTPUT_SCHEMA agrees with the real proposalResponseSchema validator (specs/22 M17 P21)', () => {
-  it('accepts a real, valid normal proposal (command + probe + runnerVersion + reason)', () => {
+  it('accepts a real, valid normal proposal (command + probe + runnerVersionCommand + reason)', () => {
     expectBothAgree(
       {
         command: VALID_COMMAND,
         probe: { path: 'probe.test.js', content: 'x', expectedName: 'x' },
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'npx vitest --version',
         reason: 'a real proposal',
       },
       true,
@@ -165,7 +165,7 @@ describe('ADOPT_TESTS_OUTPUT_SCHEMA agrees with the real proposalResponseSchema 
         noTestsFound: false,
         command: VALID_COMMAND,
         probe: { path: 'probe.test.js', content: 'x', expectedName: 'x' },
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'npx vitest --version',
         reason: 'explicit false, same as absent',
       },
       true,
@@ -184,8 +184,11 @@ describe('ADOPT_TESTS_OUTPUT_SCHEMA agrees with the real proposalResponseSchema 
     );
   });
 
-  it('rejects a normal proposal missing "probe" and "runnerVersion" -- the ORCHESTRATOR-flagged concern that the top-level required array alone is not enough to catch', () => {
-    expectBothAgree({ command: VALID_COMMAND, reason: 'missing probe and runnerVersion' }, false);
+  it('rejects a normal proposal missing "probe" and "runnerVersionCommand" -- the ORCHESTRATOR-flagged concern that the top-level required array alone is not enough to catch', () => {
+    expectBothAgree(
+      { command: VALID_COMMAND, reason: 'missing probe and runnerVersionCommand' },
+      false,
+    );
   });
 
   it('rejects when the nested "probe" object itself is missing a required field ("expectedName") -- proves the NESTED object is constrained too, not only the top-level branch', () => {
@@ -193,7 +196,7 @@ describe('ADOPT_TESTS_OUTPUT_SCHEMA agrees with the real proposalResponseSchema 
       {
         command: VALID_COMMAND,
         probe: { path: 'probe.test.js', content: 'x' },
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'npx vitest --version',
         reason: 'probe is missing expectedName',
       },
       false,
@@ -205,7 +208,7 @@ describe('ADOPT_TESTS_OUTPUT_SCHEMA agrees with the real proposalResponseSchema 
       {
         command: VALID_COMMAND,
         probe: { path: 'probe.test.js', content: 'x', expectedName: 'x' },
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'npx vitest --version',
         reason: 'has an extra key',
         bogusExtraField: 'nope',
       },
@@ -218,7 +221,7 @@ describe('ADOPT_TESTS_OUTPUT_SCHEMA agrees with the real proposalResponseSchema 
       {
         command: { run: 'node --test', output: { source: 'file' }, format: 'tap' },
         probe: { path: 'probe.test.js', content: 'x', expectedName: 'x' },
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'npx vitest --version',
         reason: 'file output with no path',
       },
       false,
@@ -230,7 +233,7 @@ describe('ADOPT_TESTS_OUTPUT_SCHEMA agrees with the real proposalResponseSchema 
       {
         command: { run: 'node --test', output: { source: 'stdout', extra: 'nope' }, format: 'tap' },
         probe: { path: 'probe.test.js', content: 'x', expectedName: 'x' },
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'npx vitest --version',
         reason: 'output has a stray key',
       },
       false,
@@ -241,7 +244,7 @@ describe('ADOPT_TESTS_OUTPUT_SCHEMA agrees with the real proposalResponseSchema 
     const sample = {
       command: 'pnpm test',
       probe: { path: 'probe.test.js', content: 'x', expectedName: 'x' },
-      runnerVersion: '1.0.0',
+      runnerVersionCommand: 'npx vitest --version',
       reason: 'a bare string, which an agent proposal may not actually use',
     };
     // `testCommandEntrySchema` (`proposalResponseSchema`'s own `command` field) accepts the legacy

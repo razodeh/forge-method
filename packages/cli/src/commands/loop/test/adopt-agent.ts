@@ -236,7 +236,7 @@ import type { Clock } from '@forge/core';
 import type { ExecCommandVerdict, PlatformAdapter, SessionRequest } from '@forge/adapter-kit/types';
 import { resolveContentReference } from '@forge/agents/prompt';
 import {
-  ADOPT_TESTS_EXEC_PATTERNS,
+  ADOPT_TESTS_VET_GRANT,
   assembleAgentSession,
   createLiveFileAccessGate,
   createLiveNetworkAccessGate,
@@ -259,8 +259,10 @@ import { adrNew, type AdrCommandContext } from '../../adr.ts';
 import { buildRunEngineContext } from '../../run/context.ts';
 import { DETECTED_LAYER } from './detect.ts';
 import { writeStagedProposal, type StagedProposalRecord } from './adopt.ts';
+import { DEFAULT_TEST_RUN_TIMEOUT_MS } from './reporter.ts';
 import { createSystemTempPath } from './system-temp.ts';
 import {
+  captureRunnerVersion,
   runTranslatorProof,
   type InjectedProbe,
   type ProofCheckNumber,
@@ -335,7 +337,7 @@ export const proposalResponseSchema = z.union([
       command: testCommandEntrySchema,
       probe: probeResponseSchema,
       translatorPath: z.string().min(1).optional(),
-      runnerVersion: z.string().min(1),
+      runnerVersionCommand: z.string().min(1),
       reason: z.string().min(1),
     })
     .strict(),
@@ -432,7 +434,7 @@ const PROBE_JSON_SCHEMA = {
  * structure at all reflecting the real two-branch union `proposalResponseSchema` (a `z.union` of two
  * `.strict()` object schemas) actually enforces afterward. A real, billed live run hit this twice,
  * independently: once on the `noTestsFound` branch (a genuinely test-less fixture project) and once on
- * the ordinary `command`/`probe`/`runnerVersion`/`reason` branch (a fixture with real, working tests) —
+ * the ordinary `command`/`probe`/`runnerVersionCommand`/`reason` branch (a fixture with real, working tests) —
  * both exhausted all 3 rounds with the IDENTICAL generic, field-path-less Zod error (`"(root): Invalid
  * input."`), because the schema steering every round's own prompt never changed, only the prose
  * feedback did, and prose alone was not enough across 3 real rounds for either case.
@@ -473,7 +475,7 @@ const PROBE_JSON_SCHEMA = {
  * channel.** `required: ['command', 'reason']` are the only two fields genuinely unconditional across
  * BOTH of `proposalResponseSchema`'s own branches; `if` tests whether `noTestsFound` is present and
  * `true` (the real branch-B discriminant), `then` adds `adrSummary` to what is required, `else` adds
- * `probe`/`runnerVersion` instead — mirroring each branch's own real `required` array as closely as this
+ * `probe`/`runnerVersionCommand` instead — mirroring each branch's own real `required` array as closely as this
  * transport's top-level constraint allows.
  *
  * **Disclosed, not silently accepted: this design CANNOT reject a response that mixes fields from both
@@ -505,8 +507,8 @@ export const ADOPT_TESTS_OUTPUT_SCHEMA: NonNullable<SessionRequest['outputSchema
       type: 'boolean',
       description:
         'Set to true ONLY when investigation finds this project has no test setup at all. When true, ' +
-        'omit "probe", "runnerVersion", and "translatorPath" entirely, and report "adrSummary" ' +
-        'instead. When false or omitted, report "probe" and "runnerVersion" instead of "adrSummary".',
+        'omit "probe", "runnerVersionCommand", and "translatorPath" entirely, and report "adrSummary" ' +
+        'instead. When false or omitted, report "probe" and "runnerVersionCommand" instead of "adrSummary".',
     },
     command: COMMAND_JSON_SCHEMA,
     probe: {
@@ -520,10 +522,14 @@ export const ADOPT_TESTS_OUTPUT_SCHEMA: NonNullable<SessionRequest['outputSchema
       description:
         'Only when a translator script was written. Never set when "noTestsFound" is true.',
     },
-    runnerVersion: {
+    runnerVersionCommand: {
       type: 'string',
       description:
-        'Required unless "noTestsFound" is true, in which case omit this field entirely.',
+        'The exact command that prints the runner\'s own version (e.g. "npx vitest --version") -- ' +
+        'never the version text itself. It must be one of the already-granted conventional test-' +
+        'invocation forms; FORGE runs it for real, both now and again later to check it has not ' +
+        'drifted, and never trusts a self-reported version string. Required unless "noTestsFound" ' +
+        'is true, in which case omit this field entirely.',
     },
     reason: { type: 'string' },
     adrSummary: {
@@ -539,7 +545,7 @@ export const ADOPT_TESTS_OUTPUT_SCHEMA: NonNullable<SessionRequest['outputSchema
     required: ['noTestsFound'],
   },
   then: { required: ['adrSummary'] },
-  else: { required: ['probe', 'runnerVersion'] },
+  else: { required: ['probe', 'runnerVersionCommand'] },
 };
 
 export interface AdoptTestsAgentDeps {
@@ -645,6 +651,27 @@ export type AdoptTestsAgentResult =
       readonly runId: string;
     }
   | {
+      readonly outcome: 'exhausted';
+      readonly layer: string;
+      readonly rounds: number;
+      /** The round's own proposed `runnerVersionCommand` passed `vetProposedTestCommand`'s hard vet
+       * (so this is never the allowlist/security concern `RUN-161` is) but, once actually run
+       * (`captureRunnerVersion`), timed out or printed nothing on either stream — an unconventional
+       * tool whose real version flag differs from what was proposed, say. `SPEC-QUESTIONS.md` Q333:
+       * the real mechanism that closes the "runner version is self-reported, never verified" gap
+       * needs FORGE to actually execute something, and an execution outcome (unlike the allowlist
+       * itself) carries none of `RUN-161`'s own round-by-round-oracle risk, so this is retried with
+       * feedback exactly like `'proof-threw'`/`'invalid-response'` above. */
+      readonly cause: 'runner-version-unobtainable';
+      readonly reason: string;
+      /** `true` only when the LAST round's own failure was a real timeout, never empty output --
+       * disclosed here too (not only in the retried-round feedback) so a human reading an exhausted
+       * result can tell "every round genuinely ran out of time" from "every round produced no
+       * version text at all," two very different real causes. */
+      readonly timedOut?: true;
+      readonly runId: string;
+    }
+  | {
       readonly outcome: 'no-test-setup';
       readonly layer: string;
       readonly adrPath: string;
@@ -680,7 +707,20 @@ export type AdoptTestsAgentResult =
  * boundary the way `RUN-161`'s own command allowlist is — there, the ALLOWED SET itself is what a
  * round-by-round oracle could probe out; here, telling a confused-but-cooperative agent "this exact
  * path is unusable, choose another" cannot weaken a rule that never relaxes no matter how many rounds
- * run. */
+ * run.
+ *
+ * `'runner-version-unobtainable'` is new (`SPEC-QUESTIONS.md` Q333): the proposed
+ * `runnerVersionCommand` already passed the hard vet (`vetProposedTestCommand`/`RUN-161`) — this
+ * feedback only ever fires AFTER that, on `captureRunnerVersion`'s own real execution of an already-
+ * allowed command, so (like `'proof-threw'` above) it is never the allowlist itself a round-by-round
+ * oracle could probe. `timedOut` (a fresh critic round's own finding) distinguishes two genuinely
+ * different situations the same `captureRunnerVersion` failure can mean: a real timeout is NOT
+ * necessarily the wrong command -- a fresh, `node_modules`-less lane can make a correct command
+ * genuinely slow to resolve (`captureRunnerVersion`'s own doc comment) -- while empty output on both
+ * streams IS "this specific, already-permitted command didn't produce a version at all," squarely
+ * the agent's own choice to revise. Telling a cooperative agent "report a different command"
+ * unconditionally, even on a bare timeout, would be actively wrong advice and burn one of only 3
+ * rounds on an infrastructural hiccup rather than a real mistake. */
 type RoundFeedback =
   | {
       readonly kind: 'proof-failed';
@@ -688,7 +728,37 @@ type RoundFeedback =
       readonly reason: string;
     }
   | { readonly kind: 'invalid-response'; readonly reason: string }
-  | { readonly kind: 'proof-threw'; readonly reason: string };
+  | { readonly kind: 'proof-threw'; readonly reason: string }
+  | {
+      readonly kind: 'runner-version-unobtainable';
+      readonly reason: string;
+      readonly timedOut?: true;
+    };
+
+/** The `'runner-version-unobtainable'` feedback's own text -- deliberately NOT "report a different
+ * command" unconditionally (a fresh critic round's own finding: that is actively wrong advice for
+ * `feedback.timedOut`, which can mean the proposed command was entirely correct and merely slow to
+ * resolve in a fresh, `node_modules`-less lane -- `captureRunnerVersion`'s own doc comment has the
+ * full reasoning). A real timeout is told apart from genuinely empty output, each with its own,
+ * honest next step. */
+function runnerVersionFeedbackText(
+  feedback: Extract<RoundFeedback, { readonly kind: 'runner-version-unobtainable' }>,
+): string {
+  if (feedback.timedOut === true) {
+    return (
+      `\n\nThe previous round's "runnerVersionCommand" did not finish in time: ${feedback.reason}\n` +
+      'This does not necessarily mean the command itself was wrong -- a fresh lane has no installed ' +
+      'dependencies yet, so a correct command can genuinely be slow to resolve. Report the SAME ' +
+      'command again if you are confident it is correct, or a different one if you are not.'
+    );
+  }
+  return (
+    `\n\nThe previous round's "runnerVersionCommand" could not be used to determine the runner's ` +
+    `real version: ${feedback.reason}\nReport a different command, still one of the already-` +
+    "granted conventional test-invocation forms, that actually prints the runner's own version " +
+    'when run, then try again.'
+  );
+}
 
 /** One round's own task text: the real, shipped brief (`briefs/adopt-tests.md`, read off the
  * project's own materialized copy, `resolveContentReference`) plus, from round 2 on, the PREVIOUS
@@ -709,7 +779,9 @@ async function buildRoundTaskText(
         ? `\n\nThe previous round's translator proof failed check ${String(feedback.failedCheck)}: ${feedback.reason}\nRevise the actual cause this names, then report again.`
         : feedback.kind === 'invalid-response'
           ? `\n\nThe previous round's structured response was not usable: ${feedback.reason}\nReport a response that matches the required JSON shape exactly (a real "command" and "probe", or "noTestsFound" with a proposed command and an ADR summary), then try again.`
-          : `\n\nThe previous round's translator proof could not even run: ${feedback.reason}\nReport a probe path (and, if a structured output file path is used, that path too) that is a plain, project-relative path which does NOT already exist and does not escape or fall under a directory FORGE reserves -- choose a genuinely new one, then try again.`;
+          : feedback.kind === 'proof-threw'
+            ? `\n\nThe previous round's translator proof could not even run: ${feedback.reason}\nReport a probe path (and, if a structured output file path is used, that path too) that is a plain, project-relative path which does NOT already exist and does not escape or fall under a directory FORGE reserves -- choose a genuinely new one, then try again.`
+            : runnerVersionFeedbackText(feedback);
   return `${kickoff}${feedbackText}\n\n${brief}`;
 }
 
@@ -791,13 +863,6 @@ async function copyTranslatorIntoProject(
   await writeFileAtomic(realPaths.resolveWithin(translatorPath), translatorContent);
 }
 
-/** The one grant both `vetProposedTestCommand` (the session's own FINAL reported command) and
- * `createLiveExecGate` (every LIVE, in-turn Bash call during the round, `specs/22` M17 P7, critic
- * round 4) hold their own real shell-executed text to — the SAME bounded menu the live session's own
- * tool-use grant (`grantWithAdoptTestsExec`) already had to stay inside, never a separate, looser one
- * a caller might accidentally let drift out of sync with it. */
-const ADOPT_TESTS_VET_GRANT = { exec: ADOPT_TESTS_EXEC_PATTERNS, network: 'none' as const };
-
 /**
  * Builds `SessionRequest.vetExecCommand` for one round — a real per-call gate on the session's own
  * LIVE Bash tool-use, closing a gap `vetProposedTestCommand` (below) never actually covered despite
@@ -851,11 +916,15 @@ function createLiveExecGate(root: string): (command: string) => Promise<ExecComm
 }
 
 /** Re-vets the proposed command's own real shell-executed fields — `run` always, `translate`/`scope`/
- * `filter` when declared — against `ADOPT_TESTS_EXEC_PATTERNS`, independently of whatever the live
- * session's own tool-use grant happened to allow, before any of them ever reaches a real shell
- * (`runTranslatorProof` -> `runStructuredTestLayer` -> `runShellCommand`), run with `cwd: lanePath` —
- * `root` below is that SAME lane path, never `deps.projectRoot`, so `vetPath`'s own containment
- * check (inside `vetProposedCommand`) matches where the command is actually about to execute.
+ * `filter` when declared, and the round's own proposed `runnerVersionCommand` (`SPEC-QUESTIONS.md`
+ * Q333: the one previously-unverified field, now held to the identical bar as the other four rather
+ * than trusted as the model's own free-text claim) — against `ADOPT_TESTS_EXEC_PATTERNS`,
+ * independently of whatever the live session's own tool-use grant happened to allow, before any of
+ * them ever reaches a real shell (`runTranslatorProof` -> `runStructuredTestLayer` ->
+ * `runShellCommand`; `captureRunnerVersion`, below, for `runnerVersionCommand` specifically), run
+ * with `cwd: lanePath` — `root` below is that SAME lane path, never `deps.projectRoot`, so
+ * `vetPath`'s own containment check (inside `vetProposedCommand`) matches where the command is
+ * actually about to execute.
  *
  * **Why this exists at all, and why lane isolation (this file's own top doc comment) does not make
  * it redundant.** The exec grant (`grantWithAdoptTestsExec`) only ever gates the session's own
@@ -884,14 +953,20 @@ function createLiveExecGate(root: string): (command: string) => Promise<ExecComm
  * refusal (`confined-command.ts`'s own `BRACE_LIST`), confirmed directly against a real invocation.
  *
  * @throws {ForgeError} `RUN-161`, naming the field, the real command, and the vet's own refusal
- * reason, for the first field (in `run`/`translate`/`scope`/`filter` order) that fails.
+ * reason, for the first field (in `run`/`translate`/`scope`/`filter`/`runnerVersionCommand` order)
+ * that fails.
  */
-async function vetProposedTestCommand(command: StructuredTestCommand, root: string): Promise<void> {
+async function vetProposedTestCommand(
+  command: StructuredTestCommand,
+  runnerVersionCommand: string,
+  root: string,
+): Promise<void> {
   const fields: readonly (readonly [string, string | undefined])[] = [
     ['run', command.run],
     ['translate', command.translate],
     ['scope', command.scope],
     ['filter', command.filter],
+    ['runnerVersionCommand', runnerVersionCommand],
   ];
   for (const [field, value] of fields) {
     if (value === undefined) continue;
@@ -1168,8 +1243,46 @@ export async function runAdoptTestsAgent(
       // Never trust the reported command enough to run it: re-vetted, independently of whatever the
       // live session's own tool-use grant allowed, against the SAME lane root it is about to run in,
       // before it ever reaches a real shell (this file's own `vetProposedTestCommand` doc comment has
-      // the full reasoning).
-      await vetProposedTestCommand(command, lane.path);
+      // the full reasoning). Now covers `runnerVersionCommand` too (`SPEC-QUESTIONS.md` Q333).
+      await vetProposedTestCommand(command, parsed.runnerVersionCommand, lane.path);
+
+      // The vet above is the hard, non-retryable security boundary (RUN-161); actually RUNNING an
+      // already-vetted command to capture a real version string is a separate, ordinary step that
+      // can fail for completely innocent reasons (a timeout, a tool that prints its version
+      // somewhere this doesn't look) -- retried with feedback, not a hard stop (`RoundFeedback`'s own
+      // doc comment, `'runner-version-unobtainable'`). This is the real fix for `SPEC-QUESTIONS.md`
+      // Q333's own disclosed gap: `runnerVersion` is no longer the model's own unverified free-text
+      // claim -- it is FORGE's own real, captured output of a command the model only CHOSE.
+      //
+      // The SAME effective timeout budget `command.run` itself gets below (a fresh critic round's
+      // own finding: a fresh lane has no `node_modules` at all -- `createLaneWorktree` never installs
+      // one -- so this command can face the identical cold-`npx`-resolution risk `command.run` is
+      // already given up to 20 minutes for by default; a shorter, independently-chosen bound here
+      // could time out first on the exact same cold state for no real reason).
+      const versionCapture = await captureRunnerVersion(
+        parsed.runnerVersionCommand,
+        lane.path,
+        command.timeoutMs ?? DEFAULT_TEST_RUN_TIMEOUT_MS,
+      );
+      if (!versionCapture.ok) {
+        if (round === maxRounds) {
+          return {
+            outcome: 'exhausted',
+            layer,
+            rounds: round,
+            cause: 'runner-version-unobtainable',
+            reason: versionCapture.reason,
+            ...(versionCapture.timedOut === true ? { timedOut: true as const } : {}),
+            runId,
+          };
+        }
+        feedback = {
+          kind: 'runner-version-unobtainable',
+          reason: versionCapture.reason,
+          ...(versionCapture.timedOut === true ? { timedOut: true as const } : {}),
+        };
+        continue;
+      }
 
       // `runTranslatorProof` itself THROWING, rather than returning a real `{ok: false}`, is the ONE
       // other retry-worthy failure class this round can hit (M17 P21, a second live-run fix, Q348 --
@@ -1190,7 +1303,8 @@ export async function runAdoptTestsAgent(
           ...(proofEnv === undefined ? {} : { env: proofEnv }),
           probe,
           ...(translatorContent === undefined ? {} : { translatorContent }),
-          runnerVersion: parsed.runnerVersion,
+          runnerVersion: versionCapture.runnerVersion,
+          runnerVersionCommand: parsed.runnerVersionCommand,
           now: () => clock.now(),
         });
       } catch (error) {
@@ -1233,6 +1347,7 @@ export async function runAdoptTestsAgent(
             ok: true,
             subjectHash: proof.subjectHash,
             runnerVersion: proof.runnerVersion,
+            runnerVersionCommand: proof.runnerVersionCommand,
             checkedAt: proof.checkedAt,
           },
         };

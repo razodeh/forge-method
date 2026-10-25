@@ -93,6 +93,7 @@ test('PROBE deliberately fails', () => { assert.strictEqual(1, 2); });
       createTempPath: makeCreateTempPath(dir),
       probe,
       runnerVersion: process.version,
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({
@@ -133,6 +134,7 @@ describe('runTranslatorProof -- check 1, schema validity (specs/22 M17 P6)', () 
       createTempPath: makeCreateTempPath(dir),
       probe,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: false, failedCheck: 1 });
@@ -208,6 +210,7 @@ process.stdout.write(JSON.stringify({ forgeTestReport: 1, tests }));
       createTempPath: makeCreateTempPath(dir),
       probe: REAL_PROBE,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: false, failedCheck: 2 });
@@ -236,6 +239,7 @@ process.stdout.write(JSON.stringify({
       createTempPath: makeCreateTempPath(dir),
       probe: REAL_PROBE,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: false, failedCheck: 2 });
@@ -269,6 +273,7 @@ process.stdout.write(JSON.stringify({
       createTempPath: makeCreateTempPath(dir),
       probe: REAL_PROBE,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: false, failedCheck: 3 });
@@ -297,6 +302,7 @@ process.stdout.write(JSON.stringify({
       createTempPath: makeCreateTempPath(dir),
       probe: REAL_PROBE,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: false, failedCheck: 3 });
@@ -328,6 +334,7 @@ process.stdout.write(JSON.stringify({
       createTempPath: makeCreateTempPath(dir),
       probe: probeWithFile,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: false, failedCheck: 3 });
@@ -348,6 +355,7 @@ process.stdout.write(JSON.stringify({
       createTempPath: makeCreateTempPath(dir),
       probe: probeWithFile,
       runnerVersion: process.version,
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result.ok).toBe(true);
@@ -423,6 +431,7 @@ process.stdout.write(JSON.stringify({
       createTempPath: makeCreateTempPath(dir),
       probe: SWAP_PROBE,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: false, failedCheck: 3 });
@@ -462,6 +471,7 @@ process.stdout.write(JSON.stringify({
       createTempPath: makeCreateTempPath(dir),
       probe: SWAP_PROBE,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     // This is the disclosed, documented residual limit -- NOT the desired behaviour of a real
@@ -519,6 +529,7 @@ process.stdout.write(JSON.stringify({ forgeTestReport: 1, tests }));
         createTempPath: makeCreateTempPath(dir),
         probe,
         runnerVersion: '1.0.0',
+        runnerVersionCommand: 'node --version',
         now: NOW,
       });
       expect(result).toMatchObject({ ok: false, failedCheck: 3 });
@@ -563,6 +574,7 @@ process.stdout.write(JSON.stringify({
       createTempPath: makeCreateTempPath(dir),
       probe: REAL_PROBE,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: false, failedCheck: 4 });
@@ -584,6 +596,7 @@ describe('runTranslatorProof -- check 5, the zero-tests guard (specs/22 M17 P6)'
       createTempPath: makeCreateTempPath(dir),
       probe: REAL_PROBE,
       runnerVersion: '1.0.0',
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: false, failedCheck: 5 });
@@ -637,6 +650,7 @@ describe('runTranslatorProof -- the probe is refused, never silently overwritten
         createTempPath: makeCreateTempPath(dir),
         probe: REAL_PROBE,
         runnerVersion: process.version,
+        runnerVersionCommand: 'node --version',
         now: NOW,
       }),
     ).rejects.toMatchObject({ code: 'RUN-158', cause: { code: 'RUN-114' } });
@@ -679,6 +693,7 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
       createTempPath: makeCreateTempPath(dir),
       probe: REAL_PROBE,
       runnerVersion: process.version,
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     // Reclaimed, not refused: this runs to real completion exactly like the happy-path test at the
@@ -709,6 +724,7 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
       createTempPath: makeCreateTempPath(dir),
       probe: REAL_PROBE,
       runnerVersion: process.version,
+      runnerVersionCommand: 'node --version',
       now: NOW,
     });
     expect(result).toMatchObject({ ok: true, runnerVersion: process.version });
@@ -746,6 +762,7 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
         createTempPath: makeCreateTempPath(dir),
         probe: { ...REAL_PROBE, path: 'already-exists.test.js' },
         runnerVersion: process.version,
+        runnerVersionCommand: 'node --version',
         now: NOW,
       }),
     ).rejects.toMatchObject({ code: 'RUN-158', cause: { code: 'RUN-114' } });
@@ -786,6 +803,7 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
         createTempPath: makeCreateTempPath(dir),
         probe: REAL_PROBE,
         runnerVersion: process.version,
+        runnerVersionCommand: 'node --version',
         now: NOW,
       }),
     ).rejects.toMatchObject({ code: 'RUN-158', cause: { code: 'RUN-114' } });

@@ -127,6 +127,7 @@ test('PROBE deliberately fails', () => { assert.strictEqual(1, 2); });
         expectedName: 'PROBE deliberately fails',
       },
       runnerVersion: process.version,
+      runnerVersionCommand: 'node --version',
       now: () => '2026-01-01T00:00:00.000Z',
     });
     expect(result.ok).toBe(true);

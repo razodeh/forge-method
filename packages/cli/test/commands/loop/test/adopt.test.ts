@@ -253,6 +253,14 @@ describe('runDetectionAndStage (specs/22 M17 P6)', () => {
   });
 });
 
+/** `evaluateTestAdoptionApproval`'s own real re-derivation (`SPEC-QUESTIONS.md` Q333) now actually
+ * EXECUTES `runnerVersionCommand` for real, vetted, against the real project root -- so a fixture
+ * meant to pass that check needs a real, allowlisted, zero-setup, deterministic command: `ls -d .`
+ * always prints exactly `.` (never the directory's own contents, which vary per test), and matches
+ * the plain `ls*` exec pattern. */
+const PASSING_RUNNER_VERSION_COMMAND = 'ls -d .';
+const PASSING_RUNNER_VERSION = '.';
+
 /** A record whose own `proof.subjectHash` really is `computeProofSubjectHash(SAMPLE_RECORD.command)`
  * (no translator -- `SAMPLE_RECORD.command.translate` is unset) -- `checkTestAdoptionApproved`'s own
  * freshness check passes for this one, unlike the hand-picked `'abc'` placeholder the pre-P7 tests
@@ -260,7 +268,13 @@ describe('runDetectionAndStage (specs/22 M17 P6)', () => {
 function passingRecord(subjectHash: string): StagedProposalRecord {
   return {
     ...SAMPLE_RECORD,
-    proof: { ok: true, subjectHash, runnerVersion: '1.0.0', checkedAt: '2026-01-01T00:00:00.000Z' },
+    proof: {
+      ok: true,
+      subjectHash,
+      runnerVersion: PASSING_RUNNER_VERSION,
+      runnerVersionCommand: PASSING_RUNNER_VERSION_COMMAND,
+      checkedAt: '2026-01-01T00:00:00.000Z',
+    },
   };
 }
 
@@ -276,7 +290,13 @@ const AGENT_RECORD: StagedProposalRecord = { ...SAMPLE_RECORD, source: 'agent' }
 function agentPassingRecord(subjectHash: string): StagedProposalRecord {
   return {
     ...AGENT_RECORD,
-    proof: { ok: true, subjectHash, runnerVersion: '1.0.0', checkedAt: '2026-01-01T00:00:00.000Z' },
+    proof: {
+      ok: true,
+      subjectHash,
+      runnerVersion: PASSING_RUNNER_VERSION,
+      runnerVersionCommand: PASSING_RUNNER_VERSION_COMMAND,
+      checkedAt: '2026-01-01T00:00:00.000Z',
+    },
   };
 }
 
@@ -323,6 +343,7 @@ describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adopti
         reason: 'wrong name',
         subjectHash: 'abc',
         runnerVersion: '1.0.0',
+        runnerVersionCommand: 'ls -d .',
         checkedAt: '2026-01-01T00:00:00.000Z',
       },
     });
@@ -351,6 +372,7 @@ describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adopti
         reason: 'wrong name',
         subjectHash: 'abc',
         runnerVersion: '1.0.0',
+        runnerVersionCommand: 'ls -d .',
         checkedAt: '2026-01-01T00:00:00.000Z',
       },
     });
@@ -379,6 +401,61 @@ describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adopti
     expect(result.detail).toContain('current');
   });
 
+  describe('runnerVersionCommand freshness -- the real re-derivation this check now performs (SPEC-QUESTIONS.md Q333, closed)', () => {
+    it('unapproved=1, "stale", when the runner\'s own real, current version no longer matches what the proof recorded -- a real re-execution of the recorded command, not a string comparison against a hand-asserted value', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      // A real file `cat` reads -- its content IS "the runner's version" as far as this fixture's
+      // own `runnerVersionCommand` is concerned, so changing it on disk is a real, observable
+      // version change, not a simulated one.
+      await writeFile(path.join(dir, 'runner-version.txt'), 'runner 1.0.0');
+      await writeStagedProposal(paths, 'unit', {
+        ...AGENT_RECORD,
+        proof: {
+          ok: true,
+          subjectHash: SAMPLE_COMMAND_HASH,
+          runnerVersion: 'runner 1.0.0',
+          runnerVersionCommand: 'cat runner-version.txt',
+          checkedAt: '2026-01-01T00:00:00.000Z',
+        },
+      });
+      // Confirms the baseline actually passes first -- a real positive, not only the drift case.
+      const before = await checkTestAdoptionApproved(paths, 'unit');
+      expect(before).toMatchObject({ v: 1, layer: 'unit', unapproved: 0 });
+
+      // The runner is "upgraded in place" -- the identical real file FORGE would re-read, now
+      // reporting a different version, with nothing else about the proposal or its translator
+      // touched at all.
+      await writeFile(path.join(dir, 'runner-version.txt'), 'runner 2.0.0');
+      const after = await checkTestAdoptionApproved(paths, 'unit');
+      expect(after.unapproved).toBe(1);
+      expect(after.detail).toContain('stale');
+      expect(after.detail).toContain("runner's own version has changed");
+      expect(after.detail).toContain('runner 1.0.0');
+      expect(after.detail).toContain('runner 2.0.0');
+    });
+
+    it('unapproved=1 when the recorded "runnerVersionCommand" no longer vets (e.g. no longer one of the granted conventional forms) -- never silently trusted as still current', async () => {
+      const dir = await tempDir();
+      const paths = new ProjectPaths(dir);
+      await writeStagedProposal(paths, 'unit', {
+        ...AGENT_RECORD,
+        proof: {
+          ok: true,
+          subjectHash: SAMPLE_COMMAND_HASH,
+          runnerVersion: 'whatever was recorded',
+          // Never matches any ADOPT_TESTS_EXEC_PATTERNS entry -- a real vet refusal, not a made-up one.
+          runnerVersionCommand: 'rm -rf /tmp/whatever',
+          checkedAt: '2026-01-01T00:00:00.000Z',
+        },
+      });
+      const result = await checkTestAdoptionApproved(paths, 'unit');
+      expect(result.unapproved).toBe(1);
+      expect(result.detail).toContain('runnerVersionCommand');
+      expect(result.detail).toContain('no longer be verified');
+    });
+  });
+
   describe('declaresTranslator() -- anchored to the exact ADOPT_TESTS_EXEC_PATTERNS prefix, never a bare substring (specs/22 M17 P21) (a critic-round fix)', () => {
     it('unapproved=0 for a CONVENTIONAL command that merely passes the translator directory as an ARGUMENT -- never flagged as "declares a translator" (the false positive a critic round found: a bare run.includes(".forge/test-translators/") check would wrongly treat this as needing re-verification against a translator file that was never written at all, permanently failing as "missing")', async () => {
       const dir = await tempDir();
@@ -394,7 +471,8 @@ describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adopti
         proof: {
           ok: true,
           subjectHash: computeProofSubjectHash(command),
-          runnerVersion: '1.0.0',
+          runnerVersion: PASSING_RUNNER_VERSION,
+          runnerVersionCommand: PASSING_RUNNER_VERSION_COMMAND,
           checkedAt: '2026-01-01T00:00:00.000Z',
         },
       });
@@ -423,7 +501,8 @@ describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adopti
           // The REAL hash basis a passing proof for this shape actually records: the translator's
           // own bytes, never the command's canonical JSON (`runTranslatorProof`'s own call, M17 P21).
           subjectHash: computeProofSubjectHash(command, translatorContent),
-          runnerVersion: '1.0.0',
+          runnerVersion: PASSING_RUNNER_VERSION,
+          runnerVersionCommand: PASSING_RUNNER_VERSION_COMMAND,
           checkedAt: '2026-01-01T00:00:00.000Z',
         },
       });
@@ -447,6 +526,7 @@ describe('checkTestAdoptionApproved -- G-TestAdopt.gate.yaml\'s own "test-adopti
           ok: true,
           subjectHash: computeProofSubjectHash(command, 'whatever was hashed at proof time'),
           runnerVersion: '1.0.0',
+          runnerVersionCommand: 'ls -d .',
           checkedAt: '2026-01-01T00:00:00.000Z',
         },
       });
@@ -497,6 +577,7 @@ describe('runPromotion -- the full staged-proposal lifecycle, now that G-TestAdo
         reason: 'the injected-failure probe does not appear at all.',
         subjectHash: 'abc',
         runnerVersion: '1.0.0',
+        runnerVersionCommand: 'ls -d .',
         checkedAt: '2026-01-01T00:00:00.000Z',
       },
     };
@@ -581,6 +662,7 @@ describe('runPromotion -- the full staged-proposal lifecycle, now that G-TestAdo
           reason: 'wrong name',
           subjectHash: 'abc',
           runnerVersion: '1.0.0',
+          runnerVersionCommand: 'ls -d .',
           checkedAt: '2026-01-01T00:00:00.000Z',
         },
       });
@@ -665,6 +747,7 @@ describe('runPromotion -- the full staged-proposal lifecycle, now that G-TestAdo
             ok: true,
             subjectHash: otherHash,
             runnerVersion: '1.0.0',
+            runnerVersionCommand: 'ls -d .',
             checkedAt: '2026-01-01T00:00:00.000Z',
           },
         });

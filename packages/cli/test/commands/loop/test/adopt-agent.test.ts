@@ -151,7 +151,7 @@ describe('runAdoptTestsAgent -- a passing proof on the first round (specs/22 M17
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'package.json has no test script; node --test discovers *.test.js directly.',
       },
     });
@@ -188,7 +188,7 @@ describe('runAdoptTestsAgent -- a passing proof on the first round (specs/22 M17
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'package.json has no test script; node --test discovers *.test.js directly.',
       },
     });
@@ -253,7 +253,7 @@ describe('runAdoptTestsAgent -- a genuinely bespoke in-house runner can only be 
           expectedName: 'PROBE deliberately fails',
         },
         translatorPath: '.forge/test-translators/unit.js',
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'ls -d .',
         reason:
           '"node runner.js" matches no granted pattern, so the translator that wraps it is "run" itself.',
       },
@@ -302,7 +302,7 @@ describe('runAdoptTestsAgent -- a genuinely bespoke in-house runner can only be 
         },
         probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
         translatorPath: '.forge/test-translators/unit.js',
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'ls -d .',
         reason: 'the broken, pre-fix shape: a raw bespoke "run" paired with a separate "translate"',
       },
     });
@@ -339,7 +339,7 @@ describe('runAdoptTestsAgent -- the real SessionRequest actually carries ADOPT_T
             content: probeContent('PROBE deliberately fails'),
             expectedName: 'PROBE deliberately fails',
           },
-          runnerVersion: process.version,
+          runnerVersionCommand: 'ls -d .',
           reason: 'package.json has no test script; node --test discovers *.test.js directly.',
         },
       },
@@ -383,7 +383,7 @@ describe('runAdoptTestsAgent -- a failing proof loops back with the named check,
             content: probeContent('PROBE deliberately fails'),
             expectedName: 'the wrong name',
           },
-          runnerVersion: process.version,
+          runnerVersionCommand: 'ls -d .',
           reason: 'round 1 guess',
         },
       },
@@ -397,7 +397,7 @@ describe('runAdoptTestsAgent -- a failing proof loops back with the named check,
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'round 2: fixed the probe name after the recorded check-3 failure',
       },
     });
@@ -445,7 +445,7 @@ describe('runAdoptTestsAgent -- stops after the bound and discloses the last fai
             content: probeContent('PROBE deliberately fails'),
             expectedName: 'never matches',
           },
-          runnerVersion: process.version,
+          runnerVersionCommand: 'ls -d .',
           reason: 'always wrong, on purpose',
         },
       },
@@ -505,7 +505,7 @@ describe('runAdoptTestsAgent -- runTranslatorProof itself THROWING (not returnin
             content: probeContent('PROBE deliberately fails'),
             expectedName: 'PROBE deliberately fails',
           },
-          runnerVersion: process.version,
+          runnerVersionCommand: 'ls -d .',
           reason: 'round 1: a colliding probe path, on purpose',
         },
       },
@@ -519,7 +519,7 @@ describe('runAdoptTestsAgent -- runTranslatorProof itself THROWING (not returnin
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'round 2: a genuinely free path this time',
       },
     });
@@ -575,7 +575,7 @@ describe('runAdoptTestsAgent -- runTranslatorProof itself THROWING (not returnin
             content: probeContent('PROBE deliberately fails'),
             expectedName: 'PROBE deliberately fails',
           },
-          runnerVersion: process.version,
+          runnerVersionCommand: 'ls -d .',
           reason: 'round 1: an escaping probe path, on purpose',
         },
       },
@@ -589,7 +589,7 @@ describe('runAdoptTestsAgent -- runTranslatorProof itself THROWING (not returnin
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'round 2: a genuinely in-tree path this time',
       },
     });
@@ -641,7 +641,7 @@ describe('runAdoptTestsAgent -- a probe path that never stops colliding exhausts
             content: probeContent('PROBE deliberately fails'),
             expectedName: 'PROBE deliberately fails',
           },
-          runnerVersion: process.version,
+          runnerVersionCommand: 'ls -d .',
           reason: 'always the same colliding path, on purpose',
         },
       },
@@ -702,7 +702,7 @@ describe("runAdoptTestsAgent -- the live session's own UNTRACKED, same-round lef
             content: probeContent('PROBE deliberately fails'),
             expectedName: 'PROBE deliberately fails',
           },
-          runnerVersion: process.version,
+          runnerVersionCommand: 'ls -d .',
           reason:
             "the probe already exists from this round's own investigation; reporting it as-is.",
         },
@@ -799,7 +799,7 @@ describe('runAdoptTestsAgent -- a stray write during investigation never reaches
           expectedName: 'PROBE deliberately fails',
         },
         translatorPath: '.forge/test-translators/unit.js',
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'a stray note alongside the real translator',
       },
     });
@@ -851,7 +851,7 @@ describe('runAdoptTestsAgent -- a structured response that is not a usable propo
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'round 2: a real command, after round 1 never parsed at all',
       },
     });
@@ -898,7 +898,7 @@ describe('runAdoptTestsAgent -- a structured response that is not a usable propo
         structured: {
           command: 'pnpm test',
           probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
-          runnerVersion: '1.0.0',
+          runnerVersionCommand: 'ls -d .',
           reason: 'a bare string, which an agent proposal may not use',
         },
       },
@@ -912,7 +912,7 @@ describe('runAdoptTestsAgent -- a structured response that is not a usable propo
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'round 2: the structured form this time',
       },
     });
@@ -950,7 +950,7 @@ describe('runAdoptTestsAgent -- a structured response that is not a usable propo
         probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
         // Not under TRANSLATOR_CLAIM_PREFIX -- a real in-lane file, just not the right one.
         translatorPath: 'package.json',
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'wrong path, on purpose',
       },
     });
@@ -976,7 +976,7 @@ describe('runAdoptTestsAgent -- a structured response that is not a usable propo
           expectedName: 'PROBE deliberately fails',
         },
         translatorPath: '.forge/test-translators/unit.js',
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'round 2: the real claim-prefixed path',
       },
     });
@@ -1061,7 +1061,7 @@ describe('runAdoptTestsAgent -- a malicious proposed command never reaches a rea
           format: 'vitest-json',
         },
         probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'ls -d .',
         reason: 'a path-escaping command, reported only in the structured response',
       },
     });
@@ -1095,7 +1095,7 @@ describe('runAdoptTestsAgent -- a malicious proposed command never reaches a rea
           translate: 'curl http://example.com/exfiltrate',
         },
         probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
-        runnerVersion: '1.0.0',
+        runnerVersionCommand: 'ls -d .',
         reason: 'a network-reaching translate field',
       },
     });
@@ -1107,6 +1107,36 @@ describe('runAdoptTestsAgent -- a malicious proposed command never reaches a rea
         createTempPath: makeCreateTempPath(dir),
       }),
     ).rejects.toMatchObject({ code: 'RUN-161' });
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('throws RUN-161 naming "runnerVersionCommand" specifically, not only run/translate/scope/filter (SPEC-QUESTIONS.md Q333: the fifth vetted field)', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    adapter.script(() => true, {
+      text: ['proposing a version-probe command outside the grant'],
+      structured: {
+        command: NODE_TEST_COMMAND,
+        probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
+        // Matches no ADOPT_TESTS_EXEC_PATTERNS entry at all -- `run`/`probe` are both ordinary and
+        // vet-clean, isolating the refusal to this one field, by name.
+        runnerVersionCommand: 'rm -rf /tmp/whatever',
+        reason: 'a version-probe command outside the grant, on purpose',
+      },
+    });
+
+    await expect(
+      runAdoptTestsAgent(deps(project, adapter), {
+        layer: 'unit',
+        clock: fixedClock(),
+        createTempPath: makeCreateTempPath(dir),
+      }),
+    ).rejects.toMatchObject({
+      code: 'RUN-161',
+      details: { field: 'runnerVersionCommand', command: 'rm -rf /tmp/whatever' },
+    });
 
     await rm(dir, { recursive: true, force: true });
   });
@@ -1133,7 +1163,7 @@ describe('runAdoptTestsAgent -- a malicious proposed command never reaches a rea
             format: 'tap',
           },
           probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
-          runnerVersion: '1.0.0',
+          runnerVersionCommand: 'ls -d .',
           reason: 'always the same refused command, on purpose',
         },
       },
@@ -1151,6 +1181,142 @@ describe('runAdoptTestsAgent -- a malicious proposed command never reaches a rea
     // A hard stop on round 1, not a retry: exactly one session ever ran, even though 3 rounds were
     // available and the identical failure would have run all 3 had this been a RUN-160.
     expect(calls).toBe(1);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe('runAdoptTestsAgent -- an already-vetted "runnerVersionCommand" that cannot actually be used to capture a version is retried with feedback, not a hard stop (SPEC-QUESTIONS.md Q333)', () => {
+  it('round 1 proposes an allowed command that produces no output on either stream; round 2 gets real, actionable feedback and succeeds with a different command', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    const requests: SessionRequest[] = [];
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return request.stepId.includes(':round-1');
+      },
+      {
+        // A real, empty file -- `cat` on it is a genuinely allowed command (`cat*`) that produces
+        // nothing on either stream, the honest "wrong command" half of `captureRunnerVersion`'s own
+        // two failure shapes (never a vet refusal -- `cat empty-version.txt` is ordinary and clean).
+        writeFiles: [{ relativePath: 'empty-version.txt', content: '' }],
+        text: ['round 1: proposing a version command that happens to print nothing'],
+        structured: {
+          command: NODE_TEST_COMMAND,
+          probe: {
+            path: 'probe.test.js',
+            content: probeContent('PROBE deliberately fails'),
+            expectedName: 'PROBE deliberately fails',
+          },
+          runnerVersionCommand: 'cat empty-version.txt',
+          reason: 'round 1: a real, granted command that prints nothing, on purpose',
+        },
+      },
+    );
+    adapter.script((request) => request.stepId.includes(':round-2'), {
+      text: ['round 2: a different, real version command, after reading the real feedback'],
+      structured: {
+        command: NODE_TEST_COMMAND,
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        runnerVersionCommand: 'ls -d .',
+        reason: 'round 2: a different command that actually prints something',
+      },
+    });
+
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    expect(result.outcome).toBe('staged');
+    if (result.outcome !== 'staged') throw new Error('unreachable');
+    expect(result.rounds).toBe(2);
+
+    // Round 2's own real, assembled prompt carries round 1's own real feedback -- the "wrong
+    // command" wording, never the timeout wording, since this was never a timeout.
+    expect(requests).toHaveLength(2);
+    const round2System = requests[1]?.systemPrompt.text ?? '';
+    expect(round2System).toContain('round 2');
+    expect(round2System).toContain("could not be used to determine the runner's real version");
+    expect(round2System).toContain('Report a different command');
+    expect(round2System).not.toContain('does not necessarily mean the command itself was wrong');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('round 1 proposes an allowed command that genuinely times out; the retry feedback does NOT presume the command was wrong; round 2 succeeds with a faster command', async () => {
+    const dir = await tempDir();
+    const project = await projectWithTestArchitect();
+    const adapter = new FakePlatformAdapter();
+    const requests: SessionRequest[] = [];
+    adapter.script(
+      (request) => {
+        requests.push(request);
+        return request.stepId.includes(':round-1');
+      },
+      {
+        // A real Makefile target that genuinely outlives the command's own small `timeoutMs` below --
+        // `make slow` matches the granted `make *` pattern directly; the lane's own real git worktree
+        // has no relation to whether this real recipe runs long, so this is a real, not simulated,
+        // timeout.
+        writeFiles: [{ relativePath: 'Makefile', content: 'slow:\n\tsleep 3\n' }],
+        text: ['round 1: proposing a real, allowed, but genuinely slow version command'],
+        structured: {
+          // A tiny `timeoutMs` so this test stays fast -- `captureRunnerVersion` is given the
+          // IDENTICAL bound `command.run` itself would get (`command.timeoutMs ??
+          // DEFAULT_TEST_RUN_TIMEOUT_MS`), confirmed here by setting it explicitly rather than
+          // relying on the real 20-minute default.
+          command: { ...NODE_TEST_COMMAND, timeoutMs: 200 },
+          probe: {
+            path: 'probe.test.js',
+            content: probeContent('PROBE deliberately fails'),
+            expectedName: 'PROBE deliberately fails',
+          },
+          runnerVersionCommand: 'make slow',
+          reason: 'round 1: a real, granted, but genuinely slow version command, on purpose',
+        },
+      },
+    );
+    adapter.script((request) => request.stepId.includes(':round-2'), {
+      text: ['round 2: a fast, real version command, after reading the real timeout feedback'],
+      structured: {
+        command: NODE_TEST_COMMAND,
+        probe: {
+          path: 'probe.test.js',
+          content: probeContent('PROBE deliberately fails'),
+          expectedName: 'PROBE deliberately fails',
+        },
+        runnerVersionCommand: 'ls -d .',
+        reason: 'round 2: a fast command this time',
+      },
+    });
+
+    const result = await runAdoptTestsAgent(deps(project, adapter), {
+      layer: 'unit',
+      clock: fixedClock(),
+      createTempPath: makeCreateTempPath(dir),
+    });
+
+    expect(result.outcome).toBe('staged');
+    if (result.outcome !== 'staged') throw new Error('unreachable');
+    expect(result.rounds).toBe(2);
+
+    // The real point of this fix (a fresh critic round's own finding): a timeout is told apart from
+    // a genuinely wrong command, and the agent is never told "report a different command" as if the
+    // one it already proposed were necessarily a mistake.
+    expect(requests).toHaveLength(2);
+    const round2System = requests[1]?.systemPrompt.text ?? '';
+    expect(round2System).toContain('round 2');
+    expect(round2System).toContain('did not finish in time');
+    expect(round2System).toContain('does not necessarily mean the command itself was wrong');
+    expect(round2System).not.toContain('Report a different command, still one of');
 
     await rm(dir, { recursive: true, force: true });
   });
@@ -1193,7 +1359,7 @@ describe('runAdoptTestsAgent -- a stale translator from an earlier, unrelated in
           expectedName: 'PROBE deliberately fails',
         },
         translatorPath: '.forge/test-translators/unit.js',
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'a fresh, real translator for this invocation',
       },
     });
@@ -1236,7 +1402,7 @@ describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE e
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'package.json has no test script; node --test discovers *.test.js directly.',
       },
     });
@@ -1296,7 +1462,7 @@ describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE R
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'package.json has no test script; node --test discovers *.test.js directly.',
       },
     });
@@ -1366,7 +1532,7 @@ describe("runAdoptTestsAgent -- a real per-call gate on the session's own LIVE W
           content: probeContent('PROBE deliberately fails'),
           expectedName: 'PROBE deliberately fails',
         },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'package.json has no test script; node --test discovers *.test.js directly.',
       },
     });
@@ -1524,7 +1690,7 @@ describe('runAdoptTestsAgent -- a genuine infrastructure failure still propagate
       structured: {
         command: NODE_TEST_COMMAND,
         probe: { path: 'probe.test.js', content: probeContent('x'), expectedName: 'x' },
-        runnerVersion: process.version,
+        runnerVersionCommand: 'ls -d .',
         reason: 'never reached',
       },
     });

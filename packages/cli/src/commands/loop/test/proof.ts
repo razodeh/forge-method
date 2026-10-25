@@ -113,7 +113,7 @@ import { execa } from 'execa';
 import { ForgeError } from '@forge/core/errors';
 import { readTextFile, writeFileAtomic, writeNewFileAtomic } from '@forge/core/fs';
 import type { AbsolutePath, ProjectPaths } from '@forge/core/fs';
-import { runShellCommand } from '@forge/engine/dispatch';
+import { ADOPT_TESTS_VET_GRANT, runShellCommand, vetProposedCommand } from '@forge/engine/dispatch';
 import type { StructuredTestCommand } from '@forge/schemas/config';
 
 import {
@@ -151,9 +151,15 @@ export type ProofCheckNumber = 1 | 2 | 3 | 4 | 5;
 /** `runTranslatorProof`'s own inputs. `translatorContent`, when given, is the translator script's
  * real, current bytes (`command.translate`'s own target file's content) -- `subjectHash` is computed
  * from it; omitted for a bare built-in-format command, which has no translator script to hash at all.
- * `runnerVersion` is caller-supplied (detection already knows which runner it found and is in the
- * best position to have run its own `--version`), not derived here -- this keeps the harness a pure
- * function of its real inputs, with no opinion of its own about how a runner's version is obtained.
+ * `runnerVersion` is caller-supplied -- the caller (`adopt-agent.ts`'s round loop) has ALREADY
+ * vetted and really executed `runnerVersionCommand` itself (`captureRunnerVersion`, below) to obtain
+ * it, never trusted it as the model's own free-text claim -- this keeps the harness a pure function
+ * of its real inputs, with no opinion of its own about how a runner's version is obtained.
+ * `runnerVersionCommand` is the exact command that produced `runnerVersion`, carried through
+ * unexamined so `adopt.ts`'s own `evaluateTestAdoptionApproval` can re-run the IDENTICAL command
+ * later to check the second half of `10` §10.3 rule 8 ("and the detected runner's own current
+ * version") -- this was `10` §10.3 rule 8's own disclosed, unsolved half (`SPEC-QUESTIONS.md`
+ * Q333); `captureRunnerVersion`'s own doc comment has the real mechanism that closes it.
  * `now`, per `QUALITY-BAR.md` R10, is an injected clock, never a direct `Date.now()`/`new Date()`
  * call in this file. */
 export interface TranslatorProofInput {
@@ -164,6 +170,7 @@ export interface TranslatorProofInput {
   readonly probe: InjectedProbe;
   readonly translatorContent?: string;
   readonly runnerVersion: string;
+  readonly runnerVersionCommand: string;
   readonly now: () => string;
   /** The real environment every real run of `command.run` below executes with (`bin.ts`'s own
    * `realEnvSnapshot()`, R10). Absent (a bare, env-less test call): every `runShellCommand`/
@@ -174,15 +181,16 @@ export interface TranslatorProofInput {
 }
 
 /** The proof's own result -- `ok: true` carries the evidence `adopt.ts`'s staged proposal record
- * pins (`subjectHash`/`runnerVersion`/`checkedAt`, `13` F-TEST-11's own "pinned to the translator's
- * content hash and the runner's version"); `ok: false` is a typed refusal naming the ONE check that
- * failed, never a partial or best-effort pass, and still carries the same evidence triple so a caller
- * can tell a stale, outdated refusal from a fresh one. */
+ * pins (`subjectHash`/`runnerVersion`/`runnerVersionCommand`/`checkedAt`, `13` F-TEST-11's own
+ * "pinned to the translator's content hash and the runner's version"); `ok: false` is a typed
+ * refusal naming the ONE check that failed, never a partial or best-effort pass, and still carries
+ * the same evidence so a caller can tell a stale, outdated refusal from a fresh one. */
 export type TranslatorProofResult =
   | {
       readonly ok: true;
       readonly subjectHash: string;
       readonly runnerVersion: string;
+      readonly runnerVersionCommand: string;
       readonly checkedAt: string;
     }
   | {
@@ -191,6 +199,7 @@ export type TranslatorProofResult =
       readonly reason: string;
       readonly subjectHash: string;
       readonly runnerVersion: string;
+      readonly runnerVersionCommand: string;
       readonly checkedAt: string;
     };
 
@@ -221,6 +230,88 @@ export function computeProofSubjectHash(
 ): string {
   const basis = translatorContent ?? canonicalJson(command);
   return createHash('sha256').update(basis).digest('hex');
+}
+
+/** `captureRunnerVersion`'s own result -- `ok: false` names why no real version could be captured
+ * (a vet refusal, a timeout, or a command that printed nothing on either stream), never a thrown
+ * exception: both of this function's two callers (`adopt-agent.ts`'s round loop, `adopt.ts`'s
+ * `evaluateTestAdoptionApproval`) already have an established, typed way to turn "could not verify
+ * this" into their own real outcome, and a throw here would force each to invent a redundant
+ * try/catch around what is, for both of them, an ordinary, expected-to-sometimes-fail result.
+ * `timedOut` is `true` only for the real timeout case -- carried as its own field, not folded into
+ * `reason` text, so a caller building round feedback (`adopt-agent.ts`) can tell "this ran out of
+ * time" (not necessarily the wrong command -- a fresh critic round traced a real, non-theoretical
+ * cause: a fresh lane has no `node_modules` at all, `createLaneWorktree` is a plain `git worktree
+ * add` that never installs one, so `npx vitest --version` can genuinely need to hit the real
+ * registry, the identical cold-resolution risk `command.run` itself is already given up to
+ * `DEFAULT_TEST_RUN_TIMEOUT_MS` for) apart from "this produced no usable output at all" (a
+ * genuinely wrong command), without parsing its own prose. */
+export type RunnerVersionCapture =
+  | { readonly ok: true; readonly runnerVersion: string }
+  | { readonly ok: false; readonly reason: string; readonly timedOut?: true };
+
+/**
+ * Executes `runnerVersionCommand` for real at `cwd`, bounded by `timeoutMs`, and returns its own
+ * real, current output as the runner's version -- the one, previously-missing mechanism `10` §10.3
+ * rule 8's own second half ("and the detected runner's own current version") needs, closing
+ * `SPEC-QUESTIONS.md` Q333's own disclosed gap (verified, not merely accepted: before this,
+ * `runnerVersion` was the model's own bare, unverified free-text claim in `adopt-agent.ts`'s
+ * structured response -- never independently obtained by FORGE at all, the identical "self-reported,
+ * trusted on its word" shape `13` F-TEST-11's own Decision 1 already refused to accept for the
+ * command FORGE actually runs).
+ *
+ * **`timeoutMs` is the caller's own real risk budget, never a fixed guess here.** A first version of
+ * this function picked its own fixed, short bound (30s) -- a fresh critic round found this a real,
+ * not merely theoretical, asymmetry: `runnerVersionCommand` faces the IDENTICAL cold-resolution risk
+ * `command.run` itself does (a fresh, `node_modules`-less lane, `npx` hitting the real registry),
+ * which is exactly why `command.run` is already given up to `DEFAULT_TEST_RUN_TIMEOUT_MS` (20
+ * minutes) by default. Both real callers now pass `command.timeoutMs ?? DEFAULT_TEST_RUN_TIMEOUT_MS`
+ * -- the SAME effective bound the real run this version command accompanies already gets, never a
+ * smaller, independently-chosen one that could time out first on the exact same cold state.
+ *
+ * **Vets first, every call, independently of whatever vetted it before.** `runnerVersionCommand` is
+ * still a model-proposed string that is about to be really executed, so it is held to the IDENTICAL
+ * `ADOPT_TESTS_VET_GRANT`/`vetProposedCommand` containment check every other live-executed field in
+ * this flow already is (`vetProposedTestCommand`'s own doc comment) -- never trusted merely because
+ * it passed that same check once before, at proof time, under a DIFFERENT root (the lane, not the
+ * real project `evaluateTestAdoptionApproval` re-checks it against later). A refusal here is real,
+ * actionable data for the caller (a hard stop at proof time, a "cannot re-verify" refusal at check
+ * time), never silently swallowed.
+ *
+ * **Stdout first, stderr as a fallback, never both.** Most conventional `--version` invocations
+ * print to stdout; a few tools print it to stderr instead (several Java-ecosystem wrappers do) --
+ * falling back only when stdout is empty, rather than concatenating both, keeps the captured value
+ * exactly what a human reading the SAME command's own terminal output would see, never a
+ * two-stream splice nothing printed as one string.
+ *
+ * `ok: false` (never a thrown exception) for: a vet refusal; a real timeout (`timedOut: true`); or a
+ * command that produced no output on either stream (an unconventional tool whose actual version flag
+ * differs from what was proposed, say) -- any of these is the proposed command's own problem, never
+ * this function's to paper over with a guess.
+ */
+export async function captureRunnerVersion(
+  runnerVersionCommand: string,
+  cwd: string,
+  timeoutMs: number,
+): Promise<RunnerVersionCapture> {
+  const refusal = await vetProposedCommand(runnerVersionCommand, ADOPT_TESTS_VET_GRANT, cwd);
+  if (refusal !== undefined) {
+    return { ok: false, reason: refusal.detail };
+  }
+  const result = await runShellCommand(runnerVersionCommand, cwd, undefined, { timeoutMs });
+  if (result.timedOut === true) {
+    return {
+      ok: false,
+      reason: `the command did not complete within ${String(timeoutMs)}ms.`,
+      timedOut: true,
+    };
+  }
+  const stdout = result.stdout.trim();
+  const captured = stdout !== '' ? stdout : result.stderr.trim();
+  if (captured === '') {
+    return { ok: false, reason: 'the command produced no output on stdout or stderr.' };
+  }
+  return { ok: true, runnerVersion: captured };
 }
 
 /** `runTranslatorProof`'s own crash-recovery marker (`PROOF_LOCK_REL_PATH`, below) -- names exactly
@@ -409,8 +500,18 @@ function countByStatus(outcomes: readonly TestOutcome[], status: TestOutcome['st
 export async function runTranslatorProof(
   input: TranslatorProofInput,
 ): Promise<TranslatorProofResult> {
-  const { command, cwd, paths, createTempPath, probe, translatorContent, runnerVersion, now, env } =
-    input;
+  const {
+    command,
+    cwd,
+    paths,
+    createTempPath,
+    probe,
+    translatorContent,
+    runnerVersion,
+    runnerVersionCommand,
+    now,
+    env,
+  } = input;
   const subjectHash = computeProofSubjectHash(command, translatorContent);
   const checkedAt = now();
   const fail = (failedCheck: ProofCheckNumber, reason: string): TranslatorProofResult => ({
@@ -419,6 +520,7 @@ export async function runTranslatorProof(
     reason,
     subjectHash,
     runnerVersion,
+    runnerVersionCommand,
     checkedAt,
   });
 
@@ -603,7 +705,7 @@ export async function runTranslatorProof(
       );
     }
 
-    return { ok: true, subjectHash, runnerVersion, checkedAt };
+    return { ok: true, subjectHash, runnerVersion, runnerVersionCommand, checkedAt };
   } finally {
     await rm(probePath, { force: true });
     await rm(lockPath, { force: true });

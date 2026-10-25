@@ -43,7 +43,8 @@ import { z } from 'zod';
 
 import { CONFIG_REL_PATH, readConfig } from '../../config.ts';
 import { DETECTED_LAYER, detectTestRunners, type DetectedCandidate } from './detect.ts';
-import { computeProofSubjectHash, type ProofCheckNumber } from './proof.ts';
+import { captureRunnerVersion, computeProofSubjectHash, type ProofCheckNumber } from './proof.ts';
+import { DEFAULT_TEST_RUN_TIMEOUT_MS } from './reporter.ts';
 
 const PROPOSAL_ROOT = '.forge/test-adopt';
 
@@ -72,6 +73,7 @@ const stagedProofSchema = z.discriminatedUnion('ok', [
       ok: z.literal(true),
       subjectHash: z.string().min(1),
       runnerVersion: z.string().min(1),
+      runnerVersionCommand: z.string().min(1),
       checkedAt: z.string().min(1),
     })
     .strict(),
@@ -82,6 +84,7 @@ const stagedProofSchema = z.discriminatedUnion('ok', [
       reason: z.string().min(1),
       subjectHash: z.string().min(1),
       runnerVersion: z.string().min(1),
+      runnerVersionCommand: z.string().min(1),
       checkedAt: z.string().min(1),
     })
     .strict(),
@@ -115,6 +118,7 @@ export interface StagedProposalRecord {
         readonly ok: true;
         readonly subjectHash: string;
         readonly runnerVersion: string;
+        readonly runnerVersionCommand: string;
         readonly checkedAt: string;
       }
     | {
@@ -123,6 +127,7 @@ export interface StagedProposalRecord {
         readonly reason: string;
         readonly subjectHash: string;
         readonly runnerVersion: string;
+        readonly runnerVersionCommand: string;
         readonly checkedAt: string;
       }
     | undefined;
@@ -394,15 +399,23 @@ async function currentTranslatorContent(
  * SEPARATE, later requirement `runPromotion` still enforces for every source including `'detected'`
  * -- this function only ever answers the deterministic half of that gate's own check.
  *
- * **Disclosed, not solved** (the same honest-limitation discipline `proof.ts`'s own doc comment
- * already models): the OTHER half of that same spec sentence -- "and the detected runner's own
- * current version" -- is not independently re-derived here. `proof.ts`'s own `TranslatorProofInput
- * .runnerVersion` doc comment is explicit that the version is caller-supplied, never derived by the
- * proof harness itself ("this keeps the harness a pure function of its real inputs, with no opinion
- * of its own about how a runner's version is obtained"); re-deriving it at check time would mean
- * guessing a `--version` invocation for an arbitrary runner, which no schema field here names a
- * convention for. A translator or proposal edited since the proof was taken is still caught (the
- * subject-hash half); a runner silently upgraded in place, with nothing else changed, is not.
+ * **CLOSED (`SPEC-QUESTIONS.md` Q333) -- the OTHER half of that same spec sentence, "and the
+ * detected runner's own current version," IS now independently re-derived here too.** The gap this
+ * used to disclose was real but mis-stated: it was never merely "no schema field names a convention
+ * for re-deriving a runner's version" -- before this fix, `runnerVersion` was not derived by ANYTHING
+ * at all, not even once, at proof time; it was the model's own bare, unverified free-text claim in
+ * its structured response (`adopt-agent.ts`'s own `ADOPT_TESTS_OUTPUT_SCHEMA`), exactly the kind of
+ * self-reported, trust-on-its-word value `13` F-TEST-11's own Decision 1 already refused to accept
+ * for the command FORGE actually runs. The real fix (`proof.ts`'s own `captureRunnerVersion`): the
+ * agent now proposes `runnerVersionCommand` -- the exact, already-vetted (`vetProposedTestCommand`/
+ * `RUN-161`) command that PRINTS the runner's version (e.g. its own `--version` flag) -- and FORGE
+ * itself runs it for real, both at proof time (capturing `runnerVersion`) and again HERE, at check
+ * time, re-vetted and re-run against the real project root, exactly the identical "re-derive from
+ * the real, current state, never trust a past run's own say-so" treatment `subjectHash` already
+ * gets just above. A mismatch between the freshly-captured version and the one the recorded proof
+ * pinned is staled out below, closing the second half of rule 8's own "no older than the
+ * translator's own current content hash AND the detected runner's own current version" -- both
+ * halves now hold, not only the first.
  *
  * @see specs/10 rule 8
  * @see specs/13 F-TEST-11
@@ -509,6 +522,48 @@ async function evaluateTestAdoptionApproval(
       detail:
         'the recorded translator proof is stale: the proposal or its translator changed since ' +
         'the proof was taken.',
+    };
+  }
+  // `10` §10.3 rule 8's own SECOND half -- "and the detected runner's own current version" --
+  // re-derived the identical way `currentHash` just was above, never trusted as the proof's own past
+  // say-so (`SPEC-QUESTIONS.md` Q333, closed; `proof.ts`'s own `captureRunnerVersion` doc comment has
+  // the full mechanism). Re-vets AND re-runs the SAME `runnerVersionCommand` the recorded proof
+  // pinned -- against the real, live project root (`paths.resolveWithin('.')`; there is no lane at
+  // check time) rather than the lane root it was proven under -- so a command that only ever worked
+  // inside that disposable lane, or that the allowlist itself no longer permits, is caught here too,
+  // not merely a version mismatch.
+  const root = paths.resolveWithin('.');
+  // The SAME effective timeout `command.run` itself would get -- never a shorter, independently-
+  // chosen bound that could time out first on the identical cold-resolution risk (`proof.ts`'s own
+  // `captureRunnerVersion` doc comment has the full reasoning; `evaluateTestAdoptionApproval`'s own
+  // doc comment above already established `staged.command` can only be the structured form here).
+  const commandTimeoutMs =
+    (staged.command as Exclude<TestCommandEntry, string>).timeoutMs ?? DEFAULT_TEST_RUN_TIMEOUT_MS;
+  const versionCapture = await captureRunnerVersion(
+    staged.proof.runnerVersionCommand,
+    root,
+    commandTimeoutMs,
+  );
+  if (!versionCapture.ok) {
+    return {
+      v: 1,
+      layer,
+      unapproved: 1,
+      detail:
+        `the recorded proof's "runnerVersionCommand" ("${staged.proof.runnerVersionCommand}") ` +
+        "could no longer be verified, so the recorded proof's freshness cannot be confirmed: " +
+        versionCapture.reason,
+    };
+  }
+  if (versionCapture.runnerVersion !== staged.proof.runnerVersion) {
+    return {
+      v: 1,
+      layer,
+      unapproved: 1,
+      detail:
+        "the recorded translator proof is stale: the runner's own version has changed since the " +
+        `proof was taken (recorded "${staged.proof.runnerVersion}", now ` +
+        `"${versionCapture.runnerVersion}").`,
     };
   }
   return {
