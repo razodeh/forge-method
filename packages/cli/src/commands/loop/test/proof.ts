@@ -255,39 +255,115 @@ export type RunnerVersionCapture =
   | { readonly ok: true; readonly runnerVersion: string }
   | { readonly ok: false; readonly reason: string; readonly timedOut?: true };
 
-/** The three package managers whose own CLI intercepts a trailing version flag meant for the
+/** The three package managers whose own CLI can intercept a trailing version flag meant for the
  * underlying test framework (`captureRunnerVersion`'s own doc comment, `SPEC-QUESTIONS.md` Q333
- * critic round 4). `bun` is deliberately not here: it is not in `ADOPT_TESTS_EXEC_PATTERNS` at all
- * (no `bun test*`/`bun run test*` pattern exists), so this shape cannot even be proposed for it under
- * this grant -- nothing to refuse. */
+ * critic round 4; re-verified and rebuilt round 5 -- see `PACKAGE_MANAGER_VERSION_TRAP_FLAGS` below).
+ * `bun` is deliberately not here: it is not in `ADOPT_TESTS_EXEC_PATTERNS` at all (no `bun test*`/
+ * `bun run test*` pattern exists), so this shape cannot even be proposed for it under this grant --
+ * nothing to refuse. */
 const PACKAGE_MANAGER_VERSION_PROBE_VERBS: ReadonlySet<string> = new Set(['npm', 'pnpm', 'yarn']);
 
-/** The version flags a package manager's own CLI reads itself, before any script it would otherwise
- * run -- matched against the LAST word only (`isPackageManagerVersionProbe`), never a substring, so a
- * legitimate extra argument after `test` (which this shape never has in practice, but which would
- * change what actually runs) is not silently absorbed. */
-const PACKAGE_MANAGER_VERSION_FLAGS: ReadonlySet<string> = new Set(['--version', '-v', '-V']);
+/**
+ * Which `(program, form)` pair actually traps -- and with which exact flags -- re-derived ENTIRELY
+ * from real execution (round 5), through the identical mechanism `runShellCommand` itself uses
+ * (`execa(command, { cwd, shell: true, reject: false })`), against a real `package.json` whose
+ * `"test"` script is a tiny program that echoes back its own received `argv` -- never assumed from
+ * round 4's own, now-corrected, claims. The real table, confirmed live for npm 11.1.0/pnpm 9.15.5/
+ * yarn classic 1.22.22 (the versions actually installed in this repo):
+ *
+ * | program | form (`test` / `run test`) | `--version` | `-v`   | `-V`                         |
+ * |---------|-----------------------------|-------------|--------|------------------------------|
+ * | npm     | bare                        | TRAP        | TRAP   | safe (see note 1)            |
+ * | npm     | `run`                       | TRAP        | TRAP   | safe (see note 1)            |
+ * | pnpm    | bare                        | TRAP        | TRAP   | TRAP (see note 2)            |
+ * | pnpm    | `run`                       | safe        | safe   | safe                         |
+ * | yarn    | bare                        | safe        | safe   | safe                         |
+ * | yarn    | `run`                       | safe        | safe   | safe                         |
+ *
+ * "TRAP" = confirmed live: the real test script never runs at all; "safe" = confirmed live: the real
+ * script DOES run, receiving the flag as a genuine `argv` token (or, for pnpm's `-V`/npm's `-V`, the
+ * flag is absent from its own `argv` -- still "safe" in the one sense this module cares about: no
+ * wrong version is ever silently captured, because the real script still runs and its real output,
+ * not a package manager's own version string, is what gets captured).
+ *
+ * Note 1 -- npm recognises only lowercase `-v`/`--version` as its own global "print version and
+ * exit" flag; `-V` (capital) is not one of npm's own flags at all (confirmed: a bare `npm -V` at the
+ * top level, with no subcommand, prints npm's usage text, not a version, and exits `1`). npm's own
+ * argv handling for `npm test`/`npm run test` silently DROPS any unrecognised flag that appears
+ * before a literal `--` (confirmed: `npm test --versionish` runs the real script with an EMPTY
+ * `argv`, the unrecognised flag simply vanishes) rather than forwarding it -- so `npm test -V` runs
+ * the real script (with `-V` silently absorbed, not forwarded) rather than printing npm's own
+ * version. Unhelpful as a version probe, perhaps, but not the dangerous "silently captures the wrong
+ * thing as if it were right" shape this check exists to close, so it is deliberately not refused.
+ *
+ * Note 2 -- pnpm does not recognise `-V` either (confirmed: a bare `pnpm -V` at the top level also
+ * errors), but UNLIKE npm, pnpm's own argv parser treats an unrecognised short flag in this exact
+ * position as a hard error: `pnpm test -V` exits `1` with `"ERROR  Unknown option: 'V'"` on stderr,
+ * the real script never running at all -- a different MECHANISM from `--version`/`-v` (an error, not
+ * a leaked version), but the identical practical hazard: `captureRunnerVersion`'s own stdout-then-
+ * stderr fallback would otherwise silently return that error text as if it were a real
+ * `runnerVersion`. `-V` is therefore included in pnpm's own bare-form trap set even though, strictly,
+ * nothing is "the package manager's own version" here.
+ *
+ * Every one of the "TRAP"/"safe" cells above was independently reconfirmed with the flag placed in
+ * every token position among extra, non-flag tokens (`pnpm test -x --version`, `pnpm test --version
+ * -x`, `npm run test a b -v c`, ...) and in both relative orders against a SECOND flag
+ * (`yarn test -v -V --version`) -- a trap never became safe, and a safe form never became a trap,
+ * regardless of where the flag sat or what else surrounded it. This is exactly why
+ * `isPackageManagerVersionProbe` (below) scans every token, not merely an assumed fixed position --
+ * round 4's own exact-tail-length check was bypassable by adding one harmless extra token
+ * (`npm test --version --extra` still silently printed npm's own version despite failing that
+ * length check), the actual security gap this round closes.
+ *
+ * Round 4's own claim that this was "confirmed live for all three [package managers]" was FALSE for
+ * yarn: no test in that round actually executed `yarn test --version` and checked whose version came
+ * out (the live-execution test that existed deliberately omitted the version flag). Yarn classic
+ * 1.22.22 forwards `--version`/`-v`/`-V` to the real script, in BOTH the bare and `run test` forms,
+ * exactly like an ordinary script argument -- round 4's refusal of all yarn shapes was a pure
+ * usability regression with no actual safety behind it, now corrected. Round 4 also refused pnpm's
+ * `run test` form outright, which round 5 found is equally wrong: pnpm forwards all three flags
+ * correctly in that form too.
+ */
+const PACKAGE_MANAGER_VERSION_TRAP_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['npm bare', new Set(['--version', '-v'])],
+  ['npm run', new Set(['--version', '-v'])],
+  ['pnpm bare', new Set(['--version', '-v', '-V'])],
+  ['pnpm run', new Set()],
+  ['yarn bare', new Set()],
+  ['yarn run', new Set()],
+]);
 
 /**
- * Whether `command` is exactly `(npm|pnpm|yarn) (run )?test (--version|-v|-V)` -- the one shape
- * `ADOPT_TESTS_EXEC_PATTERNS` genuinely allows and `vetProposedCommand` genuinely executes, but which
- * silently captures the package manager's own version instead of the test framework's
- * (`captureRunnerVersion`'s own doc comment has the full reasoning). Parsed with `commandWords`
- * (`confined-command.ts`'s own syntax stage, already run by `vetProposedCommand` above) rather than a
- * raw string match, so this cannot be fooled by extra whitespace or a quoting shape the real vet
- * itself would not have accepted either.
+ * Whether `command` is `(npm|pnpm|yarn) (run )?test ...` with one of that EXACT `(program, form)`
+ * pair's own confirmed trap flags (`PACKAGE_MANAGER_VERSION_TRAP_FLAGS` above) appearing anywhere
+ * among the tokens between `test` and either the end of the command or a literal `--` separator,
+ * whichever comes first -- never merely the immediately-following token, and never a fixed tail
+ * length, so one harmless extra token on either side of the flag (`npm test --version --extra`,
+ * `npm test --extra --version`, `npm run test a b -v c`) can never silently evade this (round 4's own
+ * bypass, closed here). A literal `--` ends the scan because everything after it is forwarded
+ * verbatim to the real script by the package manager itself, never parsed as the package manager's
+ * own flag (confirmed live for every one of npm/pnpm/yarn, both forms: `npm test -- --version` runs
+ * the real script with `--version` as a genuine `argv` token, never npm's own version). Parsed with
+ * `commandWords` (`confined-command.ts`'s own syntax stage, already run by `vetProposedCommand`
+ * above) rather than a raw string match, so this cannot be fooled by extra whitespace or a quoting
+ * shape the real vet itself would not have accepted either.
  */
 function isPackageManagerVersionProbe(command: string): boolean {
   const words = commandWords(command);
   if (words === undefined) return false;
   const [program, ...rest] = words;
   if (program === undefined || !PACKAGE_MANAGER_VERSION_PROBE_VERBS.has(program)) return false;
-  const afterRun = rest[0] === 'run' ? rest.slice(1) : rest;
-  return (
-    afterRun.length === 2 &&
-    afterRun[0] === 'test' &&
-    PACKAGE_MANAGER_VERSION_FLAGS.has(afterRun[1] ?? '')
+  const isRunForm = rest[0] === 'run';
+  const afterRun = isRunForm ? rest.slice(1) : rest;
+  if (afterRun[0] !== 'test') return false;
+  const trapFlags = PACKAGE_MANAGER_VERSION_TRAP_FLAGS.get(
+    `${program} ${isRunForm ? 'run' : 'bare'}`,
   );
+  if (trapFlags === undefined || trapFlags.size === 0) return false;
+  const tail = afterRun.slice(1);
+  const literalSeparatorIndex = tail.indexOf('--');
+  const scanned = literalSeparatorIndex === -1 ? tail : tail.slice(0, literalSeparatorIndex);
+  return scanned.some((word) => trapFlags.has(word));
 }
 
 /**
@@ -329,21 +405,32 @@ function isPackageManagerVersionProbe(command: string): boolean {
  * differs from what was proposed, say) -- any of these is the proposed command's own problem, never
  * this function's to paper over with a guess.
  *
- * **Refuses `(npm|pnpm|yarn) (run )?test (--version|-v|-V)` outright, after the vet above, before
- * ever running it (`SPEC-QUESTIONS.md` Q333, critic round 4).** `ADOPT_TESTS_EXEC_PATTERNS` (`npm
- * test*`/`pnpm test*`/`yarn test*`/the `run test` forms) genuinely ALLOWS this shape, and
- * `vetProposedCommand` genuinely EXECUTES it -- `vetNetworkAndArguments`'s own shared `PACKAGE_MANAGERS`
- * check exempts a bare `test`/`run test` verb for npm/pnpm/yarn specifically (unlike `cargo`, which it
- * refuses unconditionally). The problem is not the vet: it is that npm's/pnpm's/yarn's own CLI
- * intercepts a trailing `--version`/`-v`/`-V` before the project's real test script ever runs at all,
- * silently printing the PACKAGE MANAGER's own version (confirmed live for all three; `yarn` was
- * previously only disclosed as "unconfirmed," now confirmed and closed the identical way) -- exactly
- * the self-report-trust problem this whole mechanism exists to close, just relocated one level down.
- * `isPackageManagerVersionProbe` below recognises only that one shape, so an ordinary `npm test`/
- * `pnpm test` used as the real `run`/`filter` field is never touched by this check -- those fields are
- * never passed to this function at all (its two real callers, `adopt-agent.ts`'s round loop and
- * `adopt.ts`'s `evaluateTestAdoptionApproval`, pass only `runnerVersionCommand`). Deliberately placed
- * here rather than in `confined-command.ts`'s own `vetNetworkAndArguments`/`PACKAGE_MANAGERS` (shared
+ * **Refuses a CONFIRMED-TRAP `(npm|pnpm|yarn) (run )?test ...` shape outright, after the vet above,
+ * before ever running it (`SPEC-QUESTIONS.md` Q333, critic round 4; re-verified and rebuilt round
+ * 5).** `ADOPT_TESTS_EXEC_PATTERNS` (`npm test*`/`pnpm test*`/`yarn test*`/the `run test` forms)
+ * genuinely ALLOWS this shape, and `vetProposedCommand` genuinely EXECUTES it --
+ * `vetNetworkAndArguments`'s own shared `PACKAGE_MANAGERS` check exempts a bare `test`/`run test`
+ * verb for npm/pnpm/yarn specifically (unlike `cargo`, which it refuses unconditionally). The problem
+ * is not the vet: it is that npm's and pnpm's own CLI can intercept a trailing `--version`/`-v`/`-V`
+ * before the project's real test script ever runs at all, silently returning the PACKAGE MANAGER's
+ * own version (or, for pnpm's `-V`, a parse error) as if it were the real one.
+ *
+ * **Not all three package managers, and not both forms, actually do this -- round 4's own blanket
+ * refusal of every npm/pnpm/yarn shape, and its own claim this was "confirmed live for all three,"
+ * were both wrong, corrected round 5 by real execution against a real `package.json` (see
+ * `PACKAGE_MANAGER_VERSION_TRAP_FLAGS`'s own doc comment, below, for the full re-derived table and
+ * the live-execution evidence behind every cell of it).** Only npm (both the bare and `run test`
+ * form, for `--version`/`-v`) and pnpm's BARE form (`--version`/`-v`/`-V`) are real traps. pnpm's
+ * explicit `run test` form forwards the flag to the real script correctly, and yarn classic 1.22.22
+ * (the version installed in this repo) forwards it correctly in BOTH forms -- refusing those was a
+ * pure usability regression with no actual safety behind it. `isPackageManagerVersionProbe` below
+ * scans every token between `test` and a literal `--` (never a fixed tail length, which round 4's own
+ * check used and which one extra token -- `npm test --version --extra` -- was enough to bypass while
+ * npm still genuinely intercepted for real), so an ordinary `npm test`/`pnpm test` used as the real
+ * `run`/`filter` field is never touched by this check regardless -- those fields are never passed to
+ * this function at all (its two real callers, `adopt-agent.ts`'s round loop and `adopt.ts`'s
+ * `evaluateTestAdoptionApproval`, pass only `runnerVersionCommand`). Deliberately placed here rather
+ * than in `confined-command.ts`'s own `vetNetworkAndArguments`/`PACKAGE_MANAGERS` (shared
  * infrastructure every other grant role is also vetted against -- too broad a blast radius for this
  * one field) -- a small, self-contained refusal scoped entirely to this one call, reached by both of
  * this function's real callers so neither can independently drift out of sync with the other.
@@ -361,10 +448,12 @@ export async function captureRunnerVersion(
     return {
       ok: false,
       reason:
-        `"${runnerVersionCommand}" asks npm/pnpm/yarn for ITS OWN version, not the test ` +
-        "framework's: the package manager's CLI intercepts a trailing --version/-v/-V before the " +
-        "project's real test script ever runs. Propose the framework's own version flag instead " +
-        '(e.g. "npx vitest --version") or fall back to "cat package.json".',
+        `"${runnerVersionCommand}" asks the package manager for ITS OWN version, not the test ` +
+        "framework's: confirmed live, this exact (program, form) pair either intercepts the flag " +
+        "and prints the package manager's own version, or fails outright, before the project's " +
+        'real test script ever runs. Propose the framework\'s own version flag instead (e.g. "npx ' +
+        'vitest --version"), use "pnpm run test --version"/"yarn test --version" (confirmed to ' +
+        'forward correctly), or fall back to "cat package.json".',
     };
   }
   const result = await runShellCommand(runnerVersionCommand, cwd, undefined, { timeoutMs });

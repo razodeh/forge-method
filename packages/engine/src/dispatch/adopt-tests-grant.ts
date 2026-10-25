@@ -129,17 +129,24 @@ export const ADOPT_TESTS_EXEC_PATTERNS: readonly string[] = [
   'yarn run test*',
   // WARNING, not a grant change -- disclosed here because `npm test*`/`pnpm test*`/`yarn test*`
   // (above) ALLOW `npm test --version`/`pnpm test --version`/`yarn test --version` as a
-  // `runnerVersionCommand` proposal, and a fresh gauntlet critic round confirmed LIVE that all three
-  // are silently intercepted by the package manager's OWN CLI parser before the project's real test
-  // script ever runs at all -- they print the package manager's own version (e.g. `11.1.0`/`9.15.5`),
-  // never the underlying framework's (`yarn test --version`, previously only disclosed as
-  // "unconfirmed live," is now confirmed too -- same mechanism, same fix, for all three). No longer
-  // only disclosed: `proof.ts`'s own `captureRunnerVersion` now refuses this exact shape outright,
-  // after the vet and before ever running it (`isPackageManagerVersionProbe`, `SPEC-QUESTIONS.md`
-  // Q333 critic round 4) -- kept here too so the risk stays visible at the ALLOWLIST itself, not only
-  // in one caller's own refusal. `briefs/adopt-tests.md` tells the agent to use the underlying
-  // framework's own `--version` (`npx vitest --version`, etc.) or the `cat package.json` fallback
-  // instead, never the package-manager wrapper's.
+  // `runnerVersionCommand` proposal, and real execution (round 5, re-verifying and correcting a
+  // fresh gauntlet critic round's own earlier, broader claim) confirms this is a genuine trap for
+  // SOME, but not all, of these: npm (both the bare and `run test` form, for `--version`/`-v`) and
+  // pnpm's BARE form (`--version`/`-v`/`-V`) are silently intercepted by the package manager's OWN
+  // CLI before the project's real test script ever runs at all -- printing the package manager's own
+  // version (e.g. `11.1.0`/`9.15.5`), or, for pnpm's `-V` specifically, a parse error, never the
+  // underlying framework's. pnpm's explicit `run test` form and yarn (both forms, confirmed for the
+  // classic 1.x line actually installed here) are NOT traps -- both forward the flag to the real
+  // script correctly, confirmed live; an earlier round's "confirmed live for all three" claim about
+  // yarn was false (no test in that round actually executed `yarn test --version` and checked whose
+  // version came out). No longer only disclosed: `proof.ts`'s own `captureRunnerVersion` now refuses
+  // exactly the confirmed-trap shapes outright, after the vet and before ever running them
+  // (`isPackageManagerVersionProbe`, `SPEC-QUESTIONS.md` Q333; see that function's own doc comment
+  // and `PACKAGE_MANAGER_VERSION_TRAP_FLAGS` for the full, re-derived table) -- kept here too so the
+  // risk stays visible at the ALLOWLIST itself, not only in one caller's own refusal.
+  // `briefs/adopt-tests.md` tells the agent exactly which of these forms are refused and which are
+  // safe, and to prefer the underlying framework's own `--version` (`npx vitest --version`, etc.) or
+  // the `cat package.json` fallback when in doubt.
   // `node --test*`'s own runner IS node itself, so a `runnerVersionCommand` proposal for it needs
   // node's OWN version flag, never a widening of `node --test*` (`--version`/`-v` share no prefix
   // with `--test` at all) -- two EXACT patterns (no trailing `*`: neither flag takes an argument),

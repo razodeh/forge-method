@@ -39,6 +39,31 @@ function makeCreateTempPath(dir: string): () => string {
   return () => path.join(dir, `tmp-output-${String((tempCounter += 1))}.raw`);
 }
 
+/** Writes a real `package.json` whose `"test"` script is a tiny program that echoes back its own
+ * received `argv` -- the one way to tell, FOR REAL, whether a package manager genuinely intercepted
+ * a trailing version flag (the real script never runs at all) or forwarded it through untouched (the
+ * real script runs, and its own printed `argv` proves exactly what it received). This is the exact
+ * methodology `SPEC-QUESTIONS.md` Q333's own round 5 used to re-derive `PACKAGE_MANAGER_VERSION_TRAP_FLAGS`
+ * (`proof.ts`) from real execution rather than from assumption -- these tests use the identical
+ * fixture, never a mock. */
+async function writeArgvEchoProject(dir: string): Promise<void> {
+  await writeFile(
+    path.join(dir, 'package.json'),
+    JSON.stringify({
+      name: 'argv-echo-fixture',
+      version: '1.0.0',
+      private: true,
+      scripts: { test: 'node script.js' },
+    }),
+    'utf8',
+  );
+  await writeFile(
+    path.join(dir, 'script.js'),
+    "console.log('REAL_SCRIPT_RAN ARGV=' + JSON.stringify(process.argv.slice(2)));\n",
+    'utf8',
+  );
+}
+
 /** Fixed, injected clock (`QUALITY-BAR.md` R10) -- every test passes the identical value, so nothing
  * here ever reads a real wall clock. */
 const NOW = () => '2026-01-01T00:00:00.000Z';
@@ -811,20 +836,21 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
   });
 });
 
-describe('captureRunnerVersion -- "(npm|pnpm|yarn) (run )?test (--version|-v|-V)" is refused outright, never silently captured as the package manager\'s own version (SPEC-QUESTIONS.md Q333, critic round 4)', () => {
-  it('refuses the version-probe shape for npm, pnpm, and yarn alike, before ever running it', async () => {
+describe('captureRunnerVersion -- exactly the CONFIRMED-TRAP "(npm|pnpm|yarn) (run )?test ..." shapes are refused, and nothing else (SPEC-QUESTIONS.md Q333, critic round 4; re-verified and rebuilt round 5 against a real argv-echoing package.json, never assumed)', () => {
+  it("refuses every confirmed npm trap -- both forms, --version and -v -- including with one harmless extra token on either side of the flag (the exact bypass two independent critics confirmed live against round 4's own exact-tail-length check)", async () => {
     const dir = await tempDir();
+    await writeArgvEchoProject(dir);
     for (const command of [
       'npm test --version',
-      'npm run test --version',
       'npm test -v',
-      'npm test -V',
-      'pnpm test --version',
-      'pnpm run test --version',
-      'pnpm test -v',
-      'yarn test --version',
-      'yarn run test --version',
-      'yarn test -V',
+      'npm run test --version',
+      'npm run test -v',
+      'npm test --version --extra',
+      'npm test --extra --version',
+      'npm test -v --extra',
+      'npm run test --version extra',
+      'npm run test extra --version',
+      'npm run test a b -v c',
     ]) {
       // A 5s bound is generous: a refused command never reaches `runShellCommand` at all, so this
       // can never itself time out -- a real timeout here would mean the refusal did NOT fire.
@@ -836,6 +862,103 @@ describe('captureRunnerVersion -- "(npm|pnpm|yarn) (run )?test (--version|-v|-V)
       }
     }
   });
+
+  it("refuses every confirmed pnpm BARE-form trap -- --version and -v (pnpm's own version leaks, the identical mechanism npm uses) AND -V (pnpm's own CLI errors \"Unknown option: 'V'\" instead -- a different mechanism, the real script still never runs) -- including with an extra token in either order", async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const command of [
+      'pnpm test --version',
+      'pnpm test -v',
+      'pnpm test -V',
+      'pnpm test --version --extra',
+      'pnpm test -x --version',
+      'pnpm test --version -x',
+      'pnpm test -v -x',
+      'pnpm test -x -v',
+      'pnpm test --extra -V',
+      'pnpm test a b --version c',
+    ]) {
+      const result = await captureRunnerVersion(command, dir, 5_000);
+      expect(result.ok, command).toBe(false);
+      if (!result.ok) {
+        expect(result.reason, command).toContain('ITS OWN version');
+        expect(result.timedOut, command).toBeUndefined();
+      }
+    }
+  });
+
+  it('does NOT refuse npm\'s "-V" in either form -- npm recognises only lowercase "-v"/"--version" as its own global version flag; capital "-V" is not one of npm\'s own flags at all (confirmed separately: a bare top-level "npm -V" prints usage, not a version), so the real script genuinely runs -- confirmed by this real argv-echoing project, not merely by the absence of a refusal (npm silently drops the unrecognised flag rather than forwarding it, so the real script sees an EMPTY argv, not "-V" itself)', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const command of ['npm test -V', 'npm run test -V']) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      expect(result.ok, command).toBe(true);
+      if (result.ok) {
+        expect(result.runnerVersion, command).toContain('REAL_SCRIPT_RAN ARGV=[]');
+      }
+    }
+  }, 60_000);
+
+  it("does NOT refuse pnpm's explicit \"run test\" form, for any of --version/-v/-V -- round 4's own blanket refusal of this form was over-broad: pnpm forwards the flag to the real script correctly here, unlike its bare form above, confirmed by the real script's own printed argv", async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const [command, expectedArg] of [
+      ['pnpm run test --version', '"--version"'],
+      ['pnpm run test -v', '"-v"'],
+      ['pnpm run test -V', '"-V"'],
+      ['pnpm run test --version --extra', '"--version","--extra"'],
+      ['pnpm run test extra -V', '"extra","-V"'],
+    ] as const) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      expect(result.ok, command).toBe(true);
+      if (result.ok) {
+        expect(result.runnerVersion, command).toContain('REAL_SCRIPT_RAN');
+        expect(result.runnerVersion, command).toContain(expectedArg);
+      }
+    }
+  }, 60_000);
+
+  it('does NOT refuse yarn, in either form, for any of --version/-v/-V -- round 4\'s own claim that this was "confirmed live for all three" package managers was false for yarn: no test in that round ever actually executed "yarn test --version" and checked whose version came out. Yarn classic (1.22.22, the version installed in this repo) forwards the flag to the real script correctly in BOTH forms, confirmed by the real script\'s own printed argv', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const [command, expectedArg] of [
+      ['yarn test --version', '"--version"'],
+      ['yarn test -v', '"-v"'],
+      ['yarn test -V', '"-V"'],
+      ['yarn run test --version', '"--version"'],
+      ['yarn run test -v', '"-v"'],
+      ['yarn run test -V', '"-V"'],
+      ['yarn test --version --extra', '"--version","--extra"'],
+      ['yarn test -v -V --version', '"-v","-V","--version"'],
+    ] as const) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      expect(result.ok, command).toBe(true);
+      if (result.ok) {
+        expect(result.runnerVersion, command).toContain('REAL_SCRIPT_RAN');
+        expect(result.runnerVersion, command).toContain(expectedArg);
+      }
+    }
+  }, 60_000);
+
+  it('a literal "--" separator always forwards the flag to the real script, for every package manager and form, never refused -- the pre-existing safe-passthrough design intent, re-verified unchanged by this round\'s rebuild', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    for (const command of [
+      'npm test -- --version',
+      'npm run test -- --version',
+      'pnpm test -- --version',
+      'pnpm run test -- --version',
+      'yarn test -- --version',
+      'yarn run test -- --version',
+    ]) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      expect(result.ok, command).toBe(true);
+      if (result.ok) {
+        expect(result.runnerVersion, command).toContain('REAL_SCRIPT_RAN');
+        expect(result.runnerVersion, command).toContain('--version');
+      }
+    }
+  }, 60_000);
 
   it('does not refuse an ordinary "npm test"/"pnpm run test"/"yarn test" -- the real run/filter shape this field never actually receives in production, with no trailing version flag -- real execution still happens (each package manager prints its own real, deterministic "no package.json here" error, proving the command reached a real shell rather than being turned away by the version-probe check)', async () => {
     const dir = await tempDir();

@@ -188,17 +188,30 @@ Report your findings as the structured result this session asks for — never on
   `go version` (not `go test --version` — Go's own toolchain version is a separate subcommand, never
   a flag on `test`), `python manage.py --version` (Django), or `php artisan --version` (Laravel).
 
-  Two real traps, not merely theoretical — never propose either of these:
-  - `npm test --version`/`pnpm test --version`/`yarn test --version` (or the `run test` form) —
-    FORGE refuses these outright for this field: npm's/pnpm's/yarn's own CLI intercepts
-    `--version`/`-v`/`-V` before your project's real test script ever runs, so this would silently
-    record the package manager's own version, never the actual framework's. Use the underlying
-    framework's own `--version` instead (`npx vitest --version`, etc.), or the `cat package.json`
-    fallback below.
+  Real traps, not merely theoretical — never propose any of these (FORGE refuses them outright for
+  this field, confirmed live against real npm/pnpm/yarn installs):
+  - `npm test --version`/`npm test -v` — and the identical
+    `npm run test --version`/`npm run test -v` form. npm's own CLI intercepts the flag before your
+    project's real test script ever runs, silently printing npm's OWN version, never the actual
+    framework's.
+  - `pnpm test --version`/`pnpm test -v`/`pnpm test -V` — the BARE form only. pnpm's own CLI either
+    intercepts the flag the identical way npm does (`--version`/`-v`), or (`-V`) fails outright with
+    a parse error — either way, your project's real test script never runs.
   - `cargo --version`/`cargo -V` — these are REFUSED outright (a pre-existing, unrelated limitation:
     no `cargo` invocation of any kind, including the ordinary `cargo test`, is grantable here at
     all). For a Rust/Cargo project, go straight to the `cat Cargo.lock`/`cat Cargo.toml` fallback
     below; do not propose a bare `cargo` command for this field.
+
+  Confirmed SAFE, not traps, despite looking similar — these ARE allowed, and correctly forward the
+  flag to your project's real test script (confirmed live):
+  - `pnpm run test --version` (and `-v`/`-V`) — pnpm's explicit `run test` form, unlike its bare
+    form above, forwards the flag correctly.
+  - `yarn test --version` and `yarn run test --version` (and `-v`/`-V`, either form) — yarn (the
+    classic 1.x line) forwards the flag correctly in both forms.
+
+  If you are unsure which form the project's package manager uses, or the installed version might
+  differ from what was confirmed here, prefer the underlying framework's own `--version` instead
+  (`npx vitest --version`, etc.), or the `cat package.json` fallback below — it is never wrong.
 
   If the runner you propose genuinely has no granted way to report its own version (a bespoke
   Makefile/Rake target, Cargo, or an in-house runner with no conventional flag), `cat` a real,
