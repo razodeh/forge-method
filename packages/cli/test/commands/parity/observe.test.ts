@@ -1260,6 +1260,48 @@ await observeParityDeclaration({ declaration: ${declarationLiteral}, side: 'refe
     if (outcome.outcome !== 'failed') throw new Error(`expected failed, got ${outcome.outcome}`);
     expect(outcome.failure.error.code).toBe('RUN-127');
   });
+
+  it('a reference-side process command resolves a real, installed third-party package through the bridged node_modules (process/SPEC-QUESTIONS.md Q314)', async () => {
+    const { dir, oldSha: ref } = await repoWithTwoRevisions();
+    // A real, installed package at the PROJECT's own top-level node_modules -- never committed
+    // (exactly like a real, gitignored node_modules), confirming this works purely through
+    // `withReferenceWorktree`'s own bridging, not through anything git tracked.
+    const pkgDir = path.join(dir, 'node_modules', 'forge-q314-observe-fake-pkg');
+    await mkdir(pkgDir, { recursive: true });
+    await writeFile(
+      path.join(pkgDir, 'package.json'),
+      JSON.stringify({ name: 'forge-q314-observe-fake-pkg', version: '1.0.0', main: 'index.js' }),
+      'utf8',
+    );
+    await writeFile(
+      path.join(pkgDir, 'index.js'),
+      'module.exports = "hello-from-forge-q314-observe-fake-pkg";',
+      'utf8',
+    );
+    const declaration = minimalDeclaration({
+      reference: { ref },
+      surfaces: {
+        process: {
+          run: `${process.execPath} -e "console.log(require('forge-q314-observe-fake-pkg'))"`,
+          stability: { runs: 3 },
+          cases: [{}],
+        },
+      },
+    });
+    const results = await observeParityDeclaration({
+      declaration,
+      side: 'reference',
+      projectRoot: dir,
+      referenceSha: ref,
+      parentEnv: process.env,
+    });
+    const outcome = findCase(results, 'process');
+    if (outcome.outcome !== 'observed')
+      throw new Error(`expected observed, got ${outcome.outcome}`);
+    if (outcome.observation.surface !== 'process') throw new Error('expected process surface');
+    expect(outcome.observation.exit).toEqual({ kind: 'code', code: 0 });
+    expect(outcome.observation.stdout?.text.trim()).toBe('hello-from-forge-q314-observe-fake-pkg');
+  });
 });
 
 describe(

@@ -453,9 +453,17 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   project directory, so a runtime that finds dependencies by walking up the directory tree (Node's
   `node_modules`) reached the candidate's own installed copy from both sides as an emergent property
   of that nesting, never something the engine itself implemented. Once P8 moved it outside the
-  project's own working tree, that walk-up no longer reaches the candidate's installed packages — a
-  disclosed, open gap for any reference-side command that is a Node program importing a third-party
-  package this way (`SPEC-QUESTIONS.md` Q314); for any runtime, and for anything that
+  project's own working tree, that walk-up stopped reaching the candidate's installed packages at
+  all — a disclosed regression (`SPEC-QUESTIONS.md` Q314) the harness now closes explicitly: before
+  any surface's `setup` or `run` reaches the scratch tree, the project's own top-level `node_modules`
+  is symlinked into the scratch tree's root, restoring the identical "both sides run against one
+  installed copy" reach the old nesting gave by accident, now as a reviewable mechanism rather than
+  one. `NODE_PATH` was considered and rejected (Node's own ESM resolver never consults it, so an
+  `import`-based command would still fail), as was a declaration-authored `setup` command (`network:
+  none` already refuses a package-manager install verb, below, so a declaration has no vetted way to
+  populate `node_modules` itself). This still reaches only the project's top-level `node_modules`,
+  matching the old mechanism's own real reach — a workspace package's own nested `node_modules` was
+  never found by the pre-P8 walk-up either. For any runtime other than Node, and for anything that
   must be built from the tracked files, a declaration carries `setup` commands, vetted exactly as
   `run` is (so `network: none` applies to a `setup` too: an install by a package manager the engine
   knows is refused, and a declaration is not given the registry allowlist that `20` §20.1 allows an

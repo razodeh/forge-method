@@ -161,8 +161,10 @@ function normalizeTextOrThrow(
  * it) is the orchestrator's own call when writing this piece's `Q` entry, not a code fix made here.
  *
  * **`specs/22` M17 P14, MAJOR disclosed gap, NOT fixed here (tracked for a dedicated follow-up
- * piece, same as the `node_modules` regression M17 P8 found): `library` has no mechanism at all to
- * redact an embedded root/absolute path.** `CFG-516` (`replace-lint.ts`) correctly excludes
+ * piece — `reference-node-modules.ts`'s own doc comment has the account of the identical-shaped
+ * `node_modules` regression M17 P8 found, `SPEC-QUESTIONS.md` Q314, since closed by its own such
+ * piece): `library` has no mechanism at all to redact an embedded root/absolute path.**
+ * `CFG-516` (`replace-lint.ts`) correctly excludes
  * `library` from the root-token-masking fix, because this function confirms (directly above, not
  * merely assumed) that the automatic root-rewrite genuinely never reaches a `library` result — but
  * that exclusion closes a DIFFERENT problem (a length-anchored `replace` interacting with a rewrite

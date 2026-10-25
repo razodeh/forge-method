@@ -3788,6 +3788,24 @@ export const ERROR_CODES = {
       'gate (Claude Code: unset "transport" or set it to "sdk" in ' +
       'platform.adapterConfig["claude-code"], and make sure the SDK package resolves), then retry.',
   },
+  // `specs/22` M17, a dedicated follow-up to `process/SPEC-QUESTIONS.md` Q314: M17 P8 moved the
+  // reference's scratch worktree outside the project tree, which silently broke Node's own
+  // `node_modules` directory walk-up for any reference-side command that imports a third-party
+  // package (it used to reach the candidate's installed copy only as an emergent property of the old,
+  // in-project nesting, `13` F-TEST-9). `reference-node-modules.ts`'s own `linkReferenceNodeModules`
+  // restores that reachability explicitly, via one symlink created right after the scratch worktree
+  // itself; this is what it raises on the rare case that symlink genuinely cannot be created (a
+  // permissions problem, an already-occupied path) — never for the ordinary "nothing installed to
+  // link" case, which is a silent no-op, not a failure.
+  'RUN-163': {
+    severity: 'error',
+    exitCode: EXIT_CODES.failure,
+    message: (d: { path: string; detail: string }) =>
+      `Linking the project's own node_modules into the reference's scratch worktree at ${show(d.path)} failed: ${show(d.detail)}`,
+    remedy:
+      'Fix the underlying filesystem problem named above (a permissions issue, or a pre-existing ' +
+      'path at the destination), then re-run the capture.',
+  },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
 /** Every error code FORGE can raise. */

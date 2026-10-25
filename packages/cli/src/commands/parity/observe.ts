@@ -31,6 +31,16 @@
  * internally is: run the command IN the tree being observed, but read every overlaid byte FROM
  * `projectRoot`.
  *
+ * **The reference's `node_modules` is bridged in explicitly, not left to accident
+ * (`process/SPEC-QUESTIONS.md` Q314).** Before M17 P8 moved the scratch worktree outside the project
+ * tree, Node's own directory walk-up reached the project's installed packages from the nested
+ * worktree as an emergent property of that nesting; once moved out, nothing reached them at all.
+ * `withReferenceWorktree`, below, calls `reference-node-modules.ts`'s own
+ * `linkReferenceNodeModules` right after the worktree is created (and before any `setup` or `run`
+ * reaches it), which symlinks the project's top-level `node_modules` into the worktree root — see
+ * that module's own doc comment for why a symlink, not `NODE_PATH` or a declaration `setup` command,
+ * is the right mechanism.
+ *
  * **Per-case failures are DATA, not thrown exceptions.** A real `ForgeError` (`QUALITY-BAR.md` R2)
  * is always constructed for a case that cannot be completed (a timeout, a cap breach, a secret or a
  * lossy decode, a malformed probe, a symlinked output path, a missing overlay source) — but it is
@@ -43,6 +53,7 @@
  * @see specs/13-frameworks-testing-and-debugging.md F-TEST-9
  * @see process/plans/PLAN-M16.md P3
  * @see process/SPEC-QUESTIONS.md Q294 Decision 7
+ * @see process/SPEC-QUESTIONS.md Q314
  */
 import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
@@ -70,6 +81,7 @@ import { SURFACE_KINDS } from './declaration-types.ts';
 import { parseLibraryProbeOutput } from './library-protocol.ts';
 import { observeHttpSurfaceCases } from './observe-http.ts';
 import { PINNED_ENV } from './pinned-env.ts';
+import { linkReferenceNodeModules } from './reference-node-modules.ts';
 import type {
   ObservedRoot,
   ParityCaseObservationOutcome,
@@ -471,7 +483,13 @@ function syntheticLaneRef(
  * useful one from cleanup (`try`/`finally`'s own "the `finally` block's throw wins" pitfall, avoided
  * here explicitly rather than relied upon).
  *
+ * Once the worktree exists, {@link linkReferenceNodeModules} bridges in the project's own
+ * `node_modules` (`process/SPEC-QUESTIONS.md` Q314) before `fn` ever runs — a failure there is
+ * treated identically to `fn` itself throwing: the worktree is still removed, and the error
+ * propagates the same way.
+ *
  * @throws {ForgeError} `RUN-124` if the worktree itself cannot be created.
+ * @throws {ForgeError} `RUN-163` if the project's `node_modules` cannot be linked into it.
  */
 async function withReferenceWorktree<T>(
   projectRoot: string,
@@ -513,6 +531,7 @@ async function withReferenceWorktree<T>(
   let outcome:
     { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown };
   try {
+    await linkReferenceNodeModules(projectRoot, handle.path);
     outcome = { ok: true, value: await fn(handle.path) };
   } catch (cause) {
     outcome = { ok: false, error: cause };

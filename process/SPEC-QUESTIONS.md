@@ -30931,3 +30931,74 @@ for the same reason it wasn't possible to trigger the original bug live).
 **Found while fixing, disclosed, not blocking**: the raw leg's field-desync (the real mechanism behind Defect B — a collapsed rename record misaligns the index-paired field-extraction loop) cascades past the renamed entry itself: a second, unrelated `nonRegular` entry in the same commit (confirmed with a second rename, and independently with an unrelated submodule add) can also vanish from the result with zero trace. Confined entirely to `nonRegular`; `claims.ts` is categorically immune to this class (its legs use `--name-only`/`ls-files` exclusively, no multi-field record, no index-pairing to desync). The one real production consumer of `nonRegular` (`outputs.ts`'s `checkOne`, wired into the live step-execution gate) has two independent redundant checks that would have caught most misuses of a stale/missing `nonRegular` entry regardless; the one genuinely uncovered shape is a forged non-regular file planted beside an already-valid artifact under the same claimed glob — already guarded by existing dedicated tests in the non-rename case.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P21` entry for this fix, dated 2026-10-25.
+## Q352 — Fix: the reference's own `node_modules` is bridged into the scratch worktree explicitly, closing the regression `Q314` disclosed, across 4 rounds (M17 P8's own dedicated follow-up piece, owner-directed scope expansion 2026-10-25)
+
+**Context.** `Q314` (M17 P8) disclosed, but did not fix, a real regression P8's own in-tree-to-cache-directory
+relocation of the parity reference's scratch worktree caused: before P8, a nested worktree's own
+Node `node_modules` directory walk-up reached the project's installed packages as an accident of
+nesting beneath the project root; once P8 moved the worktree outside the project tree entirely
+(`13` F-TEST-9, `18`'s Worktree location paragraph), that walk-up reached nothing, and any
+reference-side `run`/`setup` command that is a Node program importing a third-party package started
+failing to resolve it. `Q314`'s own DECISION paragraph named three candidate mechanisms without
+choosing one — a symlink, `NODE_PATH` injection, or requiring every such `setup` to install its own
+dependencies — and left the choice, and the build, to a dedicated follow-up piece.
+
+**Round 1 — the fix.** `packages/cli/src/commands/parity/reference-node-modules.ts`'s new
+`linkReferenceNodeModules(projectRoot, worktreeRoot)` symlinks the project's own top-level
+`node_modules` into the scratch worktree's root, called from `observe.ts`'s `withReferenceWorktree`
+immediately after the worktree is created and before any surface's `setup` or `run` ever reaches it.
+`NODE_PATH` was rejected (empirically confirmed: Node's ESM resolver never consults it, only
+CommonJS `require()` does). A declaration-authored `setup` command was rejected (`network: none`
+refuses any recognised package-manager install verb outright — no vetted way for a declaration to
+populate `node_modules` itself). A harness-created symlink was confirmed to actually work (CJS
+`require()` and ESM `import` both follow it correctly, from a script nested arbitrarily deep) before
+being chosen. Scope deliberately narrow: only the project's top-level `node_modules`, matching the
+old accidental mechanism's own real reach exactly (a workspace package's own nested `node_modules`
+was never reached that way either). Removal safety confirmed empirically: both `fs.rm(recursive:
+true)` and a real `git worktree remove -f -f` `lstat` each entry and unlink the symlink directly
+rather than recursing through it, so the real `node_modules` it points at always survives.
+
+**Rounds 2-4 — the EEXIST edge case, narrowed three times.** A genuine failure to create the symlink
+raises the new `RUN-163` — but what counts as "genuine" versus a safe no-op took three more rounds
+to get right, each one independently critic-found:
+- **Round 2**: a critic found round 1 had NO handling at all for a destination that already has
+  something at it (e.g. a project that intentionally tracks its own `node_modules` in git — a real,
+  if rare, case `specs/20` §20.2's own deny list already anticipates by naming `node_modules/` as a
+  separate bullet from "anything in `.gitignore`") — `symlink()`'s `EEXIST` was unconditionally
+  wrapped into `RUN-163`, turning a working scenario into a permanent, unrecoverable failure. Fixed
+  by treating `EEXIST` as a no-op.
+- **Round 3**: two critics found round 2's fix was too broad — a plain stray file, or a broken
+  symlink, also hit `EEXIST` and silently no-opped, when neither could ever have made module
+  resolution work (losing test coverage the original suite had for exactly the plain-file case).
+  Narrowed to no-op only when `lstat(destination).isDirectory()`.
+- **Round 4**: two more critics found round 3's narrowing was STILL too broad — an empty, untracked
+  junk directory (e.g. a crashed-run leftover) also satisfies `isDirectory()` and no-ops, even though
+  an empty directory can never make resolution work either; this is exactly the "confusing,
+  unattributed Node crash deep in the reference run" scenario the whole no-op design exists to avoid
+  trading `RUN-163` away from. Fixed by requiring BOTH `isDirectory()` AND a non-empty `readdir()`.
+  Also hardened the `lstat`/`readdir` pair in its own try/catch (falling through to typed `RUN-163`
+  on any failure there, closing a narrow, practically-unreachable `@throws` contract gap) and
+  corrected `codes.ts`'s `RUN-163` comment, left stale by round 2.
+- **A critic explicitly tasked with finding a 5th gap in round 4's own review, from two independent
+  directions, found none that was real rather than theoretical**: a dotfile-only directory (e.g. only
+  `.gitkeep`) correctly no-ops, since `readdir()` includes dotfiles by default; a hollow tree of
+  entirely file-less subdirectories was judged impossible to arise from either of the function's own
+  two real-world causes (git fundamentally cannot track an empty directory at all, and a crashed-run
+  leftover would plausibly leave a bare, literally-empty top-level directory — the shape round 4
+  already catches — not a hollow multi-level tree), unlike rounds 1-3's own gaps, which were all
+  real and reproducible.
+
+**Scope, confirmed deliberately narrow.** Only the project's top-level `node_modules` is linked. A
+monorepo's own nested, per-package `node_modules` (pnpm workspace isolation) is not bridged — never
+reachable before P8 either, so nothing regresses. The `library`-surface path-redaction gap `Q317`
+disclosed is unrelated and remains open; `compare.ts`'s own cross-reference is corrected to note
+`Q314` is closed while leaving `Q317` untouched.
+
+**Verification, final state.** `pnpm typecheck`, `pnpm lint`, `pnpm run boundaries` clean across all
+4 rounds. `reference-node-modules.test.ts` (11 tests) organized by behavior category: the ordinary
+no-op, real module resolution through the symlink (CJS + ESM, scope-limited), removal safety, a
+tracked-directory no-op, and every genuine-failure shape (file, broken symlink, empty directory,
+read-only/EACCES) collected together. `observe.test.ts` gained a red-before/green-after case
+confirming a reference-side command importing an installed third-party package now resolves.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P21` entry for this fix, dated 2026-10-25.
