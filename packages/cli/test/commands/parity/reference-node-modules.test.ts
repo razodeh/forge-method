@@ -9,7 +9,7 @@
  * @see process/SPEC-QUESTIONS.md Q314
  */
 import { execFile } from 'node:child_process';
-import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -201,17 +201,50 @@ describe('linkReferenceNodeModules: removal safety (specs/22, Q314 follow-up)', 
   });
 });
 
+describe('linkReferenceNodeModules: a project that tracks its own node_modules in git (specs/22, Q314 follow-up, critic round 1)', () => {
+  it('is a no-op (never RUN-163, never replaces the real content) when the checkout already populated node_modules', async () => {
+    const projectRoot = await freshDir('forge-q314-tracked-project-');
+    await mkdir(path.join(projectRoot, 'node_modules'), { recursive: true });
+    const worktreeRoot = await freshDir('forge-q314-tracked-worktree-');
+    // Simulates what `createLaneWorktree`'s own ordinary checkout already did, BEFORE this function
+    // ever runs, for a project that intentionally tracks `node_modules` in git (`specs/20` §20.2's
+    // deny list names it as its own, separate bullet from "anything in .gitignore"): a real,
+    // already-populated directory at the destination, not a symlink.
+    const realPkgDir = path.join(worktreeRoot, 'node_modules', 'forge-q314-tracked-pkg');
+    await mkdir(realPkgDir, { recursive: true });
+    await writeFile(
+      path.join(realPkgDir, 'index.js'),
+      'module.exports = "tracked-for-real";',
+      'utf8',
+    );
+
+    await linkReferenceNodeModules(projectRoot, worktreeRoot);
+
+    // Still the real, checked-out directory -- never replaced by (or merged into) a symlink.
+    const destinationStat = await lstat(path.join(worktreeRoot, 'node_modules'));
+    expect(destinationStat.isSymbolicLink()).toBe(false);
+    expect(destinationStat.isDirectory()).toBe(true);
+    await expect(readFile(path.join(realPkgDir, 'index.js'), 'utf8')).resolves.toBe(
+      'module.exports = "tracked-for-real";',
+    );
+  });
+});
+
 describe('linkReferenceNodeModules: a genuine failure (RUN-163) (specs/22, Q314 follow-up)', () => {
-  it('fails typed (RUN-163) when the destination cannot be created (something already occupies it)', async () => {
+  it('fails typed (RUN-163) when the symlink cannot be created for a reason other than the destination already existing (a read-only worktree root)', async () => {
     const projectRoot = await freshDir('forge-q314-fail-project-');
     await mkdir(path.join(projectRoot, 'node_modules'), { recursive: true });
     const worktreeRoot = await freshDir('forge-q314-fail-worktree-');
-    // Occupy the destination with an ordinary file first, so `symlink()` itself genuinely fails
-    // (EEXIST) rather than this test merely asserting a code path never reached.
-    await writeFile(path.join(worktreeRoot, 'node_modules'), 'already here', 'utf8');
-
-    await expect(linkReferenceNodeModules(projectRoot, worktreeRoot)).rejects.toSatisfy(
-      (error: unknown) => isForgeError(error) && error.code === 'RUN-163',
-    );
+    // A read-only worktree root makes the real `symlink()` call itself genuinely fail (EACCES, not
+    // the benign EEXIST the no-op above covers) -- confirmed by direct execution (not assumed) that
+    // this reliably fails under the current, non-root test user (id -u 501 locally).
+    await chmod(worktreeRoot, 0o555);
+    try {
+      await expect(linkReferenceNodeModules(projectRoot, worktreeRoot)).rejects.toSatisfy(
+        (error: unknown) => isForgeError(error) && error.code === 'RUN-163',
+      );
+    } finally {
+      await chmod(worktreeRoot, 0o755);
+    }
   });
 });

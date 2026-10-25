@@ -3794,17 +3794,17 @@ export const ERROR_CODES = {
   // package (it used to reach the candidate's installed copy only as an emergent property of the old,
   // in-project nesting, `13` F-TEST-9). `reference-node-modules.ts`'s own `linkReferenceNodeModules`
   // restores that reachability explicitly, via one symlink created right after the scratch worktree
-  // itself; this is what it raises on the rare case that symlink genuinely cannot be created (a
-  // permissions problem, an already-occupied path) — never for the ordinary "nothing installed to
-  // link" case, which is a silent no-op, not a failure.
+  // itself; this is what it raises on the rare case that symlink genuinely cannot be created for a
+  // reason OTHER than the destination already existing (a permissions problem, say) — never for
+  // "nothing installed to link" (a silent no-op), and never for a project that tracks its own
+  // `node_modules` in git, whose checkout already populated the destination for real (also a silent
+  // no-op, critic-found: refusing that case would be a genuine regression with no actionable remedy).
   'RUN-163': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,
     message: (d: { path: string; detail: string }) =>
       `Linking the project's own node_modules into the reference's scratch worktree at ${show(d.path)} failed: ${show(d.detail)}`,
-    remedy:
-      'Fix the underlying filesystem problem named above (a permissions issue, or a pre-existing ' +
-      'path at the destination), then re-run the capture.',
+    remedy: 'Fix the underlying filesystem problem named above, then re-run the capture.',
   },
 } as const satisfies Record<`${ErrorCodePrefix}-${string}`, ErrorDefinition<never>>;
 
