@@ -121,6 +121,7 @@ export {
 } from './output-ids.ts';
 export {
   commandWords,
+  commandWordsWithGlobs,
   CONFINED_ENV_ALLOWLIST,
   createLiveFileAccessGate,
   createLiveNetworkAccessGate,

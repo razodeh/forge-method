@@ -1092,3 +1092,100 @@ describe("captureRunnerVersion -- round 6: two independent critics, two independ
     }
   }, 60_000);
 });
+
+/** Writes a real file literally named `--version` into `dir` -- round 7's own decoy: a plausible
+ * accident (an investigating agent's own tool-use, or one already present) that the real shell glob-
+ * expands a flag-shaped glob word into, before npm/pnpm/yarn ever parses their own `argv`. */
+async function writeVersionDecoyFile(dir: string): Promise<void> {
+  await writeFile(path.join(dir, '--version'), 'not a real version\n', 'utf8');
+}
+
+describe("captureRunnerVersion -- round 7: the fifth bypass, real shell GLOB EXPANSION, closed by refusing an unquoted glob metacharacter anywhere in the scanned tail (SPEC-QUESTIONS.md Q333, critic round 6 on round 6's own fix)", () => {
+  it('refuses the exact critic repro, live, with a real decoy file named "--version" in the lane -- "npm test --vers*", "npm run test --vers*", "pnpm test --vers*", and the character-class variant "npm test --versio[n]" -- confirmed before this fix each one leaked the package manager\'s own version (the shell expands the glob to the literal decoy filename before npm/pnpm ever parses argv)', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    await writeVersionDecoyFile(dir);
+    for (const command of [
+      'npm test --vers*',
+      'npm run test --vers*',
+      'pnpm test --vers*',
+      'npm test --versio[n]',
+    ]) {
+      const result = await captureRunnerVersion(command, dir, 5_000);
+      expect(result.ok, command).toBe(false);
+      if (!result.ok) {
+        expect(result.reason, command).toContain('ITS OWN version');
+        expect(result.timedOut, command).toBeUndefined();
+      }
+    }
+  });
+
+  it('refuses the identical repro even with NO decoy file present -- the fix is unconditional, by syntax alone, never contingent on whatever happens to be on disk right now (a decoy created a moment later, by a different process, or present on one host and not another would otherwise reopen a time-of-check/time-of-use gap)', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    // No `writeVersionDecoyFile` call: before this fix, this exact command ran the real script with
+    // an empty argv (the glob's own text simply vanishing, like "--versionX" already does) -- the
+    // control that proved round 6's gap was conditional on a matching file. After this fix, the glob
+    // character alone is enough: whether anything on disk would ever have matched is never asked.
+    for (const command of ['npm test --vers*', 'npm run test --vers*', 'pnpm test --vers*']) {
+      const result = await captureRunnerVersion(command, dir, 5_000);
+      expect(result.ok, command).toBe(false);
+      if (!result.ok) {
+        expect(result.reason, command).toContain('ITS OWN version');
+        expect(result.timedOut, command).toBeUndefined();
+      }
+    }
+  });
+
+  it('refuses a glob in a cell this table otherwise calls "safe" for a literal flag too -- "pnpm run test --vers*"/"yarn test --vers*" -- a glob character has no legitimate reason to appear in ANY of the six (program, form) cells, trap or not, so the refusal is deliberately not gated on that cell\'s own trap-flag set being non-empty', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    await writeVersionDecoyFile(dir);
+    for (const command of ['pnpm run test --vers*', 'yarn test --vers*', 'yarn run test --vers*']) {
+      const result = await captureRunnerVersion(command, dir, 5_000);
+      expect(result.ok, command).toBe(false);
+      if (!result.ok) {
+        expect(result.reason, command).toContain('ITS OWN version');
+        expect(result.timedOut, command).toBeUndefined();
+      }
+    }
+  });
+
+  it('the pre-existing SHORT-flag glob accident ("-v*"/"-V*") is unaffected by this round\'s fix -- still refused, for the same reason it always was (the generic "expands to something starting with -" check in vetGlob), now ALSO independently covered by the new glob-index check, confirmed never to have regressed to allowing it through', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    await writeVersionDecoyFile(dir);
+    for (const command of ['npm test -v*', 'pnpm test -V*']) {
+      const result = await captureRunnerVersion(command, dir, 5_000);
+      expect(result.ok, command).toBe(false);
+    }
+  });
+
+  it('does NOT refuse a QUOTED, genuinely literal glob character -- "npm test --filter=\'*\'" -- the real shell never expands a single-quoted "*" at all, and `commandWordsWithGlobs`\' own `globbed` set correctly excludes it (unlike a bare textual "does this word\'s string contain an asterisk" rescan, which could not tell the two apart): the real script runs, receiving the literal three-character string "--filter=*" as one genuine argv token, proving this was never glob-expanded', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    await writeVersionDecoyFile(dir);
+    const result = await captureRunnerVersion("npm test --filter='*'", dir, 30_000);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.runnerVersion).toContain('REAL_SCRIPT_RAN ARGV=[]');
+    }
+  }, 60_000);
+
+  it('confirmed-safe shapes from rounds 5-6 are unaffected by this round\'s fix -- no glob character, no new refusal: "pnpm run test --version" and "yarn test --version" still forward to the real script exactly as before', async () => {
+    const dir = await tempDir();
+    await writeArgvEchoProject(dir);
+    await writeVersionDecoyFile(dir);
+    for (const [command, expectedArg] of [
+      ['pnpm run test --version', '"--version"'],
+      ['yarn test --version', '"--version"'],
+    ] as const) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      expect(result.ok, command).toBe(true);
+      if (result.ok) {
+        expect(result.runnerVersion, command).toContain('REAL_SCRIPT_RAN');
+        expect(result.runnerVersion, command).toContain(expectedArg);
+      }
+    }
+  }, 60_000);
+});

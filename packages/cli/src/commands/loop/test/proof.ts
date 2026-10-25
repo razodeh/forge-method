@@ -115,7 +115,7 @@ import { readTextFile, writeFileAtomic, writeNewFileAtomic } from '@forge/core/f
 import type { AbsolutePath, ProjectPaths } from '@forge/core/fs';
 import {
   ADOPT_TESTS_VET_GRANT,
-  commandWords,
+  commandWordsWithGlobs,
   runShellCommand,
   vetProposedCommand,
 } from '@forge/engine/dispatch';
@@ -414,8 +414,8 @@ const PACKAGE_MANAGER_VERSION_TRAP_FLAGS: ReadonlyMap<string, ReadonlySet<string
  * everything after it is forwarded verbatim to the real script by the package manager itself, never
  * parsed as the package manager's own flag (confirmed live for every one of npm/pnpm/yarn, both
  * forms: `npm test -- --version` runs the real script with `--version` as a genuine `argv` token,
- * never npm's own version). Parsed with `commandWords` (`confined-command.ts`'s own syntax stage,
- * already run by `vetProposedCommand` above) rather than a raw string match, so this cannot be
+ * never npm's own version). Parsed with `commandWordsWithGlobs` (`confined-command.ts`'s own syntax
+ * stage, already run by `vetProposedCommand` above) rather than a raw string match, so this cannot be
  * fooled by extra whitespace or a quoting shape the real vet itself would not have accepted either.
  *
  * Two widenings from round 6 (this function's own doc comment above has the full live-execution
@@ -432,22 +432,94 @@ const PACKAGE_MANAGER_VERSION_TRAP_FLAGS: ReadonlyMap<string, ReadonlySet<string
  * WITHOUT a `=` right after it (`--versionX`) stays deliberately unmatched: npm's own parser drops
  * that silently and the real script still runs, so matching it would be round 4's own over-broad bug
  * again, just spelled differently.
+ *
+ * **Round 7, a fifth bypass -- real shell GLOB EXPANSION, a different mechanism entirely, not a
+ * string-matching gap (`SPEC-QUESTIONS.md` Q333, critic round 6 on round 6's own fix).** Every check
+ * above matches trap flags as literal tokens against the UNEXPANDED text `commandWords` (now
+ * `commandWordsWithGlobs`) returns -- but `runShellCommand`/`captureRunnerVersion` actually execute
+ * the command through a real POSIX shell (`execa(command, { shell: ... })`), which performs REAL
+ * pathname expansion (`*`, `?`, `[...]`) before npm/pnpm/yarn ever sees `argv`. `confined-command.ts`'s
+ * own `vetPath`/`vetGlob` deliberately skip any glob word whose every `pathCandidates` entry starts
+ * with `-` (by design -- a flag-shaped word is read as an option, not a path, so nothing downstream of
+ * the syntax stage ever asks what it would expand to). Confirmed live, reproducibly: with a file
+ * literally named `--version` sitting in the lane (a plausible accident -- an investigating agent
+ * could easily have written such a file, or one could already exist), `npm test --vers*` / `npm run
+ * test --vers*` / `pnpm test --vers*` / `npm test --versio[n]` each have the shell expand the glob to
+ * the literal filename `--version` BEFORE the package manager parses its own `argv`, so the package
+ * manager receives a genuine `--version` token and intercepts it exactly as the bare-flag case above
+ * already does -- completely unseen by every check above, since each of those only ever sees the
+ * UNEXPANDED text (`--vers*`), which matches no trap-flag string. (Confirmed this needs an ACTUAL
+ * matching file on disk -- a control run of the identical glob with no decoy present correctly runs
+ * the real script with an empty `argv`, the glob's own text simply vanishing the same way `--versionX`
+ * already does, above.) The analogous SHORT-flag glob shapes (`-v*`, `-V*`) already happen to be
+ * caught, but only by accident, through an unrelated mechanism: `pathCandidates`' own short-option
+ * glued-value extraction (`-v*` -> the bare candidate `*`) happens to hand `vetGlob` a second, non-flag-
+ * shaped candidate, which its own generic "does this expand to something starting with `-`" check then
+ * refuses -- a mechanism specific to the exactly-one-dash-plus-one-letter short-option shape, which
+ * never engages for a long option (`--vers*`), exactly why only the long form leaked.
+ *
+ * **Fixed by refusing the whole shape outright whenever ANY unquoted glob metacharacter appears in the
+ * scanned tail, using `commandWordsWithGlobs`' own real `globbed` index set -- never a textual "does
+ * this word's string contain an asterisk" rescan.** Two fix directions were weighed: (a) a bare textual
+ * scan for `*`/`?`/`[` anywhere in the tail, or (b) reusing `syntaxOf`'s own already-computed `globbed`
+ * set (exposed via the new `commandWordsWithGlobs`). (a) alone, run over `commandWords`' plain strings,
+ * cannot tell a genuinely UNQUOTED glob character (which the real shell actually expands) from one that
+ * was single- or double-quoted in the original command text (`splitWords` strips quote characters
+ * before a word ever reaches `commandWords`, so `--filter='*'` and `--filter=*` produce the IDENTICAL
+ * string `--filter=*` once split) -- a purely textual rescan would therefore refuse a quoted, genuinely
+ * literal `*` the shell would never expand at all, a real false-refusal risk (a) cannot avoid on its
+ * own. `commandWordsWithGlobs` carries the distinction forward instead: `globbed` is populated only for
+ * an UNQUOTED occurrence (`splitWords`'s own per-character quote-state tracking), the exact set of
+ * characters the real shell this command actually runs through would try to expand -- which is also
+ * precisely why this is scoped to this one gated shape (program is npm/pnpm/yarn, form is bare/`run`,
+ * script name starts with `test`) and never applied command-wide: nothing about "contains an unquoted
+ * glob character" is dangerous in general (a configured `pytest tests/unit/*` is a completely ordinary,
+ * already-vetted-by-`vetGlob` shape elsewhere in this codebase), only here, where the field in question
+ * is specifically a `runnerVersionCommand` that has no legitimate reason to ever need one: nothing of
+ * the shape `<tool> --version` (what every confirmed-safe example in this file's own doc comment above
+ * looks like) has a plausible use for a literal `*`, `?`, or `[` -- there is no flag whose value is
+ * meant to be a glob pattern in a version probe, unlike `pytest`'s own test-selection globs, which this
+ * function never sees at all (its two real callers pass only `runnerVersionCommand`, never `run`/
+ * `filter`). Refusing the shape outright, rather than trying to evaluate what the glob would actually
+ * expand to (duplicating `vetGlob`'s own real directory-reading logic for a field that should never
+ * need it), is therefore the whole, safe answer, not merely a cheaper approximation of one -- and it
+ * refuses UNCONDITIONALLY, independent of whether a matching file happens to exist on disk right now:
+ * checking "does a dangerous decoy currently exist" first would reopen a real time-of-check/time-of-use
+ * gap (a file created a moment later, by a different process, or present on one host and not another),
+ * exactly the kind of fragile, environment-dependent safety property this function's whole design
+ * (confirmed-live tables, never "probably fine") exists to avoid.
+ *
+ * The glob check runs BEFORE the trap-flag string check and is NOT gated on `trapFlags.size > 0`: a
+ * glob character has no legitimate reason to appear in ANY of the six (program, form) cells, including
+ * the three this table already calls "safe" for a literal flag (`pnpm run test`, `yarn` either form) --
+ * a literal `--version` is safe there because it is confirmed to forward to the real script untouched,
+ * but nothing about the SHELL'S OWN glob-expansion mechanism is specific to which cell receives the
+ * result, and refusing a glob character in a field that should never contain one loses no legitimate
+ * usage in any cell.
  */
 function isPackageManagerVersionProbe(command: string): boolean {
-  const words = commandWords(command);
-  if (words === undefined) return false;
+  const syntax = commandWordsWithGlobs(command);
+  if (syntax === undefined) return false;
+  const { words, globbed } = syntax;
   const [program, ...rest] = words;
   if (program === undefined || !PACKAGE_MANAGER_VERSION_PROBE_VERBS.has(program)) return false;
   const isRunForm = rest[0] === 'run';
   const afterRun = isRunForm ? rest.slice(1) : rest;
   if (afterRun[0]?.startsWith('test') !== true) return false;
+  const tail = afterRun.slice(1);
+  const literalSeparatorIndex = tail.indexOf('--');
+  const scanned = literalSeparatorIndex === -1 ? tail : tail.slice(0, literalSeparatorIndex);
+  // The index, within `words`, of `scanned[0]`. `words.length - afterRun.length` is the index of
+  // `afterRun[0]` itself (the script-name word: `program`, plus `run` when present, account for
+  // everything before it) -- `scanned` begins one word after that.
+  const scannedStartIndex = words.length - afterRun.length + 1;
+  for (let offset = 0; offset < scanned.length; offset += 1) {
+    if (globbed.has(scannedStartIndex + offset)) return true;
+  }
   const trapFlags = PACKAGE_MANAGER_VERSION_TRAP_FLAGS.get(
     `${program} ${isRunForm ? 'run' : 'bare'}`,
   );
   if (trapFlags === undefined || trapFlags.size === 0) return false;
-  const tail = afterRun.slice(1);
-  const literalSeparatorIndex = tail.indexOf('--');
-  const scanned = literalSeparatorIndex === -1 ? tail : tail.slice(0, literalSeparatorIndex);
   return scanned.some((word) =>
     [...trapFlags].some((flag) => word === flag || word.startsWith(`${flag}=`)),
   );

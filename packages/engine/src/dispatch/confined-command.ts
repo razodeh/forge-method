@@ -671,6 +671,27 @@ export function commandWords(command: string): readonly string[] | undefined {
   return syntaxOf(command).words;
 }
 
+/**
+ * `commandWords`, plus exactly which of those word INDICES hold an unquoted glob metacharacter (`*`, `?`, `[`) --
+ * `syntaxOf`'s own `splitWords` already computes this (it is how `vetProposedCommand` below decides which words to
+ * run `vetGlob` against), but `commandWords` itself has always discarded it. Exposed for a caller that needs to know
+ * not merely "does this word's TEXT contain one of these characters" (a check a quoted, genuinely-literal `'*'`
+ * would also trip, and that `splitWords` deliberately does NOT mark as globbed -- single- and double-quoted
+ * occurrences are excluded, exactly the shell's own rule, since neither quote form lets `*`/`?`/`[` expand) but "will
+ * the real POSIX shell `runShellCommand` executes this through actually try to expand this word" (`SPEC-QUESTIONS.md`
+ * Q333, critic round 6's fifth bypass -- `isPackageManagerVersionProbe`, `proof.ts`, is this function's one real
+ * caller so far). `undefined` for exactly the commands `commandWords` itself refuses on syntax (same stage, same
+ * input, same reasoning -- a caller that already calls `commandWords` and checks for `undefined` needs no new
+ * handling to also call this).
+ */
+export function commandWordsWithGlobs(
+  command: string,
+): { readonly words: readonly string[]; readonly globbed: ReadonlySet<number> } | undefined {
+  const syntax = syntaxOf(command);
+  if (syntax.refusal !== undefined) return undefined;
+  return { words: syntax.words, globbed: syntax.globbed };
+}
+
 function syntaxOf(command: string):
   | { readonly refusal: CommandRefusal; readonly words?: undefined; readonly globbed?: undefined }
   | {
