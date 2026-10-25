@@ -61,11 +61,12 @@
  *   thread with a hard terminate is the one generally-sound mitigation `replace-lint.ts` already
  *   named for this exact gap, not a new, cleverer one)
  */
+import { existsSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 
 import { ForgeError } from '@forge/core/errors';
 
-import { WORKER_TS_EXEC_ARGV } from '../../../../../scripts/lib/node-ts-flag.mjs';
+import { getWorkerTsExecArgv } from '../../../../../scripts/lib/worker-ts-exec-argv.mjs';
 import type { NormalizeRule } from './declaration-types.ts';
 import type { NormalizeTargetScope, NormalizeTextOutcome } from './normalize.ts';
 import {
@@ -81,19 +82,47 @@ import {
  * value standing in for it by accident. */
 export const DEFAULT_NORMALIZE_BUDGET_MS = 5000;
 
-const WORKER_URL = new URL('./normalize-worker.ts', import.meta.url);
+/** The real worker SOURCE file, run with no build step in dev/test — never shipped: `package.json`'s
+ * own `files` lists only `dist` and `bin/preflight.cjs`, so this `.ts` file does not exist at all in
+ * a real npm install of this package. */
+const SRC_WORKER_URL = new URL('./normalize-worker.ts', import.meta.url);
 
-/** The worker's own execution flags — Node-version-aware so a `.ts` worker file loads with no build
- * step on every Node this repository supports, not only the versions where
- * `--experimental-strip-types` happens to exist (`Q340`, `SPEC-QUESTIONS.md`): `WORKER_TS_EXEC_ARGV`
- * resolves to the native flag on Node >=22.6, or a hand-written `--import`-registered `load` hook
- * (using the real TypeScript compiler) on Node 20.x, where neither `--experimental-strip-types` nor
- * `tsx` (this repo's own general Node-20 stand-in) work for a `Worker`'s own module loading —
- * confirmed directly (not assumed) that a freshly started worker thread accepts either real
- * mechanism via `execArgv` regardless of which flags started the CALLING process. `--no-warnings`
- * stays a separate, always-present argv element: harmless and unaffected by which TS mechanism is
- * in play. */
-const WORKER_EXEC_ARGV = [...WORKER_TS_EXEC_ARGV, '--no-warnings'];
+/** The real, PRECOMPILED, plain-JS worker entry `tsup.config.ts`'s own second `entry` produces as a
+ * sibling of the published `dist/forge.mjs` — needs no runtime TypeScript understanding, and
+ * therefore no flag, on any Node version. Exists ONLY in a built package (`pnpm build`, or the real
+ * npm-published artifact); never in this repository's own unbundled source tree, where
+ * `src/commands/parity/` has no `dist/` sibling at all — the same safe, non-throwing
+ * `existsSync`-based dev-vs-dist distinction `scripts/bench.mjs`'s own `resolveCliCommand` already
+ * establishes for the identical "this file might be running from source or from a real build"
+ * question. */
+const DIST_WORKER_URL = new URL('./normalize-worker.mjs', import.meta.url);
+
+const WORKER_URL = existsSync(DIST_WORKER_URL) ? DIST_WORKER_URL : SRC_WORKER_URL;
+
+/**
+ * The real, per-`workerUrl` execution flags a `node:worker_threads.Worker` needs — critically, a
+ * precompiled `.mjs`/`.js` worker (the published artifact's own default `DIST_WORKER_URL`, above)
+ * needs NONE of this at all, so `getWorkerTsExecArgv()` — which, on Node 20.x, resolves a real,
+ * on-disk file this package's own published `files` never ships (`scripts/lib/worker-ts-strip-
+ * loader.mjs`) — is called ONLY when `workerUrl` is genuinely a `.ts`-family source file, never
+ * unconditionally at module load.
+ *
+ * `Q340` (`SPEC-QUESTIONS.md`), a real critic finding against the actual built artifact: an EARLIER
+ * version of this fix called the equivalent of `getWorkerTsExecArgv()` eagerly, as a top-level
+ * constant — since this whole module is bundled into the published `dist/forge.mjs`, and ES module
+ * semantics run a module's whole top-level body the instant ANY of its exports are imported, that
+ * meant the published CLI crashed with `Cannot find module` on Node 20 for EVERY command, before any
+ * dispatch or argument parsing even happened — not merely "this one worker path is broken." This
+ * function being both lazy (called only here, at actual `Worker`-creation time) and
+ * extension-gated (skipped entirely for the dist build's own default precompiled worker) closes that
+ * gap at its real root, not merely by deferring the same crash to a later point.
+ */
+function execArgvForWorker(workerUrl: URL): readonly string[] {
+  const needsTypeStripping = /\.(m?ts|cts)$/.test(workerUrl.pathname);
+  // `--no-warnings` stays a separate, always-present argv element regardless: harmless, and
+  // unaffected by which (if any) TS mechanism is in play.
+  return needsTypeStripping ? [...getWorkerTsExecArgv(), '--no-warnings'] : ['--no-warnings'];
+}
 
 /** How many bytes of shared memory are reserved for the worker's own JSON-encoded result, beyond the
  * 8-byte header (`normalize-worker.ts`'s own doc comment has the exact layout) — generous relative to
@@ -152,7 +181,7 @@ export function applyNormalizeRulesToTextBounded(
   const sync = new Int32Array(syncBuffer);
   const resultBuffer = new SharedArrayBuffer(8 + payloadCapacityBytesFor(text));
   const workerData: NormalizeWorkerData = { text, rules, scope, sync, resultBuffer };
-  const worker = new Worker(workerUrl, { execArgv: WORKER_EXEC_ARGV, workerData });
+  const worker = new Worker(workerUrl, { execArgv: [...execArgvForWorker(workerUrl)], workerData });
   // Prevents Node's own default "an unhandled 'error' event crashes the process" behaviour for
   // anything that escapes even `normalize-worker.ts`'s own `process.on('uncaughtException', ...)`
   // handler (a failure before that handler can register at all, such as an import/module-load

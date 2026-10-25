@@ -1,4 +1,4 @@
-import { defineConfig } from 'tsup';
+import { defineConfig, type Options } from 'tsup';
 
 /**
  * Produces the real, single-file `dist/forge.mjs` `02` §2.7 names as the published CLI's own `bin`
@@ -17,20 +17,28 @@ import { defineConfig } from 'tsup';
  * `optionalDependencies` in the published `package.json` is consistent with that existing design, not
  * a new risk.
  *
+ * A SECOND entry, `normalize-worker`, produces `dist/normalize-worker.mjs` — a real, precompiled,
+ * plain-JS build of `normalize-budget.ts`'s own `node:worker_threads.Worker` entry file
+ * (`normalize-worker.ts`). `normalize-worker.ts` itself is never published (`package.json`'s own
+ * `files` lists only `dist` and `bin/preflight.cjs`), so without this, the published CLI's worker
+ * would try to spawn a `.ts` source file that simply does not exist in a real npm install — a real,
+ * confirmed bug this second entry fixes, not a hypothetical one (`SPEC-QUESTIONS.md` Q340):
+ * `normalize-budget.ts` checks for this file's own existence at runtime and prefers it over the raw
+ * `.ts` source whenever it is present (a built package, dev included), needing no Node-version-aware
+ * TypeScript-stripping flag for it at all, since it is already plain, compiled JS.
+ *
  * @see specs/02 §2.7
  * @see specs/23 (open decision #1, P8 update)
+ * @see SPEC-QUESTIONS.md Q340
  */
-export default defineConfig({
-  entry: { forge: 'src/bin.ts' },
-  format: ['esm'],
-  platform: 'node',
+const common = {
+  format: ['esm'] satisfies Options['format'],
+  platform: 'node' as const,
   target: 'node20',
   outDir: 'dist',
-  clean: true,
   splitting: false,
   sourcemap: false,
   dts: false,
-  shims: true,
   minify: false,
   // Every real npm package reachable through the bundled `@forge/*` workspace graph (not just
   // `@forge/cli`'s own direct `dependencies`) must be listed here, or esbuild bundles it in — which
@@ -56,6 +64,25 @@ export default defineConfig({
     'zod-to-json-schema',
   ],
   noExternal: [/^@forge\//],
-  banner: { js: '#!/usr/bin/env node' },
-  outExtension: () => ({ js: '.mjs' }),
-});
+  outExtension: () => ({ js: '.mjs' }) as const,
+};
+
+export default defineConfig([
+  {
+    ...common,
+    entry: { forge: 'src/bin.ts' },
+    clean: true,
+    shims: true,
+    banner: { js: '#!/usr/bin/env node' },
+  },
+  {
+    ...common,
+    entry: { 'normalize-worker': 'src/commands/parity/normalize-worker.ts' },
+    // Not the CLI's own entry point and never run via a shebang — no banner, and `clean: false` so
+    // this second build does not wipe out the first one's own `dist/forge.mjs` (tsup/esbuild's
+    // `clean` option empties the whole `outDir` once, regardless of which entry triggers it; only
+    // ONE of this array's two configs may safely set it `true`).
+    clean: false,
+    shims: false,
+  },
+]);

@@ -48,6 +48,18 @@
  * this repo runs in (local dev, CI) is the identical binary the parent is already running; there is no
  * mechanism anywhere in this codebase that spawns a *different* Node version as a child.
  *
+ * **This file is never imported by any SHIPPED production source, and must stay that way.** Its own
+ * `TS_NODE_FLAG` eagerly resolves `tsx/esm` (a devDependency never shipped to a real npm consumer) the
+ * instant ANY of this module's exports are imported — ES module semantics run a module's whole
+ * top-level body on any import, not only the specific binding actually used. Every real caller today
+ * is a test file or `packages/cli/bin/forge.mjs` (a dev-only wrapper, excluded from `package.json`'s
+ * own `files`, never published) — both fine, since neither is ever bundled into
+ * `packages/cli/dist/forge.mjs`. `packages/cli/src/commands/parity/normalize-budget.ts` (a real,
+ * shipped file) needs the identical Node-20 stand-in for its own `Worker`'s `execArgv`, which is
+ * exactly why that need was split into its own, separate, LAZY module instead of being added here —
+ * see `./worker-ts-exec-argv.mjs`'s own doc comment for the real crash this split exists to prevent
+ * (a critic found it live, against the real built artifact, `SPEC-QUESTIONS.md` Q340).
+ *
  * @see SPEC-QUESTIONS.md Q340
  * @see specs/02 §2.1
  * @see PLAN-M17.md P16
@@ -55,29 +67,11 @@
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
+import { SUPPORTS_NATIVE_STRIP_TYPES, supportsNativeStripTypes } from './node-version.mjs';
+
 const require = createRequire(import.meta.url);
 
-/**
- * True iff the given `node` version string (`process.versions.node`'s own format, e.g. `"22.6.0"`)
- * understands `--experimental-strip-types` natively (Node >=22.6.0). A pure function of its one
- * argument, with no dependency on the currently running process, so `node-ts-flag.test.ts` can pin
- * the exact version boundary (22.5.x false, 22.6.0 true, every 20.x false, every 24.x true) without
- * needing a second real Node binary installed to prove it.
- *
- * @param {string} nodeVersion
- */
-export function supportsNativeStripTypes(nodeVersion) {
-  const [majorStr, minorStr] = nodeVersion.split('.');
-  const major = Number(majorStr);
-  const minor = Number(minorStr);
-  return major > 22 || (major === 22 && minor >= 6);
-}
-
-/** True iff the CURRENTLY RUNNING `node` binary understands `--experimental-strip-types` natively
- * (Node >=22.6.0) — exported so a caller that needs to branch on more than just the flag string
- * itself (e.g. whether to also expect Node's own `ExperimentalWarning`) does not have to re-derive
- * this from `process.versions.node` a second time. */
-export const SUPPORTS_NATIVE_STRIP_TYPES = supportsNativeStripTypes(process.versions.node);
+export { SUPPORTS_NATIVE_STRIP_TYPES, supportsNativeStripTypes };
 
 /** The single `node` CLI argv element that makes a child `node <TS_NODE_FLAG> some-file.ts`
  * invocation understand TypeScript syntax, chosen for the Node binary this process is actually
@@ -89,23 +83,3 @@ export const SUPPORTS_NATIVE_STRIP_TYPES = supportsNativeStripTypes(process.vers
 export const TS_NODE_FLAG = SUPPORTS_NATIVE_STRIP_TYPES
   ? '--experimental-strip-types'
   : `--import=${pathToFileURL(require.resolve('tsx/esm')).href}`;
-
-/**
- * The `execArgv` a `node:worker_threads.Worker` needs to understand real TypeScript syntax in its
- * own entry file, chosen for the Node binary this process is actually running under.
- *
- * NOT simply `[TS_NODE_FLAG]`: confirmed live, empirically, that `tsx` does not work for a `Worker`'s
- * own module loading on Node 20.x — `tsx`'s own hooks module silently installs nothing when loaded
- * via `--import` through a `Worker`'s own `execArgv` (the `.ts` load then fails downstream with
- * `ERR_UNKNOWN_FILE_EXTENSION`, as if no loader were registered at all). `./worker-ts-strip-
- * loader.mjs` is a hand-written, generic `--import`-registered `load` hook (using the real
- * TypeScript compiler, `ts.transpileModule`, for the actual syntax stripping) that IS confirmed to
- * work for a `Worker`'s own `execArgv` on a real Node 20.19.6 binary — the one call site in this
- * repository that genuinely needs a different mechanism from every other real spawn site.
- *
- * @see scripts/lib/worker-ts-strip-loader.mjs
- * @see packages/cli/src/commands/parity/normalize-budget.ts
- */
-export const WORKER_TS_EXEC_ARGV = SUPPORTS_NATIVE_STRIP_TYPES
-  ? ['--experimental-strip-types']
-  : [`--import=${pathToFileURL(require.resolve('./worker-ts-strip-loader.mjs')).href}`];

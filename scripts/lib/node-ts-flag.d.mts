@@ -7,4 +7,3 @@
 export declare function supportsNativeStripTypes(nodeVersion: string): boolean;
 export declare const SUPPORTS_NATIVE_STRIP_TYPES: boolean;
 export declare const TS_NODE_FLAG: string;
-export declare const WORKER_TS_EXEC_ARGV: readonly string[];
