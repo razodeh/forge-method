@@ -77,13 +77,26 @@ import {
 import { execa } from 'execa';
 import { minimatch } from 'minimatch';
 
+import { resolvePosixShell } from './posix-shell.ts';
 import { expandTrustedInvocation } from './test-path.ts';
 
 /** The variables a confined child inherits, and no others. A build or a test needs a `PATH`, a home directory, a
  * locale, a terminal type, a time zone and a temp directory; nothing here can carry a credential. Everything else
  * in the parent environment is dropped, which is the point: `ANTHROPIC_API_KEY`, `AWS_*`, `GITHUB_TOKEN`,
  * `NPM_TOKEN`, `SSH_AUTH_SOCK`, `GOOGLE_APPLICATION_CREDENTIALS` and whatever the next tool invents are refused by
- * not being on a list, not by matching a list of bad names (which is always one name behind). */
+ * not being on a list, not by matching a list of bad names (which is always one name behind).
+ *
+ * The Windows names for the same real-world things a POSIX child needs: no `HOME` (`USERPROFILE`, or the older
+ * `HOMEDRIVE`+`HOMEPATH` pair some tools still read), no `USER`/`LOGNAME` (`USERNAME`), no `SHELL` (`COMSPEC`, the
+ * default-shell variable cmd.exe itself sets), plus `PATHEXT` (without it, Windows cannot resolve a bare command
+ * name to `name.exe`/`.cmd`/`.bat` at all — the direct Windows analogue of a POSIX child needing `PATH` itself) and
+ * `APPDATA`/`LOCALAPPDATA` (where `npm`/`pnpm`/`corepack` and most Node tooling keep their own config/cache on
+ * Windows, the same role `HOME`-relative dotfiles play on POSIX). `scrubbedEnvironment` below matches every name
+ * here case-insensitively for exactly this reason: Node's own real `process.env` on Windows commonly spells this
+ * list's own `PATH` as `Path` (and `Path`/`PATH`/`path` are all the same variable to the OS) — a case-sensitive
+ * `.includes` check against the literal `'PATH'` would silently drop it from a real Windows child's environment,
+ * leaving every confined command unable to resolve any program at all, not merely the ones this allowlist means to
+ * exclude. */
 export const CONFINED_ENV_ALLOWLIST: readonly string[] = [
   'PATH',
   'HOME',
@@ -100,6 +113,14 @@ export const CONFINED_ENV_ALLOWLIST: readonly string[] = [
   'CI',
   'NO_COLOR',
   'SYSTEMROOT',
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'USERNAME',
+  'COMSPEC',
+  'PATHEXT',
+  'APPDATA',
+  'LOCALAPPDATA',
 ];
 
 /** Locale variables come as a family (`LC_ALL`, `LC_CTYPE`, ...). */
@@ -112,15 +133,31 @@ const CONFINED_ENV_FIXED: Readonly<Record<string, string>> = {
   PAGER: 'cat',
 };
 
+/** git's own null device, by platform: POSIX `/dev/null`, or Windows' `NUL` (no leading slash — it is a reserved
+ * device name resolved from any directory, not a filesystem path `path.join`/`path.resolve` could build). Getting
+ * this wrong on Windows would not just error loudly: a `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` git cannot open as
+ * the null device could instead fall back to reading the user's or the system's REAL config, silently reopening
+ * exactly the alias/credential-helper/`core.hooksPath` hole `PROPOSED_ENV_FIXED` exists to close. */
+const GIT_NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
+
 /** Added only for a command a model proposed: git reads neither the user's nor the system's config, so an alias
  * (`alias.x = !sh ...`), a credential helper or a `core.hooksPath` the user set cannot be reached through `git *`. */
 export const PROPOSED_ENV_FIXED: Readonly<Record<string, string>> = {
-  GIT_CONFIG_GLOBAL: '/dev/null',
-  GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_CONFIG_GLOBAL: GIT_NULL_DEVICE,
+  GIT_CONFIG_SYSTEM: GIT_NULL_DEVICE,
   GIT_CONFIG_NOSYSTEM: '1',
 };
 
-/** `parent` reduced to `CONFINED_ENV_ALLOWLIST` (and the `LC_` family) plus the fixed values. Pure. */
+const CONFINED_ENV_ALLOWLIST_LOWER: ReadonlySet<string> = new Set(
+  CONFINED_ENV_ALLOWLIST.map((name) => name.toLowerCase()),
+);
+
+/** `parent` reduced to `CONFINED_ENV_ALLOWLIST` (and the `LC_` family) plus the fixed values. Pure.
+ *
+ * Matched case-insensitively (see `CONFINED_ENV_ALLOWLIST`'s own doc comment): the key this function keeps is
+ * `parent`'s own original spelling, never a renamed/canonicalised one, since a Windows child looks its own `PATH`
+ * (or `Path`) up the same, case-insensitive way the OS always does, and a second, differently-cased entry would
+ * only risk two competing values rather than fix anything. */
 export function scrubbedEnvironment(
   parent: Readonly<Record<string, string | undefined>>,
   extra: Readonly<Record<string, string>> = {},
@@ -128,9 +165,10 @@ export function scrubbedEnvironment(
   const result: Record<string, string> = {};
   for (const [name, value] of Object.entries(parent)) {
     if (value === undefined) continue;
+    const lower = name.toLowerCase();
     const allowed =
-      CONFINED_ENV_ALLOWLIST.includes(name) ||
-      CONFINED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix));
+      CONFINED_ENV_ALLOWLIST_LOWER.has(lower) ||
+      CONFINED_ENV_PREFIXES.some((prefix) => lower.startsWith(prefix.toLowerCase()));
     if (allowed) result[name] = value;
   }
   return { ...result, ...CONFINED_ENV_FIXED, ...extra };
@@ -1368,11 +1406,18 @@ export async function runConfinedCommand(
   options: ConfinedRunOptions,
 ): Promise<ConfinedCommandResult> {
   const env = scrubbedEnvironment(options.parentEnv, options.extraEnv);
+  // `extendEnv: false` on both branches below means `env` (not the real `process.env`) is exactly what
+  // this child sees, so `resolvePosixShell` must search `env`'s own `PATH` — the real `PATH` lookup this
+  // spawn actually performs — not the ambient one. `vetProposedCommand`/`vetStoredCommand` already parse
+  // `command` assuming a real POSIX shell (`splitWords`'s own quoting/expansion model, `posix-shell.ts`'s
+  // own doc comment); this is what makes that assumption true on Windows, when `env`'s `PATH` actually has
+  // one. Both the `preserveRawOutput` branch just below and the default branch after it need this: neither
+  // is "the" call this module makes, there are genuinely two now.
 
   if (options.preserveRawOutput === true) {
     const subprocess = execa(command, {
       cwd,
-      shell: true,
+      shell: resolvePosixShell(env),
       reject: false,
       env,
       extendEnv: false,
@@ -1406,7 +1451,7 @@ export async function runConfinedCommand(
   // comment for why it is not unified with the branch above.
   const subprocess = execa(command, {
     cwd,
-    shell: true,
+    shell: resolvePosixShell(env),
     reject: false,
     env,
     extendEnv: false,

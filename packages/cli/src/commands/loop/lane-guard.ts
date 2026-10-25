@@ -42,11 +42,18 @@ export interface LaneGuard {
   commit(message: string, sign: boolean): Promise<string>;
 }
 
+/** git's own null device, by platform: POSIX `/dev/null`, or Windows' `NUL` (a reserved device name, not a
+ * filesystem path) — the identical reasoning `@forge/engine/dispatch/confined-command.ts`'s own
+ * `GIT_NULL_DEVICE` doc comment gives: a `core.hooksPath`/`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` git
+ * cannot resolve as the null device could fall back to the user's or the system's REAL hooks/config
+ * instead of erroring, silently reopening exactly the hole each exists to close. */
+const GIT_NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
+
 const GUARD_CONFIG: readonly string[] = [
   '-c',
   'core.fsmonitor=false',
   '-c',
-  'core.hooksPath=/dev/null',
+  `core.hooksPath=${GIT_NULL_DEVICE}`,
 ];
 
 export async function createLaneGuard(
@@ -58,8 +65,8 @@ export async function createLaneGuard(
   // Every call but the commit reads neither the user's nor the system's git config: `.gitattributes` `filter=` and
   // textconv drivers from it would otherwise run on session-written files before any scan.
   const env = scrubbedEnvironment(parentEnv, {
-    GIT_CONFIG_GLOBAL: '/dev/null',
-    GIT_CONFIG_SYSTEM: '/dev/null',
+    GIT_CONFIG_GLOBAL: GIT_NULL_DEVICE,
+    GIT_CONFIG_SYSTEM: GIT_NULL_DEVICE,
     GIT_CONFIG_NOSYSTEM: '1',
   });
   const state = { tampered: false };

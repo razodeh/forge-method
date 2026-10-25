@@ -548,6 +548,35 @@ describe('scrubbedEnvironment: an allowlist, not a blocklist', () => {
       expect(name).not.toMatch(/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|SOCK|AUTH/i);
     }
   });
+
+  it('matches a name case-insensitively, so a real Windows process environment (commonly `Path`, not `PATH`) is not silently dropped', () => {
+    const env = scrubbedEnvironment({
+      Path: 'C:\\Windows\\system32',
+      UserProfile: 'C:\\Users\\dev',
+      ANTHROPIC_API_KEY: 'sk-ant-canary',
+    });
+    // The caller's own original spelling is kept — never renamed to a canonical `PATH`/`USERPROFILE` —
+    // since that is the one a real Windows PATH lookup for the SAME variable already matches regardless
+    // of case; a second, differently-cased entry would only risk two competing values.
+    expect(env['Path']).toBe('C:\\Windows\\system32');
+    expect(env['UserProfile']).toBe('C:\\Users\\dev');
+    expect(JSON.stringify(env)).not.toMatch(/canary/);
+  });
+
+  it('keeps every Windows equivalent of an already-allowed POSIX variable (a home directory, PATH extension resolution, a per-user cache)', () => {
+    const parent = {
+      USERPROFILE: 'C:\\Users\\dev',
+      HOMEDRIVE: 'C:',
+      HOMEPATH: '\\Users\\dev',
+      USERNAME: 'dev',
+      COMSPEC: 'C:\\Windows\\System32\\cmd.exe',
+      PATHEXT: '.COM;.EXE;.BAT;.CMD',
+      APPDATA: 'C:\\Users\\dev\\AppData\\Roaming',
+      LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local',
+    };
+    const env = scrubbedEnvironment(parent);
+    expect(env).toMatchObject(parent);
+  });
 });
 
 describe('runConfinedCommand: what actually reaches the child', () => {

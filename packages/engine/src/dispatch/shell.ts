@@ -11,6 +11,8 @@ import { execFileSync } from 'node:child_process';
 
 import { execa } from 'execa';
 
+import { resolvePosixShell } from './posix-shell.ts';
+
 export interface ShellCommandResult {
   readonly stdout: string;
   readonly stderr: string;
@@ -31,10 +33,11 @@ export interface ShellLimits {
   readonly maxOutputBytes?: number;
 }
 
-/** `shell: true` — every real command this module ever runs (`10` §10.3's own gate checks, a `command`-
- * kind step's own `run`, a merge policy's own `preChecks`/`postChecks`) is authored as one shell-syntax
- * string with flags (`"forge spec validate --json"`), not a pre-split argv array; `execa`'s own shell mode
- * is what makes a single string like that runnable at all. `reject: false` — this function reports an
+/** `shell: true` (or a real POSIX shell found via `resolvePosixShell`, see that module's own doc comment)
+ * — every real command this module ever runs (`10` §10.3's own gate checks, a `command`-kind step's own
+ * `run`, a merge policy's own `preChecks`/`postChecks`) is authored as one shell-syntax string with flags
+ * (`"forge spec validate --json"`), not a pre-split argv array; `execa`'s own shell mode is what makes a
+ * single string like that runnable at all. `reject: false` — this function reports an
  * exit code as data for its own caller to interpret (a `command` step's own outcome, a gate's own `failOn`
  * evaluation, a merge check's own pass/fail), the identical "never throw on a nonzero exit, that is not
  * this layer's failure" stance `@forge/engine/gates`' own `CheckRunner` contract already establishes —
@@ -57,10 +60,16 @@ export async function runShellCommand(
   // entirely — execa's own `Options.env` has no `| undefined` in its own declared type, so this project's
   // own stricter setting rejects passing the key at all when this function's own caller didn't supply one,
   // not just a bare `undefined` value for it.
+  //
+  // `resolvePosixShell` is only consulted when a real `env` was given: R10 forbids this module reading the
+  // real `process.env` itself (no composition-root role of its own — the real environment always arrives
+  // as a parameter, `commandStepEnvironment`/`gateEnv`/a test's own fixture), so the `env === undefined`
+  // case (every real caller today always supplies one; only a bare, env-less test call does not) keeps
+  // today's exact `shell: true` — not a regression, since that is what it already was.
   const result =
     env === undefined
       ? await execa(command, { cwd, shell: true, reject: false })
-      : await execa(command, { cwd, shell: true, reject: false, env });
+      : await execa(command, { cwd, shell: resolvePosixShell(env), reject: false, env });
   return { stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode ?? 1 };
 }
 
@@ -160,7 +169,9 @@ async function runLimitedShellCommand(
 ): Promise<ShellCommandResult> {
   const base = {
     cwd,
-    shell: true,
+    // See `runShellCommand`'s own identical comment: `resolvePosixShell` is only consulted when a real
+    // `env` was given (R10 — this module never reads the real `process.env` itself).
+    shell: env === undefined ? true : resolvePosixShell(env),
     reject: false,
     // A group of its own, so `killGroup` can end everything the command started. The command therefore no
     // longer receives the terminal's Ctrl-C; the signal handlers below end it when this process is signalled.
