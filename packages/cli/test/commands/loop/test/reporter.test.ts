@@ -770,12 +770,24 @@ describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F
       kind: 'load',
       file: 'test_broken_module',
     });
-    expect(result.report.outcomes[0]?.name).toContain('file failed to load');
-    // `message` (Q346, round 5): the real collection-failure detail -- already folded into `name`
-    // above -- is ALSO threaded through as its own `message` field now, matching the ordinary
-    // per-testcase branch this same function already fixed in round 4 (a round-4 critic found this
-    // branch alone had been left out, the detail computed but only ever used for the display name).
-    expect(result.report.outcomes[0]?.message).toBeTruthy();
+    // `message` (Q346, rounds 5-6): `name` carries ONLY the unqualified "file failed to load" shape
+    // -- an exact match, not `toContain`, is the point: round 5 threaded the real collection-failure
+    // detail through as its own `message` field but LEFT it folded into `name` too, so a real
+    // failure printed the full traceback TWICE, back-to-back, in actual CLI output (round-6 critic,
+    // live reproduction through the real `forge` CLI). A `toContain` check here cannot tell "name
+    // carries only the unqualified phrase" apart from "name also carries the duplicated detail" --
+    // it passes either way, which is exactly how this regression shipped with zero automated
+    // coverage until a round-7 critic caught it manually. The exact match below fails on either the
+    // round-5 shape (detail folded into name) or a hypothetical reversion that drops the unqualified
+    // suffix entirely.
+    expect(result.report.outcomes[0]?.name).toBe('test_broken_module (file failed to load)');
+    const message = result.report.outcomes[0]?.message;
+    expect(message).toBeTruthy();
+    // Belt-and-suspenders: the real detail text itself must never also appear inside `name` --
+    // restates the same guarantee the exact match above already proves, directly in terms of the
+    // double-print bug's own shape, rather than relying solely on one literal string staying in sync
+    // with pytest's own real output.
+    expect(result.report.outcomes[0]?.name.includes(message ?? '')).toBe(false);
   });
 
   it('pytest: --continue-on-collection-errors lets a sibling, healthy module still run and report, rather than the whole session silently dropping it', async () => {
