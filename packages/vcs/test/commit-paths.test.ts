@@ -205,6 +205,37 @@ describe('commitPaths', () => {
     expect(await status(cwd)).toEqual([]);
   });
 
+  it('commits a real path literally named with a leading ".." (not a real escape) -- assertPathWithinRepo\'s own raw string-prefix check used to misread this as one, throwing VCS-COMMIT-PATH-ESCAPES-REPO for a file that never left the repository', async () => {
+    const cwd = await createTempRepo();
+    await writeFile(path.join(cwd, '..config'), 'a: 1\n');
+
+    const result = await commitPaths(cwd, {
+      paths: ['..config'],
+      message: 'forge(config): set a',
+      sign: false,
+    });
+
+    expect(result.committed).toBe(true);
+    expect(result.sha).toMatch(/^[0-9a-f]{40}$/);
+    const { stdout: showFiles } = await execa(
+      'git',
+      ['show', '--name-only', '--format=', result.sha],
+      { cwd },
+    );
+    expect(showFiles.split('\n').filter(Boolean)).toEqual(['..config']);
+  });
+
+  it('still refuses a real ".." escape through the same real call site, immediately alongside the literal-leading-".." case above', async () => {
+    const cwd = await createTempRepo();
+    await expect(
+      commitPaths(cwd, { paths: ['../escaped.txt'], message: 'x', sign: false }),
+    ).rejects.toThrow(VcsError);
+    await expect(commitPaths(cwd, { paths: ['..'], message: 'x', sign: false })).rejects.toThrow(
+      VcsError,
+    );
+    expect(await status(cwd)).toEqual([]);
+  });
+
   it('commits as the first real commit on an unborn HEAD', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'forge-vcs-commit-paths-unborn-'));
     await execa('git', ['init', '--quiet'], { cwd: dir });

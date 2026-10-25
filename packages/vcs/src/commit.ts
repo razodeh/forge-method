@@ -217,7 +217,15 @@ function assertPathWithinRepo(cwd: string, relativePath: string): void {
   }
   const resolved = path.resolve(cwd, relativePath);
   const relativeToCwd = path.relative(cwd, resolved);
-  if (relativeToCwd.startsWith('..') || path.isAbsolute(relativeToCwd)) {
+  // The first path SEGMENT must be checked, not a raw string prefix: `path.relative` can return a
+  // literal `'...'` (e.g. for a real commit path like `'...'` or `'..foo.txt'`), and
+  // `'...'.startsWith('..')` is `true` purely because the first two characters coincidentally match,
+  // even though `...`/`..foo.txt` name a real file inside `cwd`, never a `..` parent-directory escape.
+  if (
+    relativeToCwd === '..' ||
+    relativeToCwd.startsWith('..' + path.sep) ||
+    path.isAbsolute(relativeToCwd)
+  ) {
     throw new VcsError({
       code: 'VCS-COMMIT-PATH-ESCAPES-REPO',
       message: `Commit path "${relativePath}" resolves outside the repository at "${cwd}".`,
