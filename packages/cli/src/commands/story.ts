@@ -171,6 +171,12 @@ export interface StoryVerifyContext {
   readonly testCommands: TestCommands;
   readonly flakeConfig?: TestRunContext['flakeConfig'];
   readonly runTests?: TestRunner;
+  /** The real environment every real shelled test/lint/typecheck/binding command this file runs
+   * executes with (`bin.ts`'s own `realEnvSnapshot()`, R10). Absent (a bare, env-less test call):
+   * every `runShellCommand`/`runAndNormalize`/`runStructuredTestLayer` call below keeps `shell: true`
+   * unconditionally — its own pre-existing fallback, never a regression; only a caller that supplies
+   * a real one gets `resolvePosixShell` consulted for it on Windows. */
+  readonly env?: TestRunContext['env'];
   /** `execution.testRoots`, passed straight to `validateTestPath`'s matching rule (`PLAN-M14.md` P26) for a
    * ` --scope story` check's own expanded test-path list. `undefined` (the project configures none) falls
    * back to `validateTestPath`'s own built-in `isTestPath` rule — the identical fallback every other real
@@ -560,6 +566,7 @@ async function runRule(ctx: StoryVerifyContext, rule: 'lint' | 'typecheck'): Pro
       testCommands: ctx.testCommands,
       persistState: false,
       ...(ctx.flakeConfig !== undefined ? { flakeConfig: ctx.flakeConfig } : {}),
+      ...(ctx.env !== undefined ? { env: ctx.env } : {}),
     },
     { rule },
     () => createSystemTempPath('forge-story-verify'),
@@ -608,6 +615,7 @@ async function runLayer(
       testCommands: { [layer]: command },
       persistState: false,
       ...(ctx.flakeConfig !== undefined ? { flakeConfig: ctx.flakeConfig } : {}),
+      ...(ctx.env !== undefined ? { env: ctx.env } : {}),
     },
     files !== undefined ? { files } : {},
     () => createSystemTempPath('forge-story-verify'),
@@ -734,6 +742,7 @@ async function checkBinding(ctx: StoryVerifyContext, story: Story): Promise<Reso
     baseRevision: 'HEAD~1',
     clock: SYSTEM_CLOCK,
     createTempPath: () => createSystemTempPath('forge-story-verify'),
+    ...(ctx.env !== undefined ? { env: ctx.env } : {}),
   });
   if (result.outcome === 'no-test-paths') {
     return {

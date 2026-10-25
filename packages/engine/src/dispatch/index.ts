@@ -146,6 +146,7 @@ export {
   type TrustedInvocationMatch,
 } from './test-path.ts';
 export { runShellCommand, type ShellCommandResult, type ShellLimits } from './shell.ts';
+export { resolvePosixShell } from './posix-shell.ts';
 export type { AgentWorkOptions } from './steps.ts';
 export type {
   AskPort,

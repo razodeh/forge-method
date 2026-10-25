@@ -109,6 +109,7 @@ export async function runRawBindingCheck(
     clock,
     createTempPath: () => createSystemTempPath('forge-test-binding'),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    env: realEnvSnapshot(),
   };
   const { outcome: result, hunkMutation } =
     hunkOptions === undefined

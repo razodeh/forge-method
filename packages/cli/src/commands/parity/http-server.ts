@@ -49,7 +49,7 @@ import { createServer } from 'node:net';
 import http from 'node:http';
 
 import { ForgeError } from '@forge/core/errors';
-import { killGroup, scrubbedEnvironment } from '@forge/engine/dispatch';
+import { killGroup, resolvePosixShell, scrubbedEnvironment } from '@forge/engine/dispatch';
 import { execa } from 'execa';
 
 import type { HttpReadinessProbe } from './declaration-types.ts';
@@ -201,15 +201,19 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
   // (`pid`, `exitCode`, `signalCode`, `on`, `kill`, and the promise interface) this function uses.
   // `reject: false` means this promise ALWAYS resolves, never rejects -- confirmed by direct
   // experiment, not assumed (this piece's own report has the transcript): even a completely missing
-  // program resolves, because `shell: true` means the SHELL always spawns successfully and reports
-  // the failure (a real `/bin/sh`-reported exit code, 127 for "command not found") as an ordinary
-  // non-zero exit, which `reject: false` folds into the resolved result rather than a rejection --
-  // execa's own documented contract for the option. So, under `shell: true` specifically, there is no
-  // live "failed to spawn at all" case for this module to detect SEPARATELY from an ordinary non-zero
-  // exit, and no promise here ever needs a `.catch()`.
+  // program resolves, because the shell always spawns successfully and reports the failure (a real
+  // exit code, 127 for "command not found" under a POSIX shell) as an ordinary non-zero exit, which
+  // `reject: false` folds into the resolved result rather than a rejection -- execa's own documented
+  // contract for the option. So, under a real shell specifically, there is no live "failed to spawn
+  // at all" case for this module to detect SEPARATELY from an ordinary non-zero exit, and no promise
+  // here ever needs a `.catch()`. `resolvePosixShell(env)` (M17 #18): `options.run` is an author-
+  // vetted command FORGE itself never authored in a POSIX dialect, same as `confined-command.ts`'s
+  // own `preserveRawOutput` call site reuses it for the identical reason -- `true` (cmd.exe) on every
+  // platform but Windows, where a real `bash` on `env`'s own `PATH` replaces it; falls back to `true`
+  // when none is found, the exact behaviour this call already had.
   const subprocess = execa(options.run, {
     cwd: options.root,
-    shell: true,
+    shell: resolvePosixShell(env),
     env,
     extendEnv: false,
     stdin: 'ignore',
@@ -219,14 +223,20 @@ export async function startHttpServer(options: StartHttpServerOptions): Promise<
 
   const pid = subprocess.pid;
   if (pid === undefined) {
-    // Unreachable under `shell: true` (see this function's own report section), kept only because
-    // `Subprocess['pid']` is typed `number | undefined` and a silent `!`/`as` past that would be an
-    // unexplained `as` this piece's own `QUALITY-BAR.md` R1 refuses -- the identical "already proven
-    // impossible, reported the same way as a real unreachable branch" shape `observe.ts`'s own
-    // `composeArgs` re-check already uses.
-    throw new Error(
-      `unreachable: execa with shell:true never leaves "pid" undefined, for ${options.run}`,
-    );
+    // Genuinely unreachable under `shell: true` (this function's own report section has the direct
+    // experiment that confirmed it: the shell itself always spawns, even for a missing program). NOT
+    // equally unreachable any more under `resolvePosixShell`'s own real-`bash`-path branch (M17 #18):
+    // that path names a real file `isFile()` confirmed moments earlier, not the OS's own always-
+    // present default shell, so a genuine race (deleted between the check and the spawn, denied by an
+    // antivirus/EDR hook, a corrupt binary) is a real, if rare, possibility specifically on Windows --
+    // disclosed, unverified without a real Windows rig to force it. Reported as a real, typed
+    // `RUN-148` (the identical "the server never came up" bucket a child that exited before its
+    // readiness probe already uses below), never a bare, uncaught "unreachable" throw, since this is
+    // no longer provably impossible.
+    throw new ForgeError('RUN-148', {
+      command: options.run,
+      detail: 'the process could not be started at all (no pid was ever assigned)',
+    });
   }
 
   /** Whether the child has already ended, by any means this module can see: `exitCode`/`signalCode`

@@ -87,6 +87,33 @@ async function writeHangingScript(project: TestProject, id: string): Promise<voi
   await put(project, `${SCRIPTS_DIR}/${id}.mjs`, 'setInterval(() => {}, 1000);\n');
 }
 
+/** The exact shape a real migration script's own dependency can produce (specs/22 M16 P10,
+ * `SPEC-QUESTIONS.md` Q296): a `detached: true` Node grandchild (Node's own, direct equivalent of
+ * `setsid(2)`) that writes its own real pid to `markerRelativePath` (project-root-relative, since the
+ * script's own `cwd` is `projectRoot`), then blocks the event loop with a synchronous busy loop --
+ * unreachable by anything that relies on `setTimeout`/signal handling inside it, so only an external
+ * SIGKILL by pid can end it. The script itself (the migration's own top-level process) also busy-loops
+ * after spawning and never exits on its own, so the real timeout below -- not an early exit -- is what
+ * has to end it; by that point the grandchild, spawned in the script's very first statement, has
+ * certainly already written its marker. Mirrors `shell.test.ts`'s own identical fixture verbatim in
+ * shape, since this is `runMigrationScript`'s own direct analogue of exactly the same real-world risk. */
+async function writeHangingScriptWithDetachedGrandchild(
+  project: TestProject,
+  id: string,
+  markerRelativePath: string,
+): Promise<void> {
+  await put(
+    project,
+    `${SCRIPTS_DIR}/${id}.mjs`,
+    "import { spawn } from 'node:child_process';\n" +
+      `const child = spawn(process.execPath, ['-e', ${JSON.stringify(
+        "require('node:fs').writeFileSync(process.argv[1], String(process.pid));\nfor (;;) { /* busy */ }\n",
+      )}, ${JSON.stringify(markerRelativePath)}], { detached: true, stdio: 'ignore' });\n` +
+      'child.unref();\n' +
+      'for (;;) { /* the script hangs too, so the real timeout -- not an early exit -- ends it */ }\n',
+  );
+}
+
 /** Every real line `applied.log` holds — one per genuine script invocation, named by id — or `[]`
  * when no counting script has ever run. */
 async function appliedLogEntries(project: TestProject): Promise<readonly string[]> {
@@ -472,6 +499,46 @@ describe('migrateRun: per-entry failure modes (QUALITY-BAR.md R6) (specs/22 M17 
     expect(outcome.result).toMatchObject({ applied: [], failed: 1, errors: 0 });
     expect(outcome.result.problems?.[0]).toContain('timed out');
     expect(outcome.result.problems?.[0]).toContain('killed');
+  }, 15_000);
+
+  it('a timed-out script does not leave a detached grandchild running (specs/22 M16 P10, SPEC-QUESTIONS.md Q296): runMigrationScript must kill the whole real process tree, not only the script itself', async () => {
+    const project = await createTestProject();
+    await writeMigrations(
+      project,
+      `migrations:
+  - id: alpha-expand
+    phase: expand
+    release: 1
+`,
+    );
+    const markerRelativePath = 'grandchild.pid';
+    await writeHangingScriptWithDetachedGrandchild(project, 'alpha-expand', markerRelativePath);
+
+    const outcome = await migrateRun(
+      ctx(project),
+      project.dir,
+      { phase: 'expand' },
+      FAKE_CLOCK,
+      500, // scriptTimeoutMs -- a real, short timeout, test-injected (never reachable from the CLI).
+    );
+
+    if (outcome.kind !== 'ok') throw new Error('expected a real result');
+    expect(outcome.result).toMatchObject({ applied: [], failed: 1, errors: 0 });
+    expect(outcome.result.problems?.[0]).toContain('timed out');
+
+    const markerPath = path.join(project.dir, markerRelativePath);
+    const pid = Number((await readFile(markerPath, 'utf8')).trim());
+    expect(Number.isInteger(pid)).toBe(true);
+    // `kill -0`: the standard liveness probe, sends no real signal.
+    let alive = true;
+    try {
+      process.kill(pid, 0);
+    } catch {
+      alive = false;
+    }
+    expect(alive, `detached grandchild pid ${String(pid)} must not survive the timeout kill`).toBe(
+      false,
+    );
   }, 15_000);
 });
 
@@ -907,11 +974,13 @@ async function writeSlowCountingScript(
 }
 
 /** Every real descendant of `rootPid`, found by walking `ps`'s own real pid/ppid columns -- the
- * identical technique `@forge/engine/dispatch`'s own internal `listDescendantPids` (`shell.ts`) uses,
- * reproduced here because that function is module-private. Needed for real: `runMigrationScript`'s
- * own `runShellCommand` call runs with real `limits` (a `timeoutMs`), which routes through
- * `runLimitedShellCommand`'s own `detached: true` -- the shell it spawns for a migration script
- * becomes the leader of a NEW process group of its OWN, separate from bin.ts's. A plain
+ * identical technique `@forge/engine/dispatch`'s own exported `listDescendantPids`
+ * (`confined-command.ts`) uses, reproduced here rather than imported so this test keeps verifying the
+ * REAL process tree from the outside, not merely trusting that `runMigrationScript`'s own call to that
+ * same exported function did its job. Needed for real: `runMigrationScript` spawns `node` directly as
+ * its own `detached: true` process (M17 #18 rewrote it away from a shell string through
+ * `runShellCommand`/`runLimitedShellCommand` entirely -- a real argv array now, no shell involved at
+ * all), which makes it the leader of a NEW process group of its own, separate from bin.ts's. A plain
  * `process.kill(-pid, 'SIGKILL')` aimed at bin.ts's own group therefore can never reach it (confirmed
  * live: a first attempt using only that technique still left the script's own process alive,
  * orphaned, after the "kill" -- it finished on its own later and appended a second, genuinely
@@ -1068,14 +1137,15 @@ describe('a real SIGKILL between two successfully-applied entries (R9: proven, n
       }
     }
     // A plain `child.kill('SIGKILL')` (or even a process-GROUP kill of bin.ts's own group) is not
-    // enough here, confirmed live: `runMigrationScript`'s own `runShellCommand` call runs with real
-    // `limits` (a `timeoutMs`), which routes through `@forge/engine/dispatch`'s own
-    // `runLimitedShellCommand` -- its own `detached: true` makes the shell it spawns for entry-3's
-    // script the leader of a NEW process group of its OWN, separate from bin.ts's. SIGKILL is also
-    // never catchable, so bin.ts's own `onExit` signal-cleanup logic (the same file, for a signal it
-    // CAN catch) never runs either. `killProcessTree` walks and kills the whole real descendant tree
-    // instead, the identical technique `@forge/engine/dispatch`'s own internal `killGroup` uses for
-    // the identical, doc-commented reason: "a descendant that started its own session... becomes the
+    // enough here, confirmed live: `runMigrationScript` spawns `node` directly as its own
+    // `detached: true` process for entry-3's script (M17 #18 rewrote it away from a shell string
+    // through `runShellCommand`/`runLimitedShellCommand` entirely -- a real argv array now, timed out
+    // and killed via `@forge/engine/dispatch`'s own exported `killGroup`, not a hand-rolled timer),
+    // which makes IT the leader of a NEW process group of its OWN, separate from bin.ts's. SIGKILL is
+    // also never catchable, so bin.ts's own `onExit` signal-cleanup logic (the same file, for a signal
+    // it CAN catch) never runs either. `killProcessTree` walks and kills the whole real descendant
+    // tree instead, the identical technique `@forge/engine/dispatch`'s own `killGroup` uses for the
+    // identical, doc-commented reason: "a descendant that started its own session... becomes the
     // leader of a new group a plain group kill can never reach."
     killProcessTree(binPid);
     const exit = await new Promise<{ readonly signal: NodeJS.Signals | null }>((resolve) => {

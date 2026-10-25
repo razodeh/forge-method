@@ -51,6 +51,7 @@
  */
 import { SYSTEM_CLOCK, type Clock } from '@forge/core';
 import { pathExists, readTextFile, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
+import { killGroup } from '@forge/engine/dispatch';
 import { execa } from 'execa';
 
 import { acquireMigrateLock, releaseMigrateLock } from './lock.ts';
@@ -199,13 +200,21 @@ function truncate(text: string): string {
  * `CreateProcess`'s own command-line quoting) regardless of platform, with no shell in between to
  * (mis)interpret it a second time.
  *
- * The timeout kill mirrors `@forge/engine/dispatch/shell.ts`'s own `killGroup` (POSIX-only process-
- * group kill; Windows has no equivalent, see that function's own doc comment) — deliberately a
- * narrower copy, not that module's full `listDescendantPids` walk, since that exists for an
- * arbitrary SHELL command's own backgrounded jobs (`cmd & cmd2`), which a bare, shell-free `node
- * <path>` was never exposed to in the first place; a migration script that itself double-forks a
- * detached grandchild is already a correctness problem in the script, not something this caller can
- * discover. */
+ * The timeout kill reuses `@forge/engine/dispatch`'s own exported `killGroup` verbatim — the real,
+ * already-fixed "kill the whole process group AND walk every real `ps`-reported descendant
+ * individually" logic (`specs/22` M16 P10, `SPEC-QUESTIONS.md` Q296 Decisions 1/5), the IDENTICAL
+ * primitive `runShellCommand`/`runConfinedCommand` already use and `commands/parity/http-server.ts`
+ * already reuses this same way for the identical reason (see that module's own "Why this is not
+ * runConfinedCommand" doc comment). A migration script is arbitrary Node code a project owns, not
+ * code this codebase controls the shape of — a dependency that daemonizes, or forks a worker that
+ * calls `setsid(2)` (Node's own `detached: true`), is an ordinary thing a real script can do, not a
+ * script bug this caller is entitled to assume away. The group kill alone (`process.kill(-pid, ...)`)
+ * does not reach such a descendant, which immediately leaves the group on its own `setsid()` call
+ * (`killGroup`'s own doc comment has the full, confirmed repro) — `listDescendantPids`'s real `ps`
+ * walk is what actually finds and kills it, individually, whether or not it is still a group member.
+ * A second, independently-written, narrower copy of this exact logic is exactly the "two places this
+ * can drift" shape this codebase avoids elsewhere, so this reuses the export rather than reimplementing
+ * a weaker version of it. */
 async function runMigrationScript(
   scriptPath: string,
   cwd: string,
@@ -215,23 +224,22 @@ async function runMigrationScript(
     cwd,
     reject: false,
     stdin: 'ignore',
+    // Its own process group (POSIX), so `killGroup` can end everything the script started, not only
+    // the script's own direct process — see that function's own doc comment.
     detached: process.platform !== 'win32',
-    timeout: timeoutMs,
-    killSignal: 'SIGKILL',
   });
-  const pid = subprocess.pid;
-  const result = await subprocess;
-  if (result.timedOut) {
-    // execa's own `timeout` already SIGKILLed the direct child; this additionally reaches any
-    // descendant still alive in its own process group (POSIX only — Windows has no group-kill
-    // primitive, matching `killGroup`'s own disclosed platform limit elsewhere in this codebase).
-    if (pid !== undefined && process.platform !== 'win32') {
-      try {
-        process.kill(-pid, 'SIGKILL');
-      } catch {
-        // Already gone, or the child was never its own group leader.
-      }
-    }
+  const state = { timedOut: false };
+  const timer = setTimeout(() => {
+    state.timedOut = true;
+    killGroup(subprocess);
+  }, timeoutMs);
+  let result;
+  try {
+    result = await subprocess;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (state.timedOut) {
     return { ok: false, message: `script timed out after ${String(timeoutMs)}ms and was killed` };
   }
   // `?? 1`: a process execa reports with no numeric exit code at all (killed by a signal this

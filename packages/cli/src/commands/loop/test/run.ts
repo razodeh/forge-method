@@ -99,6 +99,11 @@ export interface TestRunContext {
    * story verify`) must not overwrite the project-wide report with a partial one or drop the flake and
    * quarantine history of the layers it did not run. Defaults to `true`. */
   readonly persistState?: boolean;
+  /** The real environment every shelled test/lint/typecheck command in this file runs with (`bin.ts`'s own
+   * `realEnvSnapshot()`, R10). Absent (a bare, env-less test call): every `runShellCommand` call below keeps
+   * `shell: true` unconditionally — its own pre-existing fallback, never a regression; only a caller that
+   * supplies a real one gets `resolvePosixShell` consulted for it on Windows. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /** `rule` selects which of `G-Verify.gate.yaml`'s checks this call answers: absent runs the
@@ -196,6 +201,7 @@ async function runDefaultRule(
       createTempPath,
       files,
       options.timeoutMs,
+      ctx.env,
     );
     if (degraded) {
       problems.push(
@@ -245,6 +251,7 @@ async function runDefaultRule(
         outcome.name,
         outcome.file,
         options.timeoutMs,
+        ctx.env,
       );
       // `specs/22` M17 P4, `18` §18.3's degradation table: a structured layer with no `filter`
       // template cannot be retried in isolation at all -- no run was even attempted, so this test is
@@ -426,7 +433,7 @@ async function runLintRule(ctx: TestRunContext): Promise<TestRunResult> {
       ],
     };
   }
-  const result = await runShellCommand(`${command} --format json`, ctx.projectRoot);
+  const result = await runShellCommand(`${command} --format json`, ctx.projectRoot, ctx.env);
   const errors = countEslintErrors(result.stdout);
   if (errors === undefined) {
     return {
@@ -479,7 +486,7 @@ async function runTypecheckRule(ctx: TestRunContext): Promise<TestRunResult> {
       ],
     };
   }
-  const result = await runShellCommand(command, ctx.projectRoot);
+  const result = await runShellCommand(command, ctx.projectRoot, ctx.env);
   const errors = countTscErrors(result.stdout) + countTscErrors(result.stderr);
   if (errors === 0 && result.exitCode !== 0) {
     return {

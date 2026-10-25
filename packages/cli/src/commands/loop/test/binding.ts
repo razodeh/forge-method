@@ -121,6 +121,12 @@ interface BindingCheckInputCommon {
    * runs this same check N+3 times per story is the other real reason this exists — a tight override
    * is what keeps that loop fast rather than waiting out the full default on every one of those runs. */
   readonly timeoutMs?: number;
+  /** The real environment every real run this check makes executes with (`bin.ts`'s own
+   * `realEnvSnapshot()`, R10). Absent (a bare, env-less test call): `runAndNormalize`/
+   * `runStructuredTestLayer` keep `shell: true` unconditionally — their own pre-existing fallback,
+   * never a regression; only a caller that supplies a real one gets `resolvePosixShell` consulted
+   * for it on Windows. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /** `true` iff `input`'s own test-layer command can be run scoped to a closed set of real test paths
@@ -179,6 +185,7 @@ export async function runScopedLayer(
       undefined,
       testPaths,
       input.timeoutMs,
+      input.env,
     );
   }
   const { structuredCommand } = input;
@@ -198,6 +205,7 @@ export async function runScopedLayer(
     new ProjectPaths(cwd),
     input.createTempPath,
     rendered,
+    input.env,
   );
 }
 

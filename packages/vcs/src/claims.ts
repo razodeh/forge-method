@@ -333,6 +333,20 @@ export async function applySharedPathStrategy(
       // ("ensure git is installed and on PATH") — actively misleading, since `command` is a configured
       // project command (`execution.sharedMutablePaths` in `.forge/config.yaml`, `18` §18.3), not a git
       // operation, and its failure has nothing to do with git at all.
+      //
+      // `shell: true` deliberately NOT routed through `@forge/engine/dispatch`'s `resolvePosixShell`
+      // (M17 #18's own Windows-hardening piece): unlike every POSIX-authored string that piece fixed
+      // (FORGE's own shipped workflow/check content, `confined-command.ts`'s model-proposed/stored
+      // commands), `command` here is a project author's OWN configured text, authored for whatever
+      // shell their own platform actually runs — forcing it through a different shell than the one
+      // they wrote it for would be a correctness regression for them, not a fix. Disclosed, not fixed:
+      // on Windows this still runs under cmd.exe unconditionally, so a `regenerate` command authored in
+      // POSIX shell syntax (as every other shell-syntax string in this codebase otherwise is) would
+      // fail the identical way the fixed call sites used to. Currently dormant either way — confirmed by
+      // grep, `execution.sharedMutablePaths` has zero real (non-test) callers anywhere in this codebase
+      // today, the same "latent, no current production trigger" shape `SPEC-QUESTIONS.md` Q350
+      // discloses for a different mechanism — so there is no live Windows breakage this leaves behind,
+      // only a gap to close before a project ever configures one.
       try {
         await execa(command, { cwd: handle.path, shell: true });
       } catch (cause) {

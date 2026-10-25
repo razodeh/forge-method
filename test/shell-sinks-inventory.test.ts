@@ -20,6 +20,14 @@
  * starting a shell directly, so neither is a sink of its own any more and both rows are removed rather
  * than relabelled.
  *
+ * `packages/cli/src/commands/migrate/run.ts`'s own row is removed for the identical reason, M17's own
+ * Windows-hardening piece (#18): `runMigrationScript` used to build `node ${shellQuote(scriptPath)}`
+ * and run it through `runShellCommand` (`shell: true`) — cmd.exe does not treat `'...'` as a quoted
+ * argument at all, so this invocation would have failed on Windows. Rewritten as
+ * `execa(process.execPath, [scriptPath], ...)`, a real argv array with no shell involved at all: it
+ * never genuinely needed one (it is always exactly "run node on this one path," no `&&`/`$VAR`/glob),
+ * so removing the shell removed the sink, not merely closed it.
+ *
  * @see specs/20 §20.1
  * @see specs/20 §20.5
  * @see SPEC-QUESTIONS.md Q222
@@ -90,17 +98,6 @@ const INVENTORY: Readonly<Record<string, Sink>> = {
       '`forge gate check|approve`: the same gate `check.run` strings, run in the project root',
     checks: 'as facades.ts; a human typed the command',
     status: 'trusted',
-  },
-  'packages/cli/src/commands/migrate/run.ts': {
-    source:
-      'a fixed `node <path>` invocation of `docs/forge/migrations/<id>.mjs`, `<id>` taken from a ' +
-      '`migrations.yaml` entry already validated by `readMigrationEntries`/`validateMigrationOrder` ' +
-      '(`runMigrationScript`, via `runShellCommand`)',
-    checks:
-      'the script path is wrapped in `shellQuote` before interpolation; no model or run-input text ' +
-      'reaches the command; a timeout (`DEFAULT_SCRIPT_TIMEOUT_MS`) bounds it and the migrate lock ' +
-      'serializes the ledger around it',
-    status: 'quoted',
   },
   'packages/cli/src/commands/parity/http-server.ts': {
     source:

@@ -26,7 +26,12 @@ import {
   runTestLayerCommand,
 } from '../loop/test/layer-command.ts';
 import { readConfig } from '../config.ts';
-import { assertNoArgs, parseCommandFlags, type DispatchContext } from './shared.ts';
+import {
+  assertNoArgs,
+  parseCommandFlags,
+  realEnvSnapshot,
+  type DispatchContext,
+} from './shared.ts';
 
 const TEST_RULE_IDS = ['lint', 'typecheck', 'oracle-lint'] as const;
 type TestRuleId = (typeof TEST_RULE_IDS)[number];
@@ -100,6 +105,7 @@ async function runTestRunCommand(
     paths,
     projectRoot,
     testCommands: config.execution.testCommands,
+    env: realEnvSnapshot(),
     flakeConfig: config.quality.flake,
     // `specs/22` M17 P5: `quality.oracleLint` itself is optional -- `?.` reads `undefined` for a
     // config written before this piece existed, which `testRun`/`runOracleLintRule` already treat
@@ -174,6 +180,7 @@ export async function dispatchTestRun(ctx: DispatchContext): Promise<number | un
       rawRule,
       flags.json,
       console,
+      realEnvSnapshot(),
     );
   }
   if (rawRule !== undefined && !isTestRuleId(rawRule)) {

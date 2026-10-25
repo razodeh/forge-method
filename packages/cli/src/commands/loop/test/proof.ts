@@ -165,6 +165,12 @@ export interface TranslatorProofInput {
   readonly translatorContent?: string;
   readonly runnerVersion: string;
   readonly now: () => string;
+  /** The real environment every real run of `command.run` below executes with (`bin.ts`'s own
+   * `realEnvSnapshot()`, R10). Absent (a bare, env-less test call): every `runShellCommand`/
+   * `runStructuredTestLayer` call below keeps `shell: true` unconditionally — its own pre-existing
+   * fallback, never a regression; only a caller that supplies a real one gets `resolvePosixShell`
+   * consulted for it on Windows. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /** The proof's own result -- `ok: true` carries the evidence `adopt.ts`'s staged proposal record
@@ -403,7 +409,7 @@ function countByStatus(outcomes: readonly TestOutcome[], status: TestOutcome['st
 export async function runTranslatorProof(
   input: TranslatorProofInput,
 ): Promise<TranslatorProofResult> {
-  const { command, cwd, paths, createTempPath, probe, translatorContent, runnerVersion, now } =
+  const { command, cwd, paths, createTempPath, probe, translatorContent, runnerVersion, now, env } =
     input;
   const subjectHash = computeProofSubjectHash(command, translatorContent);
   const checkedAt = now();
@@ -427,7 +433,14 @@ export async function runTranslatorProof(
 
   // Check 3's own baseline half (below) needs the project's real, PRE-probe behaviour -- captured
   // before the probe exists on disk at all, never after.
-  const baselineRun = await runStructuredTestLayer(command, cwd, paths, createTempPath);
+  const baselineRun = await runStructuredTestLayer(
+    command,
+    cwd,
+    paths,
+    createTempPath,
+    undefined,
+    env,
+  );
 
   // The marker is written and fsync'd (`writeFileAtomic`) BEFORE the probe itself, so a SIGKILL at
   // any point from here onward always leaves a marker naming a probe path the next invocation can
@@ -464,9 +477,23 @@ export async function runTranslatorProof(
     // Captured independently of `runStructuredTestLayer`'s own translate/parse pipeline -- the one
     // signal every check below cross-validates the canonical report against, never read off the
     // translator's own output (which is exactly what this harness exists to not trust blindly).
-    const raw = await runShellCommand(command.run, cwd, undefined, { timeoutMs });
-    const firstRun = await runStructuredTestLayer(command, cwd, paths, createTempPath);
-    const secondRun = await runStructuredTestLayer(command, cwd, paths, createTempPath);
+    const raw = await runShellCommand(command.run, cwd, env, { timeoutMs });
+    const firstRun = await runStructuredTestLayer(
+      command,
+      cwd,
+      paths,
+      createTempPath,
+      undefined,
+      env,
+    );
+    const secondRun = await runStructuredTestLayer(
+      command,
+      cwd,
+      paths,
+      createTempPath,
+      undefined,
+      env,
+    );
 
     // Check 1 -- schema validity (this file's own doc comment, point 1).
     if (firstRun.outcome !== 'ran') {

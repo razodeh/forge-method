@@ -31051,3 +31051,67 @@ read-only/EACCES) collected together. `observe.test.ts` gained a red-before/gree
 confirming a reference-side command importing an installed third-party package now resolves.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P21` entry for this fix, dated 2026-10-25.
+## Q353 — M17 P16/#18's own Windows-hardening fix, 4 rounds (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** M17's own Windows-hardening piece (#18, the real CI matrix's Windows leg).
+`execa`'s `shell: true` means "the OS default shell" — `/bin/sh` on POSIX, `cmd.exe` on Windows —
+but this codebase ships command text authored assuming a POSIX shell (`command`-kind workflow
+steps, `.check.yaml` module scripts, `confined-command.ts`'s own vetted `forge debug`/`forge kb
+verify`/`forge adopt` commands), none of which cmd.exe can interpret.
+
+**Round 1 — the core mechanism.** A new `resolvePosixShell` (`packages/engine/src/dispatch/
+posix-shell.ts`): on win32, searches `PATH` (case-insensitively — Windows commonly spells it
+`Path`) for a real `bash.exe`/`bash.cmd`/`bash`, returning its full path for execa's `shell` option;
+falls back to `true` when none is found. Wired into `shell.ts` and `confined-command.ts`. Also
+fixed, found along the way: `scrubbedEnvironment`'s `CONFINED_ENV_ALLOWLIST` check was
+case-sensitive against literal `'PATH'` — a confined child on Windows would have gotten no `PATH`
+at all. Added the Windows equivalents of the existing POSIX allowlist entries (`USERPROFILE`,
+`USERNAME`, `COMSPEC`, `PATHEXT`, `APPDATA`/`LOCALAPPDATA`). `GIT_NULL_DEVICE` added (`NUL` on
+win32, `/dev/null` elsewhere) — getting this wrong wouldn't just error, it could silently fall back
+to the user's real git config, reopening the alias/credential-helper hole those settings close.
+
+**Rounds 2-3 — two critics each found the base had moved, and each found more untouched sites.**
+Round 2's critics found: `migrate/run.ts`'s own shell spawn still hardcoded `shell: true` with no
+env (two more "env can be undefined" sites, not caught by round 1's own audit); `main` had since
+grown a second, untouched `execa` call site in `confined-command.ts`'s own `preserveRawOutput`
+branch; a test (`rca/shell.test.ts`) hardcoded a POSIX-only assertion that would fail on the real
+Windows leg this piece exists to turn green. Round 3's critics, after a real rebase onto `main`'s
+current tip, found MORE: a currently-RED test (`test/shell-sinks-inventory.test.ts`, caused
+directly by the `migrate/run.ts` rewrite removing its own shell, never reconciled with the
+inventory's stale entry), a live, same-defect-class gap untouched in `parity/http-server.ts`, and —
+the most severe finding — a CONFIRMED LIVE REGRESSION: the `migrate/run.ts` rewrite's own
+timeout-kill dropped the full descendant-process walk `killGroup`/`listDescendantPids` already
+provides elsewhere in this exact file, reintroducing the precise orphan-process bug (`Q296`, M16
+P10) that mechanism was built to close, for one new caller. Reproduced live: a detached Node
+grandchild survived a real timeout kill.
+
+**Round 4 fixed everything found.** Restored full descendant-walk `killGroup` in `migrate/run.ts`
+(reusing the exported primitive, not a reimplementation) — a new test confirms a detached
+grandchild no longer survives. An exhaustive env-threading sweep went past the 2 named sites to 8,
+adding an `env` field to 5 context/input types across the `test`/`binding`/`proof`/`adopt-agent`
+surfaces. Fixed the failing inventory test. Wired `resolvePosixShell` into `http-server.ts`, and
+honestly upgraded an adjacent `throw new Error('unreachable')` to a real, typed error — no longer
+provably unreachable once a resolved third-party `bash.exe` path, rather than the OS's always-
+present default shell, is involved. A critic's own independent, from-scratch sweep — the first
+round of this piece NOT to find a live 5th site — confirmed the env-threading gap is finally closed;
+two theoretical (non-live) gaps surfaced and were traced to genuinely dead code paths.
+
+**Disclosed, not fixed — the one security question neither 2 nor 4 critic rounds could close.**
+Windows' `CreateProcess` takes one flat command-line string, not an argv array: `execa` applies
+Node's own default Windows argument-escaping when building that string for a resolved `bash.exe`,
+and `bash.exe` (an MSYS2/Cygwin-built binary) then recovers its own argv through its own runtime's
+escaping convention — a different one than a native `CreateProcess` caller generally assumes.
+Whether that double round-trip preserves single-quote/space/backslash semantics identically to a
+native POSIX `exec`, or opens a gap between what `confined-command.ts`'s own `vetProposedCommand`
+approved and what bash actually runs, cannot be settled by reading source or documentation alone.
+Closing it needs a real Windows host with a real Git-for-Windows install, run by hand against
+adversarial inputs — until then, the Windows leg of the vet is unverified for exactly these shapes,
+not confirmed-safe merely because the ordinary, non-adversarial cases pass.
+
+**Also disclosed, lower priority**: `claims.ts`'s `regenerate` branch (a project-author-configured
+command, not FORGE's own authored content) deliberately kept on `shell: true` — zero real callers
+today, confirmed by grep; one critic noted the comment's "respects author intent" framing is weaker
+than it should be (FORGE has no actual way to know which shell dialect the author wrote for), the
+real distinction being "known dialect vs. unknown dialect," not "whose platform."
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P16` entry for this fix, dated 2026-10-25.

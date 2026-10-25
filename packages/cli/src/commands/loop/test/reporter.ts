@@ -242,6 +242,7 @@ async function runVitest(
   testNameFilter?: string,
   fileFilter?: string,
   files?: readonly string[],
+  env?: Readonly<Record<string, string>>,
 ): Promise<
   | { readonly ok: true; readonly outcomes: readonly TestOutcome[] }
   | { readonly ok: false; readonly message: string }
@@ -290,7 +291,7 @@ async function runVitest(
   const result = await runShellCommand(
     `${command}${fileArg} --reporter=json${filterFlag}`,
     cwd,
-    undefined,
+    env,
     { timeoutMs },
   );
   // Checked BEFORE any attempt to parse `stdout` (`specs/22` M16 P10): confirmed directly against a
@@ -479,6 +480,7 @@ async function runPytest(
   testNameFilter?: string,
   fileFilter?: string,
   files?: readonly string[],
+  env?: Readonly<Record<string, string>>,
 ): Promise<
   | { readonly ok: true; readonly outcomes: readonly TestOutcome[] }
   | { readonly ok: false; readonly message: string }
@@ -530,7 +532,7 @@ async function runPytest(
     const result = await runShellCommand(
       `${command}${fileArgs} --continue-on-collection-errors --junitxml=${shellQuote(xmlPath)}${filterFlag}`,
       cwd,
-      undefined,
+      env,
       { timeoutMs },
     );
     // Checked BEFORE any attempt to read `xmlPath` (`specs/22` M16 P10): confirmed directly against a
@@ -628,6 +630,7 @@ export async function runAndNormalize(
   fileFilter?: string,
   files?: readonly string[],
   timeoutMs?: number,
+  env?: Readonly<Record<string, string>>,
 ): Promise<Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>>;
 export async function runAndNormalize(
   command: string | undefined,
@@ -638,6 +641,7 @@ export async function runAndNormalize(
   fileFilter?: string,
   files?: readonly string[],
   timeoutMs?: number,
+  env?: Readonly<Record<string, string>>,
 ): Promise<RunAndNormalizeResult>;
 export async function runAndNormalize(
   command: string | undefined,
@@ -648,6 +652,7 @@ export async function runAndNormalize(
   fileFilter?: string,
   files?: readonly string[],
   timeoutMs?: number,
+  env?: Readonly<Record<string, string>>,
 ): Promise<RunAndNormalizeResult> {
   if (command === undefined) return { outcome: 'missing-command' };
   const effectiveTimeoutMs = timeoutMs ?? DEFAULT_TEST_RUN_TIMEOUT_MS;
@@ -661,8 +666,9 @@ export async function runAndNormalize(
           testNameFilter,
           fileFilter,
           files,
+          env,
         )
-      : await runVitest(command, cwd, effectiveTimeoutMs, testNameFilter, fileFilter, files);
+      : await runVitest(command, cwd, effectiveTimeoutMs, testNameFilter, fileFilter, files, env);
   if (!result.ok) return { outcome: 'tool-error', message: result.message };
   return { outcome: 'ran', report: { outcomes: result.outcomes } };
 }
@@ -713,6 +719,7 @@ async function runTranslator(
   timeoutMs: number,
   declaredOutputPath: string | undefined,
   createTempPath: () => string,
+  env?: Readonly<Record<string, string>>,
 ): Promise<Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>> {
   // `createTempPath()`'s own return type is unconditionally `string`, so `??` alone types this
   // `string` with no cast or assertion needed. `declaredOutputPath === undefined` is re-read (not
@@ -726,7 +733,7 @@ async function runTranslator(
     const translateResult = await runShellCommand(
       substituteOutputPlaceholder(translate, outputPath),
       cwd,
-      undefined,
+      env,
       { timeoutMs },
     );
     if (translateResult.timedOut === true) {
@@ -786,6 +793,7 @@ export async function runStructuredTestLayer(
   paths: ProjectPaths,
   createTempPath: () => string,
   commandToRun: string = command.run,
+  env?: Readonly<Record<string, string>>,
 ): Promise<Exclude<RunAndNormalizeResult, { readonly outcome: 'missing-command' }>> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_TEST_RUN_TIMEOUT_MS;
   // Captured together, once: `command.output.path` only exists on the narrower 'file' branch of the
@@ -803,7 +811,7 @@ export async function runStructuredTestLayer(
   // before `run` ever starts, tolerating "already absent" (there may be nothing to delete at all).
   if (declaredOutputPath !== undefined) await rm(declaredOutputPath, { force: true });
 
-  const runResult = await runShellCommand(commandToRun, cwd, undefined, { timeoutMs });
+  const runResult = await runShellCommand(commandToRun, cwd, env, { timeoutMs });
   // `ShellCommandResult.timedOut` fires only once the whole process tree has already been SIGKILLed
   // (`shell.ts`'s own contract, confirmed by this file's own `runVitest`/`runPytest` precedent above)
   // -- so a translator, invoked next otherwise, is never run against a process that might still be
@@ -833,6 +841,7 @@ export async function runStructuredTestLayer(
       timeoutMs,
       declaredOutputPath,
       createTempPath,
+      env,
     );
   }
 
@@ -984,6 +993,7 @@ export async function runTestLayerCommand(
   createTempPath: () => string,
   files?: readonly string[],
   timeoutMs?: number,
+  env?: Readonly<Record<string, string>>,
 ): Promise<TestLayerRunResult> {
   if (typeof command === 'string') {
     const run = await runAndNormalize(
@@ -995,6 +1005,7 @@ export async function runTestLayerCommand(
       undefined,
       files,
       timeoutMs,
+      env,
     );
     return { run, degraded: false };
   }
@@ -1004,6 +1015,8 @@ export async function runTestLayerCommand(
       cwd,
       paths,
       createTempPath,
+      undefined,
+      env,
     );
     return { run, degraded: files !== undefined };
   }
@@ -1014,6 +1027,7 @@ export async function runTestLayerCommand(
     paths,
     createTempPath,
     rendered,
+    env,
   );
   return { run, degraded: false };
 }
@@ -1056,6 +1070,7 @@ export async function runTestLayerRetry(
   name: string,
   file: string | undefined,
   timeoutMs?: number,
+  env?: Readonly<Record<string, string>>,
 ): Promise<RetryInIsolationResult> {
   if (typeof command === 'string') {
     const run = await runAndNormalize(
@@ -1067,6 +1082,7 @@ export async function runTestLayerRetry(
       file,
       undefined,
       timeoutMs,
+      env,
     );
     return { kind: 'ran', run };
   }
@@ -1081,6 +1097,7 @@ export async function runTestLayerRetry(
     paths,
     createTempPath,
     rendered,
+    env,
   );
   return { kind: 'ran', run };
 }

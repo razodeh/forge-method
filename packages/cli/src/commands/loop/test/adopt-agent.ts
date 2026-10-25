@@ -552,6 +552,30 @@ export interface AdoptTestsAgentDeps {
   /** `docs/forge/kb` in a real project (`bin.ts`'s own `KB_ROOT`) — where the no-test-setup branch's
    * ADR is scaffolded (`adrNew`, `@forge/cli`'s own `commands/adr.ts`). */
   readonly kbRoot: string;
+  /** The real environment every real round's own `runTranslatorProof` call runs the proposed command
+   * under (`buildLoopDepsForProject`'s own `realEnvSnapshot()`, R10, the identical `DebugDeps.env`
+   * shape every other loop command already carries — `string | undefined`-valued since nothing here
+   * reads it directly; `runTranslatorProof` below takes only the defined entries). Absent (a bare,
+   * env-less test call): `runShellCommand`/`runStructuredTestLayer` keep `shell: true`
+   * unconditionally — their own pre-existing fallback, never a regression; only a caller that
+   * supplies a real one gets `resolvePosixShell` consulted for it on Windows. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
+/** `deps.env` (`DebugDeps`'s own wide, possibly-`undefined`-valued shape) reduced to the defined
+ * entries `runShellCommand`/`runStructuredTestLayer` actually accept — the identical "a real
+ * environment variable is always a defined string; `undefined` only ever means this object's own
+ * shape allows a missing key" filter `launcher-shim.ts`'s own `definedLauncherEnv` already applies to
+ * the identical shape, for the identical reason. */
+function definedEnv(
+  env: Readonly<Record<string, string | undefined>> | undefined,
+): Readonly<Record<string, string>> | undefined {
+  if (env === undefined) return undefined;
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined) result[name] = value;
+  }
+  return result;
 }
 
 export interface AdoptTestsAgentOptions {
@@ -1139,6 +1163,7 @@ export async function runAdoptTestsAgent(
           ? undefined
           : await readTextFile(lanePaths.resolveWithin(parsed.translatorPath));
       const command = parsed.command as StructuredTestCommand;
+      const proofEnv = definedEnv(deps.env);
 
       // Never trust the reported command enough to run it: re-vetted, independently of whatever the
       // live session's own tool-use grant allowed, against the SAME lane root it is about to run in,
@@ -1162,6 +1187,7 @@ export async function runAdoptTestsAgent(
           cwd: lane.path,
           paths: lanePaths,
           createTempPath,
+          ...(proofEnv === undefined ? {} : { env: proofEnv }),
           probe,
           ...(translatorContent === undefined ? {} : { translatorContent }),
           runnerVersion: parsed.runnerVersion,

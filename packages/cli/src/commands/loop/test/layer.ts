@@ -46,6 +46,11 @@ export interface TestLayerContext {
   readonly testCommands: TestCommands;
   /** Overrides `TEST_LAYER_LIMITS`; a test uses it to prove the caps without waiting for the real ones. */
   readonly limits?: ShellLimits;
+  /** The real environment the configured command runs with (`bin.ts`'s own `realEnvSnapshot()`, R10:
+   * no ambient read happens inside this module). Absent (a bare, env-less test call): `runShellCommand`
+   * keeps `shell: true` unconditionally, its own pre-existing fallback — never a regression, only a
+   * caller that supplies a real one gets `resolvePosixShell` consulted for it on Windows. */
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 export interface TestLayerCommandResult {
@@ -117,7 +122,7 @@ export async function testRunLayer(
 ): Promise<TestLayerResult> {
   const command = usableCommand(`execution.testCommands.${rule}`, ctx.testCommands[rule]);
   const limits = ctx.limits ?? TEST_LAYER_LIMITS;
-  const outcome = await runShellCommand(command, ctx.projectRoot, undefined, limits);
+  const outcome = await runShellCommand(command, ctx.projectRoot, ctx.env, limits);
 
   const timedOut = outcome.timedOut === true;
   const flooded = outcome.outputLimitExceeded === true;

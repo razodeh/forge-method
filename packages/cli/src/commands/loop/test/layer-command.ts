@@ -30,10 +30,15 @@ export async function runTestLayerCommand(
   rule: TestLayerRule,
   json: boolean,
   out: OutputPort,
+  env?: Readonly<Record<string, string>>,
 ): Promise<number> {
   try {
     const result = await testRunLayer(
-      { projectRoot, testCommands: await loadTestCommands() },
+      {
+        projectRoot,
+        testCommands: await loadTestCommands(),
+        ...(env === undefined ? {} : { env }),
+      },
       rule,
     );
     if (json) {

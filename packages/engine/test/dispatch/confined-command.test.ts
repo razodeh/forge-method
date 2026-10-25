@@ -8,6 +8,7 @@
  * canary file absent, and a canary variable in the parent environment must not be visible to a child.
  */
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -673,6 +674,30 @@ describe('runConfinedCommand: what actually reaches the child', () => {
       parentEnv: process.env,
     });
     expect(process.listenerCount('exit')).toBe(before);
+  });
+});
+
+describe('runConfinedCommand: resolvePosixShell on Windows (M17 #18) reaches BOTH execa call sites', () => {
+  // `resolvePosixShell` always returns `true` (the OS default) on every platform but Windows
+  // (`posix-shell.ts`'s own doc comment) -- there is no observable macOS/Linux-side behavioural
+  // difference between `shell: true` and `shell: resolvePosixShell(env)` for this test runner to
+  // exercise. A real round-trip through a resolved `bash.exe` therefore needs an actual Windows host
+  // (`SPEC-QUESTIONS.md` Q351's own disclosed residual). What IS verifiable here, on any platform,
+  // is the wiring itself: `runConfinedCommand`'s `preserveRawOutput: true` branch is a second,
+  // independent `execa` call this module added after the first `shell: resolvePosixShell(env)` fix
+  // landed (a rebase conflict a fresh critic round confirmed was resolved correctly for both) -- a
+  // future refactor that touches one call site and not the other would regress Windows silently,
+  // with no test anywhere failing, since neither branch's *other* behaviour depends on which shell
+  // runs it. Reading the real source and counting both occurrences pins that wiring directly,
+  // instead of trusting it stays true by convention.
+  it('both the default branch and the preserveRawOutput branch pass shell: resolvePosixShell(env), not a bare shell: true', async () => {
+    const sourcePath = fileURLToPath(
+      new URL('../../src/dispatch/confined-command.ts', import.meta.url),
+    );
+    const source = await readFile(sourcePath, 'utf8');
+    const occurrences = source.match(/shell: resolvePosixShell\(env\)/g) ?? [];
+    expect(occurrences).toHaveLength(2);
+    expect(source).not.toMatch(/execa\(command, \{\s*cwd,\s*shell: true,/);
   });
 });
 
