@@ -527,6 +527,21 @@ place. Still disclosed, correctly left out of this piece's own scope: `WebFetch`
 go bare under `network: 'full'` — a separate instance of the same SDK behavior, for its own future
 piece.
 
+**Closing gate, expanded (owner instruction, 2026-10-25): every disclosed-but-unfixed defect found
+anywhere in M17 Phase A, not only P16's and P21's own, now gates `m17-hardened`.** A direct status
+check on this date confirmed the tag was not actually ready under the narrower 2026-10-21 wording
+above — two older disclosed defects from earlier pieces were still open (`Q314`, found during P8;
+`Q317` "Decision 8", found during P14), and `Q350` (the `WebFetch`/`WebSearch` instance of `Q347`'s
+own bug, explicitly deferred two paragraphs above) is now pulled into scope rather than left for a
+future piece. The combined gate is therefore: P16's real `next` CI matrix fully green, AND every
+real defect P21's own live run found fixed (done except as noted here), AND `Q314` fixed, AND
+`Q317` fixed, AND `Q350` fixed, AND the P21 mandate's "forced transient failure retried live" item
+either demonstrated or explicitly resolved as not required — under the identical gauntlet
+discipline as every other M17 piece. Dispatched the same day: parallel builders for `Q340`+`Q341`
+(P16's own CI-script fixes), P16's Windows audit/fix (`#18`), `Q314`, `Q317`, and `Q350`; a fresh
+sweep of `SPEC-QUESTIONS.md` for any further M17-era "disclosed, not fixed" entries missed by this
+list. See `GAUNTLET-LOG.md`'s `## M17 P21` entries dated 2026-10-25 onward for the real narrative.
+
 ---
 
 ## Phase B — the trial (outline; finalized after the tag)
