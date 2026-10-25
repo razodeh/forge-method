@@ -695,16 +695,20 @@ describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F
     const outcome = result.report.outcomes[0];
     const message = outcome?.message;
     expect(message).toBeTruthy();
-    // `name` (round 8): `toBeTruthy()` on `message` alone cannot distinguish "the detail reaches
+    // `name` (round 8-9): `toBeTruthy()` on `message` alone cannot distinguish "the detail reaches
     // `message` only" from "the detail ALSO got folded back into `name`" -- the exact double-print
-    // shape round 6/7 fixed for the sibling JUnit branch, reconstructed live by a round-7 critic
-    // for this vitest branch too and found to pass this test either way, before this fix. `name`'s
-    // own absolute-path prefix is not fixture-predictable (a real tempdir path), so an exact match
-    // on the whole string is not usable here the way the JUnit test's was; `endsWith` on the fixed,
-    // unqualified suffix plus "the real detail text is never itself a substring of name" together
-    // give the identical guarantee without hardcoding the volatile path.
-    expect(outcome?.name.endsWith('(file failed to load)')).toBe(true);
-    expect(outcome?.name.includes(message ?? '')).toBe(false);
+    // shape round 6/7 fixed for the sibling JUnit branch, reconstructed live by a round-7 critic for
+    // this vitest branch too and found to pass this test either way, before this fix. Round 8's own
+    // first draft here (`name.endsWith(...)` plus `!name.includes(message)`) was itself found too
+    // weak by a round-9 critic: a TRUNCATED fold of the detail into `name`, placed before the fixed
+    // suffix, still ends with the unqualified phrase AND never contains `message` as an exact
+    // substring, so it passed both checks while still duplicating the detail. `outcome.file` carries
+    // the exact same `fileName` value `name` is built from, known (though not hardcodable ahead of
+    // time) at assertion time -- so a dynamic exact match, with zero hardcoded paths, is achievable
+    // and strictly stronger: it is the one shape the real, fixed `name` can take.
+    const file = outcome?.file;
+    if (file === undefined) throw new Error('expected a real file, got none');
+    expect(outcome?.name).toBe(`${file} (file failed to load)`);
   });
 
   it('vitest: a beforeAll hook exception is kind "crash" — not "load" (the file loaded fine) and not "assertion" (the test body never ran)', async () => {
