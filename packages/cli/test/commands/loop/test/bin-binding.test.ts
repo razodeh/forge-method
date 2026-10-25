@@ -260,6 +260,35 @@ describe('forge test binding — telemetry (specs/22 M15 P11)', () => {
     const { ProjectPaths } = await import('@forge/core/fs');
     expect(await pathExists(new ProjectPaths(dir).resolveState('runs'))).toBe(false);
   }, 30_000);
+
+  // `specs/22` M17 Phase A hardening (`process/SPEC-QUESTIONS.md` Q324's own disclosed, not-fixed
+  // sibling): `G-Verify.gate.yaml`'s own `test:binding` check shells out to this exact command as an
+  // in-run gate evaluation, with its own `cwd`/`projectRoot` really the INTEGRATION WORKTREE
+  // (`runGateStep`'s own `ctx.integrationPath`), never the real project root -- the identical
+  // mechanism Q324 Decision 2 already fixed for `forge parity check` (`check-command.test.ts`'s own
+  // "telemetryProjectRoot sends the CheckRun event to the REAL project root" describe block). A real
+  // `FORGE_PROJECT_ROOT` env var is what `run/context.ts`'s own `gateEnv` carries for every gate check
+  // today (unconditionally, since Q324); this proves the CLI side actually reads it for `test:binding`.
+  it('a real FORGE_PROJECT_ROOT in the environment, different from where the check itself runs, sends the CheckRun event there -- never to the directory the check actually ran in', async () => {
+    const dir = await freshProject();
+    const realProjectRoot = await mkdtemp(path.join(tmpdir(), 'forge-p12-sibling-telemetry-root-'));
+    dirs.push(realProjectRoot);
+    const result = run(['test', 'binding', '--story', 'STORY-001', '--json'], dir, {
+      FORGE_RUN_ID: 'run-cli-binding-sibling',
+      FORGE_PROJECT_ROOT: realProjectRoot,
+    });
+
+    expect(result.status).toBe(0);
+    const { readEvents } = await import('@forge/telemetry/events');
+    const atRealRoot = [];
+    for await (const event of readEvents(realProjectRoot, 'run-cli-binding-sibling')) {
+      atRealRoot.push(event);
+    }
+    expect(atRealRoot.some((event) => event.type === 'CheckRun')).toBe(true);
+    // Never ALSO written under the directory the check itself actually ran in.
+    const { pathExists, ProjectPaths } = await import('@forge/core/fs');
+    expect(await pathExists(new ProjectPaths(dir).resolveState('runs'))).toBe(false);
+  }, 30_000);
 });
 
 describe('forge test binding — a failed restore-verification (specs/22 M15 P5)', () => {

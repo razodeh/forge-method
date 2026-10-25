@@ -1635,6 +1635,44 @@ function splitExcerptBudget(
   return { head: half, tail: MAX_FAILURE_EXCERPT_CHARS - half };
 }
 
+/** `specs/22` M17 Phase A hardening (`process/SPEC-QUESTIONS.md` Q324's own disclosed structural
+ * limit, closed here for the one case it specifically named): a THIRD allocation mode, used only when
+ * a SINGLE blob needs both a head AND a tail carved from itself ({@link boundedExcerpt}'s own
+ * `text.length <= MAX_FAILURE_EXCERPT_CHARS ? text : ...` branch — the one case {@link
+ * splitExcerptBudget} can never do better than a rigid fixed half each, since there is only the one
+ * section to reallocate across, never two independent ones the way the line-split branch above has).
+ * A head slice, a TRUE-MIDDLE slice centered on the blob's own midpoint, and a tail slice, each an
+ * equal third of the budget: the blob's own true center — previously disclosed as categorically
+ * unreachable by any two-edge scheme, since a two-edge scheme has no boundary inside one undifferentiated
+ * blob to anchor a reallocated share against — is now the one additional point a three-edge scheme CAN
+ * name. This does not make the WHOLE blob reachable (two residual gaps remain, one between the head
+ * slice and the middle slice, one between the middle slice and the tail slice — the identical
+ * "no semantic structure to split on" limit, just narrowed from one gap to two smaller ones); it closes
+ * exactly the one point Q324 named as the concrete, irreducible-sounding example: the blob's own true
+ * middle. Returns `undefined` when `len` is not comfortably larger than `MAX_FAILURE_EXCERPT_CHARS`
+ * (an even third each would not keep the three slices disjoint) — {@link boundedExcerpt} falls back to
+ * the plain two-edge split in that case, which loses nothing a third slice would have bought anyway
+ * (a blob only barely over budget has little or nothing sitting strictly in its own true middle). */
+function splitExcerptBudgetTriple(len: number):
+  | {
+      readonly headLen: number;
+      readonly midStart: number;
+      readonly midLen: number;
+      readonly tailLen: number;
+    }
+  | undefined {
+  const third = Math.floor(MAX_FAILURE_EXCERPT_CHARS / 3);
+  if (third <= 0) return undefined;
+  const midStart = Math.floor(len / 2) - Math.floor(third / 2);
+  const midEnd = midStart + third;
+  const tailStart = len - third;
+  // Disjoint, left to right: head ends at `third`; the middle slice must start no earlier than that,
+  // and end no later than where the tail slice starts. Either failing means `len` is too close to
+  // `MAX_FAILURE_EXCERPT_CHARS` for three honest, non-overlapping thirds -- never silently overlapped.
+  if (midStart < third || midEnd > tailStart) return undefined;
+  return { headLen: third, midStart, midLen: third, tailLen: third };
+}
+
 /** `text`'s own first `budget` characters, pure slicing with no marker of its own -- {@link
  * boundedExcerpt} is the one place that decides where a marker goes. Applied to ONE section at a time
  * (never to several sections already concatenated together, or to a single flattened whole, round 1's
@@ -1677,15 +1715,26 @@ function tailChars(text: string, budget: number): string {
  * of the head (the fixed-split bug); and a single long line with no newlines at all (never even
  * reaching the line-based split, the `lines.length <= maxLines` branch below).
  *
- * That third repro's own shape is different in kind, not merely in degree, and is NOT closed by either
- * fix (disclosed, not silently left ambiguous — see this piece's own report): one undifferentiated
- * line wider than the WHOLE combined budget has no section boundary to assign an independent, or a
- * reallocated, share to at all (`headChars`/`tailChars` below are both applied to the SAME one block,
- * so {@link splitExcerptBudget} always falls to its own fixed-half branch there). Content strictly
- * between its own two preserved edges is a residual limit of ANY fixed, two-sided budget over an
- * unsplittable blob, not a further-closable accounting bug the way the first two repros were — the
- * mathematical floor here is "raise the total budget" or "find semantic structure to split on," never
- * "allocate more carefully," since there is only the one section to allocate from. */
+ * That third repro's own shape is different in kind from the first two, and was originally disclosed
+ * rather than closed (`process/SPEC-QUESTIONS.md` Q324): one undifferentiated line wider than the WHOLE
+ * combined budget has no section BOUNDARY for `headChars`/`tailChars` to carve an independent,
+ * reallocated share from the way the line-split branch above does — both calls apply to the SAME one
+ * block, so {@link splitExcerptBudget} always fell to its own fixed-half branch there, and content
+ * strictly between the two preserved edges was unconditionally lost.
+ *
+ * **Closed, M17 Phase A hardening (still Q324, the sibling gap this piece names explicitly):** a third
+ * allocation mode, {@link splitExcerptBudgetTriple}, carves a head slice, a TRUE-MIDDLE slice centered
+ * on the blob's own midpoint, AND a tail slice from that one block when it is comfortably larger than
+ * the budget — the blob's own true center, the one point a two-edge scheme could never name at all, is
+ * now reachable. This narrows the residual gap; it does not eliminate it. Two smaller unreachable spans
+ * remain (between the head slice and the middle slice, and between the middle slice and the tail
+ * slice) — the same "no semantic structure to split on" ceiling, just applied twice instead of once.
+ * Closing those too would need a FOURTH and FIFTH slice, then a sixth and seventh for THEIR OWN
+ * residual gaps, without end: any FIXED number of fixed-size slices over one undifferentiated blob of
+ * unbounded length always leaves gaps between them, by construction — only "raise the total budget" or
+ * "find semantic structure to split on" (the original ceiling) closes the question in general. Picking
+ * three over two is a deliberate, scoped choice (named by Q324's own disclosure as the concrete
+ * example worth closing specifically), not a claim that N-section slicing solves the general problem. */
 function boundedExcerpt(text: string, maxLines: number): string {
   const lines = text.split('\n');
   if (lines.length > maxLines) {
@@ -1699,6 +1748,17 @@ function boundedExcerpt(text: string, maxLines: number): string {
     return [headChars(headText, budget.head), marker, tailChars(tailText, budget.tail)].join('\n');
   }
   if (text.length <= MAX_FAILURE_EXCERPT_CHARS) return text;
+  const triple = splitExcerptBudgetTriple(text.length);
+  if (triple !== undefined) {
+    const head = text.slice(0, triple.headLen);
+    const mid = text.slice(triple.midStart, triple.midStart + triple.midLen);
+    const tail = text.slice(text.length - triple.tailLen);
+    const beforeMid = triple.midStart - triple.headLen;
+    const afterMid = text.length - triple.tailLen - (triple.midStart + triple.midLen);
+    const markerBefore = `... (${String(beforeMid)} char${beforeMid === 1 ? '' : 's'} omitted) ...`;
+    const markerAfter = `... (${String(afterMid)} char${afterMid === 1 ? '' : 's'} omitted) ...`;
+    return `${head}${markerBefore}${mid}${markerAfter}${tail}`;
+  }
   const budget = splitExcerptBudget(text.length, text.length);
   return `${headChars(text, budget.head)}...(truncated)...${tailChars(text, budget.tail)}`;
 }

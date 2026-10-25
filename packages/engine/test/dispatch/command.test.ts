@@ -515,18 +515,26 @@ describe("runCommandStep — a failed command's message combines a bounded stder
     expect(message).not.toContain('MIDDLE-FILLER-2');
   });
 
-  it('a single long line with no newlines at all: content near either edge survives, content strictly in the middle does not -- a disclosed, mathematically inherent limit of a fixed two-sided budget over one unsplittable blob, never a further-closable accounting bug (gauntlet critic round 2, disclosed residual, not blocking)', async () => {
-    const projectRoot = await createTempRepo('command-single-line-edges');
+  it('a single long line with no newlines at all: content near either edge AND at the true middle now survives, content strictly BETWEEN an edge and the middle does not -- the Q324-disclosed structural limit, closed for the one point it named specifically (M17 Phase A hardening: a third, true-middle allocation mode, never silently overlapping the other two)', async () => {
+    const projectRoot = await createTempRepo('command-single-line-triple-split');
     const ctx = createTestContext({ projectRoot });
     const stepNode = node({
       id: 'wf:check',
       kind: 'command',
+      // 6000 chars total, five contiguous blocks with no overlap: a head-slice marker (survives, as
+      // before), a gap1 marker strictly between the head slice and the true-middle slice (does NOT
+      // survive -- the one kind of residual gap this fix still has), a true-middle marker (THE fix:
+      // this now survives, where it never could before), a gap2 marker strictly between the
+      // true-middle slice and the tail slice (does NOT survive, the symmetric residual gap), and a
+      // tail-slice marker (survives, as before).
       run:
         'node -e "' +
-        "const head = 'A'.repeat(50) + 'HEAD-MARKER-ABC' + 'A'.repeat(1950); " +
-        "const middle = 'M'.repeat(900) + 'MIDDLE-MARKER-GHI' + 'M'.repeat(900); " +
-        "const tail = 'Z'.repeat(1950) + 'TAIL-MARKER-DEF' + 'Z'.repeat(50); " +
-        'console.error(head + middle + tail); ' +
+        "const headBlock = 'A'.repeat(50) + 'HEAD-MARKER-ABC' + 'A'.repeat(1268); " +
+        "const gap1Block = 'B'.repeat(493) + 'GAP1-MARKER-XYZ' + 'B'.repeat(493); " +
+        "const midBlock = 'C'.repeat(657) + 'MIDDLE-MARKER-GHI' + 'C'.repeat(658); " +
+        "const gap2Block = 'D'.repeat(492) + 'GAP2-MARKER-UVW' + 'D'.repeat(493); " +
+        "const tailBlock = 'E'.repeat(1268) + 'TAIL-MARKER-DEF' + 'E'.repeat(50); " +
+        'console.error(headBlock + gap1Block + midBlock + gap2Block + tailBlock); ' +
         'process.exit(1)"',
     });
 
@@ -534,9 +542,17 @@ describe("runCommandStep — a failed command's message combines a bounded stder
 
     expect(outcome.status).toBe('failed');
     const message = outcome.failure?.message ?? '';
+    // The positive guarantee, unchanged from before this fix: either edge survives.
     expect(message).toContain('HEAD-MARKER-ABC');
     expect(message).toContain('TAIL-MARKER-DEF');
-    expect(message).not.toContain('MIDDLE-MARKER-GHI');
+    // The fix itself: the blob's own true middle, previously unreachable by any two-edge scheme, now
+    // survives too.
+    expect(message).toContain('MIDDLE-MARKER-GHI');
+    // The still-disclosed residual: content strictly BETWEEN an edge and the middle slice remains
+    // genuinely unreachable -- narrower than before (two smaller gaps instead of one big one), not
+    // eliminated.
+    expect(message).not.toContain('GAP1-MARKER-XYZ');
+    expect(message).not.toContain('GAP2-MARKER-UVW');
   });
 
   it("never drops a project's own warning emitted via the standard process.emitWarning API under a custom name -- only Node's own closed set of built-in warning names is known (gauntlet critic round 1, MAJOR: a bare \\w*Warning: wildcard would have deleted this real, load-bearing diagnostic outright)", async () => {

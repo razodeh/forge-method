@@ -147,10 +147,23 @@ export async function runRawBindingCheck(
 /** One story's own binding check, factored out of `runTestBindingCommand` so both its single-story
  * mode (`--story <id>`) and its discover mode (`specs/22` M15 P5: no `--story`, every `done` story)
  * share the identical runId/evidence/outcome-mapping logic. Built on `runRawBindingCheck` above,
- * adding matching against declared exemptions and writing `MutationEvidence`. */
+ * adding matching against declared exemptions and writing `MutationEvidence`.
+ *
+ * `telemetryProjectRoot` (`specs/22` M17 Phase A hardening, `process/SPEC-QUESTIONS.md` Q324's own
+ * disclosed-not-fixed sibling): `G-Verify.gate.yaml`'s own `test:binding` check runs this exact
+ * command (`forge test binding --json`) as an in-run gate evaluation, with `projectRoot` resolved from
+ * its own `cwd` (`runGateStep`'s own `ctx.integrationPath`, never the real project root) -- the
+ * IDENTICAL mechanism gap Q324 Decision 2 fixed for `forge parity check` (`check-command.ts`'s own
+ * `telemetryProjectRoot`, mirroring `story.ts`'s pre-existing `StoryVerifyContext.telemetryProjectRoot`
+ * split), left unfixed here at the time ("flagged by a critic, not confirmed or chased"). Mirrors that
+ * identical split exactly: `projectRoot` stays whatever this invocation's own real check needs (the
+ * worktree it actually runs in), `telemetryProjectRoot` is only ever read for where the
+ * `CheckRun{kind:'binding'}` event itself lands. `undefined` (the ordinary, standalone human
+ * invocation, where the two always coincide) falls back to `projectRoot` unchanged. */
 async function runOneStoryBinding(
   paths: ProjectPaths,
   projectRoot: string,
+  telemetryProjectRoot: string | undefined,
   reportsRoot: string,
   story: Story,
   testLayer: TestLayerIdentity,
@@ -194,7 +207,7 @@ async function runOneStoryBinding(
     clock.now().slice(0, 10),
   );
   await emitBindingCheckTelemetry({
-    projectRoot,
+    projectRoot: telemetryProjectRoot ?? projectRoot,
     runId: telemetryRunId,
     clock,
     storyId: story.id,
@@ -319,6 +332,7 @@ function allNonBindingNote(tests: readonly TestOutcomeEntry[]): string | undefin
 async function runSingleStoryBindingCommand(
   paths: ProjectPaths,
   projectRoot: string,
+  telemetryProjectRoot: string | undefined,
   reportsRoot: string,
   storyId: string,
   testLayer: TestLayerIdentity,
@@ -334,6 +348,7 @@ async function runSingleStoryBindingCommand(
   const outcome = await runOneStoryBinding(
     paths,
     projectRoot,
+    telemetryProjectRoot,
     reportsRoot,
     story,
     testLayer,
@@ -406,6 +421,7 @@ async function runSingleStoryBindingCommand(
 async function runDiscoverModeBindingCommand(
   paths: ProjectPaths,
   projectRoot: string,
+  telemetryProjectRoot: string | undefined,
   reportsRoot: string,
   specsRoot: string,
   testLayer: TestLayerIdentity,
@@ -422,6 +438,7 @@ async function runDiscoverModeBindingCommand(
       runOneStoryBinding(
         paths,
         projectRoot,
+        telemetryProjectRoot,
         reportsRoot,
         story,
         testLayer,
@@ -528,11 +545,16 @@ async function runTestBindingCommand(
   const clock = SYSTEM_CLOCK;
   const { exemptions } = await loadExemptions(paths, config.paths.reports);
   const runId = realEnvSnapshot()[FORGE_RUN_ID];
+  // `specs/22` M17 Phase A hardening (Q324's own disclosed sibling): the real project root for THIS
+  // check's own telemetry, when this invocation is an in-run `G-Verify` gate evaluation (`gateEnv`,
+  // `run/context.ts`) -- mirrors `run-and-gates.ts`'s own identical `forge parity check` wiring exactly.
+  const telemetryProjectRoot = realEnvSnapshot()['FORGE_PROJECT_ROOT'];
 
   if (storyId === undefined) {
     return runDiscoverModeBindingCommand(
       paths,
       projectRoot,
+      telemetryProjectRoot,
       config.paths.reports,
       SPECS_ROOT,
       testLayer,
@@ -547,6 +569,7 @@ async function runTestBindingCommand(
   return runSingleStoryBindingCommand(
     paths,
     projectRoot,
+    telemetryProjectRoot,
     config.paths.reports,
     storyId,
     testLayer,
