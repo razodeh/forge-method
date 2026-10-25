@@ -19,6 +19,7 @@ import {
   createLauncherShim,
   createLauncherShimOrWarn,
   currentLauncher,
+  definedLauncherEnv,
   launcherScript,
   removeLiveLauncherShims,
   shellQuote,
@@ -347,5 +348,26 @@ describe('currentLauncher', () => {
     expect(launcher?.entry).toBe(path.resolve(process.argv[1] ?? ''));
     expect(launcher?.execArgv.some((flag) => flag.startsWith('--inspect'))).toBe(false);
     expect(launcher?.env).toEqual({ PATH: '/p' });
+  });
+});
+
+describe('definedLauncherEnv', () => {
+  it('is undefined for an undefined spec (no real launcher, nothing to fall back to)', () => {
+    expect(definedLauncherEnv(undefined)).toBeUndefined();
+  });
+
+  it('drops every undefined value from a real spec’s own env, keeping the rest', () => {
+    const spec: LauncherSpec = {
+      execPath: process.execPath,
+      execArgv: [],
+      entry: 'entry.mjs',
+      env: { PATH: '/p', HOME: undefined, LANG: 'C' },
+    };
+    expect(definedLauncherEnv(spec)).toEqual({ PATH: '/p', LANG: 'C' });
+  });
+
+  it('is the real, usable fallback run.ts/resume.ts need when createLauncherShimOrWarn could not build a real shim: a concrete env with a real PATH, not undefined', () => {
+    const spec = currentLauncher({ PATH: '/usr/bin', HOME: undefined });
+    expect(definedLauncherEnv(spec)).toEqual({ PATH: '/usr/bin' });
   });
 });

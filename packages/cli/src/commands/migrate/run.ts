@@ -51,7 +51,7 @@
  */
 import { SYSTEM_CLOCK, type Clock } from '@forge/core';
 import { pathExists, readTextFile, writeFileAtomic, type ProjectPaths } from '@forge/core/fs';
-import { runShellCommand } from '@forge/engine/dispatch';
+import { execa } from 'execa';
 
 import { acquireMigrateLock, releaseMigrateLock } from './lock.ts';
 import type { SpecCommandContext } from '../spec.ts';
@@ -174,13 +174,6 @@ async function writeLedger(paths: ProjectPaths, ledger: Ledger): Promise<void> {
   await writeFileAtomic(paths.resolveWithin(LEDGER_PATH), `${JSON.stringify(ledger, null, 2)}\n`);
 }
 
-/** POSIX single-quoting for one shell token — the identical technique `reporter.ts`'s own
- * `shellQuote` already uses for the identical reason (`QUALITY-BAR.md` R11: a quoted interpolation,
- * never a bare one). */
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
 function truncate(text: string): string {
   return text.length > 2000 ? `${text.slice(0, 2000)}…` : text;
 }
@@ -188,23 +181,69 @@ function truncate(text: string): string {
 /** Runs one entry's own script as a plain Node subprocess (this file's own header doc comment has
  * the full reasoning for why it is a subprocess, never an in-process `import()`). Exit 0 is the whole
  * contract: a non-zero exit, or outliving `timeoutMs`, is a failure, with enough of the process's own
- * output to diagnose why. */
+ * output to diagnose why.
+ *
+ * Spawned as `execa(process.execPath, [scriptPath], ...)` — a real argv array, never a shell string
+ * (`02` §2.7 makes Windows first-class). This is always exactly "run node on this one path," with no
+ * shell feature (`&&`, `$VAR`, a glob) it ever genuinely needs, so there is no reason to involve a
+ * shell at all — and so no POSIX-vs-cmd.exe quoting dialect for `scriptPath` to get wrong in the
+ * first place. A prior version built `node ${shellQuote(scriptPath)}` (POSIX single-quoting) and ran
+ * it through `@forge/engine/dispatch`'s `runShellCommand` with `env` always `undefined` — the one
+ * shape that keeps `shell: true` (cmd.exe on Windows) rather than ever consulting
+ * `resolvePosixShell`, since that function has no real `PATH` to search without a concrete `env`
+ * (`shell.ts`'s own doc comment). cmd.exe does not treat `'...'` as a quoted argument at all, so
+ * `node` would have received one literal argument containing apostrophes and failed to find the
+ * module — every real `forge migrate run` invocation would have failed on Windows. The argv form
+ * sidesteps the whole dialect question instead of needing to pick one: Node's own child-process layer
+ * escapes each array element for the OS's real argv convention (a POSIX `exec`, or Windows
+ * `CreateProcess`'s own command-line quoting) regardless of platform, with no shell in between to
+ * (mis)interpret it a second time.
+ *
+ * The timeout kill mirrors `@forge/engine/dispatch/shell.ts`'s own `killGroup` (POSIX-only process-
+ * group kill; Windows has no equivalent, see that function's own doc comment) — deliberately a
+ * narrower copy, not that module's full `listDescendantPids` walk, since that exists for an
+ * arbitrary SHELL command's own backgrounded jobs (`cmd & cmd2`), which a bare, shell-free `node
+ * <path>` was never exposed to in the first place; a migration script that itself double-forks a
+ * detached grandchild is already a correctness problem in the script, not something this caller can
+ * discover. */
 async function runMigrationScript(
   scriptPath: string,
   cwd: string,
   timeoutMs: number,
 ): Promise<{ readonly ok: true } | { readonly ok: false; readonly message: string }> {
-  const result = await runShellCommand(`node ${shellQuote(scriptPath)}`, cwd, undefined, {
-    timeoutMs,
+  const subprocess = execa(process.execPath, [scriptPath], {
+    cwd,
+    reject: false,
+    stdin: 'ignore',
+    detached: process.platform !== 'win32',
+    timeout: timeoutMs,
+    killSignal: 'SIGKILL',
   });
-  if (result.timedOut === true) {
+  const pid = subprocess.pid;
+  const result = await subprocess;
+  if (result.timedOut) {
+    // execa's own `timeout` already SIGKILLed the direct child; this additionally reaches any
+    // descendant still alive in its own process group (POSIX only — Windows has no group-kill
+    // primitive, matching `killGroup`'s own disclosed platform limit elsewhere in this codebase).
+    if (pid !== undefined && process.platform !== 'win32') {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        // Already gone, or the child was never its own group leader.
+      }
+    }
     return { ok: false, message: `script timed out after ${String(timeoutMs)}ms and was killed` };
   }
-  if (result.exitCode !== 0) {
+  // `?? 1`: a process execa reports with no numeric exit code at all (killed by a signal this
+  // function did not itself request, e.g. the `timedOut` branch above already returned) is still a
+  // real failure, never printed as the literal text "undefined" — the identical fallback `shell.ts`'s
+  // own `runShellCommand` already applies to every other command this codebase runs.
+  const exitCode = result.exitCode ?? 1;
+  if (exitCode !== 0) {
     const detail = result.stderr.trim() !== '' ? result.stderr.trim() : result.stdout.trim();
     return {
       ok: false,
-      message: `script exited ${String(result.exitCode)}${detail === '' ? '' : `: ${truncate(detail)}`}`,
+      message: `script exited ${String(exitCode)}${detail === '' ? '' : `: ${truncate(detail)}`}`,
     };
   }
   return { ok: true };

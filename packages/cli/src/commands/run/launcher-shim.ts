@@ -67,6 +67,27 @@ export function currentLauncher(
   };
 }
 
+/** `spec.env` with every `undefined` value dropped — a real environment variable the parent process
+ * carries at all is always a defined string; `undefined` only ever means "this object's own shape
+ * allows a missing key," never a real value to pass on. The fallback `run.ts`/`resume.ts` use when
+ * `createLauncherShimOrWarn` could not build a real shim (warned, not thrown): `shim?.commandEnv` is
+ * then itself `undefined`, which otherwise reaches `runShellCommand` as its own `env === undefined`
+ * and keeps `shell: true` (cmd.exe on Windows) unconditionally, never giving `resolvePosixShell` a
+ * real `PATH` to search (`shell.ts`'s own doc comment) — this is the real environment `currentLauncher`
+ * already captured, usable as that concrete fallback, just missing the (now-failed) shim's own
+ * binDir-prepended `PATH`. `undefined` in, `undefined` out: a caller with no real `LauncherSpec` at
+ * all (`currentLauncher`'s own "no script path" case) has nothing to fall back to either. */
+export function definedLauncherEnv(
+  spec: LauncherSpec | undefined,
+): Readonly<Record<string, string>> | undefined {
+  if (spec === undefined) return undefined;
+  const result: Record<string, string> = {};
+  for (const [name, value] of Object.entries(spec.env)) {
+    if (value !== undefined) result[name] = value;
+  }
+  return result;
+}
+
 /** POSIX single-quoting: wrap in `'...'`, and end/reopen the quote around each embedded `'`. */
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;

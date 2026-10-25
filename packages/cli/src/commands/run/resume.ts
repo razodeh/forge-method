@@ -17,7 +17,11 @@ import { resolveStepCostCeilings, runEngine } from '@forge/engine/run';
 import { parseWorkflow } from '@forge/engine/workflow';
 
 import { buildRunEngineContext } from './context.ts';
-import { createLauncherShimOrWarn, type LauncherShim } from './launcher-shim.ts';
+import {
+  createLauncherShimOrWarn,
+  definedLauncherEnv,
+  type LauncherShim,
+} from './launcher-shim.ts';
 import {
   acquireRunLock,
   isProcessAlive,
@@ -121,7 +125,11 @@ export async function resumeWorkflow(
       checksRoot: deps.checksRoot,
       agentsRoot: deps.agentsRoot,
       clock,
-      commandEnv: shim?.commandEnv,
+      // See `run.ts`'s own identical comment: `shim?.commandEnv` alone left this `undefined` on a
+      // real, reachable degraded path (the shim could not be created), which kept `runShellCommand`
+      // from ever consulting `resolvePosixShell`. `deps.launcher?.env` is the real environment
+      // already captured to build the (now-failed) shim from.
+      commandEnv: shim?.commandEnv ?? definedLauncherEnv(deps.launcher),
       ask: deps.ask,
       // The integration branch the run started on (`forge run --stage`): its lanes and merges are there.
       expressionContext: manifest.expressionContext,

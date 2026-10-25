@@ -84,7 +84,11 @@ describe('createRcaShell', () => {
     });
     const result = await runShell('env', root, 'proposed');
     expect(result.stdout).not.toContain('canary-token');
-    expect(result.stdout).toContain('GIT_CONFIG_GLOBAL=/dev/null');
+    // `confined-command.ts`'s own `GIT_NULL_DEVICE`: `/dev/null` on POSIX, `NUL` on win32 -- a bare
+    // `/dev/null` assertion here would be a real, guaranteed failure on this repo's own `windows-latest`
+    // CI leg, exercising the exact code path that constant exists to make platform-correct.
+    const gitNullDevice = process.platform === 'win32' ? 'NUL' : '/dev/null';
+    expect(result.stdout).toContain(`GIT_CONFIG_GLOBAL=${gitNullDevice}`);
   });
 
   it('the FORGE run/step/agent marker (@forge/core/session-marker, PLAN-M14.md P4) never reaches a proposed or engine RCA shell command, even when it is already present in parentEnv -- a nested "forge debug" run inside a command step would otherwise inherit it via ExecuteStepContext.commandEnv (commandEnvFor/commandStepEnvironment)', async () => {

@@ -316,8 +316,19 @@ async function runGateCommand(
     console.error(message);
   });
   const baseRef = env['FORGE_BASE_REF'];
-  const commandEnv =
-    baseRef === undefined ? shim?.commandEnv : { ...shim?.commandEnv, FORGE_BASE_REF: baseRef };
+  // `shim?.commandEnv` alone used to leave `commandEnv` `undefined` whenever the shim could not be
+  // created (`createLauncherShimOrWarn` warns and swallows the failure rather than throwing, `03`
+  // §3.2.4 — a disk-full or unwritable-temp-dir host still runs the gate's own checks, just without
+  // `forge` resolving to this exact binary on `PATH`). `undefined` reaches `runShellCommand` as its own
+  // `env === undefined`, which keeps `shell: true` (cmd.exe on Windows) unconditionally: `env` has to be
+  // a real, concrete object for `resolvePosixShell` to have anything to search (`shell.ts`'s own doc
+  // comment) — so a real `env` (already read, once, above) is the fallback here instead of nothing at
+  // all. `shim?.commandEnv ?? env`: the shim's own `PATH`-with-the-launcher-first value when it exists,
+  // or this file's own real environment snapshot when it does not — never literally `undefined`.
+  const commandEnv = {
+    ...(shim?.commandEnv ?? env),
+    ...(baseRef === undefined ? {} : { FORGE_BASE_REF: baseRef }),
+  };
   try {
     return await runGateSubcommand(paths, projectRoot, sub, rest, json, commandEnv);
   } finally {
@@ -633,7 +644,11 @@ async function runMergeCommand(
       integrationPath,
       config,
       workflowsRoot: WORKFLOWS_ROOT,
-      commandEnv: shim?.commandEnv,
+      // `shim?.commandEnv` alone (never `undefined`, see `runGateCommand`'s own identical comment,
+      // above): a merge's pre/post-check commands still need a real, concrete environment to run
+      // with when the launcher shim itself could not be created, both so `resolvePosixShell` has a
+      // real `PATH` to search and so the checks are not run with no environment at all.
+      commandEnv: shim?.commandEnv ?? env,
     };
 
     if (all) {

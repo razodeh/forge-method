@@ -57,6 +57,15 @@ describe('resolvePosixShell', () => {
     expect(resolvePosixShell({ PATH: binDir }, 'win32')).toBe(true);
   });
 
+  it('on win32, a DIRECTORY literally named bash.exe on PATH is not "resolved" as a real shell', async () => {
+    // An unrelated project's own build output (or anything else) can easily put a directory called
+    // `bash.exe` on PATH; `execa` would fail confusingly at spawn time if that were handed to it as
+    // `shell`, instead of this function correctly treating "not a real file" the same as "not found".
+    const binDir = await dir();
+    await mkdir(path.join(binDir, 'bash.exe'));
+    expect(resolvePosixShell({ PATH: binDir }, 'win32')).toBe(true);
+  });
+
   it('on win32, falls back to `true` when PATH is missing or empty entirely', () => {
     expect(resolvePosixShell({}, 'win32')).toBe(true);
     expect(resolvePosixShell({ PATH: '' }, 'win32')).toBe(true);

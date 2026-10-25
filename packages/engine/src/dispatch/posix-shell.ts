@@ -23,14 +23,46 @@
  * Windows install with no git, or git installed without bash), this falls back to `true` (cmd.exe): the
  * exact behaviour every caller of this module already had, not a new, harder failure.
  *
+ * **Disclosed, unverified residual (needs a real Windows + Git-for-Windows rig to actually close, not
+ * further reasoning from here).** Windows' `CreateProcess` takes one flat command-line string, not an
+ * argv array: when `execa` builds that string for a non-cmd.exe `shell` (this module's own return value,
+ * `bash.exe`'s full path), it applies Node's own default Windows argument-escaping to each piece, and
+ * `bash.exe` itself (an MSYS2/Cygwin-built binary) then has to recover its own argv from that same string
+ * through ITS runtime's own escaping convention — a different one than native `CreateProcess` callers
+ * generally assume. `confined-command.ts`'s whole `vetProposedCommand`/`vetStoredCommand` security model
+ * (`splitWords`'s own POSIX quoting/expansion rules) assumes what the vet approved is byte-for-byte what
+ * the shell it hands off to receives and parses the same way. Whether that double round-trip (Node's
+ * Windows escaping, then MSYS2 bash's own argv recovery) genuinely preserves single-quote/space/backslash
+ * semantics identically to a native POSIX `exec`, or instead opens a gap between "what the vet approved"
+ * and "what bash actually runs," is not something either a fresh reading of execa's/Node's own source or
+ * Git-for-Windows' documentation can fully settle — it needs to be run, by hand, against a real Windows
+ * host with a real Git-for-Windows install, with adversarial inputs (embedded quotes, backslashes,
+ * trailing backslash-before-quote, spaces) proposed the way a model actually would. Treat this as an
+ * open security question this piece's own reasoning could not close, not as confirmed-safe.
+ *
  * @see SPEC-QUESTIONS.md
  */
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 
 /** Checked in this order; the first one found on `PATH` wins. `bash` with no extension is last — Windows
  * executables normally carry one, but nothing stops a shim or a WSL interop wrapper from being named bare. */
 const POSIX_SHELL_CANDIDATES: readonly string[] = ['bash.exe', 'bash.cmd', 'bash'];
+
+/** A real, regular FILE at `full` — never a directory (a stray `bash/` directory on `PATH`, e.g. an
+ * unrelated project's own build output, must not be "resolved" as a shell and handed to `execa`, which
+ * would fail confusingly at spawn time instead of this function correctly falling back to `true`).
+ * `existsSync` alone cannot tell the two apart; `statSync` can. Swallows any error (permission denied, a
+ * symlink that no longer resolves, a race with something deleting it between the two checks) as "not a
+ * real usable shell here" rather than letting a filesystem quirk throw out of a function whose whole
+ * contract is "never worse than `shell: true`." */
+function isRealFile(full: string): boolean {
+  try {
+    return statSync(full).isFile();
+  } catch {
+    return false;
+  }
+}
 
 /** The directories named by `env`'s `PATH` (or, on Windows, however that variable is actually spelled —
  * `Path`, `path`), in order. `''` entries (an empty `PATH`, or a stray leading/trailing delimiter) are
@@ -56,7 +88,7 @@ export function resolvePosixShell(
   for (const dir of pathDirectories(env)) {
     for (const candidate of POSIX_SHELL_CANDIDATES) {
       const full = path.join(dir, candidate);
-      if (existsSync(full)) return full;
+      if (isRealFile(full)) return full;
     }
   }
   return true;

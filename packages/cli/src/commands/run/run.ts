@@ -26,6 +26,7 @@ import {
 import { collectExternalKbIds } from './external-kb-ids.ts';
 import {
   createLauncherShimOrWarn,
+  definedLauncherEnv,
   removeLiveLauncherShims,
   type LauncherShim,
   type LauncherSpec,
@@ -254,7 +255,14 @@ export async function runWorkflow(
       checksRoot: deps.checksRoot,
       agentsRoot: deps.agentsRoot,
       clock,
-      commandEnv: shim?.commandEnv,
+      // `shim?.commandEnv` alone left this `undefined` whenever the shim could not be created
+      // (`createLauncherShimOrWarn` warns and swallows the failure, never throws): `undefined`
+      // reaches `runShellCommand` as its own `env === undefined`, which keeps `shell: true` (cmd.exe
+      // on Windows) unconditionally rather than ever giving `resolvePosixShell` a real `PATH` to
+      // search (`shell.ts`'s own doc comment). `deps.launcher?.env` is the real environment
+      // `currentLauncher` already captured to build the (now-failed) shim from — a concrete fallback,
+      // just missing the shim's own binDir-prepended `PATH`, rather than nothing at all.
+      commandEnv: shim?.commandEnv ?? definedLauncherEnv(deps.launcher),
       ask: deps.ask,
       expressionContext: options.expressionContext,
       lanesFromIntegration: true,
