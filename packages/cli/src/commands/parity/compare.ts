@@ -29,18 +29,13 @@ import type {
   SurfaceObservation,
 } from './capture.ts';
 import type { NormalizeRule, ProcessStream, SurfaceKind } from './declaration-types.ts';
+import { applyNormalizeRulesToLibraryValueBounded } from './normalize-library-budget.ts';
 import {
   applyNormalizeRulesToTextBounded,
   DEFAULT_NORMALIZE_BUDGET_MS,
 } from './normalize-budget.ts';
 import type { ObservedRoot } from './normalize.ts';
-import {
-  fieldRedactor,
-  redactJsonPointerSubstring,
-  removeJsonPointer,
-  reorderPointersForSafeRemoval,
-  rewriteRootPaths,
-} from './normalize.ts';
+import { rewriteRootPaths } from './normalize.ts';
 import type { StabilityOutcome } from './stability.ts';
 import { decideStability } from './stability.ts';
 
@@ -145,10 +140,10 @@ function normalizeTextOrThrow(
  * `ignore-json-pointers` and `redact-json-pointers` are the two normalise rules with a defined
  * meaning against `library`'s own STRUCTURED result (`capture.ts`'s `LibraryObservation.result.value`
  * is already a parsed `CanonicalValue`, never raw text): each operates on the named pointers
- * directly, with no parse/serialise round trip needed. The other six rules — line-endings,
- * strip-ansi, trim-trailing-whitespace, sort-lines, json-canonical, and, in particular, `replace` —
- * have no text to run against here and are no-ops; a thrown error's `name`/`message` are likewise
- * untouched.
+ * directly, via `normalize.ts`'s own `applyNormalizeRulesToLibraryValue`, with no parse/serialise
+ * round trip needed. The other six rules — line-endings, strip-ansi, trim-trailing-whitespace,
+ * sort-lines, json-canonical, and, in particular, `replace` — have no text to run against here and
+ * are no-ops; a thrown error's `name`/`message` are likewise untouched.
  *
  * **The library-surface path-redaction gap `process/SPEC-QUESTIONS.md` Q317 Decision 8 disclosed is
  * CLOSED here, by `redact-json-pointers` (`specs/22` M17 P14 follow-up).** Decision 8's own repro: two
@@ -173,19 +168,18 @@ function normalizeTextOrThrow(
  * a-length-anchored-pattern reason `CFG-516` already refuses `replace` there — this rule is
  * meaningful, and permitted, only on `library`, which is exactly the surface this gap was in.
  *
- * **Disclosed, not fixed here: `redact-json-pointers`' own regex runs with NO wall-clock budget on
- * this path.** `normalizeTextOrThrow` (above, this file) routes a `process`/`file`/`http` case's
- * normalisation through `normalize-budget.ts`'s own worker-thread-bounded
- * `applyNormalizeRulesToTextBounded`, specifically so a catastrophic `replace` pattern cannot hang
- * the process. This function has never been routed through that bound — it had nothing regex-shaped
- * to protect before `redact-json-pointers` existed — and still is not: `fieldRedactor`'s own
- * `applyReplace` call, below, runs synchronously, on this thread, with no timeout. `replace-lint.ts`'s
- * own `collectReplacePatterns` doc comment has the full account of why this makes its STATIC
- * catastrophic-backtracking lint (`CFG-511`) the only real protection `redact-json-pointers` has
- * today, not merely "advisory defence in depth" the way it is for `replace`. Routing `library`'s own
- * normalisation through the identical worker-thread budget is real, separable engineering scope —
- * the structured value would need to cross the worker boundary instead of a plain string — tracked
- * as a follow-up, not attempted here half-built, the identical treatment Decision 8's own repro got.
+ * **Two critic findings against this piece's own first version, both now closed.** (1) A real,
+ * exploitable ReDoS: `redact-json-pointers`' own regex ran synchronously, on this thread, with no
+ * wall-clock budget at all — a flat, ADJACENT-group pattern (`isPathologicalReplacePattern`'s own
+ * blind spot; `CFG-511` only catches NESTED quantifiers) measured exponential blowup directly.
+ * Closed by routing this function through `normalize-library-budget.ts`'s own worker-thread-bounded
+ * `applyNormalizeRulesToLibraryValueBounded` — the identical `Atomics`/`SharedArrayBuffer`-terminated
+ * bound `normalizeTextOrThrow` (below) already gives `process`/`file`/`http`, reused rather than a
+ * second mechanism. (2) A real, silent information leak when `ignore-json-pointers` and
+ * `redact-json-pointers` share an array and are declared in a particular order: `normalize.ts`'s own
+ * `applyNormalizeRulesToLibraryValue` doc comment has the full repro and the fix (a FIXED order —
+ * every `ignore-json-pointers` rule resolves fully before any `redact-json-pointers` pointer,
+ * regardless of declared order).
  */
 function normalizeLibraryOrThrow(
   observation: LibraryObservation,
@@ -193,67 +187,31 @@ function normalizeLibraryOrThrow(
   context: NormalizeContext,
 ): LibraryObservation {
   if (!observation.result.ok) return observation;
-  let working: unknown = observation.result.value;
-  for (const rule of rules) {
-    if (rule.rule === 'ignore-json-pointers') {
-      // Reordered first (round 6's own fix, `normalize.ts`'s own `reorderPointersForSafeRemoval` doc
-      // comment has the full account): two or more array-index pointers into the SAME parent array
-      // must apply descending, or a later one resolves against the earlier removal's already-shifted
-      // array -- this call site shares the identical fix with `normalize.ts`'s own text-path caller
-      // rather than risking a second, independently-written (and independently wrong) copy.
-      for (const pointer of reorderPointersForSafeRemoval(rule.pointers)) {
-        working = removeJsonPointer(working, pointer);
-      }
-      continue;
-    }
-    if (rule.rule === 'redact-json-pointers') {
-      // Unlike `ignore-json-pointers`, redacting a string's own content can never change an array's
-      // length, so no pointer here can ever shift a LATER pointer's own target the way a splice-based
-      // removal can -- no reordering is needed (`normalize.ts`'s own `applyRedactJsonPointers` doc
-      // comment states the identical reasoning for its text-shape sibling call site).
-      for (const pointer of rule.pointers) {
-        // A mutable BOX, not a bare `let` flag -- `normalize.ts`'s own `applyRedactJsonPointers` doc
-        // comment has the full account of why (TypeScript's control-flow narrowing mishandles a
-        // `let` boolean set only from inside a callback this function passes onward).
-        const match: { wholeField: boolean } = { wholeField: false };
-        working = redactJsonPointerSubstring(
-          working,
-          pointer,
-          fieldRedactor(rule.pattern, rule.replacement, () => {
-            match.wholeField = true;
-          }),
-        );
-        if (match.wholeField) {
-          // The field-granularity "whole match" guard (`normalize.ts`'s own `fieldRedactor` doc
-          // comment): a pattern that matches the ENTIRE non-empty string at this pointer is refused
-          // outright, regardless of what the declared `replacement` would actually produce, the
-          // identical reason `replace`'s own whole-stream guard exists.
-          throw new ForgeError('RUN-130', {
-            surface: context.surface,
-            index: context.index,
-            rule: 'redact-json-pointers',
-            detail:
-              `the pattern's match at pointer ${JSON.stringify(pointer)} is the entire content ` +
-              'of a non-empty field, which is refused',
-          });
-        }
-      }
-      continue;
-    }
-    // Every other rule kind (`line-endings`, `strip-ansi`, `trim-trailing-whitespace`, `sort-lines`,
-    // `json-canonical`, `replace`) remains a no-op on `library` for the identical reason this
-    // function's own doc comment already states.
+  const outcome = applyNormalizeRulesToLibraryValueBounded(observation.result.value, rules);
+  if (outcome.status === 'timed-out') {
+    throw new ForgeError('RUN-152', {
+      surface: context.surface,
+      index: context.index,
+      timeoutMs: DEFAULT_NORMALIZE_BUDGET_MS,
+    });
   }
-  if (typeof working === 'symbol') {
+  if (outcome.status === 'crashed') {
+    throw new ForgeError('RUN-154', { detail: outcome.detail });
+  }
+  if (outcome.ok) {
+    // Sound: `outcome.value` descends from the already-validated `CanonicalValue` in
+    // `observation.result.value` through only RFC 6902 "remove" steps (`removeJsonPointer`) and
+    // string-replacing steps (`redactJsonPointerSubstring`), neither of which can introduce a value
+    // JSON cannot represent -- `normalize.ts`'s own `applyNormalizeRulesToLibraryValue` doc comment
+    // has the full account.
+    return { surface: 'library', result: { ok: true, value: outcome.value as CanonicalValue } };
+  }
+  if (outcome.kind === 'erased') {
     // The root pointer (`""`) was applied by an `ignore-json-pointers` rule: the whole value is gone,
     // which this piece treats as the identical erase-everything violation a text target's
     // non-empty-to-empty transition is, for the same reason (`normalize.ts`'s own `removeJsonPointer`
     // doc comment) -- never silently coerced to `null`, which would hide a declaration that excuses
-    // its entire result from comparison. Checked once, after the whole loop (not inline per rule): a
-    // `redact-json-pointers` rule that runs against an already-root-removed `working` is a provably
-    // safe no-op (`redactJsonPointerSubstring` never resolves a pointer against the `ROOT_REMOVED`
-    // symbol -- it is neither an array, a plain object, nor a string), so the only thing this check
-    // needs to detect is whether root removal EVER happened, anywhere in the rule list.
+    // its entire result from comparison.
     throw new ForgeError('RUN-130', {
       surface: context.surface,
       index: context.index,
@@ -261,12 +219,31 @@ function normalizeLibraryOrThrow(
       detail: 'would erase the entire (non-empty) observation, which is refused',
     });
   }
-  // Sound: `working` descends from the already-validated `CanonicalValue` in `observation.result.value`
-  // through only RFC 6902 "remove" steps (`removeJsonPointer`) and string-replacing steps
-  // (`redactJsonPointerSubstring`), neither of which can introduce a value JSON cannot represent -- and
-  // the one case that could ("the whole value is gone") was excluded by the `typeof working ===
-  // 'symbol'` check immediately above.
-  return { surface: 'library', result: { ok: true, value: working as CanonicalValue } };
+  if (outcome.kind === 'too-large') {
+    // `normalize-library-budget.ts`'s own `payloadCapacityBytesFor` doc comment has the full
+    // account of exactly when this can happen (a `redact-json-pointers` rule whose `replacement` is
+    // far longer than its match, repeated enough times) -- an honest, typed refusal, never a crash.
+    throw new ForgeError('RUN-130', {
+      surface: context.surface,
+      index: context.index,
+      rule: 'redact-json-pointers',
+      detail:
+        'the normalised result is too large to report (the rule set grew the value far beyond ' +
+        'its own input, which this harness refuses rather than risk an unbounded allocation)',
+    });
+  }
+  // The field-granularity "whole match" guard (`normalize.ts`'s own `fieldRedactor` doc comment): a
+  // pattern that matches the ENTIRE non-empty string at this pointer is refused outright, regardless
+  // of what the declared `replacement` would actually produce, the identical reason `replace`'s own
+  // whole-stream guard exists.
+  throw new ForgeError('RUN-130', {
+    surface: context.surface,
+    index: context.index,
+    rule: 'redact-json-pointers',
+    detail:
+      `the pattern's match at pointer ${JSON.stringify(outcome.pointer)} is the entire content ` +
+      'of a non-empty field, which is refused',
+  });
 }
 
 function normalizeObservationOrThrow(

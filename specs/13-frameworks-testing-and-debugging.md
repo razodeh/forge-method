@@ -368,7 +368,10 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   embedded inside a `library` surface's own structured result, which carries no raw text for `replace`
   to run against at all. Refused outright on every surface the root-path rewrite above reaches
   (`process`/`file`/`http`), for the identical reason `replace` already is there, and so meaningful
-  only on `library`, which the rewrite never touches). The rules run in the
+  only on `library`, which the rewrite never touches — its own regular expression runs under the
+  IDENTICAL wall-clock budget, forcibly terminated the identical way, as every other rule's own
+  catastrophic-backtracking shape, even though `library`'s own structured result never passes
+  through the text-shaped rules above at all). The rules run in the
   order a declaration lists them: `line-endings` rewrites CRLF and a lone CR as LF; `strip-ansi` removes CSI
   escape sequences (`ESC [`, parameter and intermediate bytes, then a final byte);
   `trim-trailing-whitespace` removes the spaces and tabs at the end of each line; `sort-lines`

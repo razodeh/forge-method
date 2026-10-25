@@ -116,8 +116,12 @@ const WORKER_URL = existsSync(DIST_WORKER_URL) ? DIST_WORKER_URL : SRC_WORKER_UR
  * function being both lazy (called only here, at actual `Worker`-creation time) and
  * extension-gated (skipped entirely for the dist build's own default precompiled worker) closes that
  * gap at its real root, not merely by deferring the same crash to a later point.
+ *
+ * Exported so `normalize-library-budget.ts`'s own worker (`specs/22` M17 P14 follow-up, Q317
+ * Decision 8) reuses the identical lazy, extension-gated mechanism rather than an independently
+ * maintained — and, as first written, EAGER, Q340-shaped — second copy.
  */
-function execArgvForWorker(workerUrl: URL): readonly string[] {
+export function execArgvForWorker(workerUrl: URL): readonly string[] {
   const needsTypeStripping = /\.(m?ts|cts)$/.test(workerUrl.pathname);
   // `--no-warnings` stays a separate, always-present argv element regardless: harmless, and
   // unaffected by which (if any) TS mechanism is in play.

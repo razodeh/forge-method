@@ -563,6 +563,99 @@ export function applyRedactJsonPointers(
   return { ok: true, text: toCanonicalJson(working as CanonicalValue) };
 }
 
+/** The result of running every rule of a `library` case's `normalize` list over its already-parsed
+ * result value — the structural counterpart to {@link NormalizeTextOutcome}. `kind: 'too-large'` is
+ * never produced by {@link applyNormalizeRulesToLibraryValue} itself (it has no size limit of its
+ * own); it exists only for `normalize-library-budget.ts`'s own bounded wrapper to synthesise, the
+ * identical "reuse the pure function's own outcome shape for a limit the WRAPPER enforces" pattern
+ * `normalize-budget.ts`'s own `payloadLength < 0` branch already uses for text (there, reusing
+ * `kind: 'rule-failed'`; here, a dedicated kind, since this type has no other "a rule failed" case to
+ * overload). */
+export type NormalizeLibraryOutcome =
+  | { readonly ok: true; readonly value: unknown }
+  | { readonly ok: false; readonly kind: 'erased' }
+  | {
+      readonly ok: false;
+      readonly kind: 'whole-field-match';
+      readonly rule: 'redact-json-pointers';
+      readonly pointer: string;
+    }
+  | { readonly ok: false; readonly kind: 'too-large' };
+
+/**
+ * Applies `rules` to a `library` case's already-parsed result `value` — the structural counterpart
+ * to {@link applyNormalizeRulesToText}, never throwing, carrying every outcome as data exactly as
+ * that function does.
+ *
+ * **DECISION, a critic finding against this piece's own first version: `ignore-json-pointers`
+ * ALWAYS applies before ANY `redact-json-pointers` pointer is resolved, regardless of which the
+ * declaration lists first — a FIXED order for this one pair, not the declared order `13` F-TEST-9
+ * otherwise mandates.** The first version of this function applied both kinds inline, in declared
+ * order, exactly as `applyNormalizeRulesToText` does for its own seven text-shaped rules. A critic
+ * proved that unsound for library's TWO pointer-addressed rules specifically, with a real, silent
+ * information leak: two results differing only at array index 1 (a real embedded path, meant to be
+ * redacted), with `ignore-json-pointers` removing index 0 declared BEFORE a `redact-json-pointers`
+ * rule naming index 1 (intending the ORIGINAL index-1 element). Run in declared order, the ignore
+ * rule's own splice-based removal (`removeAtPointer`'s own doc comment) shifts the real path down to
+ * index 0 FIRST, so the redact rule's pointer — still literally `/list/1`, exactly as written —
+ * resolves against whatever NOW sits at index 1 (an unrelated element), not the real path it was
+ * meant to redact. The real path leaks through completely unredacted, with no error and no warning;
+ * confirmed by direct execution, not merely reasoned about. The prior doc comment's "provably safe"
+ * claim (both rules are pointer/name-addressed, never position-dependent) is true for OBJECT key
+ * pointers, which never shift, but false for ARRAY INDEX pointers, which `ignore-json-pointers`' own
+ * removal can shift out from under a later, textually-identical pointer.
+ *
+ * **Why a fixed order, not a structural refusal of the combination.** `hasRepeatedRuleKindInScope`
+ * (`replace-lint.ts`'s own `CFG-513`) already refuses TWO separate rule entries of the identical kind
+ * sharing one scope — and `ignore-json-pointers`/`redact-json-pointers` are BOTH always `UNSCOPED`
+ * (`effectiveScopeKeyOf`'s own doc comment: only `replace` ever carries a `stream`/`file`), so a
+ * `library` case can never declare more than ONE `ignore-json-pointers` rule and more than ONE
+ * `redact-json-pointers` rule — confirmed by reading that check again, not assumed. The only
+ * declared-order ambiguity that can ever exist on one `library` case is therefore exactly "which of
+ * these (at most) two rules comes first", never a longer chain — fixing that one relationship removes
+ * the ambiguity entirely, with nothing broader to refuse. Running `ignore-json-pointers` to
+ * completion FIRST, in both passes below, means every `redact-json-pointers` pointer a reviewer
+ * writes is always resolved against the FINAL, post-removal shape — the one well-defined convention
+ * this function now establishes, documented here precisely so a reviewer writes their own pointers
+ * with it in mind, rather than left as an accident of declaration order. A `redact-json-pointers`
+ * pointer that now fails to resolve (written assuming the OLD, pre-removal shape) is the identical,
+ * already-disclosed "wrong/stale pointer silently no-ops" risk `ignore-json-pointers` itself already
+ * carries (`declaration-types.ts`'s own `NormalizeRule` doc comment), never a silent WRONG-target
+ * hit — the specific hazard this fix closes.
+ */
+export function applyNormalizeRulesToLibraryValue(
+  value: unknown,
+  rules: readonly NormalizeRule[],
+): NormalizeLibraryOutcome {
+  let working: unknown = value;
+  for (const rule of rules) {
+    if (rule.rule !== 'ignore-json-pointers') continue;
+    for (const pointer of reorderPointersForSafeRemoval(rule.pointers)) {
+      working = removeJsonPointer(working, pointer);
+    }
+  }
+  if (typeof working === 'symbol') {
+    return { ok: false, kind: 'erased' };
+  }
+  for (const rule of rules) {
+    if (rule.rule !== 'redact-json-pointers') continue;
+    for (const pointer of rule.pointers) {
+      const match: { wholeField: boolean } = { wholeField: false };
+      working = redactJsonPointerSubstring(
+        working,
+        pointer,
+        fieldRedactor(rule.pattern, rule.replacement, () => {
+          match.wholeField = true;
+        }),
+      );
+      if (match.wholeField) {
+        return { ok: false, kind: 'whole-field-match', rule: 'redact-json-pointers', pointer };
+      }
+    }
+  }
+  return { ok: true, value: working };
+}
+
 /** Which text target a `replace` rule's optional `stream`/`file` scope names — the generalisation
  * `applyNormalizeRulesToText` matches a rule's scope against, for whichever surface it is normalising
  * a target for (a `process`/`library` stream, or a `file` surface's declared output path). */

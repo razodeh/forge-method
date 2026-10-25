@@ -27,9 +27,19 @@ import { defineConfig, type Options } from 'tsup';
  * `.ts` source whenever it is present (a built package, dev included), needing no Node-version-aware
  * TypeScript-stripping flag for it at all, since it is already plain, compiled JS.
  *
+ * A THIRD entry, `normalize-library-worker`, produces `dist/normalize-library-worker.mjs` — the
+ * identical treatment for `normalize-library-budget.ts`'s own worker entry file
+ * (`normalize-library-worker.ts`, `SPEC-QUESTIONS.md` Q317 Decision 8's `redact-json-pointers`
+ * ReDoS-bound mechanism), landed without a build entry of its own at first: caught and fixed during
+ * this piece's own landing, not by a dedicated gauntlet round, since no critic worked against a real
+ * built artifact the way `Q340` itself was eventually caught. Without this entry, the published CLI's
+ * `library`-surface worker would try to spawn a `.ts` source file that does not exist in a real npm
+ * install — the exact Q340 regression, reincarnated for this second worker.
+ *
  * @see specs/02 §2.7
  * @see specs/23 (open decision #1, P8 update)
  * @see SPEC-QUESTIONS.md Q340
+ * @see SPEC-QUESTIONS.md Q317 Decision 8
  */
 const common = {
   format: ['esm'] satisfies Options['format'],
@@ -81,7 +91,16 @@ export default defineConfig([
     // Not the CLI's own entry point and never run via a shebang — no banner, and `clean: false` so
     // this second build does not wipe out the first one's own `dist/forge.mjs` (tsup/esbuild's
     // `clean` option empties the whole `outDir` once, regardless of which entry triggers it; only
-    // ONE of this array's two configs may safely set it `true`).
+    // ONE of this array's three configs may safely set it `true`).
+    clean: false,
+    shims: false,
+  },
+  {
+    ...common,
+    entry: { 'normalize-library-worker': 'src/commands/parity/normalize-library-worker.ts' },
+    // Same reasoning as the `normalize-worker` entry immediately above, for the `library`-surface
+    // sibling worker — never the CLI's own entry point, no banner, and `clean: false` for the
+    // identical reason (only one of this array's three configs may wipe `outDir`).
     clean: false,
     shims: false,
   },

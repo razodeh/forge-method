@@ -48,6 +48,30 @@ export type ProcessStream = 'stdout' | 'stderr';
  * the always-on root-path rewrite reaches (`process`/`file`/`http`) for the identical
  * unprovable-safety reason `CFG-516` already refuses `replace` there — it is meaningful only on
  * `library`, which the rewrite never touches.
+ *
+ * **Disclosed, elevated-stakes risk (a critic finding): a malformed or stale pointer is a SILENT
+ * no-op here, exactly as it already is for `ignore-json-pointers` — but the consequence is worse
+ * for THIS rule.** `declaration.ts`'s loader checks only that each pointer is a non-blank string;
+ * neither it nor `normalize.ts`'s own `redactJsonPointerSubstring` validates that a pointer is
+ * well-formed RFC 6901 syntax (a leading `/`, a legal `~0`/`~1` escape) or that it actually resolves
+ * against a real observation — a syntactically invalid or simply wrong pointer is accepted at load
+ * time with zero problems and becomes a quiet no-op at runtime (`removeAtPointer`'s own
+ * "a pointer that does not resolve is a silent no-op" convention, which `redactAtPointer` shares
+ * deliberately, `normalize.ts`'s own file header has the full account of why). For
+ * `ignore-json-pointers`, a no-op means a field that should have been excused from comparison is
+ * instead compared for real — a `mismatch`, loudly visible the moment it happens. For
+ * `redact-json-pointers`, a no-op means a field a reviewer believed they had redacted is instead
+ * carried through UNREDACTED, straight into `capture.ts`'s content-addressed, human-reviewed,
+ * NEVER-PRUNED capture file (`13` F-TEST-9: "Captures are never pruned") — with no `mismatch`, no
+ * error, and no other signal anywhere that the redaction never fired, since the unredacted value is
+ * exactly as internally consistent as a correctly-redacted one would have been. A reviewer who
+ * mistypes a pointer meant to scrub a real secret or path gets no warning before that raw value
+ * lands permanently in a committed artifact. Not a new mechanism-level regression — the identical
+ * silent-no-op convention `ignore-json-pointers` already has — but worth stating plainly here rather
+ * than leaving it to be inferred, given what is actually at stake for this one rule. Closing it
+ * would mean changing the shared silent-no-op convention itself (affecting `ignore-json-pointers`
+ * too, which already relies on it to tolerate a field that is not always present), a separate,
+ * bigger call than this piece makes on its own.
  */
 export type NormalizeRule =
   | { readonly rule: 'line-endings' }
