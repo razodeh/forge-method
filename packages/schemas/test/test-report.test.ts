@@ -46,7 +46,7 @@ describe('forgeTestReportSchema (specs/22 M17 P3)', () => {
     expect(result.data.tests[0]?.message).toBe('expected 4, got 5');
   });
 
-  it('09 §9.5 (Q346): "message" applies only when status is fail -- refuses message on a pass', () => {
+  it('09 §9.5 (Q346): "message" is refused on a pass -- a passing test has nothing to explain', () => {
     const result = forgeTestReportSchema.safeParse({
       forgeTestReport: 1,
       tests: [{ name: 'x', status: 'pass', message: 'should not be here' }],
@@ -54,12 +54,12 @@ describe('forgeTestReportSchema (specs/22 M17 P3)', () => {
     expect(result.success).toBe(false);
   });
 
-  it('09 §9.5 (Q346): "message" applies only when status is fail -- refuses message on a skip', () => {
+  it('09 §9.5 (Q346): "message" is VALID on a skip -- a real skip reason, unlike "kind"', () => {
     const result = forgeTestReportSchema.safeParse({
       forgeTestReport: 1,
-      tests: [{ name: 'x', status: 'skip', message: 'should not be here' }],
+      tests: [{ name: 'x', status: 'skip', message: 'requires a live database' }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it('refuses an empty message (Q346: non-blank, same convention as file/acId/name)', () => {

@@ -494,6 +494,15 @@ async function resolveScopedTestFiles(
 /** At most this many failing test names are quoted in a message: enough to act on, not a transcript. */
 const NAMED_FAILURES = 5;
 
+/** A failing test's own name, with its `TestOutcome.message` (Q346, post-v1.0, `specs/22` M17 P21)
+ * appended when present -- this is the one real human/agent-facing surface a failing test's error
+ * text reaches today; a `forge-test-report` entry/translator that populates `message` is otherwise
+ * invisible past `outcomeFromReportEntry` (`reporter.ts`), which carries it only as far as
+ * `TestOutcome`. */
+function namedFailure(outcome: TestOutcome): string {
+  return outcome.message === undefined ? outcome.name : `${outcome.name} (${outcome.message})`;
+}
+
 /**
  * Maps one `testRun` result to a check answer. `requirePass` is for test layers, whose outcomes are individual
  * tests: a layer in which no test passed (every one skipped or pending) ran nothing, and reading it as a pass
@@ -527,7 +536,7 @@ function outcomeFromRun(
       result.failed > 0
         ? `${String(result.failed)} failing`
         : `${String(result.errors)} diagnostics`;
-    const names = failing.slice(0, NAMED_FAILURES).map((outcome) => outcome.name);
+    const names = failing.slice(0, NAMED_FAILURES).map(namedFailure);
     const more =
       failing.length > NAMED_FAILURES
         ? `, and ${String(failing.length - NAMED_FAILURES)} more`

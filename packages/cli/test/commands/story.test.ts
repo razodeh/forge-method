@@ -748,6 +748,20 @@ describe('storyVerify: build and test checks', () => {
     expect(message).toContain('and 2 more');
   });
 
+  it('a failing test\'s own forge-test-report "message" (Q346) reaches this check\'s message too, not just its name', async () => {
+    const project = await createTestProject();
+    await writeStory(project);
+    await writeProfiles(project, profileWithVerify('{ check: test:unit }'));
+    const outcomes: TestOutcome[] = [
+      { name: 'AC-1 broken', acId: 'AC-1', status: 'fail', message: 'expected 4, got 5' },
+    ];
+    const { runner } = recorder(() => ({ failed: 1, errors: 0, outcomes }));
+    const report = await verify(project, { unit: 'u' }, runner);
+    const message = report.checks[0]?.message ?? '';
+    expect(report.checks[0]?.status).toBe('fail');
+    expect(message).toContain('AC-1 broken (expected 4, got 5)');
+  });
+
   it('a failing test already quarantined as flaky is excluded from the layer (F-TEST-6) and the message says so', async () => {
     const project = await createTestProject();
     await writeStory(project);

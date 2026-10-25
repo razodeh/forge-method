@@ -89,6 +89,27 @@ test('AC-014-3 fails on purpose', () => { assert.strictEqual(1, 2); });
     });
   });
 
+  it('a forge-json "message", when present, reaches the real TestOutcome unchanged (Q346) -- round 2 critic: outcomeFromReportEntry was silently dropping it', async () => {
+    const dir = await tempDir();
+    const command: StructuredTestCommand = {
+      run: `echo '${JSON.stringify({ forgeTestReport: 1, tests: [{ name: 'AC-014-3 fails on purpose', status: 'fail', kind: 'assertion', message: 'expected 4, got 5' }] })}'`,
+      output: { source: 'stdout' },
+      format: 'forge-json',
+    };
+    const result = await runStructuredTestLayer(
+      command,
+      dir,
+      new ProjectPaths(dir),
+      makeCreateTempPath(dir),
+    );
+    if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
+    expect(result.report.outcomes[0]).toMatchObject({
+      name: 'AC-014-3 fails on purpose',
+      status: 'fail',
+      message: 'expected 4, got 5',
+    });
+  });
+
   it('output that does not parse as the declared format is a real, diagnosable tool-error', async () => {
     const dir = await tempDir();
     const command: StructuredTestCommand = {
@@ -255,6 +276,38 @@ process.stdout.write(JSON.stringify({ forgeTestReport: 1, tests: [{ name: raw.tr
     expect(result.report.outcomes).toEqual([
       { name: 'AC-014-7 came from stdout', status: 'pass', acId: 'AC-014-7' },
     ]);
+  });
+
+  it('a translator-reported "message" reaches the real TestOutcome unchanged too (Q346): both outcomeFromReportEntry call sites are covered', async () => {
+    const dir = await tempDir();
+    await writeFile(
+      path.join(dir, 'translate.js'),
+      `
+process.stdout.write(JSON.stringify({
+  forgeTestReport: 1,
+  tests: [{ name: 'AC-014-9 translated failure', status: 'fail', kind: 'assertion', message: 'boom from the translator' }],
+}));
+`,
+      'utf8',
+    );
+    const command: StructuredTestCommand = {
+      run: 'true',
+      output: { source: 'stdout' },
+      format: 'tap',
+      translate: `${process.execPath} translate.js {output}`,
+    };
+    const result = await runStructuredTestLayer(
+      command,
+      dir,
+      new ProjectPaths(dir),
+      makeCreateTempPath(dir),
+    );
+    if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
+    expect(result.report.outcomes[0]).toMatchObject({
+      name: 'AC-014-9 translated failure',
+      status: 'fail',
+      message: 'boom from the translator',
+    });
   });
 
   it('a translator that exits non-zero is a typed tool-error, even though its stdout happens to be valid forge-json', async () => {

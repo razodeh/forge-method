@@ -132,6 +132,20 @@ describe('parseVitestJson (specs/22 M17 P3)', () => {
       expect(entry).toMatchObject({ status: 'fail', kind: 'crash' });
   });
 
+  it('the hook\'s own error text ("message": "boom") is attached to every reclassified entry, not just used to decide status (Q346, round-2 critic)', () => {
+    const result = parseVitestJson(TOP_LEVEL_HOOK_THREW_JSON);
+    if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+    expect(result.tests).toHaveLength(2);
+    for (const entry of result.tests) expect(entry.message).toBe('boom');
+  });
+
+  it('an ordinary (non-reclassified) assertion failure carries no "message" -- this parser never invents one', () => {
+    const result = parseVitestJson(BASE_JSON);
+    if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);
+    const broken = result.tests.find((entry) => entry.name === 'AC-014-3 fails on purpose');
+    expect(broken?.message).toBeUndefined();
+  });
+
   it('DISCLOSED LIMIT: a NESTED (inside describe()) thrown beforeAll carries no recoverable signal at all -- both the real victim and the genuine skip read as plain "skip", never a false "crash"', () => {
     const result = parseVitestJson(NESTED_HOOK_THREW_JSON);
     if (!result.ok) throw new Error(`expected ok, got: ${result.message}`);

@@ -15,7 +15,9 @@
  * 2. A **top-level** `beforeAll`/`afterAll` hook that throws (one declared outside any `describe()`)
  *    reports EVERY assertion in that file as `status: 'skipped'` — including one that was genuinely,
  *    deliberately `.skip()`-ed, which this format gives no way to tell apart from a hook's victim at
- *    the per-assertion level — disambiguated only by the file's own `message` being non-empty.
+ *    the per-assertion level — disambiguated only by the file's own `message` being non-empty. That
+ *    same `message` (Q346, post-v1.0, `specs/22` M17 P21) is attached to every entry this
+ *    reclassification touches, rather than computed once to decide `status` and then discarded.
  *
  * DISCLOSED LIMIT, confirmed two ways (a real run against this monorepo's own installed Vitest
  * 4.1.11, and reading that exact version's bundled `JsonReporter.onTestRunEnd`,
@@ -74,6 +76,10 @@ function entriesFromFile(fileResult: VitestFileResult): readonly ForgeTestReport
   const file = typeof fileResult.name === 'string' ? fileResult.name : undefined;
   const hookThrew =
     fileFailed && typeof fileResult.message === 'string' && fileResult.message !== '';
+  // Guaranteed a non-empty string whenever `hookThrew` is true (its own condition above); re-checked
+  // rather than cast, so this stays sound if that condition's shape ever changes independently.
+  const hookMessage =
+    hookThrew && typeof fileResult.message === 'string' ? fileResult.message : undefined;
 
   if (assertions.length === 0) {
     if (!fileFailed) return [];
@@ -106,6 +112,10 @@ function entriesFromFile(fileResult: VitestFileResult): readonly ForgeTestReport
         status: 'fail',
         kind: hookReclassified ? 'crash' : 'assertion',
         ...fileField,
+        // `hookMessage` (Q346): the hook's own error text is already captured above for
+        // `hookThrew`'s own condition -- carried onto every test it reclassified, rather than
+        // computed and then discarded, the real gap a round-2 critic found in this exact branch.
+        ...(hookReclassified && hookMessage !== undefined ? { message: hookMessage } : {}),
       });
     }
   }

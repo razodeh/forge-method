@@ -6,23 +6,34 @@
  *
  * Only `name` and `status` are required on each entry; every other field is optional, and a consumer
  * that needs a field the project's own test command did not supply degrades to a stated, typed
- * outcome rather than guessing (`09` §9.5). `kind` and `message` are both additive and both apply
- * only when `status` is `'fail'` — enforced here with a cross-field refinement, since a producer
- * that sets either on a pass or a skip is not a conforming `forge-test-report` writer, not a
- * merely-unusual one.
+ * outcome rather than guessing (`09` §9.5). `kind` is additive and applies only when `status` is
+ * `'fail'` — enforced here with a cross-field refinement, since a producer that sets it on a pass or
+ * a skip is not a conforming `forge-test-report` writer, not a merely-unusual one.
  *
- * `message` (Q346, post-v1.0, `specs/22` M17 P21) is a failure's own error-message text — the one
- * thing v1 had no field for at all, confirmed live by a real translator that had this text on hand
- * and nowhere to put it. Optional, deliberately: a passing test has no error message, and not every
- * translator can recover one from its underlying format (TAP, for one, carries no per-test message
- * signal at all). No built-in parser in `packages/cli/src/commands/loop/test/parsers/` populates
- * this yet — each one either never reads its format's own message text at all (JUnit XML's
- * `<failure message="...">`, Jest/Vitest's own `failureMessages`), or already folds a captured
- * message into a synthetic entry's `name` for an unrelated, pre-existing reason (a whole file that
- * failed to load) — left untouched here, since wiring either up is new capture logic this fix does
- * not add. The field exists and validates; a future translator (hand-written, or `forge test adopt`
- * agent-authored) populates it directly, the same way `forge-json` already passes any entry through
- * unchanged.
+ * `message` (Q346, post-v1.0, `specs/22` M17 P21) is free-text detail about why a test did not pass —
+ * the one thing v1 had no field for at all, confirmed live by a real translator that had this text on
+ * hand and nowhere to put it. Deliberately NOT restricted to `'fail'` the way `kind` is: a `'skip'`
+ * commonly carries its own real reason text a producer already has (JUnit's `<skipped
+ * message="...">`, pytest's `skip(reason=...)`, a Jest/Vitest deliberate-skip annotation) — this
+ * is a real, different thing from `kind`, which has no "kind of pass" or "kind of skip" to classify,
+ * only a "kind of failure." `message` is therefore valid on `'fail'` or `'skip'`, refused only on
+ * `'pass'` (enforced below) — a passing test has nothing to explain. Optional throughout: not every
+ * translator can recover this text from its underlying format at all (TAP13's YAML diagnostic block
+ * conventionally carries its own `message:` key, but no built-in `tap` parser in
+ * `packages/cli/src/commands/loop/test/parsers/` reads that block today). Of the other built-in
+ * parsers there: JUnit XML never reads its own `<failure message="...">` text at all; Jest never
+ * reads its own per-assertion `failureMessages`; both Jest's and Vitest's parsers fold a captured
+ * file-level message into a synthetic entry's `name` instead, for an unrelated, pre-existing reason
+ * (a whole file that failed to load) — all three left untouched here, since wiring any of them up is
+ * new capture logic this fix does not add. `vitest-json.ts` is the one exception: its own top-level
+ * hook-throw reclassification (`parseVitestJson`'s own doc comment) already computed the hook's
+ * message to decide `status`, so THAT one capture-already-in-hand case is wired straight through to
+ * every entry it reclassifies (Q346's own round-2 critic). The field exists and validates regardless;
+ * a future translator (hand-written, or `forge test adopt` agent-authored) populates it directly, the
+ * same way `forge-json` already passes any entry through unchanged, and `reporter.ts`'s own
+ * `outcomeFromReportEntry` already carries it as far as `TestOutcome` for both real call sites
+ * (`runTranslator`, `PARSERS[format]`) — a human/agent-facing consumer reads it via
+ * `packages/cli/src/commands/story.ts`'s own `namedFailure`.
  *
  * @see specs/09 §9.5
  * @see specs/22 M17 P3, M17 P21 (Q346)
@@ -58,11 +69,11 @@ const forgeTestReportEntrySchema = z
         message: `"kind" (${entry.kind}) is only meaningful when "status" is "fail" (09 §9.5); this entry's status is "${entry.status}".`,
       });
     }
-    if (entry.message !== undefined && entry.status !== 'fail') {
+    if (entry.message !== undefined && entry.status === 'pass') {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['message'],
-        message: `"message" is only meaningful when "status" is "fail" (09 §9.5, Q346); this entry's status is "${entry.status}".`,
+        message: `"message" is not meaningful on a "pass" (09 §9.5, Q346): a passing test has nothing to explain.`,
       });
     }
   });

@@ -45,13 +45,19 @@ export type TestFailureKind = 'assertion' | 'load' | 'timeout' | 'crash';
  * same-named passing test in another. `file` is `undefined` only when the underlying tool's own
  * output did not name a real file for this outcome (an edge case, not the common path). `kind` is an
  * ADDITIVE field (`specs/22` M16 P10): present only for `status: 'fail'`, absent for `'pass'`/`'skip'`
- * — an existing caller that reads only `status` (every M15 caller) keeps working unchanged. */
+ * — an existing caller that reads only `status` (every M15 caller) keeps working unchanged. `message`
+ * (Q346, post-v1.0, `specs/22` M17 P21) is likewise additive: a `forge-test-report` entry's own
+ * `message` text, carried through unchanged by `outcomeFromReportEntry` below — never populated for
+ * the legacy vitest/pytest `outcomesFromVitestJson`/`outcomesFromJunitXml` paths above, which predate
+ * the field and have no equivalent captured text to carry (`09` §9.5: `message` is meaningful for
+ * `'fail'` or `'skip'`, never `'pass'`). */
 export interface TestOutcome {
   readonly name: string;
   readonly acId: string | undefined;
   readonly status: 'pass' | 'fail' | 'skip';
   readonly file?: string;
   readonly kind?: TestFailureKind;
+  readonly message?: string;
 }
 
 /** Builds a `TestOutcome`, omitting `file`/`kind` entirely rather than setting them `undefined` —
@@ -679,7 +685,11 @@ export async function runAndNormalize(
  * `acId`, when the entry already carries one (an already-extracted id from a `forge-json`-emitting
  * translator that knows its own project's naming convention better than a generic regex would), is
  * used verbatim; otherwise falls back to the identical `extractAcId`-over-`name` convention every
- * other outcome in this file already uses -- additive, never a replacement for it (`09` §9.5). */
+ * other outcome in this file already uses -- additive, never a replacement for it (`09` §9.5).
+ * `message` (Q346) is carried through exactly like `file`/`kind` -- both the `translate` path
+ * (`runTranslator`) and the structured `PARSERS[format]` path (including `forge-json`, which already
+ * read it off the schema unchanged) route every entry through this one function, so threading it
+ * here is the one place that makes it reach `TestOutcome` from either real call site. */
 function outcomeFromReportEntry(entry: ForgeTestReportEntry): TestOutcome {
   return {
     name: entry.name,
@@ -687,6 +697,7 @@ function outcomeFromReportEntry(entry: ForgeTestReportEntry): TestOutcome {
     status: entry.status,
     ...(entry.file === undefined ? {} : { file: entry.file }),
     ...(entry.kind === undefined ? {} : { kind: entry.kind }),
+    ...(entry.message === undefined ? {} : { message: entry.message }),
   };
 }
 
