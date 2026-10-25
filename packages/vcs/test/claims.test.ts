@@ -307,6 +307,71 @@ describe('diffLaneChanges', () => {
 
       expect(changed).toContain('plumbed.txt');
     });
+
+    // SPEC-QUESTIONS.md Q320: this round's own disclosed gap. The pre-existing rename test (in the
+    // outer `diffLaneChanges` describe, above) commits its own rename and leaves the worktree clean
+    // afterward, so the UNAFFECTED one-ref leg already reports both the old and new path on its own
+    // -- a mutation removing `--no-renames` from the two-ref leg alone leaves that test green,
+    // because the one-ref leg masks the gap completely. This test closes it by forcing detection
+    // through the two-ref leg ALONE: the rename is edited in the same commit (one changed line out
+    // of five keeps git's own similarity heuristic comfortably above its rename threshold), and the
+    // worktree is then moved back to its exact baseSha state without a second commit -- so the
+    // one-ref leg and the untracked-files listing both see nothing at all for this path, and only
+    // the two-ref historical diff can report it. Without `--no-renames` on that leg (the mutation
+    // this test exists to kill), git's own default rename detection collapses the two-ref diff to
+    // the new path alone (this module's own doc comment above), and the old, out-of-claim path
+    // vanishes from `changed` entirely.
+    it('reports BOTH the old and new path of a same-commit rename+edit that only the two-ref leg can see (its own --no-renames)', async () => {
+      const cwd = await createTempRepo();
+      await mkdir(path.join(cwd, 'docs'), { recursive: true });
+      const original =
+        'line one of a fairly long file\n' +
+        'line two of a fairly long file\n' +
+        'line three of a fairly long file\n' +
+        'line four of a fairly long file\n' +
+        'line five of a fairly long file\n';
+      await writeFile(path.join(cwd, 'docs', 'secret_plan.md'), original);
+      const baseSha = await commitAll(cwd, 'seed');
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: baseSha,
+      });
+
+      // Self-commit: rename AND edit in the same commit.
+      await mkdir(path.join(handle.path, 'src'), { recursive: true });
+      await execa('git', ['mv', 'docs/secret_plan.md', 'src/secret_plan.md'], {
+        cwd: handle.path,
+      });
+      const edited = original.replace('line three of a fairly long file', 'line three TAMPERED');
+      await writeFile(path.join(handle.path, 'src', 'secret_plan.md'), edited);
+      await commitAll(handle.path, 'self-commit: rename + edit');
+
+      // The worktree is then moved back to its EXACT baseSha state, without a second commit: HEAD
+      // (what a later rebase actually replays) still carries the rename+edit commit, but the live
+      // worktree reads byte-for-byte identical to baseSha, so neither the one-ref leg nor the
+      // untracked-files listing has anything to report for this path.
+      await execa('git', ['mv', 'src/secret_plan.md', 'docs/secret_plan.md'], {
+        cwd: handle.path,
+      });
+      await writeFile(path.join(handle.path, 'docs', 'secret_plan.md'), original);
+      // Confirmed directly, rather than assumed: the one-ref leg (the exact invocation
+      // `diffLaneChanges` itself uses for it) reports nothing for this path -- `git diff <oneRef>`
+      // (no second ref) compares the ref's tree against the live worktree bytes on disk directly,
+      // not through the index's own stale rename bookkeeping, so it reads clean even though `git
+      // status` (which does compare against the index/HEAD) would still show the pending rename.
+      const { stdout: oneRefDiff } = await execa(
+        'git',
+        ['diff', '--no-renames', '-z', '--name-only', baseSha],
+        { cwd: handle.path },
+      );
+      expect(oneRefDiff).toBe('');
+
+      const changed = await diffLaneChanges(handle, baseSha);
+
+      expect(changed).toContain('docs/secret_plan.md');
+      expect(changed).toContain('src/secret_plan.md');
+    });
   });
 });
 
@@ -552,6 +617,60 @@ describe('enforceClaim', () => {
         { cwd: handle.path },
       );
       expect(finalDiff.split('\0').filter((entry) => entry !== '')).not.toContain('plumbed.txt');
+    });
+
+    // SPEC-QUESTIONS.md Q320: the `enforceClaim`-level consequence of the gap the matching
+    // `diffLaneChanges` test above closes. The rename moves an out-of-claim file INTO the claimed
+    // directory, edited in the same commit, then the worktree is moved back to its exact baseSha
+    // state without a second commit -- so only the two-ref historical leg can see the old path at
+    // all. With `--no-renames` present on that leg (the real, shipped behaviour), the old path
+    // correctly surfaces as out-of-claim and gets reverted. Without it (the mutation this test
+    // exists to kill), git's own default rename detection collapses the historical diff to the new,
+    // in-claim path alone: the old path never appears in `changed`, `outOfClaim` comes back empty,
+    // and nothing is reverted -- a complete, silent bypass of claim enforcement.
+    it("strict: still reverts a same-commit rename+edit's own out-of-claim old path, even though a worktree-only check would see nothing (two-ref leg's own --no-renames)", async () => {
+      const cwd = await createTempRepo();
+      await mkdir(path.join(cwd, 'docs'), { recursive: true });
+      const original =
+        'line one of a fairly long file\n' +
+        'line two of a fairly long file\n' +
+        'line three of a fairly long file\n' +
+        'line four of a fairly long file\n' +
+        'line five of a fairly long file\n';
+      await writeFile(path.join(cwd, 'docs', 'secret_plan.md'), original);
+      const baseSha = await commitAll(cwd, 'seed');
+      const handle = await createLaneWorktree(cwd, {
+        runId: 'run-1',
+        stepId: 'a',
+        integrationBase: baseSha,
+      });
+
+      await mkdir(path.join(handle.path, 'src'), { recursive: true });
+      await execa('git', ['mv', 'docs/secret_plan.md', 'src/secret_plan.md'], {
+        cwd: handle.path,
+      });
+      const edited = original.replace('line three of a fairly long file', 'line three TAMPERED');
+      await writeFile(path.join(handle.path, 'src', 'secret_plan.md'), edited);
+      await commitAll(handle.path, 'self-commit: rename + edit');
+
+      await execa('git', ['mv', 'src/secret_plan.md', 'docs/secret_plan.md'], {
+        cwd: handle.path,
+      });
+      await writeFile(path.join(handle.path, 'docs', 'secret_plan.md'), original);
+      // See the matching `diffLaneChanges` test's own comment above: this is the exact invocation
+      // the one-ref leg uses, confirming it reports nothing for this path (a bare `git status`
+      // would still show the pending index-level rename, which is not what either leg reads).
+      const { stdout: oneRefDiff } = await execa(
+        'git',
+        ['diff', '--no-renames', '-z', '--name-only', baseSha],
+        { cwd: handle.path },
+      );
+      expect(oneRefDiff).toBe('');
+
+      const result = await enforceClaim(handle, baseSha, ['src/**'], 'strict');
+
+      expect(result.outOfClaim).toEqual(['docs/secret_plan.md']);
+      expect(result.reverted).toEqual(['docs/secret_plan.md']);
     });
   });
 
