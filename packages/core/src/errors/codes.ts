@@ -3751,6 +3751,11 @@ export const ERROR_CODES = {
   // operator/expansion refusal, grant membership, and per-word path-containment) before
   // `runTranslatorProof` ever runs any of them; this is what it raises when one fails.
   //
+  // `SPEC-QUESTIONS.md` Q333, later: a FIFTH field, `runnerVersionCommand` (the command that prints
+  // the runner's own version -- previously a bare, unvetted, unexecuted free-text claim), is vetted
+  // here too, by the identical function, for the identical reason -- it is about to be really
+  // executed (`proof.ts`'s own `captureRunnerVersion`) on the model's word alone otherwise.
+  //
   // Deliberately NOT given the same round-retry-with-feedback `RUN-160` gets (M17 P21, a live-run
   // fix, decided alongside it): this is the one FINAL backstop the design's own doc comment already
   // says "never trust the reported command enough to run it" about, and the refusal detail would
