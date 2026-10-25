@@ -137,7 +137,27 @@ export function applyNormalizeRulesToLibraryValueBounded(
   const sync = new Int32Array(syncBuffer);
   const resultBuffer = new SharedArrayBuffer(8 + payloadCapacityBytesFor(value));
   const workerData: NormalizeLibraryWorkerData = { value, rules, sync, resultBuffer };
-  const worker = new Worker(workerUrl, { execArgv: [...execArgvForWorker(workerUrl)], workerData });
+  let worker: Worker;
+  try {
+    worker = new Worker(workerUrl, { execArgv: [...execArgvForWorker(workerUrl)], workerData });
+  } catch {
+    // A critic's own follow-up finding against this file's round-3 fix: handing `workerData` to
+    // `new Worker(...)` makes NODE itself structured-clone it (the identical mechanism `postMessage`
+    // uses internally) to get it into the worker realm -- and that structured-clone is its own
+    // recursive algorithm, which overflows the call stack at the SAME depth `payloadCapacityBytesFor`'s
+    // own `JSON.stringify` estimate above already guards against, for a deeply NESTED (non-circular)
+    // `value` -- but only here, a few lines AFTER that estimate's own try/catch already returned
+    // successfully, on this calling thread, before the worker thread -- and its own crash/timeout
+    // protection -- ever gets a chance to run. (A CIRCULAR `value` is already fine end-to-end:
+    // structured clone natively supports cycles, unlike `JSON.stringify`.) This function's own
+    // signature is `value: unknown`, exactly like `payloadCapacityBytesFor`'s, and the identical
+    // `QUALITY-BAR.md` R2 justification applies: this function must hold its own guarantee on its own
+    // terms, not rely on `library-protocol.ts`'s `parseLibraryProbeOutput` having already round-tripped
+    // every parsed value through its own `JSON.stringify` upstream (confirmed separately to already
+    // reject this exact shape today -- disclosed, not relied on). The identical typed refusal
+    // `payloadCapacityBytesFor`'s own catch already returns.
+    return { status: 'ok', ok: false, kind: 'too-large' };
+  }
   // See `normalize-budget.ts`'s own identical listener for the full account of why this exists and
   // why it cannot itself be the real signal.
   worker.on('error', () => {

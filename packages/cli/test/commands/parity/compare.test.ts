@@ -10,6 +10,7 @@ import type {
   ProcessObservation,
   SurfaceObservation,
 } from '../../../src/commands/parity/capture.ts';
+import type { CanonicalValue } from '../../../src/commands/parity/canonical-json.ts';
 import {
   buildMismatchExcerpt,
   decideCaseVerdict,
@@ -391,7 +392,7 @@ describe('decideCaseVerdict: match and mismatch on the full normalised content (
       expect(outcome.verdict).toBe('mismatch');
     });
 
-    it('a redact-json-pointers rule combines with ignore-json-pointers on the same case without conflict (proven-safe, both pointer-addressed)', () => {
+    it('a redact-json-pointers rule combines with ignore-json-pointers without conflict (safe only because redact-json-pointers always resolves first against the pristine value, never because pointer-addressing alone is order-independent)', () => {
       const outcome = decideCaseVerdict(
         input({
           surface: 'library',
@@ -513,6 +514,39 @@ describe('decideCaseVerdict: match and mismatch on the full normalised content (
     expect(() => decideCaseVerdict(input({ candidateRawRuns: [] }))).toThrow(RangeError);
   });
 });
+
+describe(
+  'decideCaseVerdict: a library value too deep (non-circular) to hand to the worker thread is a ' +
+    'typed error verdict, never an uncaught crash (critic finding against Q317 round 3’s own ' +
+    'try/catch, which only guarded payloadCapacityBytesFor’s own JSON.stringify sizing estimate)',
+  () => {
+    it(
+      'a deeply-nested (non-circular) candidate library value reads a typed "error" verdict, not an ' +
+        'uncaught RangeError -- round 3’s try/catch around payloadCapacityBytesFor’s own ' +
+        'JSON.stringify sizing estimate already catches a value this deep THERE (it falls back to a ' +
+        'safe size, confirmed by normalize-library-budget.test.ts’s own circular-value test), but ' +
+        '`new Worker(workerUrl, { workerData })` a few lines later hands this same value to Node’s ' +
+        'own internal structured-clone -- itself a recursive algorithm -- on this same calling ' +
+        'thread, BEFORE the worker thread (and its own crash/timeout protection) ever gets to run; ' +
+        'unlike a circular value (which structured clone natively supports), a deeply-nested one ' +
+        'overflows the call stack there too, confirmed directly to throw uncaught before this fix',
+      () => {
+        let deepValue: CanonicalValue = { leaf: true };
+        for (let i = 0; i < 50_000; i++) deepValue = { nested: deepValue };
+
+        const outcome = decideCaseVerdict(
+          input({
+            surface: 'library',
+            rules: [{ rule: 'ignore-json-pointers', pointers: ['/nonexistent'] }],
+            referenceNormalized: { surface: 'library', result: { ok: true, value: 1 } },
+            candidateRawRuns: [{ surface: 'library', result: { ok: true, value: deepValue } }],
+          }),
+        );
+        expect(outcome.verdict).toBe('error');
+      },
+    );
+  },
+);
 
 describe('decideCaseVerdict: total precedence over unclean/unstable/error (specs/22 M16 P4)', () => {
   it('unclean outranks a content match: a clean-looking comparison still reads unclean', () => {
