@@ -24906,3 +24906,17 @@ test.ts` flake, re-confirmed clean in isolation.
 **Landed.** `278da6a` plus this doc update, cherry-picked onto `main`'s then-current tip and re-verified from a fresh, independent detached-worktree checkout as a backstop beyond the two critic rounds.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q324` (updated in place, both disclosed gaps).
+
+---
+
+## M17 P21 — Q351: two sibling mutation-testing gaps found while landing Q320's own fix (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** While landing Q320's own fix, one of its two critics' adversarial scrutiny went past what was asked and found two further real gaps of the identical shape: `claims.ts`'s sibling one-ref leg (line ~122) had the mirror-image mutation-testing gap Q320 just closed on the two-ref leg; `facades.ts`'s `changedFiles` has two of its own `--no-renames` legs, one only incidentally/fragilely covered, one with zero coverage at all.
+
+**Builder.** Added two deliberate, commented tests for the `claims.ts` gap (an uncommitted in-lane rename, so only the one-ref leg can see it) and three for the `facades.ts` gaps (a same-commit rename for the name-only leg; a same-commit symlink rename for the raw leg — confirmed, by direct construction, that a mode-changing regular→symlink rename is not merely unlikely but literally impossible for git's diffcore-rename to collapse into a rename record at all, so symlink-to-symlink is the only viable repro, not a weaker substitute). Mutation-kills confirmed by hand for each.
+
+**Two independent critics, both APPROVE AS-IS**, each going further than a pass/fail check. Both independently reproduced the real raw-diff field-collapse mechanism behind the `facades.ts` bug (constructing a real symlink rename, running the actual `git diff --raw` without `--no-renames`, inspecting the NUL-split fields directly) and independently reproduced the mutation-kills by stripping each flag in turn. One critic constructed a mode-changing rename attempt specifically to check whether the builder's symlink-only test choice was a real gap — confirmed it's categorically impossible for git to produce, strengthening rather than weakening the test design. The other critic went further still: constructed two NEW cascade scenarios (two renames in one commit; a rename plus an unrelated submodule add) and found the cascade is worse than first described — a whole second structured record can vanish with zero trace, not just a collateral drop — while also establishing, by reading `git log -p -S` on the exact line, that `--no-renames` was present on both of `facades.ts`'s legs since the line was first introduced (M13 P14) and never removed: neither gap was ever a live, shipped defect, only a latent mutation-testing hole. Both critics also independently confirmed `claims.ts` is categorically immune to the field-desync class (its legs use `--name-only`/`ls-files` exclusively, no multi-field record to desync) and traced `nonRegular`'s one real production consumer (`outputs.ts`'s `checkOne`, wired into the live step-execution gate) to assess what the bug's real-world bite would have been if it had ever misfired: narrow (two independent redundant checks already cover most cases) but genuine (a forged non-regular file planted beside an already-valid artifact under the same glob was the one uncovered shape — already guarded by existing tests in the non-rename case).
+
+**Landed.** `a32e29d` plus this doc update, cherry-picked onto `main`'s then-current tip.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q351` (new).
