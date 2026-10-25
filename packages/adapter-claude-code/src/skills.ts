@@ -104,7 +104,21 @@ function resolveSkillFile(cwd: string, skillId: string): string | undefined {
   const skillsRoot = path.join(cwd, '.claude', 'skills');
   const resolved = path.resolve(skillsRoot, skillId);
   const relative = path.relative(skillsRoot, resolved);
-  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+  // The first path SEGMENT must be checked, not a raw string prefix: `path.relative` can return a
+  // literal `'...'` (e.g. for a skill id like `'...'` or `'..foo'`), and `'...'.startsWith('..')` is
+  // `true` purely because the first two characters coincidentally match, even though `...`/`..foo`
+  // name a real, single-segment sibling directory, never a `..` parent-directory escape. (In practice
+  // `skillId.includes('/')`/`includes('\\')` above already reject any multi-segment id, so `relative`
+  // here is always exactly one segment or an escape -- but the check itself must still be correct on
+  // its own terms, the same fix applied to the identical bug elsewhere in this codebase.)
+  if (
+    relative === '' ||
+    relative === '..' ||
+    relative.startsWith('..' + path.sep) ||
+    path.isAbsolute(relative)
+  ) {
+    return undefined;
+  }
 
   try {
     // Anchored at `cwd` itself, not at `skillsRoot` -- a first draft of this check compared the real
@@ -118,7 +132,14 @@ function resolveSkillFile(cwd: string, skillId: string): string | undefined {
     const realCwd = realpathOfDeepestExistingAncestor(cwd);
     const realResolved = realpathOfDeepestExistingAncestor(resolved);
     const realRelative = path.relative(realCwd, realResolved);
-    if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
+    // Same first-segment fix as the lexical check above, applied to the real, symlink-resolved
+    // comparison too -- a raw `startsWith('..')` here would misread a real `realRelative` of `'...'`/
+    // `'..foo'` as an escape purely by string-prefix coincidence.
+    if (
+      realRelative === '..' ||
+      realRelative.startsWith('..' + path.sep) ||
+      path.isAbsolute(realRelative)
+    ) {
       return undefined;
     }
   } catch {
