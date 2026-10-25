@@ -587,23 +587,47 @@ export type NormalizeLibraryOutcome =
  * to {@link applyNormalizeRulesToText}, never throwing, carrying every outcome as data exactly as
  * that function does.
  *
- * **DECISION, a critic finding against this piece's own first version: `ignore-json-pointers`
- * ALWAYS applies before ANY `redact-json-pointers` pointer is resolved, regardless of which the
- * declaration lists first — a FIXED order for this one pair, not the declared order `13` F-TEST-9
- * otherwise mandates.** The first version of this function applied both kinds inline, in declared
- * order, exactly as `applyNormalizeRulesToText` does for its own seven text-shaped rules. A critic
- * proved that unsound for library's TWO pointer-addressed rules specifically, with a real, silent
- * information leak: two results differing only at array index 1 (a real embedded path, meant to be
- * redacted), with `ignore-json-pointers` removing index 0 declared BEFORE a `redact-json-pointers`
- * rule naming index 1 (intending the ORIGINAL index-1 element). Run in declared order, the ignore
- * rule's own splice-based removal (`removeAtPointer`'s own doc comment) shifts the real path down to
- * index 0 FIRST, so the redact rule's pointer — still literally `/list/1`, exactly as written —
- * resolves against whatever NOW sits at index 1 (an unrelated element), not the real path it was
- * meant to redact. The real path leaks through completely unredacted, with no error and no warning;
- * confirmed by direct execution, not merely reasoned about. The prior doc comment's "provably safe"
- * claim (both rules are pointer/name-addressed, never position-dependent) is true for OBJECT key
- * pointers, which never shift, but false for ARRAY INDEX pointers, which `ignore-json-pointers`' own
- * removal can shift out from under a later, textually-identical pointer.
+ * **DECISION, two rounds of critic findings against this piece's own earlier versions:
+ * `redact-json-pointers` ALWAYS resolves against the PRISTINE, ORIGINAL value FIRST; only THEN does
+ * `ignore-json-pointers` run — a FIXED order for this one pair, not the declared order `13` F-TEST-9
+ * otherwise mandates, and the OPPOSITE of this function's own first fix (round 1 ran
+ * `ignore-json-pointers` first; a second critic round proved that direction wrong too — see below).**
+ *
+ * **Round 1 (this function's very first version): both kinds applied inline, in declared order,
+ * exactly as `applyNormalizeRulesToText` does for its own seven text-shaped rules.** A critic broke
+ * this: two results differing only at array index 1 (a real embedded path, meant to be redacted),
+ * with `ignore-json-pointers` removing index 0 declared BEFORE a `redact-json-pointers` rule naming
+ * index 1 (the ORIGINAL index-1 element, the plain, natural way anyone reading the real JSON would
+ * write it). Run in declared order, the ignore rule's own splice-based removal
+ * (`removeAtPointer`'s own doc comment) shifts the real path down to index 0 FIRST, so the redact
+ * rule's pointer — still literally `/list/1`, exactly as written — resolves against whatever NOW
+ * sits at index 1 instead. The real path leaked through completely unredacted, confirmed by direct
+ * execution.
+ *
+ * **Round 2 (this function's SECOND version): "fix" that by running `ignore-json-pointers` first,
+ * unconditionally.** This was ALSO wrong, and a second critic round proved it with the exact
+ * mirror-image case: `{list: ['keep', 'other', 'ROOT/secretpath']}`, `redact-json-pointers` naming
+ * `/list/2` (the secret, at its OWN natural, original index) together with `ignore-json-pointers`
+ * removing `/list/0`. With ignore running first, index 0's removal shifts the real secret from
+ * index 2 down to index 1 BEFORE the redact rule's own `/list/2` — written, naturally, against the
+ * ORIGINAL shape — ever resolves; post-shift, index 2 no longer exists at all, so the pointer is a
+ * no-op and the secret survives at its new position, COMPLETELY UNREDACTED. Round 2's own fix
+ * required a reviewer to write `redact-json-pointers` pointers against a POST-removal shape they
+ * cannot see just by reading the declaration next to the real JSON — an authoring convention nobody
+ * would naturally use, and the round-1 fix's own identical mistake in the opposite direction.
+ *
+ * **The actual fix: `redact-json-pointers` FIRST, always, against `value` exactly as given —
+ * `ignore-json-pointers` SECOND.** Redacting a string LEAF's own content can never change an
+ * array's length or shift any sibling's index (`redactAtPointer`'s own doc comment: it only ever
+ * replaces a leaf via copy-on-write, never splices) — so resolving every `redact-json-pointers`
+ * pointer against the untouched original is ALWAYS correct, independent of whatever
+ * `ignore-json-pointers` is about to remove elsewhere. `ignore-json-pointers` then runs against the
+ * already-redacted (but structurally IDENTICAL) value, so its own pointers — also naturally written
+ * against the original shape — resolve exactly as they would have against the pristine original.
+ * Neither rule needs the other's own effect in mind at all: a reviewer writes every pointer against
+ * the one real JSON shape they are looking at, full stop. Both critic repros above now redact
+ * correctly, confirmed directly, using that one natural convention in both directions
+ * (`compare.ts`'s own test file has both).
  *
  * **Why a fixed order, not a structural refusal of the combination.** `hasRepeatedRuleKindInScope`
  * (`replace-lint.ts`'s own `CFG-513`) already refuses TWO separate rule entries of the identical kind
@@ -613,30 +637,16 @@ export type NormalizeLibraryOutcome =
  * `redact-json-pointers` rule — confirmed by reading that check again, not assumed. The only
  * declared-order ambiguity that can ever exist on one `library` case is therefore exactly "which of
  * these (at most) two rules comes first", never a longer chain — fixing that one relationship removes
- * the ambiguity entirely, with nothing broader to refuse. Running `ignore-json-pointers` to
- * completion FIRST, in both passes below, means every `redact-json-pointers` pointer a reviewer
- * writes is always resolved against the FINAL, post-removal shape — the one well-defined convention
- * this function now establishes, documented here precisely so a reviewer writes their own pointers
- * with it in mind, rather than left as an accident of declaration order. A `redact-json-pointers`
- * pointer that now fails to resolve (written assuming the OLD, pre-removal shape) is the identical,
- * already-disclosed "wrong/stale pointer silently no-ops" risk `ignore-json-pointers` itself already
- * carries (`declaration-types.ts`'s own `NormalizeRule` doc comment), never a silent WRONG-target
- * hit — the specific hazard this fix closes.
+ * the ambiguity entirely, with nothing broader to refuse.
  */
 export function applyNormalizeRulesToLibraryValue(
   value: unknown,
   rules: readonly NormalizeRule[],
 ): NormalizeLibraryOutcome {
   let working: unknown = value;
-  for (const rule of rules) {
-    if (rule.rule !== 'ignore-json-pointers') continue;
-    for (const pointer of reorderPointersForSafeRemoval(rule.pointers)) {
-      working = removeJsonPointer(working, pointer);
-    }
-  }
-  if (typeof working === 'symbol') {
-    return { ok: false, kind: 'erased' };
-  }
+  // PASS 1: `redact-json-pointers`, against `value` exactly as given -- see this function's own
+  // doc comment for why resolving it against the PRISTINE original, before any removal, is always
+  // correct and needs no authoring convention beyond "write the pointer you see in the real JSON".
   for (const rule of rules) {
     if (rule.rule !== 'redact-json-pointers') continue;
     for (const pointer of rule.pointers) {
@@ -652,6 +662,18 @@ export function applyNormalizeRulesToLibraryValue(
         return { ok: false, kind: 'whole-field-match', rule: 'redact-json-pointers', pointer };
       }
     }
+  }
+  // PASS 2: `ignore-json-pointers`, against the now-redacted (but structurally UNCHANGED) value --
+  // redaction never splices an array or adds/removes an object member, so this rule's own pointers
+  // resolve identically whether or not `redact-json-pointers` already ran.
+  for (const rule of rules) {
+    if (rule.rule !== 'ignore-json-pointers') continue;
+    for (const pointer of reorderPointersForSafeRemoval(rule.pointers)) {
+      working = removeJsonPointer(working, pointer);
+    }
+  }
+  if (typeof working === 'symbol') {
+    return { ok: false, kind: 'erased' };
   }
   return { ok: true, value: working };
 }

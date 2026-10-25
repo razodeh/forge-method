@@ -168,18 +168,20 @@ function normalizeTextOrThrow(
  * a-length-anchored-pattern reason `CFG-516` already refuses `replace` there — this rule is
  * meaningful, and permitted, only on `library`, which is exactly the surface this gap was in.
  *
- * **Two critic findings against this piece's own first version, both now closed.** (1) A real,
- * exploitable ReDoS: `redact-json-pointers`' own regex ran synchronously, on this thread, with no
- * wall-clock budget at all — a flat, ADJACENT-group pattern (`isPathologicalReplacePattern`'s own
- * blind spot; `CFG-511` only catches NESTED quantifiers) measured exponential blowup directly.
- * Closed by routing this function through `normalize-library-budget.ts`'s own worker-thread-bounded
- * `applyNormalizeRulesToLibraryValueBounded` — the identical `Atomics`/`SharedArrayBuffer`-terminated
- * bound `normalizeTextOrThrow` (below) already gives `process`/`file`/`http`, reused rather than a
- * second mechanism. (2) A real, silent information leak when `ignore-json-pointers` and
- * `redact-json-pointers` share an array and are declared in a particular order: `normalize.ts`'s own
- * `applyNormalizeRulesToLibraryValue` doc comment has the full repro and the fix (a FIXED order —
- * every `ignore-json-pointers` rule resolves fully before any `redact-json-pointers` pointer,
- * regardless of declared order).
+ * **Three rounds of critic findings against this piece's own earlier versions, all now closed.**
+ * (1) A real, exploitable ReDoS: `redact-json-pointers`' own regex ran synchronously, on this
+ * thread, with no wall-clock budget at all — a flat, ADJACENT-group pattern
+ * (`isPathologicalReplacePattern`'s own blind spot; `CFG-511` only catches NESTED quantifiers)
+ * measured exponential blowup directly. Closed by routing this function through
+ * `normalize-library-budget.ts`'s own worker-thread-bounded `applyNormalizeRulesToLibraryValueBounded`
+ * — the identical `Atomics`/`SharedArrayBuffer`-terminated bound `normalizeTextOrThrow` (below)
+ * already gives `process`/`file`/`http`, reused rather than a second mechanism. (2) A real, silent
+ * information leak when `ignore-json-pointers` and `redact-json-pointers` share an array and are
+ * declared in a particular order — found TWICE, in both directions, by two separate critic rounds:
+ * `normalize.ts`'s own `applyNormalizeRulesToLibraryValue` doc comment has the full account of both
+ * repros and why the final fix (`redact-json-pointers` ALWAYS resolves first, against the pristine
+ * original value; `ignore-json-pointers` second) is the one order that needs no authoring
+ * convention in either direction, closing both repros at once.
  */
 function normalizeLibraryOrThrow(
   observation: LibraryObservation,

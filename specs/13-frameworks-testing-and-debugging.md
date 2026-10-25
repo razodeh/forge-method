@@ -372,7 +372,18 @@ has none, so it must not claim parity and keeps relying on behavioural binding (
   IDENTICAL wall-clock budget, forcibly terminated the identical way, as every other rule's own
   catastrophic-backtracking shape, even though `library`'s own structured result never passes
   through the text-shaped rules above at all). The rules run in the
-  order a declaration lists them: `line-endings` rewrites CRLF and a lone CR as LF; `strip-ansi` removes CSI
+  order a declaration lists them, with ONE named exception (post-v1.0, `specs/22` M17,
+  `process/SPEC-QUESTIONS.md` Q317 Decision 8): on the `library` surface, where both
+  `ignore-json-pointers` and `redact-json-pointers` are declared on the same case,
+  `redact-json-pointers` always resolves FIRST, against the value exactly as observed, before
+  `ignore-json-pointers` removes anything, regardless of which the declaration lists first.
+  `ignore-json-pointers`' own removal can splice an array, shifting a later sibling's own index —
+  resolving `redact-json-pointers` against the result of that shift would force whichever pointer a
+  reviewer writes to depend on an authoring convention they cannot see just by reading the
+  declaration next to the real observed JSON; resolving it first, against the untouched value,
+  needs no such convention and was proven necessary by two independent, adversarial rounds, each in
+  the opposite direction, each confirming a real, silent, unredacted leak under the other order.
+  This is the only ordering exception among the rules; `line-endings` rewrites CRLF and a lone CR as LF; `strip-ansi` removes CSI
   escape sequences (`ESC [`, parameter and intermediate bytes, then a final byte);
   `trim-trailing-whitespace` removes the spaces and tabs at the end of each line; `sort-lines`
   orders lines by UTF-16 code unit; and `replace` replaces every match. A rule that would erase a

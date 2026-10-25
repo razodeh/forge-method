@@ -28,6 +28,45 @@ const CRASHING_NO_HANDLER_WORKER_URL = new URL(
 );
 
 describe('applyNormalizeRulesToLibraryValueBounded: the fast path (specs/22 M17 P14 follow-up)', () => {
+  it(
+    'spawns NO worker at all when rules contains neither ignore-json-pointers nor ' +
+      'redact-json-pointers (a critic’s own recommendation, closing a measured ~14,500x ' +
+      'per-case overhead for the common case of a library declaration with no relevant rules)',
+    () => {
+      // Proven by pointing `workerUrl` at a file that does not exist: if this call ever actually
+      // tried to spawn a worker, `new Worker(...)` would throw synchronously (a real, directly
+      // confirmed failure mode for a bad module specifier) -- reaching the assertion below at all
+      // is already the proof that no worker was spawned, not merely that one finished fast.
+      const nonExistentWorkerUrl = new URL(
+        './fixtures/this-file-does-not-exist.ts',
+        import.meta.url,
+      );
+      const outcome = applyNormalizeRulesToLibraryValueBounded(
+        { message: 'anything' },
+        [{ rule: 'line-endings' }, { rule: 'replace', pattern: 'a', replacement: 'b' }],
+        1000,
+        nonExistentWorkerUrl,
+      );
+      expect(outcome).toEqual({ status: 'ok', ok: true, value: { message: 'anything' } });
+    },
+  );
+
+  it('still spawns the real worker when a redact-json-pointers rule IS present (the fast path never shortcuts a rule that does something real)', () => {
+    const outcome = applyNormalizeRulesToLibraryValueBounded(
+      { message: '/real/root/a.js' },
+      [
+        {
+          rule: 'redact-json-pointers',
+          pointers: ['/message'],
+          pattern: '/real/root',
+          replacement: '<R>',
+        },
+      ],
+      1000,
+    );
+    expect(outcome).toEqual({ status: 'ok', ok: true, value: { message: '<R>/a.js' } });
+  });
+
   it('returns the identical outcome applyNormalizeRulesToLibraryValue itself would, for an ordinary rule list', () => {
     const outcome = applyNormalizeRulesToLibraryValueBounded(
       { kept: 1, drop: 2 },
@@ -36,6 +75,27 @@ describe('applyNormalizeRulesToLibraryValueBounded: the fast path (specs/22 M17 
     );
     expect(outcome).toEqual({ status: 'ok', ok: true, value: { kept: 1 } });
   });
+
+  it(
+    'payloadCapacityBytesFor falls back to a safe size rather than crashing the calling thread ' +
+      'on a circular value (a critic’s own recommended robustness fix, QUALITY-BAR.md R2: ' +
+      '"currently unreachable" is not a reason to skip this)',
+    () => {
+      const circular: Record<string, unknown> = {};
+      circular['self'] = circular;
+      const outcome = applyNormalizeRulesToLibraryValueBounded(
+        circular,
+        [{ rule: 'ignore-json-pointers', pointers: ['/nonexistent'] }],
+        1000,
+      );
+      expect(outcome.status).toBe('ok');
+      if (outcome.status !== 'ok' || !outcome.ok) throw new Error('unreachable');
+      // The circularity itself survives the real worker round trip too (`node:v8` serialize,
+      // which -- unlike `JSON.stringify` -- supports it natively), a bonus confirmation alongside
+      // the main point: this call never threw.
+      expect((outcome.value as Record<string, unknown>)['self']).toBe(outcome.value);
+    },
+  );
 
   it('propagates the erase-everything guard unchanged', () => {
     const outcome = applyNormalizeRulesToLibraryValueBounded(

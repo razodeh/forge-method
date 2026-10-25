@@ -437,12 +437,24 @@ export function assertParityDeclarationPatternsSafe(declaration: ParityDeclarati
  * reviewer combines it with `ignore-json-pointers` on the same (unscoped, library has no
  * stream/file targets) case — exactly the combination `redact-json-pointers` exists to be combined
  * with (name an embedded path's own pointer with one rule, redact a substring inside a DIFFERENT
- * field's string with the other). That combination is provably safe by the IDENTICAL reasoning the
- * "Proof, `json-canonical` + `ignore-json-pointers`" paragraph above already gives: both rules are
- * addressed by an explicit RFC 6901 POINTER — a name/index chain, never a text position — so neither
- * can make the other's own target depend on anything but the field it was itself told to name. Two
- * documents that differ in any field neither rule was told to touch still differ after either order
- * of the two (`compare.ts`'s own test file confirms this directly, not merely by this argument).
+ * field's string with the other).
+ *
+ * **That combination is safe — but NOT for the reason an earlier revision of this comment claimed,
+ * which two separate critic rounds proved FALSE.** This comment used to argue the combination is
+ * "provably safe" because both rules are addressed by an explicit RFC 6901 POINTER — a name/index
+ * chain, "never a text position" — mirroring the IDENTICAL reasoning the "Proof, `json-canonical` +
+ * `ignore-json-pointers`" paragraph above gives for ITS OWN pair. That mirrored reasoning does NOT
+ * transfer: `json-canonical` only ever REORDERS object keys, which never changes what index or key
+ * any pointer resolves to; `ignore-json-pointers` SPLICES an array, which DOES shift every later
+ * sibling's own index — the one case the "never a text position" argument silently assumed away.
+ * Two critic rounds, in BOTH directions, constructed a real declaration where a pointer-addressed
+ * `redact-json-pointers` rule and a pointer-addressed `ignore-json-pointers` rule, sharing one array,
+ * produced a genuine, silent, unredacted leak depending on which ran first — `normalize.ts`'s own
+ * `applyNormalizeRulesToLibraryValue` doc comment has the full, two-round account of both repros.
+ * The combination is safe ONLY because that function now enforces a FIXED order deliberately
+ * (`redact-json-pointers` always resolves first, against the untouched original value — redaction
+ * alone never shifts an index — `ignore-json-pointers` second), not because pointer-addressing on
+ * its own was ever order-independent the way the object-key case genuinely is.
  * `redact-json-pointers` on its own, applied twice to the SAME scope (two separate rule entries
  * rather than one with two pointers), is still caught: {@link hasRepeatedRuleKindInScope} groups by
  * `rule.rule` generically, needing no update for an 8th kind.

@@ -389,58 +389,22 @@ describe(
 );
 
 describe(
-  'applyNormalizeRulesToLibraryValue: ignore-json-pointers ALWAYS resolves before any ' +
-    'redact-json-pointers pointer, regardless of declared order (critic finding against this ' +
-    "piece's own first version, Q317 Decision 8 follow-up)",
+  'applyNormalizeRulesToLibraryValue: redact-json-pointers ALWAYS resolves first, against the ' +
+    'pristine original value; ignore-json-pointers second (two rounds of critic findings, in ' +
+    'BOTH directions, against this piece’s own earlier versions, Q317 Decision 8 follow-up)',
   () => {
-    it('redacts the correct, post-removal element identically whichever rule is declared first', () => {
-      const value = { list: ['decoy', '/real/root/path/to/secret.js'] };
-      // The redact pointer is written assuming the POST-removal shape (index 0, where the real path
-      // ends up once the decoy at the original index 0 is gone) -- the one well-defined convention
-      // this function's own doc comment establishes.
-      const ignoreFirst: readonly NormalizeRule[] = [
-        { rule: 'ignore-json-pointers', pointers: ['/list/0'] },
-        {
-          rule: 'redact-json-pointers',
-          pointers: ['/list/0'],
-          pattern: '/real/root',
-          replacement: '<R>',
-        },
-      ];
-      const redactFirst: readonly NormalizeRule[] = [
-        {
-          rule: 'redact-json-pointers',
-          pointers: ['/list/0'],
-          pattern: '/real/root',
-          replacement: '<R>',
-        },
-        { rule: 'ignore-json-pointers', pointers: ['/list/0'] },
-      ];
-      const expected = { ok: true, value: { list: ['<R>/path/to/secret.js'] } };
-      expect(applyNormalizeRulesToLibraryValue(value, ignoreFirst)).toEqual(expected);
-      expect(applyNormalizeRulesToLibraryValue(value, redactFirst)).toEqual(expected);
-    });
-
     it(
-      'the exact critic repro: a redact pointer written with STALE pre-removal indexing no ' +
-        'longer mistargets an unrelated, shifted element -- it is a clean no-op, never the ' +
-        "critic's own demonstrated silent leak",
+      'round-1 critic repro (the ORIGINAL direction): redact names the secret at its own, ' +
+        'natural, pre-removal index; ignore removes an earlier sibling -- correctly redacted, ' +
+        'identically whichever order the two rules are declared in',
       () => {
-        // Two results differing ONLY at array index 1 (a real embedded path) -- the critic's own
-        // repro: `ignore-json-pointers` removes index 0, declared BEFORE a `redact-json-pointers`
-        // rule naming index 1 (intending the ORIGINAL index-1 element, before any removal). Under
-        // the first version of this function (naive declared-order, inline application), this
-        // mistargeted: the removal shifted the real path down to index 0 FIRST, so the redact
-        // rule's own textually-unchanged `/list/1` pointer resolved against whatever NOW sat at
-        // index 1 (nothing, in this exact shape) instead -- the real path leaked through completely
-        // unredacted, with no error and no warning. Fixed: `ignore-json-pointers` always resolves
-        // first regardless of declared order, so a `redact-json-pointers` pointer written against
-        // the OLD, pre-removal shape simply no longer resolves (the array has only one element once
-        // index 0 is gone) -- a clean, silent NO-OP, the identical already-disclosed
-        // "wrong/stale pointer" risk `ignore-json-pointers` itself already carries, never a hit on
-        // the wrong element.
+        // `{list: ['decoy', '/real/root/path/to/secret.js']}`: the secret sits at its own natural
+        // index 1. The redact pointer below names THAT index, exactly as written against the real
+        // JSON, with no need to account for the sibling removal at index 0 at all -- the one
+        // natural authoring convention this function's own doc comment now guarantees works,
+        // regardless of which rule a declaration happens to list first.
         const value = { list: ['decoy', '/real/root/path/to/secret.js'] };
-        const rules: readonly NormalizeRule[] = [
+        const ignoreFirst: readonly NormalizeRule[] = [
           { rule: 'ignore-json-pointers', pointers: ['/list/0'] },
           {
             rule: 'redact-json-pointers',
@@ -449,10 +413,57 @@ describe(
             replacement: '<R>',
           },
         ];
-        expect(applyNormalizeRulesToLibraryValue(value, rules)).toEqual({
-          ok: true,
-          value: { list: ['/real/root/path/to/secret.js'] },
-        });
+        const redactFirst: readonly NormalizeRule[] = [
+          {
+            rule: 'redact-json-pointers',
+            pointers: ['/list/1'],
+            pattern: '/real/root',
+            replacement: '<R>',
+          },
+          { rule: 'ignore-json-pointers', pointers: ['/list/0'] },
+        ];
+        const expected = { ok: true, value: { list: ['<R>/path/to/secret.js'] } };
+        expect(applyNormalizeRulesToLibraryValue(value, ignoreFirst)).toEqual(expected);
+        expect(applyNormalizeRulesToLibraryValue(value, redactFirst)).toEqual(expected);
+      },
+    );
+
+    it(
+      'round-2 critic repro (the MIRROR-IMAGE direction): the secret sits AFTER the element ' +
+        'ignore-json-pointers removes -- also correctly redacted, identically whichever order ' +
+        'the two rules are declared in',
+      () => {
+        // `{list: ['keep-this', 'other', 'ROOT/secretpath']}`: the secret sits at its own natural
+        // index 2, AFTER index 0 (removed by ignore-json-pointers). This is the exact shape that
+        // broke this function's own SECOND version (which ran `ignore-json-pointers` first,
+        // unconditionally): with ignore running first, removing index 0 shifts the secret down to
+        // index 1 BEFORE the redact rule's own `/list/2` -- written, naturally, against the
+        // ORIGINAL shape -- ever resolved; post-shift, index 2 no longer existed at all, so the
+        // pointer silently no-opped and the secret survived completely unredacted. Fixed: redact
+        // ALWAYS resolves first, against the untouched original, so `/list/2` finds the real
+        // secret regardless of what ignore is about to do to index 0.
+        const value = { list: ['keep-this', 'other', 'ROOT/secretpath'] };
+        const redactFirst: readonly NormalizeRule[] = [
+          {
+            rule: 'redact-json-pointers',
+            pointers: ['/list/2'],
+            pattern: 'secretpath',
+            replacement: 'REDACTED',
+          },
+          { rule: 'ignore-json-pointers', pointers: ['/list/0'] },
+        ];
+        const ignoreFirst: readonly NormalizeRule[] = [
+          { rule: 'ignore-json-pointers', pointers: ['/list/0'] },
+          {
+            rule: 'redact-json-pointers',
+            pointers: ['/list/2'],
+            pattern: 'secretpath',
+            replacement: 'REDACTED',
+          },
+        ];
+        const expected = { ok: true, value: { list: ['other', 'ROOT/REDACTED'] } };
+        expect(applyNormalizeRulesToLibraryValue(value, redactFirst)).toEqual(expected);
+        expect(applyNormalizeRulesToLibraryValue(value, ignoreFirst)).toEqual(expected);
       },
     );
 
@@ -477,16 +488,24 @@ describe(
       ).toEqual({ ok: true, value: { message: '<R>/a.js' } });
     });
 
-    it('removing the root via ignore-json-pointers is "erased", checked before any redact-json-pointers pointer is even attempted', () => {
-      const rules: readonly NormalizeRule[] = [
-        { rule: 'ignore-json-pointers', pointers: [''] },
-        { rule: 'redact-json-pointers', pointers: ['/message'], pattern: 'x', replacement: 'y' },
-      ];
-      expect(applyNormalizeRulesToLibraryValue({ message: 'x' }, rules)).toEqual({
-        ok: false,
-        kind: 'erased',
-      });
-    });
+    it(
+      'removing the root via ignore-json-pointers is "erased" even after a redact-json-pointers ' +
+        'rule in the SAME list already resolved successfully in pass 1 -- pass 2 erases ' +
+        'everything pass 1 did, which is the correct outcome for a declaration that excuses its ' +
+        'entire result',
+      () => {
+        const rules: readonly NormalizeRule[] = [
+          { rule: 'redact-json-pointers', pointers: ['/other'], pattern: 'x', replacement: 'q' },
+          { rule: 'ignore-json-pointers', pointers: [''] },
+        ];
+        expect(
+          applyNormalizeRulesToLibraryValue({ message: 'secret', other: 'xyz' }, rules),
+        ).toEqual({
+          ok: false,
+          kind: 'erased',
+        });
+      },
+    );
 
     it('a redact-json-pointers pattern matching the ENTIRE non-empty field is reported as a typed "whole-field-match", never silently applied', () => {
       const rules: readonly NormalizeRule[] = [

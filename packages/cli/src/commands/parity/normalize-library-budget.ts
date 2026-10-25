@@ -65,8 +65,34 @@ const WORKER_URL = existsSync(DIST_WORKER_URL) ? DIST_WORKER_URL : SRC_WORKER_UR
  * of why this is an honest, typed refusal (`status: 'ok', ok: false, kind: 'too-large'`, below),
  * never a crash or a silent truncation. */
 function payloadCapacityBytesFor(value: unknown): number {
-  const serializedLength = JSON.stringify(value).length;
+  // `JSON.stringify` can throw: a `TypeError` on a circular reference, or a `RangeError` on
+  // sufficiently deep nesting (confirmed directly: around 200k levels) — neither reachable via the
+  // real CLI today (`parseLibraryProbeOutput` already filters both shapes out upstream, before this
+  // function is ever called), but this function's own signature is `value: unknown`, and
+  // `QUALITY-BAR.md` R2 rejects "currently unreachable" as a reason to skip defensive handling for a
+  // function that runs on the CALLING thread, before the worker — and its own crash/timeout
+  // protection — ever engages. A generous, fixed fallback keeps this honest and bounded rather than
+  // crashing the caller over a size ESTIMATE this function could not even measure.
+  let serializedLength: number;
+  try {
+    serializedLength = JSON.stringify(value).length;
+  } catch {
+    return 10_000_000;
+  }
   return Math.max(1_000_000, serializedLength * 8 + 65_536);
+}
+
+/** Whether `rules` contains at least one rule kind that can ever do anything real on `library`
+ * (`normalize.ts`'s own `applyNormalizeRulesToLibraryValue` doc comment: every other kind is
+ * already a complete no-op there). Used only to skip the worker entirely when the answer is no —
+ * a critic measured a real ~14,500x overhead (0.003ms direct call vs. 41.5ms through a spawned,
+ * torn-down worker) paid per `library` case even when zero rules apply to it at all, which is the
+ * common case for most `library` declarations (no rules, or only rules meant for a DIFFERENT
+ * surface the author copied from). */
+function hasAnyEffectOnLibrary(rules: readonly NormalizeRule[]): boolean {
+  return rules.some(
+    (rule) => rule.rule === 'ignore-json-pointers' || rule.rule === 'redact-json-pointers',
+  );
 }
 
 /** One normalize-library-budget outcome — the structural counterpart to `normalize-budget.ts`'s own
@@ -90,6 +116,13 @@ export type NormalizeLibraryBudgetOutcome =
  * internal failure through its own normal (non-crash) result path — unreachable in practice, since
  * `applyNormalizeRulesToLibraryValue`'s own contract is "never throws"; kept as a typed refusal
  * rather than a bare throw regardless (`QUALITY-BAR.md` R2 carries no reachability exception).
+ *
+ * **Fast path (a critic's own recommendation): no worker at all when `rules` has nothing that
+ * could ever do anything on `library`.** {@link hasAnyEffectOnLibrary}'s own doc comment has the
+ * measured overhead this avoids. Sound: `applyNormalizeRulesToLibraryValue(value, rules)` for such
+ * a `rules` list is, by construction, `{ok: true, value}` with `value` physically unchanged (every
+ * rule kind it would iterate over is a no-op) — this is the IDENTICAL result the full worker path
+ * would eventually report, just without paying for a worker thread to report it.
  */
 export function applyNormalizeRulesToLibraryValueBounded(
   value: unknown,
@@ -97,6 +130,9 @@ export function applyNormalizeRulesToLibraryValueBounded(
   budgetMs: number = DEFAULT_NORMALIZE_BUDGET_MS,
   workerUrl: URL = WORKER_URL,
 ): NormalizeLibraryBudgetOutcome {
+  if (!hasAnyEffectOnLibrary(rules)) {
+    return { status: 'ok', ok: true, value };
+  }
   const syncBuffer = new SharedArrayBuffer(4);
   const sync = new Int32Array(syncBuffer);
   const resultBuffer = new SharedArrayBuffer(8 + payloadCapacityBytesFor(value));
