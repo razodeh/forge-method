@@ -17,6 +17,7 @@ import type { StructuredTestCommand } from '@forge/schemas/config';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  captureRunnerVersion,
   computeProofSubjectHash,
   runTranslatorProof,
   type InjectedProbe,
@@ -808,4 +809,39 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
       }),
     ).rejects.toMatchObject({ code: 'RUN-158', cause: { code: 'RUN-114' } });
   });
+});
+
+describe('captureRunnerVersion -- "(npm|pnpm|yarn) (run )?test (--version|-v|-V)" is refused outright, never silently captured as the package manager\'s own version (SPEC-QUESTIONS.md Q333, critic round 4)', () => {
+  it('refuses the version-probe shape for npm, pnpm, and yarn alike, before ever running it', async () => {
+    const dir = await tempDir();
+    for (const command of [
+      'npm test --version',
+      'npm run test --version',
+      'npm test -v',
+      'npm test -V',
+      'pnpm test --version',
+      'pnpm run test --version',
+      'pnpm test -v',
+      'yarn test --version',
+      'yarn run test --version',
+      'yarn test -V',
+    ]) {
+      // A 5s bound is generous: a refused command never reaches `runShellCommand` at all, so this
+      // can never itself time out -- a real timeout here would mean the refusal did NOT fire.
+      const result = await captureRunnerVersion(command, dir, 5_000);
+      expect(result.ok, command).toBe(false);
+      if (!result.ok) {
+        expect(result.reason, command).toContain('ITS OWN version');
+        expect(result.timedOut, command).toBeUndefined();
+      }
+    }
+  });
+
+  it('does not refuse an ordinary "npm test"/"pnpm run test"/"yarn test" -- the real run/filter shape this field never actually receives in production, with no trailing version flag -- real execution still happens (each package manager prints its own real, deterministic "no package.json here" error, proving the command reached a real shell rather than being turned away by the version-probe check)', async () => {
+    const dir = await tempDir();
+    for (const command of ['npm test', 'pnpm run test', 'yarn test']) {
+      const result = await captureRunnerVersion(command, dir, 30_000);
+      expect(result.ok, command).toBe(true);
+    }
+  }, 60_000);
 });

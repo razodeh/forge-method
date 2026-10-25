@@ -480,9 +480,26 @@ function secretSegment(segments: readonly string[]): string | undefined {
   return undefined;
 }
 
+/**
+ * Whether `candidate` resolves inside `root`. A real escape is `relative` being exactly `'..'`, or
+ * starting with a `'..'` SEGMENT (`'..' + path.sep`) — never a raw string prefix: `path.relative` on
+ * `root + '/...'` (the bare `./...` a caller like `go test ./...` resolves to) returns the literal
+ * three-character string `'...'`, and `'...'.startsWith('..')` was `true` purely because the first two
+ * characters happen to match, even though `...` is a real, single path segment (Go's own
+ * recursive-wildcard token, among other things — `'...foo'` has the identical false-positive shape)
+ * and not a `..` parent-directory escape at all.
+ *
+ * **Confirmed live** (`SPEC-QUESTIONS.md` Q333, critic round 4): this made `go test ./...` and
+ * `go test -json ./...` — the single most idiomatic whole-project Go test invocation, and the EXACT
+ * strings `detect.ts`'s own `goTestCommand()` generates for both its `run` and `filter` fields — hard
+ * refused as `path-escape: "./..." is outside the project` by the real vet pipeline, with no
+ * workaround (`go test ./pkg/...` resolves to `'pkg/...'`, which correctly does not match this check
+ * and was never refused — only the bare top-level `./...` was).
+ */
 function within(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+  const escapesUpward = relative === '..' || relative.startsWith(`..${path.sep}`);
+  return relative === '' || (!escapesUpward && !path.isAbsolute(relative));
 }
 
 /** A word may hold a path in three places: the word, the part after `=` (`--git-dir=/etc`), and the part after a

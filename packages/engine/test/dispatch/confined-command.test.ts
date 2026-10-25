@@ -299,6 +299,36 @@ describe('vetProposedCommand: the hostile matrix is refused, each for its own re
   });
 });
 
+describe('within(): a ".." SEGMENT escapes, a candidate that merely starts with the two literal characters ".." does not (SPEC-QUESTIONS.md Q333, critic round 4)', () => {
+  // `path.relative(root, root + '/...')` returns the literal three-character string `"..."` --
+  // `"...".startsWith('..')` was `true` purely because the first two characters happen to match, even
+  // though `...` is one real path segment (Go's own recursive-wildcard token, among other things),
+  // never a `..` parent-directory escape. This made `go test ./...` -- the single most idiomatic
+  // whole-project Go test invocation, and the exact string `detect.ts`'s own `goTestCommand()`
+  // generates -- hard-refused as `path-escape` with no workaround. Fixed in `within()` itself: the
+  // escape check now tests the first path SEGMENT (`relative === '..'`, or `relative` starting with
+  // `'..' + path.sep`), never a raw string prefix.
+  it('a real parent-directory escape is still refused, every shape', async () => {
+    const root = await lane();
+    for (const command of [
+      'cat ..',
+      'cat ../..',
+      'cat ../../etc/passwd',
+      'cat ../sibling-dir',
+      'cat ../sibling-dir/x',
+    ]) {
+      expect(await reasonOf(command, DIAGNOSTICIAN, root), command).toBe('path-escape');
+    }
+  });
+
+  it('a candidate that only starts with two literal dots, without being a real ".." segment, is never treated as an escape', async () => {
+    const root = await lane();
+    for (const command of ['cat ...', 'cat ...foo', 'cat ..foo', 'ls ./...', 'cat a/...']) {
+      expect(await reasonOf(command, DIAGNOSTICIAN, root), command).toBeUndefined();
+    }
+  });
+});
+
 describe('vetProposedCommand: ordinary read-only reproductions are allowed', () => {
   const allowed: readonly string[] = [
     'ls -la',

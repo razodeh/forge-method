@@ -113,7 +113,12 @@ import { execa } from 'execa';
 import { ForgeError } from '@forge/core/errors';
 import { readTextFile, writeFileAtomic, writeNewFileAtomic } from '@forge/core/fs';
 import type { AbsolutePath, ProjectPaths } from '@forge/core/fs';
-import { ADOPT_TESTS_VET_GRANT, runShellCommand, vetProposedCommand } from '@forge/engine/dispatch';
+import {
+  ADOPT_TESTS_VET_GRANT,
+  commandWords,
+  runShellCommand,
+  vetProposedCommand,
+} from '@forge/engine/dispatch';
 import type { StructuredTestCommand } from '@forge/schemas/config';
 
 import {
@@ -250,6 +255,41 @@ export type RunnerVersionCapture =
   | { readonly ok: true; readonly runnerVersion: string }
   | { readonly ok: false; readonly reason: string; readonly timedOut?: true };
 
+/** The three package managers whose own CLI intercepts a trailing version flag meant for the
+ * underlying test framework (`captureRunnerVersion`'s own doc comment, `SPEC-QUESTIONS.md` Q333
+ * critic round 4). `bun` is deliberately not here: it is not in `ADOPT_TESTS_EXEC_PATTERNS` at all
+ * (no `bun test*`/`bun run test*` pattern exists), so this shape cannot even be proposed for it under
+ * this grant -- nothing to refuse. */
+const PACKAGE_MANAGER_VERSION_PROBE_VERBS: ReadonlySet<string> = new Set(['npm', 'pnpm', 'yarn']);
+
+/** The version flags a package manager's own CLI reads itself, before any script it would otherwise
+ * run -- matched against the LAST word only (`isPackageManagerVersionProbe`), never a substring, so a
+ * legitimate extra argument after `test` (which this shape never has in practice, but which would
+ * change what actually runs) is not silently absorbed. */
+const PACKAGE_MANAGER_VERSION_FLAGS: ReadonlySet<string> = new Set(['--version', '-v', '-V']);
+
+/**
+ * Whether `command` is exactly `(npm|pnpm|yarn) (run )?test (--version|-v|-V)` -- the one shape
+ * `ADOPT_TESTS_EXEC_PATTERNS` genuinely allows and `vetProposedCommand` genuinely executes, but which
+ * silently captures the package manager's own version instead of the test framework's
+ * (`captureRunnerVersion`'s own doc comment has the full reasoning). Parsed with `commandWords`
+ * (`confined-command.ts`'s own syntax stage, already run by `vetProposedCommand` above) rather than a
+ * raw string match, so this cannot be fooled by extra whitespace or a quoting shape the real vet
+ * itself would not have accepted either.
+ */
+function isPackageManagerVersionProbe(command: string): boolean {
+  const words = commandWords(command);
+  if (words === undefined) return false;
+  const [program, ...rest] = words;
+  if (program === undefined || !PACKAGE_MANAGER_VERSION_PROBE_VERBS.has(program)) return false;
+  const afterRun = rest[0] === 'run' ? rest.slice(1) : rest;
+  return (
+    afterRun.length === 2 &&
+    afterRun[0] === 'test' &&
+    PACKAGE_MANAGER_VERSION_FLAGS.has(afterRun[1] ?? '')
+  );
+}
+
 /**
  * Executes `runnerVersionCommand` for real at `cwd`, bounded by `timeoutMs`, and returns its own
  * real, current output as the runner's version -- the one, previously-missing mechanism `10` §10.3
@@ -288,6 +328,25 @@ export type RunnerVersionCapture =
  * command that produced no output on either stream (an unconventional tool whose actual version flag
  * differs from what was proposed, say) -- any of these is the proposed command's own problem, never
  * this function's to paper over with a guess.
+ *
+ * **Refuses `(npm|pnpm|yarn) (run )?test (--version|-v|-V)` outright, after the vet above, before
+ * ever running it (`SPEC-QUESTIONS.md` Q333, critic round 4).** `ADOPT_TESTS_EXEC_PATTERNS` (`npm
+ * test*`/`pnpm test*`/`yarn test*`/the `run test` forms) genuinely ALLOWS this shape, and
+ * `vetProposedCommand` genuinely EXECUTES it -- `vetNetworkAndArguments`'s own shared `PACKAGE_MANAGERS`
+ * check exempts a bare `test`/`run test` verb for npm/pnpm/yarn specifically (unlike `cargo`, which it
+ * refuses unconditionally). The problem is not the vet: it is that npm's/pnpm's/yarn's own CLI
+ * intercepts a trailing `--version`/`-v`/`-V` before the project's real test script ever runs at all,
+ * silently printing the PACKAGE MANAGER's own version (confirmed live for all three; `yarn` was
+ * previously only disclosed as "unconfirmed," now confirmed and closed the identical way) -- exactly
+ * the self-report-trust problem this whole mechanism exists to close, just relocated one level down.
+ * `isPackageManagerVersionProbe` below recognises only that one shape, so an ordinary `npm test`/
+ * `pnpm test` used as the real `run`/`filter` field is never touched by this check -- those fields are
+ * never passed to this function at all (its two real callers, `adopt-agent.ts`'s round loop and
+ * `adopt.ts`'s `evaluateTestAdoptionApproval`, pass only `runnerVersionCommand`). Deliberately placed
+ * here rather than in `confined-command.ts`'s own `vetNetworkAndArguments`/`PACKAGE_MANAGERS` (shared
+ * infrastructure every other grant role is also vetted against -- too broad a blast radius for this
+ * one field) -- a small, self-contained refusal scoped entirely to this one call, reached by both of
+ * this function's real callers so neither can independently drift out of sync with the other.
  */
 export async function captureRunnerVersion(
   runnerVersionCommand: string,
@@ -297,6 +356,16 @@ export async function captureRunnerVersion(
   const refusal = await vetProposedCommand(runnerVersionCommand, ADOPT_TESTS_VET_GRANT, cwd);
   if (refusal !== undefined) {
     return { ok: false, reason: refusal.detail };
+  }
+  if (isPackageManagerVersionProbe(runnerVersionCommand)) {
+    return {
+      ok: false,
+      reason:
+        `"${runnerVersionCommand}" asks npm/pnpm/yarn for ITS OWN version, not the test ` +
+        "framework's: the package manager's CLI intercepts a trailing --version/-v/-V before the " +
+        "project's real test script ever runs. Propose the framework's own version flag instead " +
+        '(e.g. "npx vitest --version") or fall back to "cat package.json".',
+    };
   }
   const result = await runShellCommand(runnerVersionCommand, cwd, undefined, { timeoutMs });
   if (result.timedOut === true) {

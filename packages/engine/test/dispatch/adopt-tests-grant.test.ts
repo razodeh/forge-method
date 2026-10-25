@@ -171,7 +171,7 @@ describe("the REAL full vet pipeline (vetProposedCommand), not only isExecAllowe
   // with this list at all. These tests close that blind spot directly, so "allowlist contains it"
   // and "actually grantable" can never again silently diverge unnoticed for a future pattern.
 
-  it('every runnerVersionCommand pattern this piece added for Q333 is genuinely reachable end to end through the real vet pipeline -- not merely allowlist-shaped (confirmed live by a gauntlet critic for all nine)', async () => {
+  it('every runnerVersionCommand FLAG PROBE this piece added for Q333 is genuinely reachable end to end through the real vet pipeline -- not merely allowlist-shaped (confirmed live by a gauntlet critic for all nine; this covers only the nine newly-ADDED version-flag patterns above, never a claim that every pattern in the whole allowlist was exercised this way -- the pre-existing "go test*" pattern is a separate, dedicated test below, added after a round-4 critic found this exact comment had been read as that broader, false completeness claim)', async () => {
     const r = await root();
     for (const sample of [
       'node --version',
@@ -188,23 +188,59 @@ describe("the REAL full vet pipeline (vetProposedCommand), not only isExecAllowe
     }
   });
 
-  it('cargo is NEVER actually reachable under this grant, for ANY verb -- including the pre-existing "cargo test*" pattern this piece did not add -- a real, pre-existing limitation isExecAllowed\'s own allowlist-shape check cannot see at all (a fresh gauntlet critic round confirmed this live: "cargo --version"/"cargo -V", added then removed for this exact reason, were DEAD ON ARRIVAL)', async () => {
+  it('the pre-existing "go test*" pattern\'s own idiomatic whole-project form, "go test ./..." (and its "-json"/filter variants -- the EXACT strings detect.ts\'s own goTestCommand() generates), is genuinely reachable end to end through the real vet pipeline -- round 4 critic finding: "./..." was hard-refused as a false-positive path-escape by confined-command.ts\'s own within() helper (a "..." candidate merely starting with the two literal characters "..", never a real ".." parent segment), with no workaround ("go test ./pkg/..." covers only one subtree). Fixed in within() itself (the segment-boundary check below also proves real escapes are still refused); these three are the full-pipeline-style coverage this exact pattern never had before (SPEC-QUESTIONS.md Q333, critic round 4)', async () => {
     const r = await root();
-    // `confined-command.ts`'s own `vetNetworkAndArguments`: `PACKAGE_MANAGERS.has('cargo')` plus an
-    // explicit `program === 'cargo'` clause refuses EVERY cargo invocation whenever `network !==
-    // 'full'`, regardless of verb -- unlike npm/pnpm/yarn, which that same check exempts for a bare
-    // `test`/`run test` verb. `isExecAllowed(grant, 'cargo test')` returns `true` (this file's own
-    // earlier test, unchanged) -- the real vet pipeline refuses it anyway, every time.
-    for (const sample of ['cargo test', 'cargo --version', 'cargo -V']) {
+    for (const sample of [
+      'go test ./...',
+      'go test -json ./...',
+      'go test -json -run {name:regex} ./...',
+    ]) {
+      expect(await vetProposedCommand(sample, ADOPT_TESTS_VET_GRANT, r)).toBeUndefined();
+    }
+  });
+
+  it("within()'s own fix does not weaken real parent-directory escapes -- the identical grant, same root, genuinely dangerous paths still refused as path-escape", async () => {
+    const r = await root();
+    for (const sample of ['cat ..', 'cat ../..', 'cat ../../etc/passwd', 'cat ../sibling-dir']) {
+      const refusal = await vetProposedCommand(sample, { exec: ['cat*'], network: 'none' }, r);
+      expect(refusal?.reason).toBe('path-escape');
+    }
+    // A candidate that merely STARTS WITH two literal dots, without being a real ".." segment, is
+    // never an escape -- the exact false-positive shape round 4 found for "..." generalised.
+    for (const sample of ['cat ...', 'cat ...foo', 'cat ..foo']) {
+      expect(
+        await vetProposedCommand(sample, { exec: ['cat*'], network: 'none' }, r),
+      ).toBeUndefined();
+    }
+  });
+
+  it('cargo is NEVER actually reachable under this grant, for ANY verb -- including the pre-existing "cargo test*" pattern this piece did not add -- a real, pre-existing limitation isExecAllowed\'s own allowlist-shape check cannot see at all (a fresh gauntlet critic round confirmed this live: "cargo --version"/"cargo -V", added then removed for this exact reason, were DEAD ON ARRIVAL). A round-4 critic found the ORIGINAL version of this test asserted the wrong mechanism for two of these three: "cargo --version"/"cargo -V" are no longer IN `ADOPT_TESTS_EXEC_PATTERNS` at all (removed, above), so `vetProposedCommand` now refuses them at the earlier "not in the agent\'s exec patterns" stage -- it never reaches `vetNetworkAndArguments`\'s own cargo-specific network clause for either of them. The previous assertion (`refusal?.detail).toContain(\'cargo\')`) passed anyway, but only by coincidence: the "not-in-grant" message happens to enumerate the whole pattern list, which still contains the substring "cargo" via the unrelated, still-present "cargo test*" pattern. Fixed by asserting the REAL reason for each case, so the claim this test makes is actually true: `cargo test` still demonstrates the live network clause (unchanged, matches "cargo test*", reaches vetNetworkAndArguments, refused there); `cargo --version`/`cargo -V` demonstrate allowlist-absence instead, now that the allowlist no longer names them', async () => {
+    const r = await root();
+    // `cargo test` matches the still-present `cargo test*` pattern, so it clears `isExecAllowed` and
+    // reaches `confined-command.ts`'s own `vetNetworkAndArguments`: `PACKAGE_MANAGERS.has('cargo')`
+    // plus an explicit `program === 'cargo'` clause refuses EVERY cargo invocation whenever `network
+    // !== 'full'`, regardless of verb -- unlike npm/pnpm/yarn, which that same check exempts for a
+    // bare `test`/`run test` verb. `isExecAllowed(grant, 'cargo test')` returns `true` (this file's
+    // own earlier test, unchanged) -- the real vet pipeline refuses it anyway, every time, for a
+    // 'network' reason.
+    const cargoTest = await vetProposedCommand('cargo test', ADOPT_TESTS_VET_GRANT, r);
+    expect(cargoTest?.reason).toBe('network');
+    expect(cargoTest?.detail).toContain('cargo');
+
+    // `cargo --version`/`cargo -V` match NO pattern in `ADOPT_TESTS_EXEC_PATTERNS` at all (they were
+    // removed from it, above) -- refused at the allowlist stage itself, before `vetNetworkAndArguments`
+    // is ever reached. Still refused (the end-to-end claim this test exists to prove), just via a
+    // different, now-correctly-named mechanism.
+    for (const sample of ['cargo --version', 'cargo -V']) {
       const refusal = await vetProposedCommand(sample, ADOPT_TESTS_VET_GRANT, r);
-      expect(refusal).toBeDefined();
+      expect(refusal?.reason).toBe('not-in-grant');
       expect(refusal?.detail).toContain('cargo');
     }
   });
 
-  it('DISCLOSED, NOT A BUG this test is meant to catch: "npm test --version"/"pnpm test --version" ARE genuinely allowed by the real vet pipeline, but npm\'s/pnpm\'s own CLI intercepts "--version" before the project\'s real test script ever runs -- silently reporting the PACKAGE MANAGER\'s own version, never the actual framework\'s (confirmed live by a second gauntlet critic). briefs/adopt-tests.md and this file\'s own doc comment both warn the agent away from proposing either as a "runnerVersionCommand" -- this test exists only so "the allowlist let it through" can never again be mistaken for "this is a safe version probe," for this one real, accepted exception', async () => {
+  it('DISCLOSED, NOT A BUG this test is meant to catch: "npm test --version"/"pnpm test --version"/"yarn test --version" ARE genuinely allowed by this real vet pipeline (vetProposedCommand), but npm\'s/pnpm\'s/yarn\'s own CLI intercepts "--version" before the project\'s real test script ever runs -- silently reporting the PACKAGE MANAGER\'s own version, never the actual framework\'s (confirmed live for all three; "yarn test --version" was previously only disclosed as "unconfirmed live," now confirmed too, round 4). briefs/adopt-tests.md and this file\'s own doc comment both warn the agent away from proposing any of the three as a "runnerVersionCommand" -- this test exists only so "the allowlist let it through, and the real vet pipeline runs it" can never again be mistaken for "this is a safe version probe." The ACTUAL refusal of this exact shape now lives one layer up, in `proof.ts`\'s own `captureRunnerVersion` (`isPackageManagerVersionProbe`, round 4) -- not here, and deliberately not here: `vetProposedCommand` itself still, correctly, allows it (this is a self-report-trust problem, not a containment one), so this test\'s own claim stays true regardless of that separate fix; see `proof.test.ts` for the refusal\'s own coverage', async () => {
     const r = await root();
-    for (const sample of ['npm test --version', 'pnpm test --version']) {
+    for (const sample of ['npm test --version', 'pnpm test --version', 'yarn test --version']) {
       expect(await vetProposedCommand(sample, ADOPT_TESTS_VET_GRANT, r)).toBeUndefined();
     }
   });

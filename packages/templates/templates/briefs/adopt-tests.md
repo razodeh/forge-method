@@ -189,11 +189,12 @@ Report your findings as the structured result this session asks for — never on
   a flag on `test`), `python manage.py --version` (Django), or `php artisan --version` (Laravel).
 
   Two real traps, not merely theoretical — never propose either of these:
-  - `npm test --version`/`pnpm test --version` (or the `run test` form) — these ARE accepted, but
-    npm/pnpm's own CLI intercepts `--version` before your project's real test script ever runs, so
-    FORGE would record npm's/pnpm's own version, never the actual framework's (`yarn test --version`
-    is the same risk, never confirmed safe either). Use the underlying framework's own `--version`
-    instead (`npx vitest --version`, etc.), or the `cat package.json` fallback below.
+  - `npm test --version`/`pnpm test --version`/`yarn test --version` (or the `run test` form) —
+    FORGE refuses these outright for this field: npm's/pnpm's/yarn's own CLI intercepts
+    `--version`/`-v`/`-V` before your project's real test script ever runs, so this would silently
+    record the package manager's own version, never the actual framework's. Use the underlying
+    framework's own `--version` instead (`npx vitest --version`, etc.), or the `cat package.json`
+    fallback below.
   - `cargo --version`/`cargo -V` — these are REFUSED outright (a pre-existing, unrelated limitation:
     no `cargo` invocation of any kind, including the ordinary `cargo test`, is grantable here at
     all). For a Rust/Cargo project, go straight to the `cat Cargo.lock`/`cat Cargo.toml` fallback

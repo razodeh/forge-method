@@ -127,17 +127,19 @@ export const ADOPT_TESTS_EXEC_PATTERNS: readonly string[] = [
   'pnpm run test*',
   'yarn test*',
   'yarn run test*',
-  // WARNING, not a grant change -- disclosed here because `npm test*`/`pnpm test*` (above) ALLOW
-  // `npm test --version`/`pnpm test --version` as a `runnerVersionCommand` proposal, but a fresh
-  // gauntlet critic round confirmed LIVE that both are silently intercepted by npm/pnpm's OWN CLI
-  // parser before the project's real test script ever runs at all -- they print npm's/pnpm's own
-  // version (e.g. `11.1.0`/`9.15.5`), never the underlying framework's. `captureRunnerVersion` has
-  // no way to tell this apart from a genuine version string (it is one, just the wrong program's),
-  // so this would silently defeat the whole point of this mechanism: a real vitest/jest upgrade
-  // would never be caught as drift, only an npm/pnpm upgrade would. `yarn test --version` is the
-  // same risk, unconfirmed live but not assumed safe. `briefs/adopt-tests.md` tells the agent to use
-  // the underlying framework's own `--version` (`npx vitest --version`, etc.) or the `cat
-  // package.json` fallback instead, never the package-manager wrapper's.
+  // WARNING, not a grant change -- disclosed here because `npm test*`/`pnpm test*`/`yarn test*`
+  // (above) ALLOW `npm test --version`/`pnpm test --version`/`yarn test --version` as a
+  // `runnerVersionCommand` proposal, and a fresh gauntlet critic round confirmed LIVE that all three
+  // are silently intercepted by the package manager's OWN CLI parser before the project's real test
+  // script ever runs at all -- they print the package manager's own version (e.g. `11.1.0`/`9.15.5`),
+  // never the underlying framework's (`yarn test --version`, previously only disclosed as
+  // "unconfirmed live," is now confirmed too -- same mechanism, same fix, for all three). No longer
+  // only disclosed: `proof.ts`'s own `captureRunnerVersion` now refuses this exact shape outright,
+  // after the vet and before ever running it (`isPackageManagerVersionProbe`, `SPEC-QUESTIONS.md`
+  // Q333 critic round 4) -- kept here too so the risk stays visible at the ALLOWLIST itself, not only
+  // in one caller's own refusal. `briefs/adopt-tests.md` tells the agent to use the underlying
+  // framework's own `--version` (`npx vitest --version`, etc.) or the `cat package.json` fallback
+  // instead, never the package-manager wrapper's.
   // `node --test*`'s own runner IS node itself, so a `runnerVersionCommand` proposal for it needs
   // node's OWN version flag, never a widening of `node --test*` (`--version`/`-v` share no prefix
   // with `--test` at all) -- two EXACT patterns (no trailing `*`: neither flag takes an argument),
