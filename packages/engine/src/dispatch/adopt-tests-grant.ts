@@ -127,6 +127,17 @@ export const ADOPT_TESTS_EXEC_PATTERNS: readonly string[] = [
   'pnpm run test*',
   'yarn test*',
   'yarn run test*',
+  // WARNING, not a grant change -- disclosed here because `npm test*`/`pnpm test*` (above) ALLOW
+  // `npm test --version`/`pnpm test --version` as a `runnerVersionCommand` proposal, but a fresh
+  // gauntlet critic round confirmed LIVE that both are silently intercepted by npm/pnpm's OWN CLI
+  // parser before the project's real test script ever runs at all -- they print npm's/pnpm's own
+  // version (e.g. `11.1.0`/`9.15.5`), never the underlying framework's. `captureRunnerVersion` has
+  // no way to tell this apart from a genuine version string (it is one, just the wrong program's),
+  // so this would silently defeat the whole point of this mechanism: a real vitest/jest upgrade
+  // would never be caught as drift, only an npm/pnpm upgrade would. `yarn test --version` is the
+  // same risk, unconfirmed live but not assumed safe. `briefs/adopt-tests.md` tells the agent to use
+  // the underlying framework's own `--version` (`npx vitest --version`, etc.) or the `cat
+  // package.json` fallback instead, never the package-manager wrapper's.
   // `node --test*`'s own runner IS node itself, so a `runnerVersionCommand` proposal for it needs
   // node's OWN version flag, never a widening of `node --test*` (`--version`/`-v` share no prefix
   // with `--test` at all) -- two EXACT patterns (no trailing `*`: neither flag takes an argument),
@@ -176,17 +187,31 @@ export const ADOPT_TESTS_EXEC_PATTERNS: readonly string[] = [
   // these three): the agent may still run one to see real output before deciding a translator is
   // needed. Java/Kotlin's own conventional build-wrapper invocation (`specs/15` §15.11's own worked
   // example already grants this exact pattern, `"./gradlew *"`, to a comparable module role).
+  // `cargo test*` is listed here (`detect.ts`'s own named hand-off) but is UNREACHABLE for a live
+  // model turn under this grant's `network: 'none'` -- NOT because of anything in this list, but
+  // because `confined-command.ts`'s own `vetNetworkAndArguments` refuses EVERY `cargo` invocation
+  // unconditionally whenever `network !== 'full'` (`PACKAGE_MANAGERS.has('cargo')` plus an explicit
+  // `program === 'cargo'` clause that applies regardless of verb -- unlike `npm`/`pnpm`/`yarn`, which
+  // that same check exempts for a bare `test`/`run test` verb). A fresh gauntlet critic round
+  // confirmed this live, for `cargo --version`/`cargo -V` specifically (added, then found dead, in
+  // the SAME round) -- and for this PRE-EXISTING `cargo test*` pattern too: no cargo invocation has
+  // ever actually been grantable here, a real, disclosed, pre-existing limitation this piece did not
+  // introduce and does not fix (changing `vetNetworkAndArguments`'s own `cargo` carve-out touches a
+  // shared check every OTHER role's grant is also vetted against, too broad a blast radius for this
+  // piece -- `briefs/adopt-tests.md` routes a Cargo project to `cat Cargo.lock`/`cat Cargo.toml`
+  // instead, never to `cargo --version`). `adopt-tests-grant.test.ts`'s own full-vet-pipeline test
+  // asserts this refusal directly, so it cannot silently start passing unnoticed if the shared check
+  // ever changes.
   'cargo test*',
   'dotnet test*',
   'bundle exec rspec*',
   'rspec*',
   './gradlew *',
   './mvnw *',
-  // `cargo test*`/`dotnet test*` bake "test" into their own matched prefix the identical way
-  // `node --test*`/`go test*` do -- their own version flags need the same explicit, EXACT patterns
-  // (same critic round; `cargo` accepts either spelling, `dotnet` only the long one).
-  'cargo --version',
-  'cargo -V',
+  // `dotnet test*` bakes "test" into its own matched prefix the identical way `node --test*`/
+  // `go test*` do -- its own version flag needs the same explicit, EXACT pattern (same critic
+  // round). Unlike `cargo`, `dotnet` is NOT in `confined-command.ts`'s own `PACKAGE_MANAGERS` set, so
+  // this one is genuinely reachable -- confirmed live, end to end, through the real vet pipeline.
   'dotnet --version',
   // The agent's own translator, once written — one pattern per interpreter it may reasonably be
   // written in (this file's own brief: "Node by default, or the project's own language"). Safe only

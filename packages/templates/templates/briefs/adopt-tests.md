@@ -184,16 +184,28 @@ Report your findings as the structured result this session asks for — never on
   Most conventional runners' own version flag already matches one of the granted invocation forms
   directly: `npx vitest --version`, `npx jest --version`, `npx mocha --version`, `pytest --version`,
   `phpunit --version`, `rspec --version`, `./gradlew --version`, `./mvnw --version`,
-  `cargo --version` (or `cargo -V`), `dotnet --version`, `node --version` (or `node -v`, for the
-  `node --test` built-in runner), `go version` (not `go test --version` — Go's own toolchain version
-  is a separate subcommand, never a flag on `test`), `python manage.py --version` (Django), or
-  `php artisan --version` (Laravel). If the runner you propose genuinely has no granted way to
-  report its own version (a bespoke Makefile/Rake target, or an in-house runner with no conventional
-  flag), `cat` a real, already-committed manifest or lockfile that names its exact pinned version
-  instead (e.g. `cat package.json`, `cat go.mod`, `cat requirements.txt`, `cat Cargo.lock`) — `cat`
-  is already granted, this needs no new command shape, and reading a real committed file works
-  identically whether FORGE runs it now, in your lane, or later, against the real project once this
-  is promoted. Never invent a second translator script just to report a version.
+  `dotnet --version`, `node --version` (or `node -v`, for the `node --test` built-in runner),
+  `go version` (not `go test --version` — Go's own toolchain version is a separate subcommand, never
+  a flag on `test`), `python manage.py --version` (Django), or `php artisan --version` (Laravel).
+
+  Two real traps, not merely theoretical — never propose either of these:
+  - `npm test --version`/`pnpm test --version` (or the `run test` form) — these ARE accepted, but
+    npm/pnpm's own CLI intercepts `--version` before your project's real test script ever runs, so
+    FORGE would record npm's/pnpm's own version, never the actual framework's (`yarn test --version`
+    is the same risk, never confirmed safe either). Use the underlying framework's own `--version`
+    instead (`npx vitest --version`, etc.), or the `cat package.json` fallback below.
+  - `cargo --version`/`cargo -V` — these are REFUSED outright (a pre-existing, unrelated limitation:
+    no `cargo` invocation of any kind, including the ordinary `cargo test`, is grantable here at
+    all). For a Rust/Cargo project, go straight to the `cat Cargo.lock`/`cat Cargo.toml` fallback
+    below; do not propose a bare `cargo` command for this field.
+
+  If the runner you propose genuinely has no granted way to report its own version (a bespoke
+  Makefile/Rake target, Cargo, or an in-house runner with no conventional flag), `cat` a real,
+  already-committed manifest or lockfile that names its exact pinned version instead (e.g.
+  `cat package.json`, `cat go.mod`, `cat requirements.txt`, `cat Cargo.lock`) — `cat` is already
+  granted, this needs no new command shape, and reading a real committed file works identically
+  whether FORGE runs it now, in your lane, or later, against the real project once this is promoted.
+  Never invent a second translator script just to report a version.
 
 - `{ "noTestsFound": true, "command": {...}, "adrSummary": "...", "reason": "..." }` — for a project
   with no test setup: `command` is the conventional runner you propose, `adrSummary` is the ADR body
