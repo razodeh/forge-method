@@ -125,6 +125,14 @@ describe('parseVitestJson (specs/22 M17 P3)', () => {
     // `message` (Q346, round 6): the real captured load-failure text now reaches `message` too, not
     // only `name` -- a round-6 critic found this branch alone still dropped it entirely.
     expect(result.tests[0]?.message).toContain('this-module-does-not-exist-xyz');
+    // `name` (round 8): an exact match, not `toContain`, is the point -- `toContain`/`toBeTruthy` on
+    // `message` alone cannot tell "the detail reaches `message` only" apart from "the detail is ALSO
+    // folded back into `name`," the exact double-print shape round 6/7 fixed for the sibling JUnit
+    // branch; a round-7 critic reconstructed the identical fold-into-name bug here live and found
+    // this test still passed either way, before this fix. `file` is a static fixture value, so
+    // (unlike this test's own sibling in reporter.test.ts, which exercises a real subprocess and a
+    // real, path-volatile tempdir) the exact expected string is fixed and usable directly.
+    expect(result.tests[0]?.name).toBe('/fixture/broken/x.test.js (file failed to load)');
   });
 
   it('a TOP-LEVEL thrown beforeAll reclassifies every "skipped" assertion in that file into fail/crash -- including one that was genuinely .skip()-ed, which this format cannot tell apart from the hook victim', () => {

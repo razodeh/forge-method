@@ -692,7 +692,19 @@ describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F
     // found it was the exact structural twin of the JUnit collection-failure branch round 5 fixed,
     // sitting in the very same file; this is the one real producer of that detail among this file's
     // own fixtures, so its presence here closes the gap class rather than merely asserting "truthy."
-    expect(result.report.outcomes[0]?.message).toBeTruthy();
+    const outcome = result.report.outcomes[0];
+    const message = outcome?.message;
+    expect(message).toBeTruthy();
+    // `name` (round 8): `toBeTruthy()` on `message` alone cannot distinguish "the detail reaches
+    // `message` only" from "the detail ALSO got folded back into `name`" -- the exact double-print
+    // shape round 6/7 fixed for the sibling JUnit branch, reconstructed live by a round-7 critic
+    // for this vitest branch too and found to pass this test either way, before this fix. `name`'s
+    // own absolute-path prefix is not fixture-predictable (a real tempdir path), so an exact match
+    // on the whole string is not usable here the way the JUnit test's was; `endsWith` on the fixed,
+    // unqualified suffix plus "the real detail text is never itself a substring of name" together
+    // give the identical guarantee without hardcoding the volatile path.
+    expect(outcome?.name.endsWith('(file failed to load)')).toBe(true);
+    expect(outcome?.name.includes(message ?? '')).toBe(false);
   });
 
   it('vitest: a beforeAll hook exception is kind "crash" — not "load" (the file loaded fine) and not "assertion" (the test body never ran)', async () => {
