@@ -219,7 +219,7 @@ Acceptance criteria are written in a **structured Given/When/Then** with an expl
 **The canonical test report (post-v1.0, `specs/22` M17).** `forge-test-report` v1 is one JSON object:
 
 ```json
-{"forgeTestReport": 1, "tests": [{"name": "string (required)", "file": "string, relative path (optional)", "status": "pass | fail | skip (required)", "kind": "assertion | load | timeout | crash (optional)", "durationMs": "number (optional)", "acId": "string (optional)"}]}
+{"forgeTestReport": 1, "tests": [{"name": "string (required)", "file": "string, relative path (optional)", "status": "pass | fail | skip (required)", "kind": "assertion | load | timeout | crash (optional)", "durationMs": "number (optional)", "acId": "string (optional)", "message": "string (optional)"}]}
 ```
 
 Only `name` and `status` are required on each entry; every other field is optional, and a consumer
@@ -232,7 +232,11 @@ conservative choice `13` F-TEST-10's own hunk-mutation credit logic reads from h
 guessing itself. `acId`, when present, is an already-extracted AC id from a `forge-json`-emitting
 translator that knows its own project's naming convention better than a generic regex would; when
 absent, the `extractAcId` regex-over-`name` convention point 2 above describes still applies,
-unchanged — this field is additive, never a replacement for it. This is what every OTHER format a
+unchanged — this field is additive, never a replacement for it. `message` (post-v1.0, `specs/22` M17
+P21, Q346), like `kind`, applies only when `status` is `'fail'` and is omitted otherwise — a
+failure's own error-message text, present only when the project's own test command (or a translator
+reading it) actually has one to report; no built-in translator populates it yet, so its absence on a
+real failure is not itself a signal of anything. This is what every OTHER format a
 project's test command can produce — JUnit XML, TAP, a runner's own native JSON, or a hand- or
 agent-written translator's output (`13` F-TEST-11, `18` §18.3) — is converted INTO before any FORGE
 command reads it: `forge-test-report` is the one shape the rest of this spec pack, and the rest of the

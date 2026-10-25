@@ -6145,6 +6145,12 @@ describe('pinned sentences (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313, PLAN-M17.m
     ]);
   });
 
+  it('M17 P21 specs/09 (Q346): message applies only on fail, like kind, and is absent for most translators today', () => {
+    expectPinned(spec09(), [
+      "`message` (post-v1.0, `specs/22` M17 P21, Q346), like `kind`, applies only when `status` is `'fail'` and is omitted otherwise — a failure's own error-message text, present only when the project's own test command (or a translator reading it) actually has one to report; no built-in translator populates it yet, so its absence on a real failure is not itself a signal of anything.",
+    ]);
+  });
+
   // --- specs/13 F-TEST-1/6/7: consumers re-stated in terms of forge-test-report ---------------------
 
   it('M17 specs/13 F-TEST-1 point 4: the single layer command is the testCommands entry either form', () => {

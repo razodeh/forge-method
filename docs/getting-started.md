@@ -984,10 +984,11 @@ leave the rest of it undemonstrated.
 
 A **translator** is a small, project-committed script that reads a runner's raw output and prints
 `forge-test-report` v1 (`09` §9.5) on stdout — one JSON object,
-`{"forgeTestReport": 1, "tests": [{"name", "status": "pass"|"fail"|"skip", "file"?, "kind"?, "acId"?}]}`,
+`{"forgeTestReport": 1, "tests": [{"name", "status": "pass"|"fail"|"skip", "file"?, "kind"?, "acId"?, "message"?}]}`,
 `name` and `status` the only required fields. For `tests/run.mjs` above, whose own output is two
 kinds of line (`PASS <name>`/`FAIL <name>: <reason>`), the translator is a small regex over each
-line:
+line — `<reason>` is already right there in the runner's own output, so the translator passes it
+through as `message` (Q346, post-v1.0, `specs/22` M17 P21) rather than discarding it:
 
 ```bash
 mkdir -p .forge/test-translators
@@ -1008,7 +1009,7 @@ for (const line of raw.split('\n')) {
     continue;
   }
   const fail = /^FAIL (.+?): (.+)$/.exec(line);
-  if (fail) tests.push({ name: fail[1], status: 'fail', kind: 'assertion' });
+  if (fail) tests.push({ name: fail[1], status: 'fail', kind: 'assertion', message: fail[2] });
 }
 process.stdout.write(JSON.stringify({ forgeTestReport: 1, tests }));
 EOF
@@ -1062,11 +1063,12 @@ node .forge/test-translators/unit.mjs /tmp/raw-output-with-probe.txt
 ```
 
 ```
-{"forgeTestReport":1,"tests":[{"name":"add works","status":"pass"},{"name":"subtract works","status":"pass"},{"name":"probe always fails","status":"fail","kind":"assertion"}]}
+{"forgeTestReport":1,"tests":[{"name":"add works","status":"pass"},{"name":"subtract works","status":"pass"},{"name":"probe always fails","status":"fail","kind":"assertion","message":"deliberately injected failure"}]}
 ```
 
 The probe is reported as `"fail"`, by its exact name, with the other two tests' statuses undisturbed
-— exactly what the translator proof's own check 3 looks for.
+— exactly what the translator proof's own check 3 looks for. Its real error text rides along too, in
+`message`, because this translator now passes `<reason>` through instead of discarding it.
 
 **The one real gap in this story.** Having confirmed the translator works, the natural next step
 would be `execution.testCommands.unit` set to

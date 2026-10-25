@@ -6,12 +6,26 @@
  *
  * Only `name` and `status` are required on each entry; every other field is optional, and a consumer
  * that needs a field the project's own test command did not supply degrades to a stated, typed
- * outcome rather than guessing (`09` §9.5). `kind` is additive and applies only when `status` is
- * `'fail'` — enforced here with a cross-field refinement, since a producer that sets `kind` on a pass
- * or a skip is not a conforming `forge-test-report` writer, not a merely-unusual one.
+ * outcome rather than guessing (`09` §9.5). `kind` and `message` are both additive and both apply
+ * only when `status` is `'fail'` — enforced here with a cross-field refinement, since a producer
+ * that sets either on a pass or a skip is not a conforming `forge-test-report` writer, not a
+ * merely-unusual one.
+ *
+ * `message` (Q346, post-v1.0, `specs/22` M17 P21) is a failure's own error-message text — the one
+ * thing v1 had no field for at all, confirmed live by a real translator that had this text on hand
+ * and nowhere to put it. Optional, deliberately: a passing test has no error message, and not every
+ * translator can recover one from its underlying format (TAP, for one, carries no per-test message
+ * signal at all). No built-in parser in `packages/cli/src/commands/loop/test/parsers/` populates
+ * this yet — each one either never reads its format's own message text at all (JUnit XML's
+ * `<failure message="...">`, Jest/Vitest's own `failureMessages`), or already folds a captured
+ * message into a synthetic entry's `name` for an unrelated, pre-existing reason (a whole file that
+ * failed to load) — left untouched here, since wiring either up is new capture logic this fix does
+ * not add. The field exists and validates; a future translator (hand-written, or `forge test adopt`
+ * agent-authored) populates it directly, the same way `forge-json` already passes any entry through
+ * unchanged.
  *
  * @see specs/09 §9.5
- * @see specs/22 M17 P3
+ * @see specs/22 M17 P3, M17 P21 (Q346)
  */
 import { z } from 'zod';
 
@@ -33,6 +47,7 @@ const forgeTestReportEntrySchema = z
     kind: z.enum(TEST_REPORT_FAILURE_KINDS).optional(),
     durationMs: z.number().nonnegative().optional(),
     acId: z.string().min(1).optional(),
+    message: z.string().min(1).optional(),
   })
   .strict()
   .superRefine((entry, ctx) => {
@@ -41,6 +56,13 @@ const forgeTestReportEntrySchema = z
         code: z.ZodIssueCode.custom,
         path: ['kind'],
         message: `"kind" (${entry.kind}) is only meaningful when "status" is "fail" (09 §9.5); this entry's status is "${entry.status}".`,
+      });
+    }
+    if (entry.message !== undefined && entry.status !== 'fail') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['message'],
+        message: `"message" is only meaningful when "status" is "fail" (09 §9.5, Q346); this entry's status is "${entry.status}".`,
       });
     }
   });
