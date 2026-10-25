@@ -429,9 +429,16 @@ function outcomesFromJunitXml(xml: string): readonly TestOutcome[] {
       // the module's baseline-passing tests exactly as a vitest run already does for the identical
       // shape (`13` F-TEST-10, Q294 Decision 8) — the asymmetry this piece fixes.
       if (classname === '' && testcase.error !== undefined) {
-        const detail = detailOfJunitElement(testcase.error) ?? 'collection failure';
+        // `message` (Q346, round 5): `rawDetail` is the same real captured text the display name
+        // below already folds in -- a round-4 critic found it was computed here and then only ever
+        // used for `outcomeName`, never also threaded through as `makeOutcome`'s own `message`
+        // parameter the way the ordinary per-testcase branch just below it already is. `detail`
+        // (with its `'collection failure'` fallback) stays display-name-only, since `message` itself
+        // must stay honestly absent when there is nothing real to report, never a guessed fallback.
+        const rawDetail = detailOfJunitElement(testcase.error);
+        const detail = rawDetail ?? 'collection failure';
         const outcomeName = `${name} (file failed to load: ${detail})`;
-        outcomes.push(makeOutcome(outcomeName, 'fail', name, 'load'));
+        outcomes.push(makeOutcome(outcomeName, 'fail', name, 'load', rawDetail));
         continue;
       }
 

@@ -731,6 +731,11 @@ describe('TestOutcome.kind — the classification table (specs/22 M16 P10) (13 F
       file: 'test_broken_module',
     });
     expect(result.report.outcomes[0]?.name).toContain('file failed to load');
+    // `message` (Q346, round 5): the real collection-failure detail -- already folded into `name`
+    // above -- is ALSO threaded through as its own `message` field now, matching the ordinary
+    // per-testcase branch this same function already fixed in round 4 (a round-4 critic found this
+    // branch alone had been left out, the detail computed but only ever used for the display name).
+    expect(result.report.outcomes[0]?.message).toBeTruthy();
   });
 
   it('pytest: --continue-on-collection-errors lets a sibling, healthy module still run and report, rather than the whole session silently dropping it', async () => {

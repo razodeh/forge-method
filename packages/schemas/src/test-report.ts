@@ -29,9 +29,20 @@
  * critic). Jest's per-assertion `failureMessages` is still never read, and both Jest's and Vitest's
  * parsers still fold a captured file-level message into a synthetic entry's `name` instead, for an
  * unrelated, pre-existing reason (a whole file that failed to load) -- left as-is, real but smaller
- * gaps than the two just closed. The field exists and validates regardless of which producer
- * populates it; a future translator (hand-written, or `forge test adopt` agent-authored) populates
- * it directly, the same way `forge-json` already passes any entry through unchanged, and
+ * gaps than the two just closed. This capture is not confined to the structured, opt-in
+ * `packages/cli/.../parsers/` paths named above: `reporter.ts`'s own LEGACY, ecosystem-auto-detected
+ * paths (`outcomesFromJunitXml`/`outcomesFromVitestFileResult`, reached by the default, bare-string
+ * `testCommands.<layer>` form, not only a layer that opts into a structured `format`) populate
+ * `message` the same way, round 4-5, via the identical shared `detailOfJunitElement`
+ * (`packages/cli/.../junit-detail.ts`) for every one of JUnit's three fail-shaped branches
+ * (assertion/crash/the whole-module collection-failure case) and the identical already-captured
+ * hook text for vitest's own top-level hook-throw reclassification -- a round-3 critic found this
+ * legacy/structured split had gone unfixed and undisclosed in both of those cases, and a round-4
+ * critic found one more branch (JUnit's own collection-failure case) still missed inside the very
+ * function round 4 had just fixed the other two branches of. The field exists and validates
+ * regardless of which producer populates it; a future translator (hand-written, or `forge test
+ * adopt` agent-authored) populates it directly, the same way `forge-json` already passes any entry
+ * through unchanged, and
  * `reporter.ts`'s own `outcomeFromReportEntry` already carries it as far as `TestOutcome` for both
  * real call sites (`runTranslator`, `PARSERS[format]`) -- a human/agent-facing consumer reads it via
  * `packages/cli/src/commands/story.ts`'s own `namedOutcome`, for a `'fail'` AND, as of round 3, a
