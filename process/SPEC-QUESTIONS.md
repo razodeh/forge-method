@@ -30618,12 +30618,38 @@ across 47 other files from unrelated prior pieces, undetected because the drift-
 compares a generated file's own body text. Regenerated the whole snapshot via the documented
 procedure, re-verified against every test referencing it.
 
-**DECISION** — disclosed, not fixed: `forge-test-report` v1's schema has no field for a failure's
-own error message text — an unrelated, pre-existing gap that would affect any translator for any
-runner reporting per-test messages, confirmed to be the one remaining real obstacle in one of the
-three live attempts via a zero-cost replay check, left for a separate product/spec decision.
+**DECISION — FIXED (owner-directed scope expansion, 2026-10-25), across 9 rounds.** `forge-test-report`
+v1's schema gains an optional `message` field (fail or skip only, never pass) for a failure's own
+captured error text. Round 1 added the field. The next 8 rounds were a sustained, repeated
+demonstration of "fix one producer, miss its structurally identical twin": round 2's critics found
+the field never actually reached real output (`outcomeFromReportEntry`/`TestOutcome` silently
+dropped it, and the real human/agent-facing surface in `story.ts` never rendered it either) — fixed,
+and skip reasons wired to the same surface. Round 3 added JUnit XML message-capture, but a critic
+found it was wired only into the newer structured parser path, leaving the legacy/default
+ecosystem-auto-detected path — the common case — completely unaffected, with a stale doc comment
+claiming otherwise. Round 4 closed that for real (extracting the shared helper into `junit-detail.ts`
+rather than leaving a duplicate) and additionally closed the identical legacy/structured split for
+vitest's own hook-reclassification case. Round 5 found a THIRD branch in the same function round 4
+had just edited (pytest's whole-module collection-failure case) that still silently dropped the
+captured text. Round 6 found: a regression round 5 itself introduced (the collection-failure
+branch's display name and its new `message` field both carried the same detail text, printing it
+twice in real output); the identical missing-branch gap in vitest's own whole-file-load-failure case
+(both legacy and structured); and a real, pre-existing type-soundness hole at the round-trip
+persistence boundary (`isTestOutcome` never validated `message`'s type at all, silently accepting a
+corrupt non-string value). Rounds 7-9 were pure test-hardening, not production-code fixes: round 7
+strengthened the one test whose assertion was too weak to actually catch the double-print regression
+round 6 just fixed; round 8 applied the identical strengthening to the two vitest sibling tests;
+round 9 found the one vitest test's own strengthened assertion (`endsWith`+`!includes`, chosen since
+that test drives a real subprocess against a non-hardcodable path) was still beatable by a
+constructed adversarial case and replaced it with a dynamic exact match. A final, dedicated critic
+pass systematically enumerated every producer across every built-in parser and confirmed the bug
+class has exactly three instances, all now fixed and test-proven — not an open-ended pattern.
+Jest's own two gaps (`failureMessages` never read; file-load-failure folds detail into `name` only)
+and `go-test-json.ts`'s total absence of captured text remain honestly disclosed, not silently
+fixed — a different, smaller, already-acknowledged scope boundary.
 
-**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21`.
+**Gauntlet:** see `GAUNTLET-LOG.md`, `## M17 P21` (the Q346 fix's own dedicated entry, dated
+2026-10-25, for the full 9-round narrative).
 
 ## Q347
 

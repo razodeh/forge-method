@@ -25012,3 +25012,21 @@ test.ts` flake, re-confirmed clean in isolation.
 **Net result**: the deepest, most severe finding (a confirmed live orphan-process regression) was introduced by this piece's OWN earlier round's fix, not inherited — found only because a critic insisted on constructing the exact adversarial repro rather than trusting that a rewrite preserving the same test suite also preserved the same semantics.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q353` (new).
+
+---
+
+## M17 P21 — Q346's own fix: the forge-test-report `message` field, 9 rounds (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** P21's own live run disclosed, but left unfixed, that `forge-test-report` v1 had no field for a failure's own error-message text — confirmed to be the one remaining real obstacle in one of P21's three live adoption attempts.
+
+**Round 1** added the optional `message` field (fail or skip only). **Round 2's** two critics found it never actually reached real output — `outcomeFromReportEntry`/`TestOutcome` silently dropped it, and `story.ts`'s own human/agent-facing surface never rendered it either — fixed, with skip reasons wired to the same surface. **Round 3** added JUnit XML message-capture, but a critic found it was wired only into the newer structured parser path, leaving the legacy/default ecosystem-auto-detected path — the common case most projects actually use — completely unaffected, with a stale doc comment claiming the opposite.
+
+**Round 4** closed the legacy/structured split for real (extracting a genuinely shared helper rather than leaving a duplicate — the two had already drifted into byte-for-byte copy-paste) and closed the identical split for vitest's own hook-reclassification case too. **Round 5's** critic found a THIRD branch in the very function round 4 had just edited — pytest's whole-module collection-failure case — still silently dropping the captured text.
+
+**Round 6 is the deepest round**: two critics found (a) a real regression round 5 itself introduced — the collection-failure branch's display name and its new `message` field both carried the same detail text, double-printing it in real `forge story verify` output, confirmed live through the actual CLI; (b) the identical missing-branch gap in vitest's own whole-file-load-failure case, both legacy and structured; (c) a real, pre-existing type-soundness hole at the round-trip persistence boundary — `isTestOutcome` never validated `message`'s type at all, silently accepting a corrupt non-string value on read-back.
+
+**Rounds 7-9 were pure test-hardening, no further production-code bugs** — but each still found something real: round 7 found the one JUnit test's own assertion was too weak to actually catch the double-print regression round 6 had just fixed (passed identically on the buggy and fixed code); round 8 found the identical weakness in the two vitest sibling tests; round 9's critic constructed an adversarial "truncated fold" variant that evaded round 8's own `endsWith`+`!includes` strengthening for the one test using a non-hardcodable real-subprocess path, replaced with a dynamic exact match derived from the outcome's own `file` field. A final, dedicated critic pass systematically enumerated every producer across every built-in parser (junit-xml, vitest-json, jest-json, tap, go-test-json, forge-json) and confirmed the double-print bug class has exactly three instances in the whole codebase, all now fixed and test-proven — closing the question of whether this was an open-ended pattern or a bounded, now-fully-enumerated one.
+
+**Net result**: nine rounds on a single schema field, the clearest demonstration this milestone has produced of why independent critics matter even on a seemingly-small, test-only tail — round 6's own live-output verification (not just unit tests) is what caught a real user-visible regression before it ever shipped.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q346` (updated in place).
