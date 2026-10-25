@@ -31141,3 +31141,112 @@ than it should be (FORGE has no actual way to know which shell dialect the autho
 real distinction being "known dialect vs. unknown dialect," not "whose platform."
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P16` entry for this fix, dated 2026-10-25.
+## Q354 — `Q317` Decision 8 CLOSED (library-surface path-redaction), 4 rounds, plus the `within()` substring-bug sweep it triggered across two more files (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** `Q317` Decision 8 disclosed, but deliberately did not fix, a real gap:
+`library` observations had no mechanism to redact a substring (an embedded root/absolute path, say)
+inside a string value at a named pointer — only whole-field deletion (`ignore-json-pointers`) or a
+complete no-op (`replace`, which has no raw text to act on against a structured `library` result).
+
+**Round 1 — the mechanism.** A new `redact-json-pointers` normalize rule: a reviewer names a field
+by its RFC 6901 pointer, exactly as `ignore-json-pointers` already does, plus a pattern/replacement
+to run against the string found there, exactly as `replace` already does over a whole stream. The
+same adversarial two-root case Decision 8 built now reads `match` once the rule names the offending
+pointer, while an unrelated genuine difference elsewhere in the same result still correctly reads
+`mismatch`. `replace-lint.ts`'s `CFG-519` refuses it on every root-rewritten surface (`process`/
+`file`/`http`) for the identical unprovable-safety-against-a-length-anchored-pattern reason `CFG-516`
+already refuses `replace` there; meaningful, and permitted, only on `library`.
+
+**Round 2 — a live ReDoS, confirmed by direct measurement, not assumed.** `redact-json-pointers`'
+own regex ran synchronously, on the caller's thread, with no wall-clock bound — round 1's own doc
+comment disclosed this but left it unfixed. A critic measured a real exponential blowup (128ms at
+input length 8, 11.7s at length 14) from a flat-adjacent-group pattern `CFG-511`'s static lint
+cannot catch (it only flags nested quantifiers). Fixed by routing `library`'s normalize path through
+a new worker-thread-bounded `normalize-library-budget.ts`/`normalize-library-worker.ts` pair,
+structurally identical to `normalize-budget.ts`'s own existing text-surface mechanism, using
+`node:v8`'s `serialize`/`deserialize` rather than `JSON` to preserve `NaN`/`Infinity` the structured
+value may legitimately carry. Same round also found and fixed an order-dependent leak between
+`ignore-json-pointers` and `redact-json-pointers` sharing one pointer-removal array.
+
+**Round 3 — the order-dependent leak's own fix was backwards.** Two critics found round 2 chose
+"ignore first, then redact" and that this requires a non-natural pointer-authoring convention to
+stay safe — the natural, pre-removal convention reopens the identical leak in the mirror-image
+direction. Reversed to "redact first, against the pristine value, then ignore" — redaction never
+splices an array or renames an object key, so running it first against the untouched original needs
+no special convention and is provably general (confirmed independently by both re-review critics
+via their own constructed adversarial variants, beyond the two known repros). Also added two
+non-blocking hardening items: a try/catch around the worker's own payload-size estimate, and a fast
+path skipping the worker entirely when no relevant rule is declared.
+
+**Round 4 — the round-3 hardening had its own gap.** A critic found the size-estimate's try/catch
+protected `JSON.stringify` but not the `new Worker(...)` construction a few lines later — Node's own
+structured-clone of `workerData` is itself recursive, and overflows the call stack at the identical
+depth, past the point where the estimate's own catch had already returned successfully. Fixed by
+wrapping the `Worker` construction itself in the same typed `too-large` refusal. Also fixed a stale
+test title that still attributed safety to "pointer-addressing" being inherently order-independent —
+disproven by rounds 2-3's own findings — rather than the real mechanism (the now-fixed order).
+
+**Caught during landing, not by any gauntlet round: the built artifact had no entry for the new
+worker file at all.** `tsup.config.ts` had a build entry for `normalize-budget.ts`'s own worker
+(added by `Q340`, closing the identical "the `.ts` worker file doesn't exist in a real npm install"
+crash for the text surface) but none for `normalize-library-worker.ts` — the exact `Q340` regression,
+reincarnated for this piece's own worker, would have shipped. Fixed while merging onto `main`: a
+third `tsup` entry producing `dist/normalize-library-worker.mjs`, and `normalize-library-budget.ts`
+now reuses `normalize-budget.ts`'s own exported, lazy, extension-gated `execArgvForWorker` (also a
+`Q340` mechanism) instead of the eager constant it was built against on its own branch. Confirmed by
+an actual `pnpm build`: the new worker file compiles to plain JS, parses on a flag-less `node
+--check`, and the `existsSync` dev/dist switch correctly resolves it relative to the bundled
+`dist/forge.mjs`.
+
+**The `within()` substring bug this piece's own fix for `confined-command.ts` (part of round 1-4's
+stack) exposed is NOT unique to that file — found in two more places by gauntlet critics, each
+spun off as its own small, independently-gauntleted piece.** The root cause throughout:
+`path.relative(root, candidate).startsWith('..')` is `true` for the literal string `"..."` (and any
+other string starting with the two characters `..` without being a real `..` parent-segment) purely
+by coincidence — not a genuine escape. `confined-command.ts`'s own instance hard-refused `go test
+./...`, the single most idiomatic whole-project Go test invocation (and the exact string
+`detect.ts`'s own `goTestCommand()` generates), with no workaround.
+
+- **`packages/engine/src/dispatch/test-path.ts`'s own independent `within()`**, used by
+  `validateTestPath` (confined-command.ts's `vetProposedCommand`, `rca/shell.ts`'s RCA
+  trusted-path extension — live in production via `forge debug`'s REPRODUCE/PROVE loop, not dormant
+  as a stale header comment there claimed — and `story.ts`'s `--scope story` test-narrowing).
+  Fixed identically (first-path-segment check, not a raw prefix). Two rounds: round 1's own new
+  regression tests were themselves vacuous (nested one level under a `tests/` subdirectory, which
+  structurally can never reach the buggy condition — a critic proved this by running all 59 tests,
+  including the two new ones, against the unfixed source and watching them all pass); round 2
+  rewrote both tests with the dotted name as the first path segment, independently reproducing both
+  the pre-fix red and the post-fix green before committing.
+- **`packages/core/src/fs/paths.ts`'s `relativePosixWithin`** — the highest-impact instance, by its
+  own doc comment "the single gate every write to a host project passes through" (backs
+  `resolveContained`/`resolveWithin`/`resolveState`, reachable from ~140+ call sites across
+  `core`/`kb`/`cli`/`agents`/`methods`). A real project directory or file legitimately named with a
+  leading `..` (e.g. `..cache/`) was wrongly refused (`CFG-003`) on every write near it. Fixed
+  identically; one real nuance resolved by reading rather than assuming: despite the "Posix" name,
+  the function's *input* (`path.relative()`'s own return value) is host-native-separator, not
+  POSIX — the POSIX-slash convention applies only to the function's success return, after the escape
+  check already ran — so the fix correctly uses `path.sep`, matching the other two fixes' intent
+  rather than their literal separator choice. Three real call sites (`artifacts/io.ts`,
+  `ids/scan.ts`, `fs/operations.ts`) traced and given end-to-end regression tests, not just the
+  helper in isolation. Confirmed by a critic's own 300,000-trial fuzz test (POSIX and Windows path
+  semantics both) against an independent segment-array ground-truth check: zero false-ALLOWs,
+  zero false-REFUSEs.
+
+**Disclosed, not yet fixed: the identical bug pattern remains live in at least 6 more places**,
+found by the same gauntlet critics during the two sibling fixes above but out of scope for either:
+`packages/adapter-claude-code/src/skills.ts:107,121` (`resolveSkillFile`, twice), `packages/vcs/src/
+commit.ts:220` (`assertPathWithinRepo` — would falsely throw `VCS-COMMIT-PATH-ESCAPES-REPO` for a
+commit path literally named `...`/`..foo`), `packages/engine/src/adopt/verification.ts:102,110`
+(`resolveContainedManifestPath`, twice), `packages/vcs/src/lanes.ts:342` (`parseLaneWorktrees`,
+lower practical risk — forge-generated lane-id directory names are deterministic), and, in a
+different and arguably more concerning direction, `packages/engine/src/rca/fix-scan.ts:148`
+(`protectedFixGlobs`): here the check's effect is inverted — `!root.startsWith('..')` *excludes* a
+root from the protected-globs allowlist, a potential **under**-protection bug, the opposite risk
+direction from every over-strict-refusal instance above. Two more, lower-priority, test-only
+instances: `packages/testkit/src/fake-adapter.ts:235` and `packages/adapter-generic/test/fixtures/
+scripted-binary.ts:148` (both `resolveInsideCwd`, apparently copy-pasted from testkit's). None
+verified reachable-with-impact yet; that work, and the `fix-scan.ts` inverted-direction case
+especially, is a dedicated follow-up piece.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P14` entry's close-out addendum for this fix,
+dated 2026-10-25.

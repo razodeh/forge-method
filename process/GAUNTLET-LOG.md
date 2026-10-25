@@ -25014,6 +25014,27 @@ test.ts` flake, re-confirmed clean in isolation.
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q353` (new).
 
 ---
+## M17 P14 — `Q317` Decision 8's own follow-up fix (Q354): library-surface path-redaction, 4 rounds, plus a 2-piece `within()` substring-bug sweep (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** `Q317` disclosed, but deliberately did not fix, a gap: `library` observations had no way to redact a substring embedded in a string value at a named pointer — only whole-field deletion or a complete no-op.
+
+**Round 1.** A new `redact-json-pointers` normalize rule: pointer-targeted, substring redaction via pattern/replacement, meaningful only on `library`. `CFG-519` refuses it on every root-rewritten surface for the same unprovable-safety reason `CFG-516` already refuses `replace` there.
+
+**Round 2 — a live ReDoS, measured not assumed.** The rule's own regex ran synchronously with no bound; a critic measured real exponential blowup (128ms → 11.7s) from a pattern shape `CFG-511`'s static lint can't catch. Fixed by routing `library` through a new worker-thread-bounded pair mirroring `normalize-budget.ts`'s existing text-surface mechanism, using `node:v8`'s `serialize`/`deserialize` to preserve `NaN`/`Infinity`. Same round found and fixed an order-dependent leak between the new rule and `ignore-json-pointers` sharing one array.
+
+**Round 3 — the round-2 order fix was backwards.** Two critics found "ignore first" needs a non-natural authoring convention and reopens the identical leak the other way. Reversed to "redact first, against the pristine value" — provably general, since redaction never splices an array or renames a key. Also added two non-blocking hardening items (a size-estimate try/catch, a worker-skip fast path).
+
+**Round 4 — the round-3 hardening had its own gap.** A critic found the size-estimate's try/catch didn't cover the `new Worker(...)` construction itself, which can independently overflow the stack via Node's own recursive structured-clone of `workerData`. Fixed by wrapping the Worker construction in the same typed refusal.
+
+**Caught at landing, not by any round: the built artifact had no entry for the new worker at all** — the exact `Q340` "worker file doesn't exist in a real npm install" regression, reincarnated for this piece's own worker. Added the missing third `tsup` entry and switched the new budget module to reuse `Q340`'s own lazy, extension-gated `execArgvForWorker` instead of an eager constant; confirmed by an actual build that the output is plain JS, needs no flag, and resolves correctly relative to the bundled CLI.
+
+**The `within()` substring bug this piece's own `confined-command.ts` fix carried (false-positive on the literal string `"..."`, hard-refusing `go test ./...`) turned out not to be unique to that file.** Critics reviewing it found the identical pattern in two more places, each spun off as its own small gauntleted piece: `test-path.ts`'s own `within()` (2 rounds — round 1's new tests were themselves vacuous, nested too deep to ever reach the buggy condition; round 2 rewrote them correctly, red/green-verified), and `packages/core/src/fs/paths.ts`'s `relativePosixWithin` — the highest-impact instance, the doc-commented "single gate every write passes through" — fixed identically and confirmed by a critic's own 300,000-trial fuzz test against an independent ground-truth check (zero false-ALLOWs, zero false-REFUSEs across POSIX and Windows semantics).
+
+**Disclosed, not yet fixed:** the identical pattern remains live in at least 6 more places found along the way (`skills.ts` ×2, `commit.ts`, `verification.ts` ×2, `lanes.ts`, plus two test-only sites), including one, `fix-scan.ts`'s `protectedFixGlobs`, where the risk direction is inverted — an under-protection bug, not an over-strict refusal. Tracked as a dedicated follow-up.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q354` (new).
+
+---
 
 ## M17 P21 — Q346's own fix: the forge-test-report `message` field, 9 rounds (owner-directed scope expansion, 2026-10-25)
 
