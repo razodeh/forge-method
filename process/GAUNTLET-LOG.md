@@ -24938,3 +24938,25 @@ test.ts` flake, re-confirmed clean in isolation.
 **Net result**: same rigor and 2-round critic discipline as `Q347`'s own fix (shorter, since the core architecture was already proven), closing the sibling instance of the single most severe disclosed defect this milestone.
 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q350` (updated in place).
+
+---
+
+## M17 P13 — Q325's own `z.union` formatting fix, 3 rounds (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** Q325 (M17 P13) disclosed a "latent weakness" in the dominant Zod-issue-formatting convention — mediocre messages for a `z.union` schema — originally framed as currently unreachable in production, since no schema feeding the convention was thought to use `z.union`.
+
+**Round 1 — the premise itself was wrong.** The builder, probing before building, found a real, LIVE call site: `extensions/src/install/consent.ts`'s `overlayCapabilityEntrySchema`, predating this milestone (M11), already fed the exact buggy convention via `CFG-036` — a malformed `requestsCapabilities` entry already rendered `"Invalid input"` in production, confirmed by reproducing the pre-fix code against the real installed zod version. Built a shared `formatZodIssues` with a real `invalid_union`-aware branch, migrated the 2 sites the original disclosure named as representative.
+
+**Round 1's two critics: one approved, one found 4 more live unions among the ~14 untouched sites** — `methods/dod/load.ts`, `agents/schema/load.ts` (two unions), `engine/workflow/parse.ts`, `extensions/mcp/validate.ts` — all independently reproduced live against the real schemas, not asserted.
+
+**Round 2 migrated those 4**, splitting the formatter into `formatZodIssueMessage`/`formatZodIssue`/`formatZodIssues` since the new call sites didn't all fit round 1's single-string shape, and individually audited every remaining call site rather than repeating a blanket "pre-existing duplication" claim — the exact mistake that made the original disclosure wrong once already.
+
+**Round 2's two critics: both found round 2's own audit repeated the identical mistake, in the one bucket it had explicitly flagged as unverified.** `extensions/src/presets/validate.ts` was marked "confirmed not a union at all" on the strength of a literal text-grep — but 4 of its `KIND_SCHEMAS` entries reach a live union through a shared, imported `overlayArrayField` helper, invisible to a grep of the file under review. Both critics independently reproduced all 4 live through the real `validatePreset`.
+
+**Round 3 migrated `presets/validate.ts`'s dispatch loop**, and recorded the process lesson explicitly in the shared formatter's own doc comment: audit by tracing what a schema actually *imports/composes*, never by grepping literal union-constructor text in the file being reviewed. Also corrected two secondary inaccuracies from round 2's own commit message (CFG-008's registry is 27 artifact types, not 22; the config.yaml side-finding understated its own union count and overstated one call site's defect).
+
+**Round 3's two critics, both APPROVE AS-IS**, each closing out a self-flagged uncertainty with a full from-source read (not a re-confirmation of the builder's own grep) plus a genuinely new angle neither prior round tried: sweeping the entire codebase for `.or(` (zod's alternate union-construction method, which a `z.union`/`z.discriminatedUnion` text search would miss entirely) — zero hits anywhere. One critic traced `validatePreset` all the way to the real CLI's stderr output and confirmed the improved message is present verbatim in what a user would actually see, with an honest caveat that today's only two production callers resolve exclusively against a hardcoded, already-valid preset registry, so the fix has no live user-triggerable path through the CLI yet — mechanically correct and fully wired, just not yet reachable by an ordinary user, the same caveat this file's own pre-existing doc comment already states for the general case.
+
+**Net result**: three full rounds, each surfacing a real, independently-reproduced gap in the previous round's own "this is exhaustive" claim — a direct demonstration of why this milestone's gauntlet discipline insists on independent critics rather than trusting a builder's own audit, even a careful one.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q325` (DECISION 1 updated in place).

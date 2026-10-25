@@ -29758,11 +29758,31 @@ reached.
 convention, not a new one.** `issue.path.join('.') || '(root)'`: `message`, joined `'; '` —
 confirmed byte-identical, by direct comparison, to `CFG-008`, `RUN-065`, and
 `extensions/src/module/parse.ts`'s `formatZodIssues`, the same convention ~16 pre-existing call
-sites across the codebase already use. A latent, pre-existing weakness of that shared convention
-(mediocre message quality for a `z.union` schema, confirmed via a live probe against the real
-installed zod version) is disclosed, not fixed here: no schema that feeds this convention's ~17
-call sites (including `storySchema`) actually uses `z.union`/`z.discriminatedUnion` today, so it is
-currently unreachable, not a regression this piece introduces.
+sites across the codebase already use.
+
+**FIXED (owner-directed scope expansion, 2026-10-25), in 3 rounds — and the original "currently
+unreachable" framing above was itself wrong.** A builder probing the "mediocre `z.union` message
+quality, currently unreachable" disclosure found a real, LIVE production call site: `extensions/
+src/install/consent.ts`'s `overlayCapabilityEntrySchema` already feeds this exact convention via
+`CFG-036`, and a malformed `requestsCapabilities` entry already rendered the unhelpful
+`"requestsCapabilities.0: Invalid input"` in production prior to this fix — not latent, shipping.
+Built a shared `formatZodIssues`/`formatZodIssue`/`formatZodIssueMessage` (`packages/core/src/
+errors/format-zod-issues.ts`) with a real `invalid_union`-aware branch naming every candidate
+shape's own failure reason, recursing correctly through nested unions. Round 1 migrated 2 sites;
+two critics each independently audited the ~14 other pre-existing duplicate call sites and found 4
+more confirmed-live unions round 1 missed (`methods/dod/load.ts`, `agents/schema/load.ts` — two
+unions, `engine/workflow/parse.ts`, `extensions/mcp/validate.ts`) — migrated in round 2. Round 2's
+own audit of the remaining sites was ALSO found incomplete by two further critics: `extensions/src/
+presets/validate.ts` has 4 live unions reached through composed/imported schema helpers
+(`overlayArrayField`), invisible to a literal `z.union` text-grep of the file under review —
+migrated in round 3, with an explicit process note recorded for the lesson (audit by tracing schema
+*composition*, never by grepping literal union-constructor text in the file being reviewed). A
+third zod union-construction method, `.or(`, was also swept for across both affected packages and
+found to have zero live use. Every remaining untouched call site was individually read and
+confirmed genuinely union-free (not reasserted on a prior round's unverified word) by at least one
+critic per round. A separate, worse defect found along the way — several `.forge/config.yaml`
+parse call sites discard Zod issue detail entirely for a generic canned string, rather than merely
+formatting it poorly — is a different bug class, correctly left out of this piece's own scope.
 
 **DECISION 2 — `uncovered`'s hunk-level reason is one honest, non-discriminating constant, never a
 classifier that claims to distinguish causes nothing at that point in the pipeline can distinguish.**
