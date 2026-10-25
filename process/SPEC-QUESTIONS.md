@@ -29677,9 +29677,16 @@ root cause split into `gateEnv` lacking `FORGE_PROJECT_ROOT` (fixed in `context.
 parity check`'s own CLI handler never reading that env var for its telemetry destination (fixed in
 `check-command.ts`+`bin.ts`, mirroring the pre-existing `StoryVerifyContext.telemetryProjectRoot`
 pattern) — fixing only the first half would have been a silent no-op for the Mandate's own named
-exit scenario (`G-Parity` → `forge report`). The sibling `G-Verify`/merge-check instances of the
-identical mechanism gap are disclosed, not fixed, named explicitly as out of this piece's own cited
-Surface.
+exit scenario (`G-Parity` → `forge report`). **FIXED (owner-directed scope expansion, 2026-10-25)**:
+the sibling `G-Verify` instance of the identical mechanism gap — `test-binding.ts`'s
+`runOneStoryBinding`, which `G-Verify.gate.yaml`'s `test:binding` check shells out to, was calling
+`emitBindingCheckTelemetry` with a plain cwd-derived `projectRoot` and no override — is now fixed the
+same way, threading `telemetryProjectRoot` through the same three call sites `forge parity check`
+already uses. Both critics independently traced the real execution path end to end (confirmed the
+env var genuinely reaches the subprocess and genuinely controls where `appendEvent` writes, not a
+cosmetic parameter) and swept all 11 `.gate.yaml` files for a third sibling — none exists;
+`forge parity check` and `forge test binding` are the only two gate-shelled commands with this
+telemetry pattern, and both are now fixed.
 
 **DECISION 3 — `matchingSkipChecksEntry` is a deliberate, local duplicate of `skipsChecksFor`'s
 segment-match logic, not a widened shared function.** `skipsChecksFor` is shared with `@forge/cli`'s
@@ -29709,14 +29716,22 @@ and was silently dropped, with no disclosure marker, reproduced twice through th
 `splitExcerptBudget` now gives a short section exactly what it needs and hands the unused remainder
 to the other side, so a short tail never caps a bulky head at a half-budget it has no need for.
 
-**Disclosed, not fixed, a structural limit named and TESTED, not merely claimed**: a single,
-unsplittable line wider than the whole excerpt budget has no section boundary for
-`splitExcerptBudget` to reallocate across — content in its own true middle remains genuinely
-unreachable by any two-edge truncation scheme, raising the total budget or finding semantic
-structure to split on being the only way to close it further. A dedicated test proves both the
-positive guarantee (content near either edge of a long single line survives) and the disclosed limit
-(content in the true middle does not) in the same assertion, so the boundary stays verified rather
-than merely asserted.
+**PARTIALLY FIXED (owner-directed scope expansion, 2026-10-25), residual honestly re-disclosed, not
+oversold**: a single, unsplittable line wider than the whole excerpt budget had no section boundary
+for `splitExcerptBudget` to reallocate across — content in its own true middle was genuinely
+unreachable by any two-edge truncation scheme. `boundedExcerpt`'s single-blob branch now calls a new
+`splitExcerptBudgetTriple`, carving a head, a true-middle, and a tail slice (each an equal third)
+instead of two edges — the exact point this disclosure named is now reachable. This narrows one
+unreachable gap into two smaller ones (between head↔middle and middle↔tail); closing those would
+need a fourth/fifth slice, which would leave its own smaller gaps, without end — any fixed number of
+slices over an unbounded, structureless blob always leaves some gap. Raising the total budget or
+finding semantic structure to split on remains the only way to close this further; named here and in
+the code's own doc comment, not silently left to look fully closed. Both critics independently
+redid the fallback-branch arithmetic by hand and by brute force (it's provably dead code, hence
+untested, at the current `MAX_FAILURE_EXCERPT_CHARS`) and hand-verified the rewritten test's boundary
+math rather than trusting it on sight. A dedicated test proves the positive guarantee (the blob's
+true middle now survives) and the honestly-disclosed residual (the two narrower gaps still do not)
+in the same assertion, so the boundary stays verified rather than merely asserted.
 
 **Also disclosed (non-blocking, both critics independently confirmed accurate)**: `facades.ts`'s
 own `toMergeChecks` carries the identical, pre-existing, unfixed defect-#7 pattern — its own comment,
