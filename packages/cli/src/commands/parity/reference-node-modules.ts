@@ -70,22 +70,37 @@
  * those shapes make the stated justification above true: a stray file could never have made module
  * resolution work, so silently no-opping there would trade a clear `RUN-163` pointing at the real
  * problem for a confusing, unattributed Node crash deep inside the reference run instead. So on
- * `EEXIST`, this function `lstat`s the destination itself and no-ops ONLY when it `isDirectory()` —
- * matching the stated rationale exactly, never the bare error code. Everything else at that path,
- * `EEXIST` or not, still raises `RUN-163`. (A tracked `node_modules` checked in as a SYMLINK, not a
- * real directory, is therefore NOT covered by this no-op either — `lstat` on a symlink reports
- * `isSymbolicLink()`, never `isDirectory()`, regardless of what it points to, confirmed directly —
- * which still raises `RUN-163` for it, the clearer attribution being preferable there too.)
+ * `EEXIST`, this function `lstat`s the destination and no-ops ONLY when it is BOTH a real directory
+ * AND non-empty — matching the stated rationale exactly, never the bare error code and never
+ * `isDirectory()` alone (an empty directory satisfies `isDirectory()` identically to a real, populated
+ * checkout, but makes module resolution there no truer than a stray file does — a second critic round
+ * confirmed this by direct construction: an empty, untracked directory at the destination silently
+ * no-opped under an `isDirectory()`-only guard). Everything else at that path, `EEXIST` or not, still
+ * raises `RUN-163`. (A tracked `node_modules` checked in as a SYMLINK, not a real directory, is
+ * therefore NOT covered by this no-op either — `lstat` on a symlink reports `isSymbolicLink()`, never
+ * `isDirectory()`, regardless of what it points to, confirmed directly — which still raises `RUN-163`
+ * for it, the clearer attribution being preferable there too.) The `lstat`/`readdir` pair this check
+ * itself makes is wrapped in its own `try`/`catch`: any failure there (an `ENOENT` from the
+ * destination vanishing in the window between the failed `symlink()` and this check, say) falls
+ * through to the identical typed `RUN-163` rather than leaking a raw, untyped Node error — this
+ * module's own documented `@throws` contract holds on every path, not only the common one.
  *
  * @throws {ForgeError} `RUN-163` if a `node_modules` symlink genuinely cannot be created for a reason
- * other than the destination already existing as a real directory — not either no-op above, neither
- * of which is a failure.
+ * other than the destination already existing as a real, non-empty directory — not either no-op
+ * above, neither of which is a failure.
  *
  * @see specs/13-frameworks-testing-and-debugging.md F-TEST-9
  * @see process/SPEC-QUESTIONS.md Q314
  * @see process/plans/PLAN-M17.md P8
  */
 import { lstat, symlink } from 'node:fs/promises';
+// `@forge/core/fs`'s own `listDirSorted`/`listDirEntriesSorted` need an already-branded
+// `AbsolutePath` from a `ProjectPaths` bound to this project -- overkill here, where this only ever
+// needs a non-emptiness count (order-independent), not an ordered listing, so R10's determinism
+// concern does not apply. Same exception, same justification `resolve-entry-context.ts` and
+// `packages/catalog/src/registry/load.ts` already establish.
+// eslint-disable-next-line no-restricted-imports -- see comment above
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { ForgeError } from '@forge/core/errors';
@@ -127,11 +142,18 @@ export async function linkReferenceNodeModules(
     await symlink(source, destination, 'dir');
   } catch (cause) {
     if (cause instanceof Error && 'code' in cause && cause.code === 'EEXIST') {
-      // `EEXIST` alone does not justify the no-op -- only a REAL DIRECTORY at the destination does
-      // (a tracked `node_modules` the checkout itself already populated -- see this module's own doc
-      // comment for why a bare file, broken symlink or junk directory must NOT take this path).
-      const destinationStat = await lstat(destination);
-      if (destinationStat.isDirectory()) return;
+      // `EEXIST` alone does not justify the no-op -- only a REAL, NON-EMPTY DIRECTORY at the
+      // destination does (a tracked `node_modules` the checkout itself already populated -- see this
+      // module's own doc comment for why a bare file, broken symlink, or an EMPTY junk directory must
+      // NOT take this path: `isDirectory()` alone cannot tell a real checkout from an empty one).
+      // Wrapped in its own try/catch so a failure here (the destination vanishing in a narrow race
+      // window, say) still raises the documented RUN-163, never a raw, untyped error.
+      try {
+        const destinationStat = await lstat(destination);
+        if (destinationStat.isDirectory() && (await readdir(destination)).length > 0) return;
+      } catch {
+        // Falls through to RUN-163 below -- see this module's own doc comment.
+      }
     }
     throw new ForgeError(
       'RUN-163',

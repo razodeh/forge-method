@@ -285,4 +285,25 @@ describe('linkReferenceNodeModules: a genuine failure (RUN-163) (specs/22, Q314 
       (error: unknown) => isForgeError(error) && error.code === 'RUN-163',
     );
   });
+
+  it('fails typed (RUN-163), never a silent no-op, when an EMPTY junk directory occupies the destination (EEXIST, isDirectory() true, but empty -- critic round 3)', async () => {
+    const projectRoot = await freshDir('forge-q314-fail-empty-dir-project-');
+    await mkdir(path.join(projectRoot, 'node_modules'), { recursive: true });
+    const worktreeRoot = await freshDir('forge-q314-fail-empty-dir-worktree-');
+    // An empty directory at the destination satisfies `isDirectory()` identically to a real, tracked
+    // checkout, but makes module resolution there no truer than a stray file does -- confirmed by two
+    // independent critics via direct construction that an `isDirectory()`-only guard silently no-ops
+    // here, exactly the "confusing, unattributed crash deep inside the reference run" scenario this
+    // function exists to avoid. This is the one realistic shape the EACCES/file/symlink tests above
+    // do not cover.
+    await mkdir(path.join(worktreeRoot, 'node_modules'), { recursive: true });
+
+    await expect(linkReferenceNodeModules(projectRoot, worktreeRoot)).rejects.toSatisfy(
+      (error: unknown) => isForgeError(error) && error.code === 'RUN-163',
+    );
+    // Untouched: still the empty directory, never silently adopted or replaced.
+    const destinationStat = await lstat(path.join(worktreeRoot, 'node_modules'));
+    expect(destinationStat.isDirectory()).toBe(true);
+    expect(destinationStat.isSymbolicLink()).toBe(false);
+  });
 });

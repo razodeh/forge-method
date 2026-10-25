@@ -3794,11 +3794,15 @@ export const ERROR_CODES = {
   // package (it used to reach the candidate's installed copy only as an emergent property of the old,
   // in-project nesting, `13` F-TEST-9). `reference-node-modules.ts`'s own `linkReferenceNodeModules`
   // restores that reachability explicitly, via one symlink created right after the scratch worktree
-  // itself; this is what it raises on the rare case that symlink genuinely cannot be created for a
-  // reason OTHER than the destination already existing (a permissions problem, say) — never for
-  // "nothing installed to link" (a silent no-op), and never for a project that tracks its own
-  // `node_modules` in git, whose checkout already populated the destination for real (also a silent
-  // no-op, critic-found: refusing that case would be a genuine regression with no actionable remedy).
+  // itself; this is what it raises on the rare case that symlink genuinely cannot be created — never
+  // for "nothing installed to link" (a silent no-op), and never for a project that tracks its own
+  // `node_modules` in git as a real, non-empty directory, whose checkout already populated the
+  // destination for real (also a silent no-op, critic-found: refusing that case would be a genuine
+  // regression with no actionable remedy) — but it DOES still fire for a plain file, a broken
+  // symlink, or an EMPTY junk directory at that same destination (two more critic rounds, confirmed
+  // by direct construction each time: none of those shapes make module resolution there actually
+  // work, so a silent no-op there would trade this typed error for a confusing, unattributed crash
+  // deep inside the reference run instead).
   'RUN-163': {
     severity: 'error',
     exitCode: EXIT_CODES.failure,
