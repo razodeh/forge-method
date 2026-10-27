@@ -824,6 +824,71 @@ describe('appendEvent — resilience', () => {
       expect(seqs).toEqual(Array.from({ length: expectedTotal }, (_unused, i) => i + 1));
     },
   );
+
+  it(
+    '16 real, separate OS processes racing hard for the SAME lock never produce a duplicate seq via ' +
+      "a live owner's own empty-lock reclaim window -- a real CI failure on `next` " +
+      "(`TelemetryError: ... has a seq gap: expected 20, found 19`) traced to `withEventLogLock`'s " +
+      'own empty-lock age check: a losing process can observe EEXIST with empty content (a winning ' +
+      "process's own just-created, not-yet-written lock for ITS OWN next event, not abandonment) and " +
+      'then have its *own* `fsp.stat` of that same path genuinely reject ENOENT a moment later -- the ' +
+      "winner's full create+write+close+release cycle is fast enough on a real disk to beat it -- at " +
+      'which point the previous code treated "age could not be determined" the same as "definitely ' +
+      'stale" and force-deleted the still-live winner\'s brand-new lock, letting the loser acquire ' +
+      'while the winner was still mid-write and both compute the same seq. Reproduced directly this ' +
+      'way (confirmed via timestamped instrumentation across many real runs); fixed by only ever ' +
+      'reclaiming on a real, measured age over the threshold, never on "unknown". Higher concurrency ' +
+      'and more rounds than the sibling test above -- more lock handoffs means more real chances to ' +
+      "hit this exact window -- run repeatedly (not just once) to build real confidence this isn't " +
+      'merely passing by luck.',
+    async () => {
+      const projectRoot = await createTempProjectRoot();
+      const runId = 'run-cross-process-lock-handoff';
+      const fixturePath = fileURLToPath(new URL('./fixtures/append-many.ts', import.meta.url));
+      const processCount = 16;
+      const eventsPerProcess = 8;
+
+      const runs = Array.from(
+        { length: processCount },
+        (_unused, index) =>
+          new Promise<void>((resolve, reject) => {
+            const child = spawn('node', [
+              TS_NODE_FLAG,
+              fixturePath,
+              projectRoot,
+              runId,
+              String(eventsPerProcess),
+              `proc-${String(index)}`,
+            ]);
+            let stderr = '';
+            child.stderr.on('data', (chunk: Buffer) => {
+              stderr += chunk.toString();
+            });
+            child.on('error', reject);
+            child.on('exit', (code) => {
+              if (code === 0) resolve();
+              else
+                reject(
+                  new Error(`fixture process ${String(index)} exited ${String(code)}: ${stderr}`),
+                );
+            });
+          }),
+      );
+      await Promise.all(runs);
+
+      const events: ForgeEvent[] = [];
+      for await (const event of readEvents(projectRoot, runId)) events.push(event);
+      const seqs = events.map((event) => event.seq).sort((a, b) => a - b);
+      const expectedTotal = processCount * eventsPerProcess;
+
+      // Same three real assertions as the sibling test: nothing lost, nothing duplicated, no gap --
+      // `readEvents` above having thrown at all (rather than reaching these `expect`s) would itself
+      // already be the real failure shape this guards against.
+      expect(events).toHaveLength(expectedTotal);
+      expect(new Set(seqs).size).toBe(expectedTotal);
+      expect(seqs).toEqual(Array.from({ length: expectedTotal }, (_unused, i) => i + 1));
+    },
+  );
 });
 
 describe('errorCode', () => {

@@ -327,12 +327,30 @@ async function withEventLogLock<T>(
         // edge to reach an injected `Clock` with): purely internal lock-reclaim timing, never recorded
         // event data, the one thing this package's own determinism discipline actually governs (this
         // file's own header comment).
+        //
+        // Confirmed empirically (a real 10-process repro, instrumented with timestamped logging) that
+        // `fsp.stat` here can genuinely reject with ENOENT even though the "empty" content this branch
+        // exists to investigate was real: a live, perfectly healthy owner can release its PREVIOUS
+        // lock and create a brand-new one for its own NEXT event fast enough that this process's own
+        // `readFile` (above) observes the new lock's just-created, not-yet-written, empty content,
+        // and then THIS `stat` call lands in the instant right after that -- for an entirely unrelated
+        // reason, or simply because the owner's whole create+write+close+eventual-release cycle is
+        // fast enough on a real disk to beat it -- and finds nothing there a moment later. The
+        // previous version of this check treated "age could not be determined" as "assume stale,
+        // reclaim immediately" (`ageMs === undefined` was one half of the reclaim condition's own
+        // `||`), which forcibly deleted that still-live owner's brand-new lock out from under it: a
+        // second process would then win the immediate retry this triggers, acquire while the first
+        // was still mid-write, and both would compute and append the identical `seq` -- the exact
+        // live duplicate-seq race this reclaim path must not itself cause. `ageMs === undefined` (for
+        // ANY reason the stat failed, not only ENOENT) now falls through to the ordinary
+        // retry-after-delay path below instead, identical to the "owner alive, not stale" branch
+        // above: only a real, measured age over the threshold may ever force a reclaim.
         const ageMs = await fsp
           .stat(resolved)
           // eslint-disable-next-line no-restricted-syntax -- see the comment above
           .then((info) => Date.now() - info.mtimeMs)
           .catch(() => undefined);
-        if (ageMs === undefined || ageMs > EVENT_LOG_STALE_EMPTY_LOCK_MS) {
+        if (ageMs !== undefined && ageMs > EVENT_LOG_STALE_EMPTY_LOCK_MS) {
           await fsp.rm(resolved, { force: true });
           continue;
         }
