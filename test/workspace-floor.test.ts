@@ -249,6 +249,15 @@ const IGNORED_PATHS = new Set([
   // imported, never run as a vitest suite" shape the sigkill-child entries above already establish,
   // for the identical reason.
   'packages/cli/test/commands/parity/fixtures/isolation-signal-harness.ts',
+  // `packages/cli/test/commands/parity/fixtures/crashing-no-handler-library-worker.ts` and
+  // `.../crashing-normalize-library-worker.ts` (`specs/22` M17 P14 follow-up, Q317 Decision 8): real
+  // worker-thread fixtures `normalize-library-budget.test.ts` loads BY PATH (a `workerUrl` test
+  // seam), never imported by any `*.test.ts` file and never run as a vitest suite themselves -- the
+  // identical "real child process/worker thread, never imported, never run as a vitest suite,
+  // unrecognised by `TEST_FILE`'s naming heuristic" shape `crashing-no-handler-worker.ts`/
+  // `crashing-normalize-worker.ts` above already establish, for the identical reason.
+  'packages/cli/test/commands/parity/fixtures/crashing-no-handler-library-worker.ts',
+  'packages/cli/test/commands/parity/fixtures/crashing-normalize-library-worker.ts',
 ]);
 
 /**

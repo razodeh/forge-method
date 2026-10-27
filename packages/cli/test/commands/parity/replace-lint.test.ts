@@ -938,7 +938,7 @@ describe(
 );
 
 describe(
-  '(specs/22 M17 P14 follow-up, Q317 Decision 8) collectRedactJsonPointersOnRootRewrittenSurfaceConflicts ' +
+  '(specs/22 M17 P14) -- Q317 Decision 8 follow-up: collectRedactJsonPointersOnRootRewrittenSurfaceConflicts ' +
     '/ assertNoRedactJsonPointersRuleOnRootRewrittenSurface: the new rule gets the identical ' +
     'root-rewritten-surface refusal "replace" already has',
   () => {

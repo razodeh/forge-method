@@ -27,7 +27,7 @@ const CRASHING_NO_HANDLER_WORKER_URL = new URL(
   import.meta.url,
 );
 
-describe('applyNormalizeRulesToLibraryValueBounded: the fast path (specs/22 M17 P14 follow-up)', () => {
+describe('applyNormalizeRulesToLibraryValueBounded: the fast path (specs/22 M17 P14) -- Q317 Decision 8 follow-up', () => {
   it(
     'spawns NO worker at all when rules contains neither ignore-json-pointers nor ' +
       'redact-json-pointers (a critic’s own recommendation, closing a measured ~14,500x ' +
@@ -144,7 +144,7 @@ describe('applyNormalizeRulesToLibraryValueBounded: the fast path (specs/22 M17 
 });
 
 describe(
-  'applyNormalizeRulesToLibraryValueBounded (specs/22 M17 P14 follow-up, Q317 Decision 8): a ' +
+  'applyNormalizeRulesToLibraryValueBounded (specs/22 M17 P14) -- Q317 Decision 8 follow-up: a ' +
     'catastrophic redact-json-pointers pattern is refused by TIME, not hung',
   () => {
     it(
@@ -193,8 +193,8 @@ describe(
 );
 
 describe(
-  'applyNormalizeRulesToLibraryValueBounded (specs/22 M17 P14 follow-up): a worker crash is a ' +
-    'typed refusal, never a process crash',
+  'applyNormalizeRulesToLibraryValueBounded (specs/22 M17 P14) -- Q317 Decision 8 follow-up: a ' +
+    'worker crash is a typed refusal, never a process crash',
   () => {
     it(
       'a worker that crashes WITH the real uncaughtException-signalling contract reports ' +
