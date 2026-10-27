@@ -545,6 +545,50 @@ process.stdout.write(JSON.stringify({ index, id }));
   await writeFile(workerPath, source, 'utf8');
 }
 
+/** The identical shape `writeConcurrencyWorker` above uses, but each worker does
+ * `appendsPerWorker` SEQUENTIAL `appendExemption` calls after release, not just one -- the volume a
+ * gauntlet critic independently found necessary to reliably reproduce `withCollectionLock`'s own
+ * disclosed-but-previously-uninvestigated "intermittent loss reappearing starting around 25-30"
+ * ceiling (this module's own top doc comment, `SPEC-QUESTIONS.md` Q285): 1 append per worker, even at
+ * 20-30 workers, does not reliably trigger the real bug this was tracing to (an indeterminate lock-
+ * age, most commonly ENOENT from the true owner releasing one lock and creating its own NEXT one fast
+ * enough to beat a concurrent `stat`, previously treated as "assume stale, reclaim immediately" rather
+ * than "unknown, wait and retry") -- each worker needs several of its OWN immediately-repeated
+ * acquire/release cycles for another process's `stat` to land in that gap often enough to matter. The
+ * driving regression test below (28 workers x 6 appends = 168 total) reproduced real, repeatable data
+ * loss against the pre-fix code (6 of 10 runs corrupted, 129-163 distinct ids returned/written out of
+ * 168 expected) and zero corruption across 10 repeated runs after the fix -- confirmed directly, not
+ * assumed, before this test was written. */
+async function writeMultiAppendConcurrencyWorker(
+  workerPath: string,
+  appendsPerWorker: number,
+): Promise<void> {
+  const source = `
+import { existsSync } from 'node:fs';
+import { ProjectPaths } from '@forge/core/fs';
+import { appendExemption } from ${JSON.stringify(EXEMPTIONS_MODULE_PATH)};
+
+const [, , dir, index, gatePath] = process.argv;
+const paths = new ProjectPaths(dir);
+const deadline = Date.now() + 10_000;
+while (!existsSync(gatePath)) {
+  if (Date.now() > deadline) throw new Error('gate file never appeared');
+}
+const ids = [];
+for (let i = 0; i < ${String(appendsPerWorker)}; i += 1) {
+  const id = await appendExemption(paths, 'docs/forge/reports', { now: () => new Date().toISOString() }, {
+    testId: \`race: worker-\${index}-append-\${i}\`,
+    reason: 'r',
+    owner: 'alice',
+    expiry: '2026-12-01',
+  }, { projectRoot: dir, runId: undefined });
+  ids.push(id);
+}
+process.stdout.write(JSON.stringify({ index, ids }));
+`;
+  await writeFile(workerPath, source, 'utf8');
+}
+
 describe('appendExemption — real cross-process concurrency', () => {
   it('20 real, separate OS processes, released together, all survive with 20 distinct ids', async () => {
     const { paths } = await freshProject();
@@ -587,6 +631,67 @@ describe('appendExemption — real cross-process concurrency', () => {
       workerCount,
     );
   }, 30_000);
+
+  // Regression for a CONFIRMED, previously-shipping data-loss bug in `withCollectionLock`
+  // (`../../collection-lock.ts`): the empty-lock reclaim's age check treated `ageMs === undefined`
+  // (a `stat` failure, most commonly ENOENT from the true owner releasing one lock and creating a
+  // brand-new one for its own next write fast enough to beat a concurrent `stat`) as "assume stale,
+  // reclaim immediately," stealing the lock out from under its still-live true owner mid-write. The
+  // 20-way/1-append test above does NOT reliably trigger this -- confirmed directly: it stayed clean
+  // across repeated runs against the unfixed code, because one append per worker gives each process
+  // only a single acquire/release cycle, too few chances for another worker's own `stat` to land in
+  // the narrow release-then-recreate gap. 28 workers x 6 sequential appends each (168 total) -- the
+  // volume an independent gauntlet critic's own repro found reliably corrupting -- reproduced real
+  // data loss directly against the pre-fix code (6 of 10 runs corrupted here, 129-163 distinct ids out
+  // of 168 expected) and zero corruption across 10 repeated post-fix runs, before this test was ever
+  // written. This is the identical root cause and fix as `@forge/telemetry`'s own `withEventLogLock`
+  // regression test (`packages/telemetry/test/events.test.ts`), independently reproduced here against
+  // this module's own, separate implementation.
+  it('28 real, separate OS processes x 6 sequential appends each (168 total), released together, never lose or duplicate an id', async () => {
+    const { paths } = await freshProject();
+    await mkdir(path.join(REPO_ROOT, '.forge-test-scratch'), { recursive: true });
+    const workerDir = await mkdtemp(path.join(REPO_ROOT, '.forge-test-scratch', 'race-multi-'));
+    dirs.push(workerDir);
+    const workerPath = path.join(workerDir, 'worker.mts');
+    const workerCount = 28;
+    const appendsPerWorker = 6;
+    await writeMultiAppendConcurrencyWorker(workerPath, appendsPerWorker);
+    const gatePath = path.join(workerDir, 'gate');
+    const projectDir = paths.resolveWithin('.');
+
+    const launches = Array.from({ length: workerCount }, (_unused, index) =>
+      execFileAsync(
+        process.execPath,
+        [
+          TS_NODE_FLAG,
+          '--disable-warning=ExperimentalWarning',
+          workerPath,
+          projectDir,
+          String(index),
+          gatePath,
+        ],
+        { cwd: workerDir },
+      ),
+    );
+    // Every worker is now spawned and spinning on the gate file -- release them all at once.
+    await writeFile(gatePath, 'go', 'utf8');
+    const results = await Promise.all(launches);
+
+    const parsedResults = results.map(
+      ({ stdout }) => JSON.parse(stdout) as { readonly index: number; readonly ids: string[] },
+    );
+    expect(parsedResults).toHaveLength(workerCount);
+    const allIds = parsedResults.flatMap((result) => result.ids);
+    const expectedTotal = workerCount * appendsPerWorker;
+    expect(allIds).toHaveLength(expectedTotal);
+    // The real, load-bearing assertion: every one of the 168 concurrent, separate-process
+    // declarations survived with a distinct id -- not silently lost or overwritten by another
+    // process's own read-modify-write winning a lock it was never entitled to reclaim.
+    expect(new Set(allIds).size).toBe(expectedTotal);
+    expect((await loadExemptions(paths, 'docs/forge/reports')).exemptions).toHaveLength(
+      expectedTotal,
+    );
+  }, 60_000);
 });
 
 function exemption(overrides: Partial<Exemption> = {}): Exemption {

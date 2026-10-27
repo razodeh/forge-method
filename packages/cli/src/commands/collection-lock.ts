@@ -110,10 +110,24 @@ export async function withCollectionLock<T>(
         // Empty or unparseable content is genuinely ambiguous (a crash right after `open('wx')`,
         // reclaimable, vs. an ordinary live writer about to finish its own very next line, NOT
         // reclaimable) -- age-gated, not resolved from content alone (M15 P6 round 2's own finding).
+        // CONFIRMED LIVE DATA-LOSS BUG, FIXED: an indeterminate age (`stat` itself failed -- most
+        // commonly ENOENT from a real, tiny multi-process race, where the true lock owner releases
+        // its PREVIOUS lock and creates a brand-new one for its own NEXT write fast enough that this
+        // process's `stat` lands in the gap and finds nothing) is NOT "stale" -- it is "unknown," and
+        // must fall through to the ordinary retry-after-delay path below, the identical "owner alive,
+        // not stale" treatment the branch above already gives. The previous version of this check
+        // (`ageMs === undefined || ...`) forcibly reclaimed on ANY stat failure, deleting that still-
+        // live owner's brand-new lock out from under it and letting a second process win the
+        // immediate retry while the first was still mid-write -- both then computing and writing the
+        // identical collection entry, the exact duplicate/overwrite race this reclaim path must not
+        // itself cause. Only a real, MEASURED age over the threshold may ever force a reclaim now.
+        // This is the identical root cause and fix as `@forge/telemetry`'s own `withEventLogLock`
+        // (`packages/telemetry/src/events.ts`) -- see that function's own doc comment for the full
+        // empirical repro this was independently confirmed against.
         const ageMs = await stat(resolved)
           .then((info) => Date.parse(clock.now()) - info.mtimeMs)
           .catch(() => undefined);
-        if (ageMs === undefined || ageMs > STALE_EMPTY_LOCK_MS) {
+        if (ageMs !== undefined && ageMs > STALE_EMPTY_LOCK_MS) {
           await rm(resolved, { force: true });
           continue;
         }

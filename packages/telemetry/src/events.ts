@@ -345,6 +345,12 @@ async function withEventLogLock<T>(
         // ANY reason the stat failed, not only ENOENT) now falls through to the ordinary
         // retry-after-delay path below instead, identical to the "owner alive, not stale" branch
         // above: only a real, measured age over the threshold may ever force a reclaim.
+        //
+        // `@forge/cli`'s own `withCollectionLock` (`commands/collection-lock.ts`) had the
+        // byte-identical bug in this exact same shape (its own `ageMs === undefined || ...`), fixed
+        // the same way, same root cause -- not a coincidence, since it is this function's own
+        // same-algorithm sibling (this function's doc comment above explains why they are separate
+        // implementations rather than one shared import).
         const ageMs = await fsp
           .stat(resolved)
           // eslint-disable-next-line no-restricted-syntax -- see the comment above
