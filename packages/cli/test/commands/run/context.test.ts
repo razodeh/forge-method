@@ -65,11 +65,21 @@ describe('ensureIntegrationWorktree', () => {
     expect(worktreeList).toContain(target);
   });
 
-  it('throws RUN-055 (not ENV-004) for a real, non-"tool missing" git failure', async () => {
+  it('throws RUN-055 (not ENV-004) for a real, non-"tool missing" git failure, with a friendly, version-independent detail for the branch-collision shape', async () => {
     // A critic round caught the previous code reporting the identical "install git" ENV-004 message
     // for *any* `git worktree add` failure — real or not. This forces a real, reproducible non-ENOENT
     // failure (the branch already checked out at a different real worktree path) and confirms it is
-    // reported as RUN-055, carrying the real git failure text, not ENV-004's misleading remedy.
+    // reported as RUN-055.
+    //
+    // The assertion below is on OUR OWN authored wording (`findOtherWorktreeOnBranch` /
+    // `recoverFromWorktreeAddFailure`, `context.ts`), never on git's own raw stderr for this
+    // collision — confirmed directly that git's own wording for it is NOT stable across versions: git
+    // 2.39.5 (Apple Git) says `"'<branch>' is already checked out at '<path>'"`; a newer git (what
+    // GitHub's CI runners currently ship) says `"'<branch>' is already used by worktree at
+    // '<path>'"` — the identical collision, reworded. `recoverFromWorktreeAddFailure` now detects this
+    // shape structurally, from a real `git worktree list --porcelain` read (never from either of
+    // git's own wordings above), so this test is stable regardless of which git produced the original
+    // failure.
     const project = await createTestProject();
     await execa('git', ['branch', 'forge/integration/current'], { cwd: project.dir });
     await execa('git', ['worktree', 'add', 'other-path', 'forge/integration/current'], {
@@ -88,7 +98,9 @@ describe('ensureIntegrationWorktree', () => {
       threw = error;
     }
     expect(threw).toMatchObject({ code: 'RUN-055' });
-    expect((threw as Error).message).toContain('already checked out');
+    expect((threw as Error).message).toContain(
+      "the integration branch 'forge/integration/current' is already checked out in another worktree",
+    );
   });
 
   it('throws ENV-004 (not RUN-055) when the git binary itself genuinely cannot be found', async () => {

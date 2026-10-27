@@ -228,10 +228,15 @@ function isSpawnNotFound(error: unknown): boolean {
 /** Runs a real `git` subcommand, translating a genuine "binary not found" into `ENV-004` and any
  * other real git failure into `RUN-055` — carrying the real underlying message rather than the
  * `ENV-004` template's misleading "install git" remedy for a git that is plainly already working.
- * `LC_ALL`/`LANG` pinned to `C`: `ensureIntegrationWorktree`'s own TOCTOU recovery below matches
- * plain-English substrings against a real git error message, which git localises under a non-English
- * `LANG`/`LC_ALL` — pinning here is what keeps that match reliable regardless of the host's own
- * locale, rather than silently failing to recognise the race on a non-English system. */
+ * `LC_ALL`/`LANG` pinned to `C`: every real case `ensureIntegrationWorktree`'s own TOCTOU recovery
+ * below (`recoverFromWorktreeAddFailure`) tells apart is read from real, structured state —
+ * `git worktree list --porcelain` / `pathExists` — never from git's own raw failure wording, which a
+ * critic round confirmed is not even stable across git's own versions for the identical collision
+ * (git 2.39.5: `"'<branch>' is already checked out at '<path>'"`; a newer git:
+ * `"'<branch>' is already used by worktree at '<path>'"`). The one real case that recovery cannot
+ * classify still surfaces git's own raw stderr verbatim, via `renderCause` below — pinning the locale
+ * here is what keeps THAT raw text in plain, readable English regardless of the host's own locale,
+ * rather than a non-English `LANG`/`LC_ALL` silently localising it into something unreadable. */
 async function runGitOrThrow(args: readonly string[], cwd: string): Promise<string> {
   try {
     const result = await execa('git', args, { cwd, env: { LC_ALL: 'C', LANG: 'C' } });
@@ -391,7 +396,7 @@ export async function ensureIntegrationWorktree(
     await runGitOrThrow(args, projectRoot);
     return target;
   } catch (error) {
-    return recoverFromWorktreeAddFailure(projectRoot, target, args, error);
+    return recoverFromWorktreeAddFailure(projectRoot, target, args, integrationBranch, error);
   }
 }
 
@@ -492,9 +497,10 @@ async function discardBrokenWorktree(projectRoot: string, target: string): Promi
 
 /**
  * A real, reproducible TOCTOU race the `pathExists(target)` pre-check in `ensureIntegrationWorktree`
- * cannot fully close — confirmed directly, twice, against `resume.test.ts`'s own real crash-then-
- * resume proof, in two genuinely different real shapes git itself reports with two genuinely
- * different error messages:
+ * cannot fully close — confirmed directly, against `resume.test.ts`'s own real crash-then-resume
+ * proof and a real two-worktree collision, in three genuinely different real shapes git itself
+ * reports with three genuinely different error messages (and, for case 3, two genuinely different
+ * wordings of the SAME shape across git's own versions — see below):
  *
  * 1. A *concurrent* process's own `git worktree add` finishes between this call's own `pathExists`
  *    check and this `git worktree add` actually running — the target now genuinely exists as a real,
@@ -504,38 +510,94 @@ async function discardBrokenWorktree(projectRoot: string, target: string): Promi
  *    `.git/worktrees/<name>` with no real directory behind it — `pathExists(target)` correctly found
  *    nothing (there is nothing there), but git still refuses a fresh `add` at that exact path
  *    ("is a missing but already registered worktree").
+ * 3. `integrationBranch` is already checked out at a DIFFERENT, perfectly healthy worktree —
+ *    `target` itself is genuinely not registered at all, so cases 1/2 do not apply, but git refuses
+ *    this `add` anyway, since a branch can only be checked out in one worktree at a time. This is the
+ *    one case where git's own raw wording is not just fragile but genuinely version-dependent —
+ *    confirmed directly: git 2.39.5 says `"'<branch>' is already checked out at '<path>'"`; a newer
+ *    git (what GitHub's CI runners currently ship) says `"'<branch>' is already used by worktree at
+ *    '<path>'"` — the identical collision, reworded, not a different failure.
  *
- * Both are told apart by real, structural checks — never by matching git's own exact wording (a
+ * All three are told apart by real, structural checks — never by matching git's own exact wording (a
  * critic round caught an earlier version of this fix trusting a message substring alone, which a
- * *different*, unrelated failure sharing the same words could also produce) — rather than which of
- * git's own many possible phrasings this particular failure happened to use: case 1 is `pathExists(
- * target) && isTargetRegisteredWorktree(...)` (a real, live, valid worktree — never touched, only
- * confirmed and reused); case 2 is `!pathExists(target) && isTargetRegisteredWorktree(...)` (a stale
- * registration with no real directory to protect — safe to clear via `git worktree remove --force`
- * and retry the original `add` once for real, since nothing valid could be destroyed). Any other
- * shape (not registered at all) is a genuinely different failure and always propagates.
+ * *different*, unrelated failure sharing the same words could also produce, and case 3's own
+ * cross-version wording drift above is a second, independent reason the same rule has to hold): case
+ * 1 is `pathExists(target) && isTargetRegisteredWorktree(...)` (a real, live, valid worktree — never
+ * touched, only confirmed and reused); case 2 is `!pathExists(target) && isTargetRegisteredWorktree(
+ * ...)` (a stale registration with no real directory to protect — safe to clear via `git worktree
+ * remove --force` and retry the original `add` once for real, since nothing valid could be
+ * destroyed); case 3 is `!isTargetRegisteredWorktree(target, ...)` together with a DIFFERENT
+ * registered block in the identical `git worktree list --porcelain` read naming `integrationBranch`
+ * as its own checked-out branch (`findOtherWorktreeOnBranch` below, built on the same `parseWorktreeBlocks` parser
+ * `isTargetRegisteredWorktree` itself already uses) — reported as `RUN-055` exactly as before (the
+ * existing classification was already correct), just with a friendly, version-independent `detail`
+ * this function composes itself instead of forwarding git's own raw, drifting stderr. Any other shape
+ * (not registered at all, and no other worktree on this branch either) is a genuinely different,
+ * so-far-unclassified failure and always propagates unchanged.
  */
 async function recoverFromWorktreeAddFailure(
   projectRoot: string,
   target: AbsolutePath,
   args: readonly string[],
+  integrationBranch: string,
   originalError: unknown,
 ): Promise<string> {
   const registered = await isTargetRegisteredWorktree(projectRoot, target);
-  if (!registered) throw originalError;
+  if (registered) {
+    if (await pathExists(target)) {
+      // Case 1: a concurrent winner's own real, valid worktree.
+      return target;
+    }
 
-  if (await pathExists(target)) {
-    // Case 1: a concurrent winner's own real, valid worktree.
+    // Case 2: a stale registration with nothing real behind it — safe to clear and retry. Real
+    // failures here are not swallowed: if `remove`/`prune` themselves fail, that is itself a real,
+    // worth-reporting problem, more informative than a confusing retry-`add` failure that follows one.
+    await runGitOrThrow(['worktree', 'remove', '--force', target], projectRoot);
+    await runGitOrThrow(['worktree', 'prune'], projectRoot);
+    await runGitOrThrow(args, projectRoot);
     return target;
   }
 
-  // Case 2: a stale registration with nothing real behind it — safe to clear and retry. Real
-  // failures here are not swallowed: if `remove`/`prune` themselves fail, that is itself a real,
-  // worth-reporting problem, more informative than a confusing retry-`add` failure that follows one.
-  await runGitOrThrow(['worktree', 'remove', '--force', target], projectRoot);
-  await runGitOrThrow(['worktree', 'prune'], projectRoot);
-  await runGitOrThrow(args, projectRoot);
-  return target;
+  // Case 3: `target` itself is genuinely not registered, but a DIFFERENT worktree already has
+  // `integrationBranch` checked out — the ordinary, non-crash collision. Structurally confirmed, so
+  // this reports it with the same `RUN-055` code as any other real `git worktree add` failure, but
+  // with a friendly, version-independent detail instead of forwarding git's own raw, drifting stderr.
+  const collisionPath = await findOtherWorktreeOnBranch(projectRoot, integrationBranch);
+  if (collisionPath !== undefined) {
+    throw new ForgeError(
+      'RUN-055',
+      {
+        detail:
+          `the integration branch '${integrationBranch}' is already checked out in another ` +
+          `worktree, at '${collisionPath}'`,
+      },
+      { cause: originalError },
+    );
+  }
+
+  throw originalError;
+}
+
+/** The OTHER registered worktree's own path where `branch` is checked out right now, structurally
+ * read from a fresh `git worktree list --porcelain` in `projectRoot` (built on the same
+ * `parseWorktreeBlocks` parser `isTargetRegisteredWorktree` above already uses) — never from git's
+ * own raw `add` failure text, whose exact wording for this collision is confirmed to differ between
+ * real git versions (`recoverFromWorktreeAddFailure`'s own doc comment above has both verbatim
+ * strings). Called only once `isTargetRegisteredWorktree(projectRoot, target)` has already returned
+ * `false` for the SAME listing's own target path, so a match here can never be `target` itself —
+ * there is nothing left to disambiguate by path, only by branch. `undefined` when no registered
+ * worktree has `branch` checked out at all: a genuinely different, so-far-unclassified `git worktree
+ * add` failure (a bad base ref, disk-full, real resource exhaustion), which the caller still reports
+ * via `originalError`'s own raw text rather than inventing a cause this check found no evidence for. */
+async function findOtherWorktreeOnBranch(
+  projectRoot: string,
+  branch: string,
+): Promise<string | undefined> {
+  const listing = await runGitOrThrow(['worktree', 'list', '--porcelain'], projectRoot);
+  for (const block of parseWorktreeBlocks(listing)) {
+    if (block.branch === branch) return block.path;
+  }
+  return undefined;
 }
 
 export interface IntegrationSyncResult {
