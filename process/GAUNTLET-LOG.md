@@ -25074,4 +25074,17 @@ test.ts` flake, re-confirmed clean in isolation.
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q355` (new).
 
 ---
+## M17 P14 — `Q354`'s own remaining `within()`-bug sites CLOSED (Q356): 5 files, one inverted-direction (owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** `Q354` disclosed 6 more instances of the same `path.relative(...).startsWith('..')` substring-escape bug already fixed in `confined-command.ts`/`test-path.ts`/`paths.ts`. This piece closes 5.
+
+**`fix-scan.ts`'s `protectedFixGlobs` — the one INVERTED-direction instance**, reviewed and fixed as its own piece. Every sibling bug wrongly REFUSES a safe path; this one wrongly EXCLUDES a doc root from a write-protection allowlist — under-protection, not over-refusal. Two critics each confirmed by reverting the fix and running real code that the exact disclosed defect reproduces (a write into a wrongly-unprotected root passes with zero violation) and is closed post-fix with no flip into the opposite failure mode. Re-review also found the blast radius is wider than scoped: the allowlist feeds the shipped default workflow templates' ordinary agent dispatch, not just `forge debug`'s FIX lane.
+
+**Four more production sites — `skills.ts` (2 checks), `commit.ts`, `verification.ts` (2 checks), `lanes.ts`** — same shape, same fix, each independently confirmed and red/green-verified through a real call site, not the helper in isolation. One gap a re-review critic found: `skills.ts`'s second check is anchored two directories higher than the first, so its own committed test never actually exercised it (the fix was correct, just untested) — closed with a real symlink test matching the critic's own constructed repro.
+
+**Caught during landing, not by any round**: `lanes.ts`'s new test hardcoded a pre-M17 worktree-location path instead of the test file's own location-aware helper — stale relative to an unrelated migration that had already landed on `main`, surfaced only by an isolated backstop run post-landing, fixed with a one-line change to use the existing helper.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q356` (new).
+
+---
 

@@ -31369,3 +31369,71 @@ regression.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P7` entry's close-out addendum for this fix,
 dated 2026-10-25.
+## Q356 — `Q354`'s own remaining disclosed `within()`-bug sites CLOSED: 5 more files, one with an inverted (under-protection) risk direction (owner-directed scope expansion, 2026-10-25)
+
+**What this closes.** `Q354` disclosed, but left unfixed, 6 more instances of the same `path.relative(
+root, candidate).startsWith('..')` substring-escape bug already fixed in `confined-command.ts`,
+`test-path.ts`, and `packages/core/src/fs/paths.ts`: a raw string-prefix check false-positives on
+the literal string `"..."` (and anything else starting with the two characters `..` without being a
+real `..` parent-directory segment), since `path.relative` can produce exactly that string for a
+real, non-escaping child whose own name happens to start with two dots. This piece closes 5 of
+those 6 (the 6th, `packages/vcs/src/lanes.ts`'s already-landed-elsewhere sibling, turned out to be
+the SAME file as one of these 5 — see below; only genuinely test-only, lower-priority sites remain
+disclosed).
+
+**`packages/engine/src/rca/fix-scan.ts`'s `protectedFixGlobs` — INVERTED risk direction, fixed as its
+own standalone piece.** Every sibling instance (including the 4 fixed alongside it below) is an
+OVER-strict refusal: wrongly blocking a safe, non-escaping path. This one is the opposite: the buggy
+filter decided *inclusion* in a FIX-lane write-protection allowlist (the project's configured doc
+roots — `paths.kb`/`specs`/`sessions`/`reports`), so a root merely starting with `..` (e.g.
+`paths.kb: '..cache'`) was wrongly EXCLUDED from protection — an under-protection/integrity gap, not
+an over-strict one. Confirmed by tracing both real callers (`scanFixDiff`'s own FIX-lane diff scan,
+and `splitClaim`'s `!@protected` exclusion-list forwarding) and, on re-review, confirmed the blast
+radius is wider than first scoped: `!@protected` is used by the SHIPPED DEFAULT workflow templates
+(`refactor`/`migrate`/`quick-fix`/`harden`) for ordinary agent dispatch, not merely `forge debug`'s
+FIX lane — so the gap applied to everyday agent writes, not just a debug corner case. Fixed by
+preserving the inclusion-vs-exclusion direction while correcting the escape check itself
+(`root !== '' && root !== '..' && !root.startsWith('../')`) — deliberately NOT the sibling fixes'
+own `path.sep`-based expression: this input is a configured, always-forward-slash-normalized glob
+string, never `path.relative()` output, confirmed by tracing the input all the way back to its
+schema/config-load origin, and deliberately matched against a second, independently-correct
+reference implementation already in the codebase (`escapesRepository` in `outputs.ts`) handling the
+identical input shape. Two independent critics each confirmed, by reverting the fix and re-running
+real code, that the exact disclosed defect reproduces pre-fix (a write into a wrongly-unprotected
+doc root passes with zero `protected-path` violation) and is closed post-fix, with no flip into the
+fix's own opposite failure mode (a genuine `..`-escape root is still correctly excluded throughout).
+
+**Four more production sites, same shape, same fix, different files — `packages/adapter-claude-
+code/src/skills.ts`'s `resolveSkillFile` (two checks: lexical + real/symlink-resolved),
+`packages/vcs/src/commit.ts`'s `assertPathWithinRepo` (backing `commitPaths`' own "stages/commits
+exactly the named paths" guarantee), `packages/engine/src/adopt/verification.ts`'s
+`resolveContainedManifestPath` (two checks), and `packages/vcs/src/lanes.ts`'s `parseLaneWorktrees`.**
+Each confirmed independently (not assumed identical just because the shape matched) and fixed the
+same way. Every fix traced and tested through a REAL call site end-to-end, not the escape-check
+helper in isolation — `provisionSkills`, `commitPaths` against a real git repo, `runBuildAndTestChecks`
+against a real cloned repo, `listOrphanedWorktrees` against a real `git worktree add`. Every fix
+independently red/green-verified (the fix reverted in-place, the new test confirmed to fail for the
+real reason, then restored). One real gap a re-review critic found and a quick follow-up closed:
+`skills.ts`'s second (real/symlink-resolved) check is anchored two directories higher than the
+first (`cwd`, not `skillsRoot`), so the committed test for it — built the same way as the first
+check's own test — never actually exercised it; the fix itself was correct and genuinely necessary
+(proven by the critic's own constructed symlink repro), just untested. Closed with a real symlink
+test matching the critic's own construction, itself red/green-verified independently.
+
+**`lanes.ts`'s own regression test had a separate, unrelated landing-time staleness bug, caught and
+fixed during landing, not by any gauntlet round.** The branch this piece built from was based on a
+now-stale `main` where lane worktrees still lived under `cwd/.forge/state/worktrees/`; current
+`main` had since migrated `worktreesRootFor` to a per-project cache directory entirely outside the
+project (`specs/22` M17). The new test hardcoded the old path literal instead of using the test
+file's own `expectedWorktreesRoot(cwd)` helper (which every other test in the file already uses for
+exactly this reason) — so on current `main` the test's own worktree never matched the real
+`worktreesRoot`, and `listOrphanedWorktrees` correctly found nothing, for a reason unrelated to the
+fix itself. Caught by an isolated backstop verification surfacing a real, reproducible test failure
+post-landing; fixed by switching the one line to the existing helper, re-verified clean.
+
+**Still disclosed, not fixed: 2 lower-priority, test-only instances** — `packages/testkit/src/
+fake-adapter.ts`'s `resolveInsideCwd` and `packages/adapter-generic/test/fixtures/scripted-
+binary.ts`'s own copy-pasted equivalent. Neither backs real production containment logic.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P14` entry's second close-out addendum for this
+fix, dated 2026-10-27.
