@@ -73,6 +73,25 @@ describe('FakeSessionScript.writeFiles', () => {
     expect(events.some((event) => event.type === 'tool.result' && !event.ok)).toBe(true);
   });
 
+  it('writes a scripted file whose relativePath is a direct child literally named with a leading ".." — not a real parent-directory escape', async () => {
+    // Regression for the raw string-prefix bug: `path.relative(cwd, resolved)` for a child literally
+    // named `..cache` returns the literal string `'..cache'`, which `'..cache'.startsWith('..')` would
+    // misreport as an escape purely because the first two characters coincidentally match `'..'`, even
+    // though `..cache` is a genuine, single-segment child of cwd. The fix checks the first path SEGMENT
+    // (`relative === '..'` or `relative.startsWith('..' + path.sep)`) instead.
+    const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
+    adapter.script((r) => r.prompt === 'dotdot-child', {
+      writeFiles: [{ relativePath: '..cache/marker.txt', content: 'not an escape' }],
+    });
+    const cwd = await createScratchDir();
+    const handle = await adapter.startSession(baseRequest({ cwd, prompt: 'dotdot-child' }));
+    const result = await handle.result();
+
+    expect(result.ok).toBe(true);
+    expect(await readFile(path.join(cwd, '..cache', 'marker.txt'), 'utf8')).toBe('not an escape');
+    expect(result.changedFiles).toEqual(['..cache/marker.txt']);
+  });
+
   it('refuses a scripted write whose relativePath is an absolute path', async () => {
     const adapter = new FakePlatformAdapter({}, HAND_BUILT_REQUESTS);
     const cwd = await createScratchDir();

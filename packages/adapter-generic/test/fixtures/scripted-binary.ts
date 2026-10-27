@@ -147,7 +147,21 @@ function resolveInsideCwd(cwd: string | undefined, relativePath: string): string
   if (path.isAbsolute(relativePath)) return undefined;
   const resolved = path.resolve(cwd, relativePath);
   const relative = path.relative(cwd, resolved);
-  if (relative === '' || relative.startsWith('..') || path.isAbsolute(relative)) return undefined;
+  // The first path SEGMENT must be checked, not a raw string prefix: `path.relative` can return a
+  // literal `'..cache'` (a direct child of `cwd` named with a leading `..`), and
+  // `'..cache'.startsWith('..')` is `true` purely because the first two characters coincidentally
+  // match, even though `..cache` names a real, single-segment sibling file, never a `..`
+  // parent-directory escape — mirrors `@forge/testkit`'s own identical fix to `resolveInsideCwd`
+  // (`fake-adapter.ts`), the same fix already applied to this bug's other instances elsewhere in this
+  // codebase.
+  if (
+    relative === '' ||
+    relative === '..' ||
+    relative.startsWith('..' + path.sep) ||
+    path.isAbsolute(relative)
+  ) {
+    return undefined;
+  }
   return resolved;
 }
 

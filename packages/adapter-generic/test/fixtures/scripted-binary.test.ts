@@ -160,6 +160,36 @@ describe('scripted-binary.ts: write files (07 §7.6 C2, C14)', () => {
     await expect(readFile(path.join(cwd, 'out.txt'), 'utf8')).resolves.toBe('forge-marker');
   });
 
+  it('actually writes a scripted file whose relativePath is a direct child literally named with a leading ".." — not a real parent-directory escape', async () => {
+    // Regression for the raw string-prefix bug this fixture's own `resolveInsideCwd` used to have:
+    // `path.relative(cwd, resolved)` for a child literally named `..cache` returns the literal string
+    // `'..cache'`, which `'..cache'.startsWith('..')` would misreport as an escape purely because the
+    // first two characters coincidentally match `'..'`, even though `..cache` is a genuine,
+    // single-segment child of cwd.
+    const cwd = await createScratchDir('cwd');
+    scratchDirs.push(cwd);
+    const tablePath = await writeTable({
+      entries: [
+        {
+          match: {},
+          response: { writeFiles: [{ relativePath: '..cache/marker.txt', content: 'not an escape' }] },
+        },
+      ],
+    });
+
+    const result = await run(tablePath, { cwd });
+
+    expect(result.exitCode).toBe(0);
+    expect(ndjsonLines(result.stdout)).toContainEqual({
+      type: 'tool_call',
+      tool: 'write_file',
+      args: { path: '..cache/marker.txt' },
+    });
+    await expect(readFile(path.join(cwd, '..cache', 'marker.txt'), 'utf8')).resolves.toBe(
+      'not an escape',
+    );
+  });
+
   it('refuses a scripted write that escapes the invocation cwd via ../ traversal, and writes nothing outside it', async () => {
     const cwd = await createScratchDir('cwd');
     scratchDirs.push(cwd);
