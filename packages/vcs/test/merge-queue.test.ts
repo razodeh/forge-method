@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import type {
   CheckResult,
@@ -72,6 +72,49 @@ function trackingCheck(calls: string[], name: string, result: CheckResult): PreM
     return Promise.resolve(result);
   };
 }
+
+// A real production bug, confirmed to reproduce 100% of the time: a conflict-resolution `git rebase
+// --continue` finalises a commit via git's own internal `git commit`, which git refuses to do silently
+// with no usable editor configured (`EDITOR`/`VISUAL`/`GIT_EDITOR` all unset and `TERM=dumb` — GitHub
+// Actions' real, actual default, and every other headless/unattended host's). This was masked in every
+// prior local run because a dev shell typically has `GIT_EDITOR`/`EDITOR` set ambiently — the tests below
+// force the no-editor condition explicitly (the same save/restore-around-each-test discipline
+// `system-cache-dir.test.ts`'s own `setEnv` already established) rather than trusting the ambient
+// environment to happen to lack an editor, so this suite catches a regression regardless of the shell
+// it runs in.
+type SavedEnvKey = 'EDITOR' | 'VISUAL' | 'GIT_EDITOR' | 'TERM';
+const savedEnv = new Map<SavedEnvKey, string | undefined>();
+
+function setEnv(key: SavedEnvKey, value: string | undefined): void {
+  if (!savedEnv.has(key)) savedEnv.set(key, process.env[key]);
+  if (value === undefined) {
+    Reflect.deleteProperty(process.env, key);
+  } else {
+    process.env[key] = value;
+  }
+}
+
+/** Forces the exact environment `runRebaseStep`'s own `GIT_EDITOR: 'true'` override exists for: no
+ * usable editor configured at all, and a dumb terminal (git's own real check, not merely "EDITOR unset" —
+ * confirmed empirically that a smart `TERM` with no `EDITOR` falls back to `vi`, which would hang rather
+ * than reproduce this bug's actual failure mode). */
+function forceNoEditorEnvironment(): void {
+  setEnv('EDITOR', undefined);
+  setEnv('VISUAL', undefined);
+  setEnv('GIT_EDITOR', undefined);
+  setEnv('TERM', 'dumb');
+}
+
+afterEach(() => {
+  for (const [key, value] of savedEnv) {
+    if (value === undefined) {
+      Reflect.deleteProperty(process.env, key);
+    } else {
+      process.env[key] = value;
+    }
+  }
+  savedEnv.clear();
+});
 
 function baseCandidate(handle: LaneHandle): MergeCandidate {
   return {
@@ -290,6 +333,30 @@ describe('processMergeCandidate — a lane whose merge was reverted', () => {
 
 describe('processMergeCandidate — conflict handling', () => {
   it('routes a real conflict through the resolver and merges once resolved', async () => {
+    const { integrationPath, candidate } = await setupConflictingCandidate();
+
+    const outcome = await processMergeCandidate(
+      { ...candidate, conflictPolicy: 'agent' },
+      {
+        integrationPath,
+        conflictResolver: async () => {
+          await writeFile(path.join(candidate.handle.path, 'f.txt'), 'line1\nRESOLVED\nline3\n');
+          return 'resolved';
+        },
+        preChecks: [passingCheck],
+        postChecks: [passingCheck],
+      },
+    );
+
+    expect(outcome.kind).toBe('conflict-resolved');
+    if (outcome.kind !== 'conflict-resolved') throw new Error('unreachable');
+    await expect(
+      execa('git', ['show', `${outcome.mergeCommitSha}:f.txt`], { cwd: integrationPath }),
+    ).resolves.toMatchObject({ stdout: 'line1\nRESOLVED\nline3' });
+  });
+
+  it("regression: rebase --continue finalising the resolved commit succeeds with no usable editor configured at all (EDITOR/VISUAL/GIT_EDITOR unset, TERM=dumb -- GitHub Actions' real default, not a lab condition) -- without runRebaseStep's own GIT_EDITOR override this fails with VCS-GIT-OPERATION-FAILED wrapping git's own 'Terminal is dumb, but EDITOR unset'", async () => {
+    forceNoEditorEnvironment();
     const { integrationPath, candidate } = await setupConflictingCandidate();
 
     const outcome = await processMergeCandidate(

@@ -293,14 +293,27 @@ export async function conflictStatuses(
  * a content conflict: `git diff --name-only --diff-filter=U` reports zero unmerged paths for any other
  * kind of rebase failure (a hook rejection, a corrupt object, anything not about conflicting content), the
  * same "check the actual state, don't infer from an exit code alone" discipline `git.ts`'s own
- * `isNoCommitsYetResult` established for a different check. */
+ * `isNoCommitsYetResult` established for a different check.
+ *
+ * `GIT_EDITOR: 'true'` (the real, always-succeeds `true` binary — the same style `context.ts`'s own
+ * `runGitOrThrow` already uses for its `LC_ALL`/`LANG` override, execa's `extendEnv` default merging this
+ * over the ambient environment rather than replacing it): `--continue` after a real conflict resolution
+ * finalises a commit via an internal `git commit`, which opens an editor whenever the ambient environment
+ * has no usable one configured (`EDITOR`/`VISUAL`/`GIT_EDITOR` all unset and `TERM=dumb` — not a lab
+ * condition, GitHub Actions' and any other headless/unattended host's real, actual default) — confirmed
+ * empirically this makes git refuse with "Terminal is dumb, but EDITOR unset" / "could not commit staged
+ * changes," surfacing here as a generic `VCS-GIT-OPERATION-FAILED` that looks like an ordinary git failure
+ * but is really this entirely avoidable gap. `git rebase --continue`'s own default commit message (already
+ * staged before this call ever runs) is always correct here, so there is never a real need for a human to
+ * edit it — `true` exits 0 immediately and accepts it unedited, exactly like a normal, editor-equipped
+ * environment's own default "just use what's there" keystroke would. */
 async function runRebaseStep(
   laneWorktreePath: string,
   args: readonly string[],
   context: string,
 ): Promise<'clean' | 'conflict'> {
   try {
-    await execa('git', ['rebase', ...args], { cwd: laneWorktreePath });
+    await execa('git', ['rebase', ...args], { cwd: laneWorktreePath, env: { GIT_EDITOR: 'true' } });
     return 'clean';
   } catch (cause) {
     const conflicted = await conflictedFilePaths(laneWorktreePath);
