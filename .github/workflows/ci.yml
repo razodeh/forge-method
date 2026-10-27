@@ -24,19 +24,21 @@ jobs:
   floor:
     name: floor (node ${{ matrix.node }}, ${{ matrix.os }}, TZ=${{ matrix.tz }})
     runs-on: ${{ matrix.os }}
-    # Was 20. Real evidence this repo's own CI history no longer fits it: on every run since the
-    # first commit, the ubuntu-latest/windows-latest legs pass install/build/typecheck/lint in a
-    # couple of minutes, then `pnpm test` (a full-coverage run of the whole monorepo, twice — once
-    # per vitest config) is still genuinely in progress, not hung, when the job hits this ceiling and
-    # every remaining step is cancelled outright (confirmed via the Actions API's own per-step
-    # started_at/completed_at: `pnpm test` had already run 15-17 real minutes with no sign of being
-    # stuck before cancellation). 45 gives roughly 2.5x the longest observed in-progress duration.
-    # This masks nothing: a leg that was actually hanging still fails, just at 45 minutes instead of
-    # 20; a leg that only needed more time now gets a real pass/fail instead of an inconclusive
-    # cancellation. The turbo cache step below independently shaves the typecheck step's own ~60-90s
-    # cold cost, but does not touch `pnpm test` — `test` is not a turbo-orchestrated task at all
-    # (`turbo.json` only declares `build`/`typecheck`), so it cannot benefit from turbo's cache.
-    timeout-minutes: 45
+    # Was 20, then 45 (see below for why 45 stopped being enough). Real evidence this repo's own CI
+    # history no longer fits 45 either: a 2026-10-27 run on `next` (commit 5ca9b4f) showed a
+    # ubuntu/node20 leg's `pnpm test` step genuinely still in progress — not hung — at the 45-minute
+    # mark, having completed only ~176 of the repo's 755 `.test.ts(x)` files (~23%) by then. A
+    # dedicated investigation ruled out a config/parallelism regression or a hung test (vitest.
+    # config.ts's pool/worker settings are unchanged; a representative local sample showed real,
+    # organically-growing per-file cost from this project's own "always real execution, never
+    # assumption" testing convention — real subprocess spawns, real git operations, real worker
+    # threads — compounding since the 45-minute ceiling's own 15-17-minute baseline was set, faster
+    # than GitHub's ~4-vCPU hosted runners can absorb relative to a real developer machine). Raised
+    # generously rather than precisely, since no run has yet gone the distance to report a true floor
+    # — this is deliberately a stopgap, not a tuned number; revisit (most likely via sharding
+    # `pnpm test` across multiple jobs, already the recommended direction) once a real completion time
+    # is known. This still masks nothing: a leg that is genuinely hanging still fails, just later.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -107,8 +109,12 @@ jobs:
     name: scheduler seed variation
     runs-on: ubuntu-latest
     # See the floor job's own comment -- this job runs the full suite twice (two shuffled seeds),
-    # so it needs at least as much real headroom as one floor leg's single `pnpm test`, and likely more.
-    timeout-minutes: 60
+    # sequentially, so it needs roughly double one floor leg's own single-pass headroom. Confirmed
+    # directly: the 2026-10-27 run's first shuffled pass alone took ~44 minutes (and finished, with
+    # real content failures already tracked separately) -- comfortably within a single floor leg's
+    # own 90-minute allowance, but the OLD 60-minute total budget here would not have fit a second
+    # pass at all. Raised to 180 (2x floor's 90, same stopgap-not-tuned reasoning as that comment).
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

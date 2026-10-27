@@ -63,6 +63,12 @@ export default defineConfig({
       '**/.git/**',
       'fixtures/**',
       'specs/**',
+      // Root-anchored, same reasoning as fixtures/specs above: `.claude/worktrees/` holds dozens of
+      // full nested checkouts of this repo (one per live agent worktree), each with its own copy of
+      // every test file. A real CI investigation found a local, unscoped `pnpm test` run re-running
+      // one file 70-81 times because of this -- irrelevant to CI itself (a fresh checkout never has
+      // this directory), but it badly misleads any local repro/timing attempt.
+      '.claude/**',
       // Named exactly, NOT `**/.*/**`. A blanket dot-directory exclusion was added here and mirrored
       // in the walk, which put a failing test in `test/.hidden/` beyond the reach of both — the same
       // shared-blind-spot defect this pair of mechanisms exists to prevent, reintroduced by the

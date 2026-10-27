@@ -255,8 +255,15 @@ const IGNORED_PATHS = new Set([
  * Directories skipped only at the repository root, mirroring `vitest.config.ts`'s root-anchored
  * exclusions. Anchoring matters: skipping `specs`/`fixtures` at *any* depth is what let a failing
  * test in `packages/<pkg>/specs/` hide from the globs and from this walk simultaneously.
+ *
+ * `.claude` holds this repo's own `worktrees/` cache -- dozens of full nested checkouts of this
+ * same repo, each with its own copy of every `*.test.ts` file. Collected by neither mechanism
+ * before this entry existed: a real CI investigation found a local, unscoped `pnpm test` run
+ * re-running one file 70-81 times, once per live worktree, which both masks real throughput
+ * numbers and risks double-counting coverage/pass counts. A fresh CI checkout never has this
+ * directory at all, so this is a local-dev-only fix, not a CI behavior change.
  */
-const IGNORED_ROOT_DIRECTORIES = new Set(['specs', 'fixtures']);
+const IGNORED_ROOT_DIRECTORIES = new Set(['specs', 'fixtures', '.claude']);
 
 /** Source and test file extensions, matching the collection globs in `vitest.config.ts`. */
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
