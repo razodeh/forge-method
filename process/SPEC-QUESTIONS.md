@@ -31437,3 +31437,29 @@ binary.ts`'s own copy-pasted equivalent. Neither backs real production containme
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P14` entry's second close-out addendum for this
 fix, dated 2026-10-27.
+## Q357 — `Q356`'s own last 2 disclosed `within()`-bug sites CLOSED (test-only infrastructure), no production code touched (owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** The last 2 of the 8 total disclosed instances of the `path.relative(...).
+startsWith('..')` substring-escape bug this session's own sweep found: `packages/testkit/src/
+fake-adapter.ts`'s `resolveInsideCwd` and `packages/adapter-generic/test/fixtures/scripted-
+binary.ts`'s own copy (explicitly copy-pasted from testkit's). Both fixed identically to the 6
+already-fixed production siblings. Both independently red/green-verified by two re-review critics,
+each reverting the fix and confirming the exact described symptom (a legitimate write to a
+`..`-prefixed filename wrongly refused) before restoring.
+
+**One FYI worth recording precisely, found by a re-review critic**: `FakePlatformAdapter` (backed
+by `fake-adapter.ts`, the file with one of these two fixes) is NOT purely test-only infrastructure
+as this piece was originally scoped — `packages/extensions/src/install/conformance.ts`, real
+production `src/` code reachable from the real `forge module add`/`moduleUpdate` pipeline, aliases
+`@forge/testkit`'s real resolved path into an ephemeral vitest config so a third-party module's own
+test suite can exercise `FakePlatformAdapter` directly, in a real subprocess — that file's own doc
+comment already calls this out explicitly as "the first genuine production (not test-only)
+consumer of `@forge/testkit` anywhere in this codebase" (cross-referenced to `PLAN-M11.md` P6),
+pre-existing, known architecture, not something this piece introduced or obscured. Does not change
+this fix's own correctness or risk level: the change only removes a false-positive refusal of a
+benign filename shape and does not weaken the real `..`+separator traversal check on that path
+either way — but "test-only, no production impact" should be read precisely as "no production
+*containment weakening*," not "no production code path at all."
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P14` entry's third close-out addendum for this
+fix, dated 2026-10-27.

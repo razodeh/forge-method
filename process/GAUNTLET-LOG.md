@@ -25087,4 +25087,13 @@ test.ts` flake, re-confirmed clean in isolation.
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q356` (new).
 
 ---
+## M17 P14 — last 2 `within()`-bug sites CLOSED (Q357): test-only infrastructure, no production code touched (owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** The final 2 of 8 total disclosed instances of the substring-escape bug this session's sweep found: `testkit/src/fake-adapter.ts`'s `resolveInsideCwd` and `adapter-generic/test/fixtures/scripted-binary.ts`'s own copy. Fixed identically to the 6 already-fixed production siblings, both independently red/green-verified by two re-review critics.
+
+**One FYI**: `FakePlatformAdapter` is reachable from one genuine production path (`packages/extensions/src/install/conformance.ts`'s real `forge module add` pipeline) — pre-existing, already-disclosed architecture, not introduced by this piece. Doesn't change the fix's risk level (removes a false-positive only, no containment weakening), but "test-only" here means "no containment weakening," not "zero production code path."
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q357` (new).
+
+---
 
