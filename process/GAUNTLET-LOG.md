@@ -25096,4 +25096,19 @@ test.ts` flake, re-confirmed clean in isolation.
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q357` (new).
 
 ---
+## M17 P7 — CONFIRMED LIVE RCE + secrets leak via `vetGlob`'s flag-shaped-glob blind spot, closed in 2 rounds (Q358, the most severe defect found this milestone, owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** `Q355` round 7 closed a narrow instance of this hazard in one function and disclosed the SAME blind spot exists generally in `confined-command.ts`'s vet pipeline (`vetGlob` unconditionally skipped any glob candidate starting with `-`, "flags aren't paths"). This piece confirmed that's not theoretical — it's live.
+
+**Two exploits, confirmed by direct execution three separate times each (builder, 2 re-review critics, and the orchestrator personally).** (1) `git grep --o* TODO` against a planted `--open-files-in-pager=touch PWNED` file — accepted by the vet, and really executes `touch PWNED` via git's own pager-escape when run. (2) `rg --h* SECRET` against a planted `--hidden` file — accepted, and really prints a normally-invisible `.env`'s contents.
+
+**Round 1** removed the skip entirely — the vet's own pre-existing "refuse any match starting with `-`" rule, previously unreachable for these candidates, now runs and closes both exploits.
+
+**Round 2 — two independent critics, different angles, found the same residual gap.** The pre-existing refusal only checked a match's basename (last segment), missing a dangerous FIRST segment in a multi-segment match. Both constructed the same shape: a dangerous dash-prefixed directory name containing an innocuous file. Currently masked only by an unrelated, coincidental mechanism (`vetPath`'s own slash-decomposition heuristic, built for a different purpose) — undocumented, untested, and one plausible future cleanup of that unrelated code away from going live. Fixed by widening the check to the full matched string (equivalent to the true first segment only, re-derived from real argv/getopt semantics — a shell hands a program one argv token per match, and real parsers decide "is this a flag" by that token's own first character alone). Verified not over-broad by both critics independently constructing additional real-world-plausible safe cases. `vetGlob` exported specifically so the new regression test could prove it isn't riding on the same coincidental masking the original gap exploited — one critic redid that isolation proof with a stricter split-test methodology than the builder's own test, specifically to rule this out.
+
+**Net result**: the most severe class of bug this entire milestone found — a confirmed, live, trivially-reproducible RCE-adjacent exploit and secrets leak, both through the general command-vetting pipeline every model-proposed command passes through, not a narrow edge case. Found only because Q355's own round 7 critics generalized past the one function in front of them and disclosed the broader shape rather than treating their own fix as complete.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q358` (new).
+
+---
 

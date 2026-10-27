@@ -31463,3 +31463,98 @@ either way — but "test-only, no production impact" should be read precisely as
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P14` entry's third close-out addendum for this
 fix, dated 2026-10-27.
+## Q358 — CONFIRMED LIVE RCE + secrets leak via `vetGlob`'s flag-shaped-glob blind spot, closed in 2 rounds (the most severe defect found this milestone, owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** `Q355`'s own round 7 found and closed a narrow instance of this exact
+hazard (shell glob expansion defeating a string-matching refusal) scoped to one specific function
+(`isPackageManagerVersionProbe`), and disclosed — correctly, as "by design" at the time — that
+`confined-command.ts`'s GENERAL vet pipeline (`vetGlob`/`pathCandidates`) has the identical
+underlying blind spot for every model-proposed command, not just that one probe: a per-candidate
+loop unconditionally skipped any glob-expansion candidate starting with `-`, reasoning "flags
+aren't paths, nothing to check." This piece investigated that disclosure and found it is not a
+theoretical gap — it is a CONFIRMED, LIVE, directly-demonstrated security hole.
+
+**The two live exploits, both confirmed by direct execution, independently, three separate times
+(the original builder, two re-review critics, and the orchestrator personally) — not argued, not
+assumed:**
+1. **Remote-code-execution-adjacent, via git's own pager-escape mechanism.** A model proposing
+   `git grep --o* TODO` against a lane containing a real file literally named
+   `--open-files-in-pager=touch PWNED` — accepted by the pre-fix vet, and when actually run through
+   a real shell, git genuinely executed `touch PWNED` as its own configured pager. Reproduced with
+   three independently-chosen payload strings across three different reviewers, confirming this is
+   not narrowly tied to one specific string.
+2. **Secrets exfiltration, via ripgrep's own hidden-file flag.** `rg --h* SECRET` against a lane
+   containing a real file literally named `--hidden` — accepted by the pre-fix vet, and when
+   actually run, genuinely printed the contents of a normally-invisible dotfile (`.env`) to stdout.
+
+Both exploits work because `confined-command.ts`'s general vet pipeline (`vetProposedCommand`,
+used by `forge debug`'s RCA shell for model-proposed commands AND `vetStoredCommand` for stored
+KB-verify/adopt commands) runs commands through a real POSIX shell, which performs genuine glob
+expansion BEFORE the target program ever sees its own argv — but the vet's own `vetGlob` never
+checked what a flag-shaped glob PATTERN (`--o*`, `--h*`) might actually EXPAND TO on disk, solely
+because the pattern text itself started with `-`.
+
+**Round 1 — remove the skip.** Deleted the `candidate.startsWith('-')` early-continue from
+`vetGlob`'s per-candidate loop entirely. This alone is sufficient to close both confirmed exploits:
+the pipeline's own PRE-EXISTING "refuse any real glob match whose name starts with `-`" rule
+(previously unreachable for these candidates, since they were filtered out before ever reaching
+it) now runs against them correctly.
+
+**Round 2 — two independent re-review critics, working from different angles, found the SAME
+residual gap in round 1's own reasoning.** The pre-existing refusal rule was
+`path.posix.basename(entry).startsWith('-')` — checking only the LAST path segment of a
+multi-segment glob match. Both critics independently constructed a working repro: a directory
+literally named with a dangerous dash-prefixed value (e.g.
+`--open-files-in-pager=touch X;true #`) containing an innocuously-named file, globbed as
+`--o*/evil` — the dangerous content sits in the FIRST segment; the basename-only check only ever
+inspects the innocuous last one. **Why this hadn't been exploited in practice, and why that still
+wasn't good enough to rely on**: the full pipeline happened to still refuse this exact shape today,
+but via a completely unrelated, coincidental mechanism — `vetPath`'s own slash-decomposition
+heuristic (built for a different purpose, catching glued absolute paths like `-C/etc`) added a
+candidate that resolves outside the lane root, so `vetPath` refused it first, before `vetGlob` was
+ever reached for this word. This masking was undocumented, untested, and fragile: a plausible
+future cleanup of `vetPath`'s own unrelated heuristic would have silently reopened this with zero
+warning. Fixed by widening the refusal check from the match's basename to the FULL matched path
+string (`entry.startsWith('-')`, equivalent to checking only the true first segment, proven by
+induction over how the match string is built) — re-derived from first principles about real
+argv/getopt semantics: a shell hands a program exactly one argv token per glob match, and every
+real argument parser decides "is this a flag" by that token's own first character alone, never a
+character or segment deeper in it. Deliberately NOT "does any segment start with `-`" (verified,
+by both critics independently constructing additional real-world-plausible cases, to be
+over-broad: a safe path with an ordinary dash-named directory buried in the middle, e.g.
+`node_modules/-weird-pkg/index.js`, must stay allowed, and does). `vetGlob` was exported (previously
+module-private) specifically so the fix's own regression test could exercise it DIRECTLY — proven,
+by one critic's own more rigorous split-test methodology, to NOT be riding on `vetPath`'s
+coincidental masking the way the original gap's "sufficiency" argument accidentally was.
+
+**Also closed in round 2, found along the way:** a stale doc comment in `proof.ts` (`Q355`'s own
+round 7 work) still asserted, in the present tense, that `vetGlob` "deliberately skips" flag-shaped
+candidates "by design" — now corrected to state the real, current behavior and point to this
+piece's own fix. A dead-code disjunct in `dangerousArgument`'s `tree`-specific check
+(`arg.startsWith('--output')`, which can never fire against any real `tree` release's actual
+option set — confirmed against the real installed v2.2.1 binary by three separate reviewers) was
+removed, with a correctly-hedged acknowledgment (per a re-review critic) that this is an
+environment-scoped empirical check, not a universal guarantee across every `tree` version FORGE
+might ever run under.
+
+**Disclosed, not fixed, non-blocking**: (1) `vetGlob`'s doc comment does not yet explicitly warn a
+future same-package caller against importing it directly in place of `vetProposedCommand`/
+`vetStoredCommand` (its export exists only for direct testability; calling it standalone would
+silently skip every OTHER check in the real pipeline — `dangerousArgument`, the denylist, the
+shell-operator check, network vetting). (2) The `tree --output` dead-code removal's safety is
+verified against this environment's one installed version only, not formally pinned anywhere in
+CI.
+
+**Verification, final state.** Both confirmed live exploits independently reproduced pre-fix and
+confirmed closed post-fix by: the original builder, two round-1 re-review critics, two round-2
+re-review critics (one of whom redid the critical isolation proof with a methodology more rigorous
+than the builder's own test, specifically to rule out the fix's regression test accidentally
+riding on the same coincidental masking the underlying gap exploited), and finally the orchestrator
+personally, directly, against the landed `main` tip, using a fourth independently-chosen payload
+string. All verification rounds: clean typecheck, clean lint, no over-broad false refusals found
+despite deliberate, repeated, adversarial attempts by every reviewer to construct one. An isolated,
+from-scratch backstop worktree (install, typecheck, lint, schema-drift, 32 test files / 1141
+tests): clean.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P7` entry's second close-out addendum for this
+fix, dated 2026-10-27.
