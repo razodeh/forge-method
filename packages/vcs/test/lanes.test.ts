@@ -868,7 +868,7 @@ describe('listOrphanedWorktrees', () => {
 
   it('finds a forge-managed worktree whose own lane id is literally named with a leading ".." (not a real escape) -- parseLaneWorktrees\' own raw string-prefix check used to misread this as one and silently drop it', async () => {
     const cwd = await createTempRepo();
-    const target = path.join(cwd, '.forge', 'state', 'worktrees', '..weird-00000000');
+    const target = path.join(await expectedWorktreesRoot(cwd), '..weird-00000000');
     await execa('git', ['worktree', 'add', '-b', 'forge/run-1/weird-00000000', target, 'HEAD'], {
       cwd,
     });
