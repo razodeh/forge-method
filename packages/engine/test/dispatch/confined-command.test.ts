@@ -277,6 +277,39 @@ describe('vetProposedCommand: the hostile matrix is refused, each for its own re
     expect(await reasonOf('ls *.md', DIAGNOSTICIAN, big)).toBeUndefined();
   }, 60_000);
 
+  it('a glob word that is ITSELF flag-shaped is judged by what it EXPANDS to as well, not skipped: a long option glued to a glob with no "=", and a bare "-*", are real, live-confirmed bypasses this closes', async () => {
+    // Real, live-executed before this fix (not merely argued): with these exact decoys on disk,
+    // `git grep --o* PATTERN` really did shell-expand to `git grep --open-files-in-pager=sh PATTERN`
+    // and really did run `sh` as the pager on a match; `rg --h* PATTERN` really did shell-expand to
+    // `rg --hidden PATTERN` and really did print a dotfile secret it would otherwise skip. Neither
+    // `gitDangerousArgument` nor `dangerousArgument` catch the UNEXPANDED text either (the literal
+    // `*` in `--o*`/`--h*` breaks every one of their own prefix-string comparisons), and before this
+    // fix `vetGlob` itself skipped the whole-word candidate outright because it starts with `-` --
+    // nothing asked what it would really expand to, for either reason, until now.
+    const root = await lane();
+    await writeFile(path.join(root, '--open-files-in-pager=touch PWNED'), 'x\n');
+    await writeFile(path.join(root, '--hidden'), 'x\n');
+    await writeFile(path.join(root, '--output=pwned.txt'), 'x\n');
+    await writeFile(path.join(root, '-exec=touch PWNED2'), 'x\n');
+    for (const command of [
+      'git grep --o* foo', // a long option glued to a glob, no "=": --o* -> --open-files-in-pager=...
+      'rg --h* foo', // --h* -> --hidden (would surface a dotfile a reproduction should never see)
+      'tree --o* foo', // --o* -> --output=pwned.txt (a "read-only" tool made to write a file)
+      'cat -*', // bare dash-glob, no letter to decompose: -* -> -exec=...
+    ]) {
+      expect(await reasonOf(command, DIAGNOSTICIAN, root), command).toBe('expansion');
+    }
+    // A single-letter short option glued to a glob already decomposed correctly before this fix
+    // (`pathCandidates`' own short-option-value split hands `vetGlob` the bare, non-flag-shaped
+    // remainder) -- confirmed still caught, unchanged, so this fix adds coverage without duplicating
+    // or disturbing that existing mechanism.
+    expect(await reasonOf('git grep -e* foo', DIAGNOSTICIAN, root)).toBe('expansion');
+    // An ordinary flag that merely happens to end in a glob keeps working: the whole-word candidate
+    // (`--include=*.ts`) matches no real file and is silently a no-op, exactly as an unmatched glob
+    // the real shell would also pass through literally is.
+    expect(await reasonOf('rg --include=*.ts foo', DIAGNOSTICIAN, root)).toBeUndefined();
+  });
+
   it('uppercase O in a git pickaxe value is not a pager option (only `git grep` clusters are)', async () => {
     expect(await reasonOf('git log -SFooOptions')).toBeUndefined();
     expect(await reasonOf('git log -GOrder')).toBeUndefined();

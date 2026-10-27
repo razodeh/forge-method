@@ -1114,7 +1114,16 @@ describe("captureRunnerVersion -- round 7: the fifth bypass, real shell GLOB EXP
       const result = await captureRunnerVersion(command, dir, 5_000);
       expect(result.ok, command).toBe(false);
       if (!result.ok) {
-        expect(result.reason, command).toContain('ITS OWN version');
+        // Not pinned to 'ITS OWN version' here: a decoy named literally `--version` is now ALSO
+        // independently caught, and caught FIRST, by `vetProposedCommand`'s own `vetGlob` (a later
+        // piece closed the disclosed gap this round's own doc comment named -- `vetGlob` no longer
+        // skips a candidate just because it is flag-shaped, so a real match for a flag-shaped glob
+        // is refused by the SAME "a program would read this as an option" rule every other glob
+        // already was). This is the identical, already-anticipated overlap the short-flag case right
+        // below this describe block has always had (that test, unchanged, never asserted on
+        // `.reason` for exactly this reason) -- which check wins the race is an implementation
+        // detail, never a behaviour this suite should pin down; only the decoy-FREE test right below
+        // still needs, and still gets, this function's own unconditional message.
         expect(result.timedOut, command).toBeUndefined();
       }
     }
@@ -1145,7 +1154,9 @@ describe("captureRunnerVersion -- round 7: the fifth bypass, real shell GLOB EXP
       const result = await captureRunnerVersion(command, dir, 5_000);
       expect(result.ok, command).toBe(false);
       if (!result.ok) {
-        expect(result.reason, command).toContain('ITS OWN version');
+        // Same overlap as the test above: a decoy named literally `--version` is now ALSO caught,
+        // and caught FIRST, by `vetProposedCommand`'s own `vetGlob` (the flag-shaped-candidate gap a
+        // later piece closed) -- not pinned to 'ITS OWN version' for the identical reason.
         expect(result.timedOut, command).toBeUndefined();
       }
     }

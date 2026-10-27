@@ -582,6 +582,21 @@ const GLOB_ENTRY_CAP = 20_000;
  *   - a path that is, or passes through, a symlink resolving outside the lane is refused (`link/*`, `li*\/x`);
  *   - a match that names a secret file or `.git` internals is refused (`cat .env*` is `cat .env`).
  * A pattern that needs more than `GLOB_ENTRY_CAP` directory entries to decide is refused.
+ *
+ * A candidate that is ITSELF flag-shaped (`pathCandidates` yields `--o*`, `-*`, unmodified, whenever a word already
+ * starting with `-` has no `=` or short-option-value split to decompose it into a non-flag remainder) is not
+ * skipped: it is walked and matched exactly like any other glob, by the same rule above. A pattern that begins with
+ * a literal `-` can only ever match a real entry whose name also starts with `-`, so the "a match whose name starts
+ * with `-` is refused" rule above refuses it whenever it matches anything at all — a tracked file named
+ * `--open-files-in-pager=sh` turns a model-written `--o*` into the exact same `git grep` pager option a bare `*`
+ * would turn it into, and nothing before this stage would catch it: `gitDangerousArgument`/`dangerousArgument`
+ * compare against the UNEXPANDED word, where the literal `*` character breaks every prefix match (`"--o*"` is not a
+ * string-prefix of `"--open-files-in-pager"`, and does not start with `"--pre"`/`"--hidden"`/`"--no-ignore"`
+ * either) — proven live: `git grep --o* PATTERN` against a lane holding that file really does open `sh` as the
+ * pager, and `rg --h* PATTERN` against a lane holding a file named `--hidden` really does surface a `.env`'s
+ * contents. A pattern with no real match is unaffected (the shell would pass it through literally too), so an
+ * ordinary flag that merely happens to end in a glob (`rg --include=*.ts foo`) still runs: the whole-word candidate
+ * matches nothing and only the already-checked, non-flag-shaped `*.ts` split survives.
  */
 async function vetGlob(
   word: string,
@@ -589,8 +604,7 @@ async function vetGlob(
   realRoot: string,
 ): Promise<CommandRefusal | undefined> {
   for (const candidate of pathCandidates(word)) {
-    if (!/[*?[]/.test(candidate) || candidate.startsWith('-') || candidate.startsWith('/'))
-      continue;
+    if (!/[*?[]/.test(candidate) || candidate.startsWith('/')) continue;
     const segments = candidate
       .replace(/^\.\//, '')
       .split('/')
