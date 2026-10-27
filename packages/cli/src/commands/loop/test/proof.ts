@@ -438,10 +438,21 @@ const PACKAGE_MANAGER_VERSION_TRAP_FLAGS: ReadonlyMap<string, ReadonlySet<string
  * above matches trap flags as literal tokens against the UNEXPANDED text `commandWords` (now
  * `commandWordsWithGlobs`) returns -- but `runShellCommand`/`captureRunnerVersion` actually execute
  * the command through a real POSIX shell (`execa(command, { shell: ... })`), which performs REAL
- * pathname expansion (`*`, `?`, `[...]`) before npm/pnpm/yarn ever sees `argv`. `confined-command.ts`'s
- * own `vetPath`/`vetGlob` deliberately skip any glob word whose every `pathCandidates` entry starts
- * with `-` (by design -- a flag-shaped word is read as an option, not a path, so nothing downstream of
- * the syntax stage ever asks what it would expand to). Confirmed live, reproducibly: with a file
+ * pathname expansion (`*`, `?`, `[...]`) before npm/pnpm/yarn ever sees `argv`. AT THE TIME this round
+ * was written, `confined-command.ts`'s own `vetGlob` deliberately skipped any glob candidate starting
+ * with `-` outright (by design -- a flag-shaped word was assumed to be read as an option, never a
+ * path, so nothing downstream of the syntax stage ever asked what it would really expand to), so
+ * nothing in the general vet pipeline caught this either. **That assumption has SINCE been found
+ * wrong and fixed** (`confined-command.ts`'s own `vetGlob` doc comment has the complete, current
+ * reasoning, including a later widening for a match spanning more than one path segment): `vetGlob`
+ * now walks and checks a flag-shaped glob candidate exactly like any other, so the single-segment
+ * shape described in this paragraph (`--vers*` matching a real `--version` file) is now ALSO
+ * independently caught there, before this function's own check below is ever reached. (`vetPath`,
+ * unlike `vetGlob`, never evaluates a glob's real expansion at all -- it still skips a `-`-leading
+ * candidate outright in its own, unrelated path-containment loop, which was never the mechanism this
+ * paragraph is about.) None of that makes the check this function adds below redundant: see its own
+ * later note on why it stays unconditional, independent of whatever else now also happens to catch the
+ * same shape. Confirmed live, reproducibly, against the pre-fix behaviour: with a file
  * literally named `--version` sitting in the lane (a plausible accident -- an investigating agent
  * could easily have written such a file, or one could already exist), `npm test --vers*` / `npm run
  * test --vers*` / `pnpm test --vers*` / `npm test --versio[n]` each have the shell expand the glob to

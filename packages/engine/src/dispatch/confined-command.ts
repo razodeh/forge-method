@@ -458,7 +458,10 @@ function dangerousArgument(program: string, args: readonly string[]): string | u
     ) {
       return `rg ${arg} searches hidden or ignored files, where secrets live`;
     }
-    if (program === 'tree' && (/^-[A-Za-z]*o/.test(arg) || arg.startsWith('--output'))) {
+    // Only the short `-o filename` form exists on the real, installed `tree` (confirmed against v2.2.1's own
+    // `--help`); there is no `--output` long option for a long-option prefix match to ever catch, so that
+    // disjunct was dead code, not a second real flag shape.
+    if (program === 'tree' && /^-[A-Za-z]*o/.test(arg)) {
       return `tree ${arg} writes a file`;
     }
   }
@@ -577,28 +580,55 @@ const GLOB_ENTRY_CAP = 20_000;
  * the pattern. So the expansion is computed here, one path segment at a time (as the shell does: `*` matches no leading
  * dot, `/` is never matched), reading only the directories the pattern's own depth reaches, and every match is
  * checked as if it had been written out:
- *   - a match whose name starts with `-` is refused (a tracked file called `--open-files-in-pager=sh` would turn `*`
- *     into an option of `git grep`);
+ *   - a match that, AS A WHOLE STRING, starts with `-` is refused (a tracked file called `--open-files-in-pager=sh`
+ *     would turn `*` into an option of `git grep`; see below for exactly what "as a whole string" means and why);
  *   - a path that is, or passes through, a symlink resolving outside the lane is refused (`link/*`, `li*\/x`);
  *   - a match that names a secret file or `.git` internals is refused (`cat .env*` is `cat .env`).
  * A pattern that needs more than `GLOB_ENTRY_CAP` directory entries to decide is refused.
  *
  * A candidate that is ITSELF flag-shaped (`pathCandidates` yields `--o*`, `-*`, unmodified, whenever a word already
  * starting with `-` has no `=` or short-option-value split to decompose it into a non-flag remainder) is not
- * skipped: it is walked and matched exactly like any other glob, by the same rule above. A pattern that begins with
- * a literal `-` can only ever match a real entry whose name also starts with `-`, so the "a match whose name starts
- * with `-` is refused" rule above refuses it whenever it matches anything at all — a tracked file named
- * `--open-files-in-pager=sh` turns a model-written `--o*` into the exact same `git grep` pager option a bare `*`
- * would turn it into, and nothing before this stage would catch it: `gitDangerousArgument`/`dangerousArgument`
- * compare against the UNEXPANDED word, where the literal `*` character breaks every prefix match (`"--o*"` is not a
- * string-prefix of `"--open-files-in-pager"`, and does not start with `"--pre"`/`"--hidden"`/`"--no-ignore"`
- * either) — proven live: `git grep --o* PATTERN` against a lane holding that file really does open `sh` as the
- * pager, and `rg --h* PATTERN` against a lane holding a file named `--hidden` really does surface a `.env`'s
- * contents. A pattern with no real match is unaffected (the shell would pass it through literally too), so an
- * ordinary flag that merely happens to end in a glob (`rg --include=*.ts foo`) still runs: the whole-word candidate
- * matches nothing and only the already-checked, non-flag-shaped `*.ts` split survives.
+ * skipped: it is walked and matched exactly like any other glob, by the same rule above. **This function used to
+ * skip any candidate starting with `-` outright, on the assumption that a flag can never also be a real path
+ * ("flags aren't paths") — wrong, because shell expansion can turn a flag-shaped PATTERN into a real flag-shaped
+ * MATCH, exactly the hazard this function exists to catch.** `gitDangerousArgument`/`dangerousArgument` compare
+ * against the UNEXPANDED word, where a literal `*` breaks every prefix match (`"--o*"` is not a string-prefix of
+ * `"--open-files-in-pager"`, and does not start with `"--pre"`/`"--hidden"`/`"--no-ignore"` either) — proven live:
+ * `git grep --o* PATTERN` against a lane holding a tracked file literally named `--open-files-in-pager=sh` really
+ * does open `sh` as the pager, and `rg --h* PATTERN` against a lane holding a file named `--hidden` really does
+ * surface a `.env`'s contents. A pattern with no real match is unaffected (the shell would pass it through
+ * literally too), so an ordinary flag that merely happens to end in a glob (`rg --include=*.ts foo`) still runs:
+ * the whole-word candidate matches nothing and only the already-checked, non-flag-shaped `*.ts` split survives.
+ *
+ * **"As a whole string", not the final segment's own basename, and not "any segment anywhere" either.** Two
+ * independent critics reviewing the fix above each found the same residual gap: the refusal check used to read
+ * `path.posix.basename(entry).startsWith('-')` — the LAST path segment only. A multi-segment match walks one
+ * segment at a time exactly like any other glob, so the DANGEROUS segment can sit at the FRONT while an innocuous
+ * one sits at the end: a real directory literally named `--open-files-in-pager=touch X;true #`, containing a file
+ * named `evil`, matched by a model-written `--o*\/evil` — `entry` is `--open-files-in-pager=touch X;true #\/evil`,
+ * whose `basename` is merely `evil`, so the old check waved it through. The fix is not "does ANY segment start
+ * with `-`" either: that would refuse an ordinary, safe path that merely has a real `-`-named directory somewhere
+ * in its MIDDLE (`subdir/-weird-but-real-name/file.ts`), which is not flag-shaped at all once fully expanded — a
+ * shell hands a program exactly ONE argv token per match, as one string, and every argument parser (`getopt(3)`,
+ * or any language's equivalent) decides "is this a flag" by looking at the FIRST character of that whole token,
+ * never at a character or segment elsewhere in it. So the only question that matters is: does `entry`, taken as
+ * the complete string the program would receive, begin with `-`? That is exactly `entry.startsWith('-')` —
+ * equivalent, since `entry` is built segment-by-segment as `dir === '' ? name : \`${dir}/${name}\``, to "does the
+ * FIRST segment start with `-`", which is why checking the whole string and checking only the first segment give
+ * the identical answer, and why neither is the same question `path.posix.basename`'s LAST segment was asking.
+ * Both critics independently constructed the `--o*\/evil`-shaped repro above and confirmed this function, called
+ * on its own, returned `undefined` (wrongly allowed) before this widening — and that the full `vetProposedCommand`
+ * pipeline nonetheless refused it end-to-end today, but only by structural coincidence: `vetPath`'s own
+ * slash-decomposition heuristic (written for an unrelated purpose — catching a glued absolute path like `-C/etc`)
+ * adds a `/evil`-shaped candidate whenever a word starts with `-` and contains a `/`, which resolves outside the
+ * lane and gets refused there FIRST, before this function is ever reached for that word. That overlap is not a
+ * second line of defense: it is undocumented and untested, and a future cleanup of `vetPath`'s heuristic (plausible,
+ * since it was never written with this hazard in mind) would reopen this gap with nothing to notice. `vetGlob` is
+ * therefore EXPORTED here — not just used locally — so a test can call it directly and prove THIS check, alone,
+ * refuses that shape, the identical "exported so this is directly testable" reasoning `run/context.ts`'s own
+ * `isTargetRegisteredWorktree` already documents.
  */
-async function vetGlob(
+export async function vetGlob(
   word: string,
   root: string,
   realRoot: string,
@@ -651,7 +681,11 @@ async function vetGlob(
       frontier = next;
     }
     for (const entry of frontier) {
-      if (path.posix.basename(entry).startsWith('-')) {
+      // The whole string, not `path.posix.basename(entry)` (the LAST segment only): a shell hands the program
+      // exactly one argv token per match, and an argument parser decides "is this a flag" by the token's own
+      // FIRST character — equivalent, since `entry` is built as `dir === '' ? name : \`${dir}/${name}\``, to
+      // asking whether the match's FIRST segment starts with `-` (see this function's own doc comment).
+      if (entry.startsWith('-')) {
         return refuse(
           'expansion',
           `"${word}" expands to ${entry}, which a program would read as an option`,

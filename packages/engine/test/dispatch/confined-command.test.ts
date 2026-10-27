@@ -23,6 +23,7 @@ import {
   runConfinedCommand,
   scrubbedEnvironment,
   STORED_COMMAND_LIMITS,
+  vetGlob,
   vetProposedCommand,
   vetStoredCommand,
 } from '../../src/dispatch/confined-command.ts';
@@ -308,6 +309,50 @@ describe('vetProposedCommand: the hostile matrix is refused, each for its own re
     // (`--include=*.ts`) matches no real file and is silently a no-op, exactly as an unmatched glob
     // the real shell would also pass through literally is.
     expect(await reasonOf('rg --include=*.ts foo', DIAGNOSTICIAN, root)).toBeUndefined();
+  });
+
+  describe('vetGlob: a multi-segment match is judged by the WHOLE resulting token, not only its last segment', () => {
+    it("refuses a match whose FIRST segment is dash-prefixed and dangerous even though its LAST segment (the basename) is an innocuous name -- `vetGlob` called DIRECTLY, so this cannot be masked by `vetPath`'s own, unrelated mechanism", async () => {
+      // Two independent critics reviewing the single-segment fix above each constructed this exact
+      // shape: a real DIRECTORY literally named with a dangerous dash-prefixed value, containing an
+      // innocuously-named file, globbed with a pattern like `--o*/evil`. Real shell expansion turns
+      // this into the literal dangerous string followed by `/evil`, and the OLD refusal check
+      // (`path.posix.basename(entry).startsWith('-')`) looked only at the LAST segment (`evil`),
+      // missing the dangerous FIRST segment entirely: `vetGlob`, called on this input in isolation,
+      // returned `undefined` (wrongly allowed) before this fix.
+      const root = await lane();
+      const dangerousDir = '--open-files-in-pager=touch X;true #';
+      await mkdir(path.join(root, dangerousDir));
+      await writeFile(path.join(root, dangerousDir, 'evil'), 'x\n');
+
+      // Called DIRECTLY, not through `vetProposedCommand`/`reasonOf`: the full pipeline refuses this
+      // exact shape today too, but ONLY via `vetPath`'s own, unrelated slash-decomposition heuristic
+      // (it adds a `/evil`-shaped candidate for any word starting with `-` that contains a `/`, which
+      // then resolves to an absolute path outside the lane) -- a structural coincidence that happens
+      // to mask this function's own gap rather than fix it, and that disappears the moment `vetPath`'s
+      // heuristic is ever cleaned up. Calling `vetGlob` on its own, below, proves THIS check alone
+      // refuses the shape, so this assertion cannot keep passing by accident if `vetPath` changes.
+      const refusal = await vetGlob('--o*/evil', root, root);
+      expect(refusal?.reason).toBe('expansion');
+      expect(refusal?.detail).toContain(dangerousDir);
+
+      // The full pipeline's own refusal reason for the identical word is 'path-escape' (vetPath,
+      // reached first) -- confirming it is NOT 'expansion' (vetGlob) for the full pipeline today,
+      // which is exactly the incidental-masking relationship this test exists to document and bypass.
+      expect(await reasonOf('git grep --o*/evil foo', DIAGNOSTICIAN, root)).toBe('path-escape');
+    });
+
+    it('does NOT refuse an ordinary match whose name merely has a real `-`-prefixed directory somewhere in the MIDDLE, not at the front -- the fix is "does the whole resulting token start with `-`", never "does any segment anywhere"', async () => {
+      // A path like this is not flag-shaped at all once fully expanded: the resulting argv token
+      // (`subdir/-real-name/file.ts`) starts with `s`, not `-`, so no argument parser would ever
+      // misread it as an option. A check that refused "any segment starts with `-`" (over-broad, and
+      // explicitly NOT what this fix does) would wrongly refuse this ordinary, safe path.
+      const root = await lane();
+      await mkdir(path.join(root, 'subdir', '-real-name'), { recursive: true });
+      await writeFile(path.join(root, 'subdir', '-real-name', 'file.ts'), 'x\n');
+
+      expect(await vetGlob('subdir/*/file.ts', root, root)).toBeUndefined();
+    });
   });
 
   it('uppercase O in a git pickaxe value is not a pager option (only `git grep` clusters are)', async () => {
