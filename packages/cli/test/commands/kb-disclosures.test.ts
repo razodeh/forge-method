@@ -476,6 +476,104 @@ describe('appendDisclosure — real cross-process concurrency', () => {
     expect(new Set(ids).size).toBe(workerCount);
     expect((await loadDisclosures(paths, 'kb')).disclosures).toHaveLength(workerCount);
   }, 30_000);
+
+  /** The identical shape `writeConcurrencyWorker` above uses, but each worker does
+   * `appendsPerWorker` SEQUENTIAL `appendDisclosure` calls after release, not just one — the exact
+   * volume `exemptions.test.ts`'s own `writeMultiAppendConcurrencyWorker` (`e2a42d5`) found necessary
+   * to reliably reproduce `withCollectionLock`'s own disclosed "intermittent loss reappearing
+   * starting around 25-30" ceiling: 1 append per worker, even at 20-30 workers, does not reliably
+   * trigger the real bug (an indeterminate lock age folded into "assume stale, reclaim immediately"
+   * rather than "unknown, wait and retry") — each worker needs several of its OWN immediately-
+   * repeated acquire/release cycles for another process's own read to land in that gap often enough
+   * to matter. */
+  async function writeMultiAppendConcurrencyWorker(
+    workerPath: string,
+    appendsPerWorker: number,
+  ): Promise<void> {
+    const source = `
+import { existsSync } from 'node:fs';
+import { ProjectPaths } from '@forge/core/fs';
+import { appendDisclosure } from ${JSON.stringify(DISCLOSURES_MODULE_PATH)};
+
+const [, , dir, index, gatePath] = process.argv;
+const paths = new ProjectPaths(dir);
+const deadline = Date.now() + 10_000;
+while (!existsSync(gatePath)) {
+  if (Date.now() > deadline) throw new Error('gate file never appeared');
+}
+const ids = [];
+for (let i = 0; i < ${String(appendsPerWorker)}; i += 1) {
+  const id = await appendDisclosure(paths, 'kb', { now: () => new Date().toISOString() }, {
+    kind: 'known-gap',
+    summary: \`race worker-\${index}-append-\${i}\`,
+    owner: 'alice',
+    sources: [{ kind: 'human', ref: 'race' }],
+  });
+  ids.push(id);
+}
+process.stdout.write(JSON.stringify({ index, ids }));
+`;
+    await writeFile(workerPath, source, 'utf8');
+  }
+
+  // Regression for a CONFIRMED, previously-shipping data-loss bug in `withCollectionLock`
+  // (`../../src/commands/collection-lock.ts`, `e2a42d5`): the empty-lock reclaim's age check treated
+  // `ageMs === undefined` (a `stat` failure, most commonly ENOENT from the true owner releasing one
+  // lock and creating a brand-new one for its own next write fast enough to beat a concurrent `stat`)
+  // as "assume stale, reclaim immediately," stealing the lock out from under its still-live true
+  // owner mid-write. `appendDisclosure` shares this exact lock primitive via `kb-disclosures.ts`'s
+  // own `withDisclosuresLock` -> `withCollectionLock(paths, clock, 'disclosures.lock', ...)`, but
+  // until now this file's own real multi-process coverage stopped at the 20-way/1-append shape above
+  // -- the identical volume `exemptions.test.ts`'s own regression test (right next to the production
+  // fix, `e2a42d5`) found necessary to reliably trigger this exact bug class. The production fix
+  // already landed as part of `collection-lock.ts`'s own shared-module fix; this closes the
+  // coverage gap for `appendDisclosure` specifically rather than leaving it proven only by analogy to
+  // `appendExemption`'s own sibling test.
+  it('28 real, separate OS processes x 6 sequential appends each (168 total), released together, never lose or duplicate an id', async () => {
+    const paths = await freshProject();
+    await mkdir(path.join(REPO_ROOT, '.forge-test-scratch'), { recursive: true });
+    const workerDir = await mkdtemp(
+      path.join(REPO_ROOT, '.forge-test-scratch', 'disc-race-multi-'),
+    );
+    dirs.push(workerDir);
+    const workerPath = path.join(workerDir, 'worker.mts');
+    const workerCount = 28;
+    const appendsPerWorker = 6;
+    await writeMultiAppendConcurrencyWorker(workerPath, appendsPerWorker);
+    const gatePath = path.join(workerDir, 'gate');
+    const projectDir = paths.resolveWithin('.');
+
+    const launches = Array.from({ length: workerCount }, (_unused, index) =>
+      execFileAsync(
+        process.execPath,
+        [
+          TS_NODE_FLAG,
+          '--disable-warning=ExperimentalWarning',
+          workerPath,
+          projectDir,
+          String(index),
+          gatePath,
+        ],
+        { cwd: workerDir },
+      ),
+    );
+    // Every worker is now spawned and spinning on the gate file -- release them all at once.
+    await writeFile(gatePath, 'go', 'utf8');
+    const results = await Promise.all(launches);
+
+    const parsedResults = results.map(
+      ({ stdout }) => JSON.parse(stdout) as { readonly index: number; readonly ids: string[] },
+    );
+    expect(parsedResults).toHaveLength(workerCount);
+    const allIds = parsedResults.flatMap((result) => result.ids);
+    const expectedTotal = workerCount * appendsPerWorker;
+    expect(allIds).toHaveLength(expectedTotal);
+    // The real, load-bearing assertion: every one of the 168 concurrent, separate-process
+    // declarations survived with a distinct id -- not silently lost or overwritten by another
+    // process's own read-modify-write winning a lock it was never entitled to reclaim.
+    expect(new Set(allIds).size).toBe(expectedTotal);
+    expect((await loadDisclosures(paths, 'kb')).disclosures).toHaveLength(expectedTotal);
+  }, 60_000);
 });
 
 /** Unlike `writeConcurrencyWorker` above (every process appends its OWN new disclosure), every one of
