@@ -1046,6 +1046,19 @@ describe('torn trailing write recovery', () => {
  * scenario (anomaly-injected via a `fsp.readFile` spy, since nothing else can interleave a real
  * concurrent writer deterministically into this one function's own internal awaits) and proves the fix
  * closes it: the rival's event survives, and this process's own event is correctly computed AFTER it.
+ *
+ * **Round-3 critic finding, fixed here:** the second test's own injected anomaly used to return a
+ * FRESHLY re-read value -- by the time its own `fsp.readFile` spy resolved, the rival's write (a
+ * complete, newline-terminated repair-then-append) had already landed on disk, so the content
+ * `determineLastSeq` actually received was already clean. `truncateTornTrailingWrite`'s own early
+ * return (`content === '' || content.endsWith('\n')`) fired on that clean content before the function
+ * ever reached its own fenced repair branch at all -- confirmed by a mutation test: commenting out
+ * `truncateTornTrailingWrite`'s own `verifyFence()` call left this test passing 48/48, proving it gave
+ * zero real signal for that specific fence. Fixed by returning the STALE, genuinely torn content
+ * (captured before the rival's write, exactly as a real race would hand it to this process) instead of
+ * a fresh re-read -- now `determineLastSeq` genuinely reaches the fenced repair branch, `verifyFence`
+ * is genuinely exercised, and commenting out that call genuinely fails this test (see the test's own
+ * comments below for the full mutation-testing proof).
  */
 describe('appendEvent — the torn-trailing-write repair has its own write-time fence (fix 3)', () => {
   it('demonstrates the exact vulnerability class: an unfenced truncate-rewrite computed from a stale read discards content a concurrent legitimate writer committed afterward (the identical fs.open(path, "w") mechanism truncateTornTrailingWrite uses internally)', async () => {
@@ -1115,20 +1128,28 @@ describe('appendEvent — the torn-trailing-write repair has its own write-time 
     await new Promise((resolve) => child.on('exit', resolve));
 
     let injected = false;
+    let readFileCallsForLog = 0;
     const originalReadFile = fsp.readFile.bind(fsp);
     const spy = vi.spyOn(fsp, 'readFile');
     spy.mockImplementation((async (...args: unknown[]) => {
       const [target] = args as [string];
+      if (target === filePath) readFileCallsForLog += 1;
       if (!injected && target === filePath) {
         injected = true;
-        // THE INJECTED ANOMALY: a rival process's own independently-successful lock create lands
-        // exactly as this process is about to decide whether a torn-trailing-write repair is
-        // needed -- and that rival performs its own full, legitimate repair-then-append of the
-        // SAME shared file before releasing, the identical scenario the isolated repro above shows
-        // is vulnerable.
+        // THE INJECTED ANOMALY, genuinely TORN (round-3 fix -- see this describe block's own top
+        // comment for the round-2 critic finding this corrects): captured BEFORE the rival's own write
+        // below lands, so this is exactly the stale, still-dangling content a real race would hand this
+        // process's own in-flight read -- never a value re-read AFTER the rival's write has already
+        // healed it, which would let `truncateTornTrailingWrite`'s own early return
+        // (`content.endsWith('\n')`) fire before its fenced repair branch is ever reached at all.
+        const staleTornContent = await originalReadFile(filePath, 'utf8');
+
+        // A rival process's own independently-successful lock create lands exactly as this process is
+        // about to decide whether a torn-trailing-write repair is needed -- and that rival performs its
+        // own full, legitimate repair-then-append of the SAME shared file before releasing, the
+        // identical scenario the isolated repro above shows is vulnerable.
         await writeFile(lockPath, String(rivalPid));
-        const staleContent = await originalReadFile(filePath, 'utf8');
-        const staleCleanContent = staleContent.slice(0, staleContent.lastIndexOf('\n') + 1);
+        const staleCleanContent = staleTornContent.slice(0, staleTornContent.lastIndexOf('\n') + 1);
         const rivalEvent = JSON.stringify({
           v: 1,
           seq: 2,
@@ -1138,6 +1159,12 @@ describe('appendEvent — the torn-trailing-write repair has its own write-time 
           payload: {},
         });
         await writeFile(filePath, `${staleCleanContent}${rivalEvent}\n`);
+
+        // Return the STALE, STILL-TORN content captured above -- not a fresh re-read of the file this
+        // call's own side effects just rewrote -- so `determineLastSeq` genuinely proceeds into
+        // `truncateTornTrailingWrite`'s own fenced repair branch using exactly the stale, pre-rival
+        // data a real race would hand it, instead of silently early-returning on already-clean content.
+        return staleTornContent;
       }
       return (originalReadFile as (...a: unknown[]) => unknown)(...args);
     }) as typeof fsp.readFile);
@@ -1149,9 +1176,19 @@ describe('appendEvent — the torn-trailing-write repair has its own write-time 
       spy.mockRestore();
     }
 
+    // Proof a genuine retry happened (the fence was actually lost, detected, and forced a full
+    // re-acquire-and-redetermine) rather than the repair silently never running at all: this process's
+    // own `determineLastSeq` read the real event log file exactly twice -- once with the injected,
+    // genuinely torn anomaly, once again fresh after `withEventLogLock` re-entered its loop.
+    expect(readFileCallsForLog).toBe(2);
+
     // THE FIX, DIRECTLY DEMONSTRATED: the rival's own event survives, and this process's own event is
     // correctly computed AFTER it (seq 3, never the stale seq 2 this process would have assigned had
-    // it trusted the read it took before the rival's event landed).
+    // it trusted the read it took before the rival's event landed, and never a seq 2 that collides
+    // with -- and, absent the fence, destructively overwrites on disk -- the rival's own
+    // already-committed seq 2 event: `truncateTornTrailingWrite`'s own repair write, unfenced, would
+    // `fsp.open(filePath, 'w')` the file back down to just the stale `completeLine`, permanently
+    // discarding the rival's event with no later retry able to recover it from disk).
     expect(appended.seq).toBe(3);
     const events = await collectEvents(projectRoot, runId);
     expect(events.map((event) => ({ seq: event.seq, type: event.type }))).toEqual([
