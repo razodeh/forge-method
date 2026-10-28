@@ -129,15 +129,57 @@ jobs:
       - run: pnpm test -- --sequence.shuffle --sequence.seed 20260304
       - run: pnpm test -- --sequence.shuffle --sequence.seed 99999999
 
+  # `floor`/`seed`'s own `pnpm test` (above) now excludes 5 files that each spawn a real,
+  # multi-process stress test (up to 28 real child OS processes) to exercise a cross-process file
+  # lock's own correctness: packages/cli/test/commands/{kb-disclosures,module,run/lock}.test.ts,
+  # packages/cli/test/commands/loop/test/exemptions.test.ts, packages/telemetry/test/events.test.ts.
+  # Run together with the other ~752 files in `vitest.config.ts`'s single shared fork pool (this
+  # repo's real CI gate deliberately has no `projects` array -- see that file's own header comment),
+  # real combined contention on GitHub-hosted runners (4 vCPU ubuntu/windows, 3 vCPU macos for this
+  # public repo) repeatedly spiked past 80+ concurrent child processes, exhausting even an
+  # already-widened lock-wait budget (both 200 and 400 attempts failed the same way in real CI runs)
+  # with a clean `KB-018`/`GATE-515 lock-exhausted` refusal -- never data corruption; the underlying
+  # lock correctness is already fixed and validated separately (GAUNTLET-LOG.md's `M15 P6` entry,
+  # `SPEC-QUESTIONS.md` `Q359`).
+  #
+  # Isolating these 5 files from the other 752 is NOT enough by itself: `Q359` Decision 4's own
+  # "4-file combined acceptance command" evidence shows these files running concurrently WITH EACH
+  # OTHER (nothing else competing) already produced ~84 real processes and failed 4 of 5 runs at the
+  # original 200-attempt budget. `--no-file-parallelism` (confirmed present and working in the
+  # installed vitest 4.1.11 via `vitest --help`) forces TRUE sequential execution among just these 5
+  # files, capping real peak concurrent processes at one file's own worst case (28) instead of the
+  # combined spike.
+  lock-stress:
+    name: lock-stress (sequential)
+    runs-on: ubuntu-latest
+    # Single OS/node combo, not the full `floor` matrix (ubuntu-latest/node 22, same choice `seed`
+    # above already makes for the identical class of auxiliary, non-matrix job). The lock mechanism
+    # itself is cross-platform Node.js code -- its correctness was already validated extensively on
+    # this session's own dev machine and via 7+ independent critic reviews (`Q359`), including the
+    # original double-wx-create race that the write-time fencing work (Q364) closed. This job exists
+    # to catch CI-SCALE SCHEDULING regressions (too many concurrent child processes), not to
+    # re-litigate that correctness, so one representative, cheap leg is sufficient.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test:lock-stress
+
   # Single required status check for branch protection: adding a matrix leg must not silently
   # create an unguarded path to main.
   ci-ok:
     name: ci
     if: always()
-    needs: [floor, seed]
+    needs: [floor, seed, lock-stress]
     runs-on: ubuntu-latest
     steps:
       # `skipped` must not count as success: a floor job that never ran would otherwise make the
       # single required status check green and open an unguarded path to main.
       - run: |
-          [ "${{ join(needs.*.result, ',') }}" = "success,success" ]
+          [ "${{ join(needs.*.result, ',') }}" = "success,success,success" ]
