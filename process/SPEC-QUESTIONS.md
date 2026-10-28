@@ -31667,3 +31667,182 @@ correct fix (a dedicated raw-content read inside that one check, not a change to
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M15 P6` entry's lock-reliability close-out addendum for
 this fix, dated 2026-10-27/28.
+
+## Q360 — CONFIRMED real production reliability bug: `git rebase --continue` needs an editor that a
+headless environment never has (owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** `@forge/vcs`'s `merge-queue.ts` `runRebaseStep` called `execa('git', ['rebase',
+...args])` with no env override. When a conflict-resolution `git rebase --continue` finalises a commit
+(as opposed to replaying a clean patch), git internally runs `git commit`, which opens an editor — and
+refuses outright with no usable one configured (`EDITOR`/`VISUAL`/`GIT_EDITOR` all unset, `TERM=dumb`),
+surfacing as a generic `VCS-GIT-OPERATION-FAILED`. This is GitHub Actions' real default environment,
+and any other headless/unattended deployment (a server, a cron job, a minimal container) — not a
+CI-only or test-only issue. It was masked in every prior local/dev run this milestone only because a
+dev shell typically has an editor set ambiently; this is the 3rd confirmed instance this milestone of
+that exact dev-shell-vs-headless verification gap (see this repo's own build-status memory for the
+other two).
+
+**Fixed.** `env: { GIT_EDITOR: 'true' }` on the rebase `execa` call (the real `true` binary — exits 0
+immediately, accepting git's own already-correct staged commit message unedited; there is never a
+real need for a human to edit it here). Matches `context.ts`'s own `runGitOrThrow` precedent of
+pinning `LC_ALL`/`LANG` for the identical "make git deterministic regardless of ambient environment"
+reason; relies on `execa`'s `extendEnv` default (true) to merge over `process.env`, not replace it.
+Verified safe even for a hypothetical future `reword`/`--interactive` call path: git always
+pre-populates the commit message file, so `true` just leaves it unchanged — worst case a silently
+skipped edit, never corruption. Reproduced the exact failure by hand (`env -u EDITOR -u VISUAL -u
+GIT_EDITOR TERM=dumb git rebase --continue` after a real conflict resolution), confirmed the fix
+closes it, and confirmed a reverted fix fails only the new regression test (which forces the same
+hostile env for its own duration) while all 33 pre-existing tests in the file still pass under the
+ambient dev shell's own editor.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's merge-queue addendum, dated
+2026-10-27.
+
+## Q361 — `ensureIntegrationWorktree`'s worktree-collision TOCTOU case was the one remaining spot still
+matching git's own drifting stderr wording (owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** `context.test.ts` asserted `ensureIntegrationWorktree`'s `RUN-055` message
+`.toContain('already checked out')` for the "integration branch already checked out in a different
+worktree" TOCTOU case — git's own raw stderr for this failure, not stable across versions: git 2.39.5
+(Apple Git) says `"'<branch>' is already checked out at '<path>'"`; a newer git (what GitHub's CI
+runners currently ship) says `"'<branch>' is already used by worktree at '<path>'"` — the identical
+collision, reworded. The error classification (`RUN-055`) was always correct in both cases; only the
+test's own wording assertion was version-fragile. `recoverFromWorktreeAddFailure` already tells apart
+its OTHER two git worktree-add TOCTOU races (a concurrent winner's real worktree; a crashed process's
+stale registration) via real structural checks (`isTargetRegisteredWorktree`, built on `git worktree
+list --porcelain`) — deliberately never by matching git's raw wording, per that function's own
+existing doc comment (a prior critic round already caught and fixed a wording-match bug there once).
+This was the one remaining case still doing what that function's own doc comment says it doesn't do.
+
+**Fixed.** Added a third case to the same structural pattern: when `target` itself isn't registered
+(cases 1/2 don't apply), a fresh `git worktree list --porcelain` read is searched for a different
+registered worktree whose own branch matches `integrationBranch` (`findOtherWorktreeOnBranch`, reusing
+`parseWorktreeBlocks`). When found, throws the same `RUN-055` code as before (classification
+unchanged) with a friendly, version-independent `detail` this function composes itself, never
+forwarding git's own raw stderr. Inherently version-independent for both known git wordings since the
+new logic never inspects git's stderr text for this case at all, only the stable `--porcelain` listing
+format (verified against both verbatim strings; only git 2.39.5 was available to run locally). Also
+corrected a stale doc comment on `runGitOrThrow` that described this file as matching plain-English
+substrings against git's error text, no longer true of any of the three TOCTOU cases.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's context.ts addendum, dated
+2026-10-27.
+
+## Q362 — M17 P14: a 5-round saga closing out the Q317 Decision 8 library-redaction landing's own CI
+regressions — real findings every round, including a fix that looked right twice and wasn't
+(owner-directed scope expansion, 2026-10-25/27)
+
+**Context.** The real `next` CI push this milestone caught 8 failures traceable to this session's own
+earlier `c275a7c`/`d488345`/`072c2ec` (Q317 Decision 8, library-surface path-redaction) landing on
+`main` without the full CI matrix ever having run against it. This entry closes all 8.
+
+**Round 1 (`ad530d0`).** Two real regressions from that landing: (1) 4 `describe` titles used a
+non-conforming parenthetical form (`(specs/22 M17 P14 follow-up[, Q317 Decision 8])`) that
+`test/spec-cli-examples.test.ts`'s M17 naming-rule test requires to be the exact bare `(specs/22 M17
+P<n>)` with nothing else inside — moved the extra context outside the parenthetical. (2) 2 real
+worker-thread fixtures `d488345` added were never registered in `workspace-floor.test.ts`'s
+`IGNORED_PATHS`, following the exact precedent already set for their non-library sibling fixtures.
+Verified by reverting against pristine `main` and confirming exactly these 2 failures (of 8 total)
+dropped out.
+
+**Round 2 (`2fbe133`) — a critic found a REAL 5th non-conforming title round 1 missed entirely**, in
+`normalize.test.ts`'s "redact-json-pointers" describe call — hidden by a genuine blind spot in the
+naming-rule test's own title-extractor regex, which only ever captures the FIRST quoted string literal
+after `describe(`; this title concatenates two literals with `+`, and the required marker lived
+entirely in the second, invisible segment. Confirmed directly (not just inferred) by running the exact
+extractor regex against the real file content in a standalone script. Fixed the 5th title the same way
+as round 1's four, and reformatted all 5 to this repo's dominant convention (a second bare
+parenthetical, `(specs/22 M17 P14) (Q317 Decision 8 follow-up)`, found in 46 existing occurrences
+elsewhere) rather than the one-off `--` separator round 1 had introduced with no precedent anywhere
+else in the repo.
+
+**Round 3 (`98a7472`) — round 2's own fix was verified by inspection, not by direct execution, and
+that gap let a fix that only LOOKED complete ship not actually fixing anything observable.** Round 2
+only reworded the text INSIDE the still-invisible second segment of the same `+`-concatenated describe
+title; the break point between the two literals never moved, so the naming-rule marker was still
+entirely in the extractor's blind spot, same as before round 2. A critic caught this by running the
+extractor's exact regex, copied verbatim from the real test file, against the real post-round-2 file
+content — confirming the extracted title still excluded "M17" entirely. Fixed for real this time by
+restructuring the concatenation break point so the marker falls in the extractor-visible FIRST
+segment, re-verified the same direct-execution way.
+
+**The standalone, parallel finding (`7bdaaef`):** 5 "pinned sentence" assertions in
+`spec-cli-examples.test.ts`, asserting exact spec prose text/sentence-count against
+`072c2ec`'s own Normalisation-bullet text changes (adding `redact-json-pointers` and a new
+ordering-exception sentence), were never updated when that prose changed — found during the same CI
+investigation, fixed separately since it's a content-assertion bug, not a naming-rule bug. Each needle
+was updated against the real, current `splitSentences()` output, not hand-transcribed.
+
+**Round 4/closing (`8269044`) — generalized past the one instance to close the extractor's blind spot
+STRUCTURALLY, not just for the one title that happened to get caught.** The same concatenated-title
+blind spot that took 2 full rounds to close for `normalize.test.ts` was independently confirmed to
+ALSO make two titles in `parity-gate.test.ts` invisible to the M16 naming-rule check — both happened to
+already be correctly formed, so not a live failure, but the check could not actually verify that, and
+a future edit to either could have silently broken them with zero CI signal, the same way it almost
+did here. Hardened `describeTitlesIn()` (both the M16 and M17 near-duplicate copies) to reconstruct the
+FULL `+`-concatenated title — folding in every subsequent plain-literal segment, stopping at the first
+non-literal join — while correctly preserving old first-segment-only behavior for a literal joined to
+a real expression (a variable, a template interpolation, a function call), which stays out of scope
+for this static scan, per the file's own existing doc comment. Verified against 12 hand-built cases
+plus the real `parity-gate.test.ts`/`normalize.test.ts` content, before and after.
+
+**Decision — this exact "a fix that reads right but doesn't actually close the gap it claims to"
+pattern, recurring across rounds 2→3 of the SAME piece of work, is recorded here as a standing lesson,
+not just a closed bug.** A critic reviewing round 3 explicitly recommended a permanent record of this
+saga precisely because verifying a regex/extractor fix by inspection (does the new text read
+correctly?) is not the same as verifying it by execution (does the checker's own logic actually see
+the new text at all?) — the gap between those two is exactly where round 2 failed silently. Recorded
+here, cross-referenced from `GAUNTLET-LOG.md`'s own closing addendum, as the generalizable takeaway:
+for a STATIC-ANALYSIS-SHAPED fix (a regex, an extractor, a parser), "the output now reads correctly"
+and "the checker's own logic now reaches this code path at all" are two separate claims, and only
+direct execution against the checker's own real logic proves the second one.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P14` entry's CI-regression closing addendum, dated
+2026-10-25/27.
+
+## Q363 — CONFIRMED real test-collection blind spot: a statically-`.skip`'d test's whole FILE is
+invisible to `vitest list --json`, closed in 2 independently-discovered instances (owner-directed
+scope expansion, 2026-10-27)
+
+**What this closes.** `test/workspace-floor.test.ts`'s "no test file can escape collection" check shells
+out to `vitest list --json` (via `scripts/run-tests.mjs list --json`) and asserts the returned set
+equals every real `.test.ts` file on disk — a green run on this check is this repo's own guarantee that
+no test file can silently vanish from CI without anyone noticing. Confirmed via vitest 4.1.11's own
+installed source (`formatCollectedAsJSON`, `dist/chunks/cli-api.*.js`): a test whose `task.mode` is
+STATICALLY `"skip"` — set the instant a bare `it.skip(...)` or an `it.skipIf(cond)(...)` with `cond`
+true is evaluated, at module-collection time, before anything runs — reports `state: "skipped"` and is
+unconditionally excluded from `list --json`'s own output. A test that instead calls `ctx.skip()` at
+RUNTIME, inside an always-registered `it(name, (ctx) => {...})` body, stays visible to `list --json`
+(its `task.mode` is still `"run"` at list-time, since list never executes a body) and only reports
+skipped after a real run attempt. If a FILE's only test uses the static form, the whole file vanishes
+from `list --json`'s output — invisible to this exact safety check.
+
+**Instance 1 (`7bd72fe`, originally `91e156e`).**
+`packages/adapter-claude-code/test/sdk/file-access-gate.live.test.ts`'s no-credential fallback used a
+bare `it.skip(name, fn)`, unlike its two sibling conformance files
+(`sdk.conformance.test.ts`/`cli.conformance.test.ts`), which already use the correct runtime-skip
+pattern for the identical `FORGE_LIVE`-gating need. Fixed by matching that established sibling pattern.
+Verified: `vitest list --json` now returns a real entry for this file (was `[]`); a real run still
+reports "1 skipped," zero live calls attempted.
+
+**Instance 2 (`d5d1fa6`, originally `db704ab`) — found by a re-review critic generalizing past the
+first fix, not by a separate investigation.** `packages/engine/test/security/s12-orphan-free-crash.
+test.ts` has exactly ONE test, gated `it.skipIf(process.platform === 'win32')` — and `skipIf(true)`
+resolves to the identical static `.skip` mechanism as instance 1. On the `windows-latest` leg of
+`.github/workflows/ci.yml`'s `floor` job matrix, this file's sole test would statically skip and the
+whole file would vanish from `list --json` on that leg specifically — unnoticed until now because this
+repo's own dev/review environment is never actually Windows. Restructured to the same always-registered
+`it(name, async (ctx) => { if (win32) ctx.skip(); ...unchanged real body... })` pattern. A repo-wide
+grep for `it.skipIf`/`it.runIf`/`describe.skipIf`/`describe.runIf` confirmed, independently, by two
+separate re-review critics, that every one of the other 14 files using this family of conditional-skip
+modifiers has at least 2 other unconditionally-registered tests in the same file — so none of them
+shares this exact one-test vulnerability; this file was genuinely the only other instance of the bug
+class, not merely the only one found so far.
+
+**Decision — the fix pattern (runtime `ctx.skip()` inside an always-registered test, never a static
+`.skip`/`skipIf` as a file's ONLY test) is now established in this codebase via 4 real instances (2
+pre-existing conformance files, 2 fixed here); a future file with this exact shape should follow it
+rather than reintroduce the blind spot.**
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's workspace-floor addendum, dated
+2026-10-27.

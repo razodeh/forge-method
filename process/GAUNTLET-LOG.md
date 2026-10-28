@@ -25130,3 +25130,55 @@ test.ts` flake, re-confirmed clean in isolation.
 
 ---
 
+## M17 Phase A — `git rebase --continue` needs an editor a headless environment never has (Q360, owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** `merge-queue.ts`'s `runRebaseStep` ran `git rebase`/`--continue` with no env override. A conflict-resolution `--continue` that finalises a commit internally runs `git commit`, which opens an editor and refuses outright with none configured — GitHub Actions' real default environment, and any headless deployment, not CI-only. Masked locally this whole milestone because a dev shell has an editor set ambiently; the 3rd confirmed instance of that exact dev-shell-vs-headless gap this milestone.
+
+**Fixed, single round.** `env: { GIT_EDITOR: 'true' }` on the rebase call, matching `context.ts`'s own `LC_ALL`/`LANG`-pinning precedent for the identical "deterministic regardless of ambient environment" reason. Reproduced the failure by hand under a forced hostile env, confirmed the fix closes it, and confirmed a reverted fix fails only the new regression test (which forces the same hostile env itself) while the other 33 tests in the file pass under the ambient dev shell.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q360` (new).
+
+---
+
+## M17 Phase A — `ensureIntegrationWorktree`'s one remaining git-wording-matching case (Q361, owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** A test asserted `ensureIntegrationWorktree`'s worktree-collision `RUN-055` message against git's own raw stderr substring (`'already checked out'`), which a newer git (what GitHub's CI runners ship) reworded to `'already used by worktree'` — the identical collision, different wording. `recoverFromWorktreeAddFailure` already handles its other two TOCTOU races structurally (`git worktree list --porcelain`, never wording-matching) per that function's own doc comment; this was the one case still doing what the comment says it doesn't.
+
+**Fixed, single round.** Added a third structural case (`findOtherWorktreeOnBranch`, reusing the existing `parseWorktreeBlocks`) that never inspects git's stderr text at all, so it's correct under both known wordings without special-casing either. Corrected a stale doc comment that still described this file as wording-matching. Verified: the updated test (67/67 passed), typecheck, lint all clean.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q361` (new).
+
+---
+
+## M17 P14 — Q317 Decision 8's own CI regressions, 5 rounds, including a fix that looked right twice and wasn't (Q362, owner-directed scope expansion, 2026-10-25/27)
+
+**What this closes.** The real `next` CI push caught 8 failures traceable to this session's own earlier library-redaction landing (`c275a7c`/`d488345`/`072c2ec`) never having run against the full matrix before merging to `main`.
+
+**Round 1** fixed 2 real regressions: 4 non-conforming `describe` titles (wrong parenthetical form) and 2 unregistered worker-thread test fixtures missing from `workspace-floor.test.ts`'s `IGNORED_PATHS`. Verified by reverting against pristine `main` and confirming exactly these 2 (of 8) dropped out.
+
+**Round 2 — a critic found a REAL 5th non-conforming title round 1 missed entirely**, hidden by the naming-rule test's own title-extractor regex only ever capturing the FIRST quoted literal of a `+`-concatenated `describe()` call; the required marker lived entirely in the invisible second segment. Confirmed by running the exact extractor regex against the real file content directly. Fixed the 5th title and reformatted all 5 to this repo's dominant convention, replacing a one-off separator style with zero precedent elsewhere.
+
+**Round 3 — round 2's own fix was verified by inspection, not execution, and shipped not actually fixing anything observable.** It only reworded text INSIDE the still-invisible second segment; the concatenation break point never moved, so the marker stayed in the extractor's blind spot exactly as before. A critic caught this by running the extractor's own exact regex against the real post-round-2 content. Fixed for real by moving the break point so the marker falls in the extractor-visible first segment — re-verified the same direct-execution way this time.
+
+**The parallel, standalone finding:** 5 "pinned sentence" assertions elsewhere in the same test file, asserting exact spec prose against the same original landing's own text changes, were simply stale — fixed separately as a content bug, not a naming-rule bug, against the real current `splitSentences()` output.
+
+**Round 4/closing** generalized past the one instance: the same blind spot was independently confirmed to also make two ALREADY-correct titles in a different file invisible to the M16 check — not a live failure, but unverifiable, so a future edit could have silently broken them with zero CI signal. Hardened the extractor itself (both M16/M17 copies) to reconstruct the full `+`-concatenated title, verified against 12 hand-built cases plus the real content this saga found.
+
+**Net result, and the standing lesson recorded here**: a critic reviewing round 3 explicitly asked for this pattern to be written down permanently, not just closed as a bug — for a static-analysis-shaped fix (a regex, an extractor, a parser), "the output now reads correctly" and "the checker's own logic now reaches this code path at all" are two separate claims. Round 2 satisfied only the first and believed it had satisfied both; only direct execution against the checker's own real logic (what round 3 and round 4 both did, and round 2 didn't) proves the second.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q362` (new).
+
+---
+
+## M17 Phase A — a statically-skipped test's whole FILE is invisible to `vitest list --json`, 2 instances (Q363, owner-directed scope expansion, 2026-10-27)
+
+**What this closes.** `workspace-floor.test.ts`'s "no test file can escape collection" check relies on `vitest list --json` returning every real test file. Confirmed directly from vitest's own installed source: a test whose skip-state is set STATICALLY (collection time — a bare `it.skip(...)`, or `it.skipIf(cond)(...)` with `cond` true) is unconditionally excluded from that output, even though the file and test both genuinely exist; a RUNTIME `ctx.skip()` inside an always-registered test stays visible. If a file's only test uses the static form, the whole file vanishes from this exact safety check.
+
+**Instance 1**: `file-access-gate.live.test.ts`'s no-credential fallback used a bare `it.skip(...)`, unlike its two sibling conformance files, which already use the correct runtime-skip pattern for the same gating need. Fixed to match. Verified: `list --json` now returns a real entry (was `[]`); a real run still reports "1 skipped," zero live calls.
+
+**Instance 2 — found by a re-review critic generalizing past the first fix.** `s12-orphan-free-crash.test.ts` has exactly one test, gated `it.skipIf(win32)` — same static mechanism. On the `windows-latest` CI leg this file's sole test statically skips and the whole file vanishes from `list --json` on that leg, unnoticed because review here is never actually Windows. Restructured to the same always-registered-plus-runtime-skip pattern. Two independent critics each repo-wide-grepped every other file using this family of conditional-skip modifiers and confirmed every one has ≥2 other unconditional tests in the same file — this really was the only other instance of the bug class.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q363` (new).
+
+---
+
