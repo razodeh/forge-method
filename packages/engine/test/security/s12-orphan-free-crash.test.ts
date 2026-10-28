@@ -22,9 +22,19 @@
  *    every real descendant, independent of whatever git-visible leftovers it did or didn't produce.
  *    POSIX-only (`ps`'s own `-o pid=,pgid=` field selection has no Windows equivalent, and negative-pid
  *    process-group signaling is itself a POSIX-only concept `spawnAndKillAfter`'s own doc comment
- *    already relies on) — skipped on `win32`, the same `it.skipIf(process.platform === 'win32')`
- *    pattern `packages/vcs/test/git.test.ts`/`packages/telemetry/test/events.test.ts` already establish
- *    for the identical class of POSIX-only mechanism.
+ *    already relies on) — skipped on `win32` at RUNTIME, via `ctx.skip()` inside an always-registered
+ *    `it(...)`, NOT the static `it.skipIf(process.platform === 'win32')(...)` modifier
+ *    `packages/vcs/test/git.test.ts`/`packages/telemetry/test/events.test.ts` safely use for the
+ *    identical class of POSIX-only mechanism elsewhere: those two files each have dozens of OTHER
+ *    unconditionally-registered tests alongside their one `skipIf`'d test, so a statically-`.skip`'d
+ *    task there still leaves the file itself visible to `vitest list --json`. This file's `skipIf`'d
+ *    test used to be its ONLY test, so on `windows-latest` CI (`process.platform === 'win32'` true)
+ *    the entire file statically resolved to `.skip` and vanished whole from `vitest list --json`'s
+ *    output — `vitest@4.1.11`'s own `formatCollectedAsJSON` drops any test whose skip state is known
+ *    STATICALLY at collection time, the identical root cause already fixed for
+ *    `packages/adapter-claude-code/test/sdk/file-access-gate.live.test.ts`
+ *    (`7bd72fe`/originally `91e156e`), just gated on OS here instead of on credential absence. Fixed
+ *    the same way: register unconditionally, skip at runtime.
  * 3. E3's own 20 points are *randomised* across the whole run — reproducibly hitting the one real,
  *    narrow race window that actually produces a leftover (`git worktree add`'s own short window, per
  *    Q149) is left to chance. This test instead kills at a deterministic, *empirically confirmed* set
@@ -143,79 +153,90 @@ const KILL_POINTS = [8, 9, 10, 11, 12] as const;
 describe('S12 — orphan-free crash recovery (adversarial)', () => {
   // POSIX-only: `ps`'s own `-o pid=,pgid=` field selection and negative-pid process-group signaling
   // (`spawnAndKillAfter`'s own doc comment) have no Windows equivalent -- see this file's own top doc
-  // comment, gap 2, and `packages/vcs/test/git.test.ts`/`packages/telemetry/test/events.test.ts` for the
-  // identical, already-established `skipIf` pattern for this exact class of mechanism.
-  it.skipIf(process.platform === 'win32')(
-    "a real supervisor-level group-kill, at every empirically-confirmed point across implement's own worktree-creation race window, leaves zero orphaned processes, worktrees, branches, or directories, and never blocks the subsequent resume",
-    async () => {
-      const controlProjectRoot = await createTempRepo('control');
-      const controlRunId = 'run-control';
-      const controlRunState = await runEngine(
-        FIXTURE_WORKFLOW_SOURCE,
-        fixtureExpressionContext(),
-        fixtureRunEngineContext(controlProjectRoot, controlRunId, SEED),
-      );
-      const controlContent = await Promise.all(
-        FIXTURE_ITEM_IDS.map((itemId) =>
-          readFile(path.join(controlProjectRoot, `${itemId}.txt`), 'utf8'),
-        ),
-      );
-      const totalEvents = await countTotalEvents(controlProjectRoot, controlRunId);
-      expect(totalEvents).toBeGreaterThan(Math.max(...KILL_POINTS));
+  // comment, gap 2. This is the file's only test, so it must stay registered unconditionally and skip
+  // itself at RUNTIME (`ctx.skip()`) instead of using the static `it.skipIf(...)` modifier
+  // `packages/vcs/test/git.test.ts`/`packages/telemetry/test/events.test.ts` safely use for this same
+  // class of POSIX-only mechanism -- `vitest list --json` drops any test whose skip state is known
+  // STATICALLY at collection time, and on `windows-latest` CI that made this file's one and only test,
+  // and therefore the whole file, invisible to collection (the identical defect already fixed for
+  // `packages/adapter-claude-code/test/sdk/file-access-gate.live.test.ts`, `7bd72fe`/`91e156e`, just
+  // gated on OS here instead of on credential absence; see that file's own doc comment for the
+  // `formatCollectedAsJSON` root-cause detail).
+  it("a real supervisor-level group-kill, at every empirically-confirmed point across implement's own worktree-creation race window, leaves zero orphaned processes, worktrees, branches, or directories, and never blocks the subsequent resume", async (ctx) => {
+    if (process.platform === 'win32') {
+      // `ctx.skip()` is typed `(note?: string) => never` and throws a `PendingError` -- confirmed
+      // directly against `@vitest/runner`'s own `createTestContext` (`context.skip = (condition,
+      // note) => { ...; throw new PendingError(...); }`) -- so nothing below this line ever runs on
+      // win32, and no `return` is needed (none follows).
+      ctx.skip();
+    }
 
-      let raceWindowHitCount = 0;
+    const controlProjectRoot = await createTempRepo('control');
+    const controlRunId = 'run-control';
+    const controlRunState = await runEngine(
+      FIXTURE_WORKFLOW_SOURCE,
+      fixtureExpressionContext(),
+      fixtureRunEngineContext(controlProjectRoot, controlRunId, SEED),
+    );
+    const controlContent = await Promise.all(
+      FIXTURE_ITEM_IDS.map((itemId) =>
+        readFile(path.join(controlProjectRoot, `${itemId}.txt`), 'utf8'),
+      ),
+    );
+    const totalEvents = await countTotalEvents(controlProjectRoot, controlRunId);
+    expect(totalEvents).toBeGreaterThan(Math.max(...KILL_POINTS));
 
-      for (const [index, killAfterEventCount] of KILL_POINTS.entries()) {
-        const projectRoot = await createTempRepo(`iter-${String(index)}`);
-        const runId = `run-iter-${String(index)}`;
+    let raceWindowHitCount = 0;
 
-        const pid = await spawnAndKillAfter(projectRoot, runId, killAfterEventCount, SEED);
-        await waitForProcessGone(pid);
-        // `detached: true`'s own contract: the fixture child is the leader of its own process group, so
-        // its own pgid equals its own pid.
-        await waitForGroupGone(pid);
+    for (const [index, killAfterEventCount] of KILL_POINTS.entries()) {
+      const projectRoot = await createTempRepo(`iter-${String(index)}`);
+      const runId = `run-iter-${String(index)}`;
 
-        // Gap 2: the direct, adversarial proof — genuinely zero live processes anywhere on the host
-        // still carry this run's own process-group id, not merely "the one pid we happened to spawn is
-        // gone."
-        const groupsAfterKill = await listProcessGroups();
-        expect([...groupsAfterKill.values()].includes(pid)).toBe(false);
+      const pid = await spawnAndKillAfter(projectRoot, runId, killAfterEventCount, SEED);
+      await waitForProcessGone(pid);
+      // `detached: true`'s own contract: the fixture child is the leader of its own process group, so
+      // its own pgid equals its own pid.
+      await waitForGroupGone(pid);
 
-        // The empirical proof for gap 3: did this kill point actually land while a real git-visible
-        // leftover existed, *before* resume ever touches it? Checked before reclaiming anything, so a
-        // false "always zero" from killing too early/too late is caught rather than silently assumed
-        // away.
-        const preResumeLeftovers = [
-          ...(await listOrphanedWorktrees(projectRoot)),
-          ...(await listOrphanedLaneBranches(projectRoot, runId)),
-          ...(await listOrphanedWorktreeDirectories(projectRoot, runId)),
-        ];
-        if (preResumeLeftovers.length > 0) raceWindowHitCount += 1;
+      // Gap 2: the direct, adversarial proof — genuinely zero live processes anywhere on the host
+      // still carry this run's own process-group id, not merely "the one pid we happened to spawn is
+      // gone."
+      const groupsAfterKill = await listProcessGroups();
+      expect([...groupsAfterKill.values()].includes(pid)).toBe(false);
 
-        // The actual "blocked" failure mode: a real leftover surfaces here as a thrown git refusal, not
-        // a hang — see this file's own top doc comment.
-        const finalRunState = await resumeToCompletion(projectRoot, runId);
+      // The empirical proof for gap 3: did this kill point actually land while a real git-visible
+      // leftover existed, *before* resume ever touches it? Checked before reclaiming anything, so a
+      // false "always zero" from killing too early/too late is caught rather than silently assumed
+      // away.
+      const preResumeLeftovers = [
+        ...(await listOrphanedWorktrees(projectRoot)),
+        ...(await listOrphanedLaneBranches(projectRoot, runId)),
+        ...(await listOrphanedWorktreeDirectories(projectRoot, runId)),
+      ];
+      if (preResumeLeftovers.length > 0) raceWindowHitCount += 1;
 
-        expect(finalRunState.runStatus).toBe(controlRunState.runStatus);
-        expect(finalRunState.unresolvedStepIds).toEqual([]);
-        for (const [itemIndex, itemId] of FIXTURE_ITEM_IDS.entries()) {
-          await expect(readFile(path.join(projectRoot, `${itemId}.txt`), 'utf8')).resolves.toBe(
-            controlContent[itemIndex],
-          );
-        }
+      // The actual "blocked" failure mode: a real leftover surfaces here as a thrown git refusal, not
+      // a hang — see this file's own top doc comment.
+      const finalRunState = await resumeToCompletion(projectRoot, runId);
 
-        // Gap 1: all three of Q149's own real leftover shapes, not merely the one E3 already checks.
-        expect(await listOrphanedWorktrees(projectRoot)).toEqual([]);
-        expect(await listOrphanedLaneBranches(projectRoot, runId)).toEqual([]);
-        expect(await listOrphanedWorktreeDirectories(projectRoot, runId)).toEqual([]);
+      expect(finalRunState.runStatus).toBe(controlRunState.runStatus);
+      expect(finalRunState.unresolvedStepIds).toEqual([]);
+      for (const [itemIndex, itemId] of FIXTURE_ITEM_IDS.entries()) {
+        await expect(readFile(path.join(projectRoot, `${itemId}.txt`), 'utf8')).resolves.toBe(
+          controlContent[itemIndex],
+        );
       }
 
-      // The test that would catch gap 3 regressing: if every one of `KILL_POINTS` now lands entirely
-      // outside the real race window (e.g. a future change to `implement`'s own scheduling shifts it),
-      // every iteration above would still pass vacuously — this is the one assertion that actually rules
-      // that out, for this run.
-      expect(raceWindowHitCount).toBeGreaterThan(0);
-    },
-    120_000,
-  );
+      // Gap 1: all three of Q149's own real leftover shapes, not merely the one E3 already checks.
+      expect(await listOrphanedWorktrees(projectRoot)).toEqual([]);
+      expect(await listOrphanedLaneBranches(projectRoot, runId)).toEqual([]);
+      expect(await listOrphanedWorktreeDirectories(projectRoot, runId)).toEqual([]);
+    }
+
+    // The test that would catch gap 3 regressing: if every one of `KILL_POINTS` now lands entirely
+    // outside the real race window (e.g. a future change to `implement`'s own scheduling shifts it),
+    // every iteration above would still pass vacuously — this is the one assertion that actually rules
+    // that out, for this run.
+    expect(raceWindowHitCount).toBeGreaterThan(0);
+  }, 120_000);
 });
