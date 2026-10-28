@@ -208,12 +208,22 @@ describe('appendExemption', () => {
     // This process's own pid is, definitionally, always alive -- so the lock can never legitimately
     // clear itself. The correct, honest behaviour is to exhaust the retry budget and refuse via the
     // typed GATE-515 'lock-exhausted' reason, never a bare Error and never a silent, incorrect
-    // reclaim-and-proceed. Back to the original `15_000` timeout (round 3): round 2 had widened this
-    // to `20_000` only because it also raised `collection-lock.ts`'s own global default to `400`/10s
-    // (a test-scheduling-contention fix with an unwanted global production side effect). That default
-    // is now restored to its original `200`/5s (see `DEFAULT_MAX_LOCK_ATTEMPTS`'s own doc comment),
-    // and this call passes no override, so the real exhaustion here is back to ~5s nominal -- this
-    // test's own original margin is restored along with it.
+    // reclaim-and-proceed. `20_000`, not this test's own isolated ~5s nominal margin (round 4,
+    // correcting round 3): round 3 reverted this to `15_000`, reasoning that restoring
+    // `collection-lock.ts`'s own global default to `200`/5s (see `DEFAULT_MAX_LOCK_ATTEMPTS`'s own
+    // doc comment) restored the original margin too -- verified only against an isolated rerun and
+    // the hand-picked 4-file acceptance command, neither of which is this repo's REAL CI gate. That
+    // gate (`.github/workflows/ci.yml`'s `floor` job's full-workspace `pnpm test`, and the `seed`
+    // job's own two full-suite runs under `--sequence.shuffle`) runs every test file in one shared
+    // fork pool (`vitest.config.ts` deliberately has no per-package config, no `projects` array) --
+    // so this test's own nominal ~5s exhaustion runs concurrently, in that SAME pool, with
+    // `kb-disclosures.test.ts`'s own 28-worker combined-suite stress test (added M17 round 1,
+    // `918bbca`) -- structurally the identical cross-test scheduling-contention shape that already
+    // broke that file's own original 5s margin once (round 1's own diagnosis). A wider test timeout
+    // costs nothing in production (unlike the attempt-budget constant, correctly left at its
+    // restored `200`/5s production default) -- `20s` is a defensively wide test-side margin against
+    // real cross-suite contention under that gate, not a claim that this test's own isolated nominal
+    // time changed.
     await expect(
       appendExemption(
         paths,
@@ -228,7 +238,7 @@ describe('appendExemption', () => {
         { projectRoot, runId: undefined },
       ),
     ).rejects.toMatchObject({ code: 'GATE-515' });
-  }, 15_000);
+  }, 20_000);
 
   it('does not reclaim a RECENT empty/unwritten lock file -- waits, then exhausts via GATE-515 lock-exhausted, never a silent reclaim-too-early', async () => {
     const { paths, projectRoot } = await freshProject();
@@ -261,8 +271,9 @@ describe('appendExemption', () => {
     // never deletes a lock it could not prove was actually its own to clear.
     const remaining = await readFile(lockFilePath(paths), 'utf8');
     expect(remaining).toBe('');
-    // Back to the original `15_000` -- see the identical note on the test just above.
-  }, 15_000);
+    // `20_000` -- see the identical note on the test just above (real full-workspace CI gate,
+    // not just this file's own isolated timing, is what sets this margin).
+  }, 20_000);
 
   it('reclaims an OLD empty/unwritten lock file once it is older than STALE_EMPTY_LOCK_MS', async () => {
     const { paths, projectRoot } = await freshProject();

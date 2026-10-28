@@ -22,12 +22,13 @@
  * plain `Error`); see that function's own disclosure comment (`run/lock.ts`) for why this asymmetry
  * is suspected, not confirmed, deliberate.
  *
- * Also layers the read-back-after-write protection this codebase's own cross-process locking
- * experience calls for beyond a bare `open(path, 'wx')`: the exclusive create is fsynced then
- * immediately read back to confirm THIS process's own write is the one that landed (never assumed
- * from the absence of an `EEXIST` alone), and a lock whose `startedAt` is older than `MAX_LOCK_AGE_MS`
- * is reclaimed as a last-resort self-healing fallback even when `isProcessAlive` alone would read
- * "alive" (a pid can be reused by an unrelated process across a long enough gap).
+ * Also layers two further protections this codebase's own cross-process locking experience calls
+ * for beyond a bare `open(path, 'wx')`. First, read-back-after-write: the exclusive create is
+ * fsynced then immediately read back to confirm THIS process's own write is the one that landed
+ * (never assumed from the absence of an `EEXIST` alone). Second, age-gated reclaim: a lock whose
+ * `startedAt` is older than `MAX_LOCK_AGE_MS` is reclaimed as a last-resort self-healing fallback
+ * even when `isProcessAlive` alone would read "alive" (a pid can be reused by an unrelated process
+ * across a long enough gap).
  *
  * @see specs/03 §3.2.5
  * @see specs/12 F-DATA-6

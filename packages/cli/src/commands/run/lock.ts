@@ -118,8 +118,9 @@ const AMBIGUOUS_LOCK_RETRY_DELAY_MS = 10;
  * decided and recorded — it is this comment's own inference, not a reviewed decision. Changing this
  * behavior (adding the identical age-gated self-heal the other two locks have) is a real design
  * question for a human to decide and record, not something this comment or any fix-the-doc-comment
- * pass should do unilaterally. See SPEC-QUESTIONS.md (pending entry on lock self-heal asymmetry) for
- * the eventual decision record.
+ * pass should do unilaterally.
+ *
+ * @see SPEC-QUESTIONS.md Q359
  */
 export async function acquireRunLock(paths: ProjectPaths, lock: RunLock): Promise<void> {
   const resolved = lockPath(paths);
