@@ -49,7 +49,21 @@ import { readTextFile, type AbsolutePath, type ProjectPaths } from '@forge/core/
 
 import { isProcessAlive } from './run/lock.ts';
 
-const MAX_LOCK_ATTEMPTS = 200;
+/** `400` (10s at `LOCK_RETRY_DELAY_MS` below), not the original `200` (5s) -- raised by a round-2
+ * critic finding on this milestone's own lock-reliability round: `kb-disclosures.test.ts`,
+ * `run/lock.test.ts`, and `module.test.ts` each independently added their own real, 28-OS-process
+ * stress test for this exact bug class, and running all three together (as the gauntlet's own
+ * specified acceptance command does) spikes to up to ~84 real, competing child processes at once --
+ * confirmed live at an 80% failure rate (4/5 runs) for exactly this reason: `kb-disclosures.test.ts`'s
+ * OWN 28-worker test exhausted the original 5s budget under that COMBINED host load, not because any
+ * lock was actually held longer by its true owner, but because real OS scheduling contention across
+ * ~84 competing processes slows down every single `open`+`writeFile`+`sync`+`close`/`stat` cycle this
+ * loop depends on. The data-integrity assertion itself (no lost/duplicated id) was never violated in
+ * any failing run -- a budget problem under combined test-suite load, not a correctness regression,
+ * so the fix widens the budget rather than touching the locking logic itself. Still finite and still
+ * a real, named `KB-018`/`GATE-515` refusal if a lock is EVER wedged for 10 real seconds -- this is
+ * headroom for legitimate contention, not an unbounded wait. */
+const MAX_LOCK_ATTEMPTS = 400;
 const LOCK_RETRY_DELAY_MS = 25;
 /** See `withExemptionsLock`'s own original doc comment (M15 P6) for the full reasoning: well above
  * any real `open`+`writeFile`+`sync`+`close` sequence even under heavy contention, well below

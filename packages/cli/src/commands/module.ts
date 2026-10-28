@@ -61,7 +61,7 @@
  * @see PLAN-M11.md P5
  * @see PLAN-M11.md P6
  */
-import { cp, mkdir, open, rename, rm } from 'node:fs/promises';
+import { cp, mkdir, open, rename, rm, stat } from 'node:fs/promises';
 // `fsyncTreeBestEffort` below only ever uses this to decide whether to recurse/fsync each entry of an
 // already-fully-copied staging tree -- unordered traversal cannot affect its result (every entry is
 // visited regardless of order), the identical "order cannot matter" exemption `@forge/core/fs`'s own
@@ -75,7 +75,7 @@ import path from 'node:path';
 
 import * as YAML from 'yaml';
 
-import { ForgeError, readTextFile, type ProjectPaths } from '@forge/core';
+import { ForgeError, SYSTEM_CLOCK, readTextFile, type Clock, type ProjectPaths } from '@forge/core';
 import {
   listDirEntriesSorted,
   pathExists,
@@ -179,6 +179,30 @@ async function readManifestModules(paths: ProjectPaths): Promise<readonly Manife
 const INSTALL_LOCK_REL_PATH = 'module-install.lock';
 const MAX_LOCK_ATTEMPTS = 100;
 
+/** How long an AMBIGUOUS lock (`readLockPid` returning `undefined`: missing, unreadable, or
+ * non-numeric content) may sit before this process reclaims it anyway -- the identical mechanism
+ * and literal value already proven safe one commit later in this same round by `migrate/lock.ts`'s
+ * own `acquireMigrateLock` (`AMBIGUOUS_LOCK_GRACE_MS`) and, before that, by `collection-lock.ts`'s
+ * own `withCollectionLock` (`STALE_EMPTY_LOCK_MS`, `e2a42d5`). Gated on the lock FILE's own measured
+ * `stat().mtime` age, never on content parseability: a genuine TOCTOU gap (the true owner releasing
+ * one lock and creating its own next one) resolves on the very next retry well under this, while a
+ * permanently malformed file (hand-edited, or real on-disk corruption -- `readLockPid`'s own doc
+ * comment names exactly this case) still eventually self-heals instead of burning through every one
+ * of `MAX_LOCK_ATTEMPTS` in milliseconds and throwing `CFG-047` forever, with no human remedy short
+ * of deleting the file by hand.
+ *
+ * **Confirmed regression, fixed:** before this constant existed, the ambiguous branch below neither
+ * delayed nor age-gated at all -- a permanently-malformed-but-stably-readable lock file (non-numeric
+ * content) made every `withManifestLock` call burn through all `MAX_LOCK_ATTEMPTS` in ~7ms, every
+ * time, forever, throwing `CFG-047` with zero backoff and zero self-heal path. See this file's own
+ * `withManifestLock` doc comment for the full before/after measurement. */
+const AMBIGUOUS_LOCK_GRACE_MS = 2000;
+
+/** How long `withManifestLock` waits between retries while a lock is ambiguous but still within its
+ * own grace window above -- avoids a hot, delay-free busy-loop spin while that window elapses.
+ * Matches `migrate/lock.ts`'s own identical `POLL_INTERVAL_MS`. */
+const AMBIGUOUS_LOCK_RETRY_DELAY_MS = 100;
+
 /** `undefined` for every case this process cannot currently prove holds the lock — a genuinely
  * absent file, one removed by a concurrent reclaim in the TOCTOU gap between this function's own
  * existence check and its read (confirmed live: a real 28-process x 6-iteration contention run
@@ -221,8 +245,27 @@ async function readLockPid(lockAbs: AbsolutePath): Promise<number | undefined> {
  * `undefined` is retried instead, never reclaimed. */
 /** Exported so `overlay.ts`'s own `overlayAdd` serializes against the identical lock — one project
  * has one install lock regardless of whether the operation in flight is a module or an overlay one,
- * since both mutate the same `manifest.yaml`. */
-export async function withManifestLock<T>(paths: ProjectPaths, fn: () => Promise<T>): Promise<T> {
+ * since both mutate the same `manifest.yaml`.
+ *
+ * **Round-2 critic fix, a real regression in the round-1 fix above:** the ambiguous (`undefined`)
+ * branch below used to retry the exclusive create with no delay and no age-gate at all — unlike this
+ * same round's two siblings (`run/lock.ts`'s own `AMBIGUOUS_LOCK_RETRY_DELAY_MS` and `migrate/lock.
+ * ts`'s own `AMBIGUOUS_LOCK_GRACE_MS`), both of which this file's own `AMBIGUOUS_LOCK_GRACE_MS`/
+ * `AMBIGUOUS_LOCK_RETRY_DELAY_MS` constants now mirror. A critic constructed a
+ * permanently-malformed-but-stably-readable `module-install.lock` (non-numeric content — a realistic
+ * disk-corruption or hand-edit scenario) and confirmed: before this fix, this burned through all
+ * `MAX_LOCK_ATTEMPTS` in ~7ms, every time, throwing `CFG-047` with zero backoff and zero self-heal
+ * path — a permanent, misleading failure needing a human to delete the lock file by hand. After this
+ * fix, the identical lock file self-heals once it has genuinely sat unreadable for longer than
+ * `AMBIGUOUS_LOCK_GRACE_MS`, taking measurably longer than an instant rather than either failing
+ * permanently or reclaiming unsafely with zero delay (the original round-1 bug this whole lock exists
+ * to avoid repeating). `clock` is injected (`QUALITY-BAR.md` R10) purely to compute that age
+ * deterministically in a test; production callers never pass one, taking `SYSTEM_CLOCK`. */
+export async function withManifestLock<T>(
+  paths: ProjectPaths,
+  fn: () => Promise<T>,
+  clock: Clock = SYSTEM_CLOCK,
+): Promise<T> {
   const lockAbs = paths.resolveState(INSTALL_LOCK_REL_PATH);
   await mkdir(path.dirname(lockAbs), { recursive: true });
 
@@ -242,8 +285,18 @@ export async function withManifestLock<T>(paths: ProjectPaths, fn: () => Promise
       const existingPid = await readLockPid(lockAbs);
       if (existingPid === undefined) {
         // Ambiguous, not stale: this process cannot currently prove anything about who (if anyone)
-        // holds the lock. Retry the exclusive create rather than reclaiming -- see this function's
-        // own doc comment for the full reasoning and the confirmed crash this already caused.
+        // holds the lock a moment ago. Age-gated on the lock FILE's own measured `mtime`, the
+        // identical mechanism `migrate/lock.ts`'s own `acquireMigrateLock` already proved safe for
+        // this exact "ambiguous, not stale" case -- see `AMBIGUOUS_LOCK_GRACE_MS`'s own doc comment
+        // and this function's own doc comment for the confirmed before/after this closes.
+        const ageMs = await stat(lockAbs)
+          .then((info) => Date.parse(clock.now()) - info.mtimeMs)
+          .catch(() => undefined);
+        if (ageMs !== undefined && ageMs > AMBIGUOUS_LOCK_GRACE_MS) {
+          await rm(lockAbs, { force: true });
+          continue;
+        }
+        await new Promise((resolve) => setTimeout(resolve, AMBIGUOUS_LOCK_RETRY_DELAY_MS));
         continue;
       }
       if (isProcessAlive(existingPid)) {

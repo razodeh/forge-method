@@ -208,7 +208,11 @@ describe('appendExemption', () => {
     // This process's own pid is, definitionally, always alive -- so the lock can never legitimately
     // clear itself. The correct, honest behaviour is to exhaust the retry budget and refuse via the
     // typed GATE-515 'lock-exhausted' reason, never a bare Error and never a silent, incorrect
-    // reclaim-and-proceed.
+    // reclaim-and-proceed. The test's own `20_000` timeout below (not the original `15_000`) matches
+    // `collection-lock.ts`'s own `MAX_LOCK_ATTEMPTS` (200 -> 400, a round-2 critic fix for test-suite
+    // scheduling contention under combined 28-process stress-test load -- see that file's own doc
+    // comment): the real exhaustion this test waits out now takes ~10s nominal rather than ~5s,
+    // widened to keep the same real margin this test always had, not merely to limp past the floor.
     await expect(
       appendExemption(
         paths,
@@ -223,7 +227,7 @@ describe('appendExemption', () => {
         { projectRoot, runId: undefined },
       ),
     ).rejects.toMatchObject({ code: 'GATE-515' });
-  }, 15_000);
+  }, 20_000);
 
   it('does not reclaim a RECENT empty/unwritten lock file -- waits, then exhausts via GATE-515 lock-exhausted, never a silent reclaim-too-early', async () => {
     const { paths, projectRoot } = await freshProject();
@@ -256,7 +260,8 @@ describe('appendExemption', () => {
     // never deletes a lock it could not prove was actually its own to clear.
     const remaining = await readFile(lockFilePath(paths), 'utf8');
     expect(remaining).toBe('');
-  }, 15_000);
+    // `20_000`, not the original `15_000` -- see the identical note on the test just above.
+  }, 20_000);
 
   it('reclaims an OLD empty/unwritten lock file once it is older than STALE_EMPTY_LOCK_MS', async () => {
     const { paths, projectRoot } = await freshProject();

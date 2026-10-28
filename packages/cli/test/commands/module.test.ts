@@ -26,6 +26,7 @@ import {
   moduleRemove,
   moduleUpdate,
   readManifestDocument,
+  withManifestLock,
   type InstallOptions,
   type ModuleCommandContext,
 } from '../../src/commands/module.ts';
@@ -684,6 +685,40 @@ describe('moduleAdd/moduleRemove — cross-namespace and concurrency (critic-rou
     expect(existsSync(lockPath)).toBe(true);
     await rm(lockPath, { force: true });
   });
+
+  // Regression for a CONFIRMED round-2 critic finding, a real bug in the round-1 fix above: unlike
+  // its two siblings fixed in the same round (`run/lock.ts`'s own `AMBIGUOUS_LOCK_RETRY_DELAY_MS`,
+  // `migrate/lock.ts`'s own `AMBIGUOUS_LOCK_GRACE_MS`), `withManifestLock`'s own ambiguous-retry
+  // branch (`existingPid === undefined`) used to have NO delay and NO age-gate at all. A critic
+  // constructed exactly the scenario below -- a permanently-malformed-but-stably-readable lock file
+  // (non-numeric content, a realistic disk-corruption/hand-edit scenario) -- and confirmed: pre-fix,
+  // this burned through all `MAX_LOCK_ATTEMPTS` in ~7ms, every time, throwing `CFG-047` forever with
+  // zero backoff and zero self-heal path. Fixed the identical way `migrate/lock.ts`'s own
+  // `acquireMigrateLock` already proves safe: age-gated on the lock FILE's own measured `mtime`, so
+  // this must now take measurably LONGER than an instant (past its own `AMBIGUOUS_LOCK_GRACE_MS`)
+  // before it self-heals, rather than either failing permanently or reclaiming unsafely on sight.
+  it('a permanently-malformed-but-readable lock (non-numeric content) self-heals after its own grace period, never failing instantly and never reclaiming on sight', async () => {
+    const project = await createTestProject();
+    const lockPath = project.paths.resolveState('module-install.lock');
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    // Non-numeric: `readLockPid`'s own `Number.isInteger` check always reads this as ambiguous
+    // (`undefined`), never as a real, parseable pid -- simulating a hand-edited or corrupted lock
+    // file that will NEVER become parseable on its own, unlike an ordinary in-flight TOCTOU gap.
+    await writeFile(lockPath, 'not-a-pid-corrupted-lock-content');
+
+    const start = Date.now();
+    const result = await withManifestLock(project.paths, () => Promise.resolve('acquired'));
+    const elapsedMs = Date.now() - start;
+
+    expect(result).toBe('acquired');
+    // The real, load-bearing assertion: this took measurably longer than an instant (the pre-fix
+    // ~7ms failure) -- proof the ambiguous lock was retried/age-gated, not reclaimed on sight, and
+    // not failed fast with a permanent CFG-047.
+    expect(elapsedMs).toBeGreaterThan(1000);
+    // And it must not still be sitting there unresolved past this call -- the self-heal actually
+    // reclaimed the stale file and released its own newly-acquired lock afterward.
+    expect(existsSync(lockPath)).toBe(false);
+  }, 10_000);
 });
 
 // --- withManifestLock: real cross-process stress repro (critic-disclosed reasoning gap, fixed) ----

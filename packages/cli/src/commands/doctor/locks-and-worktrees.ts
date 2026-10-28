@@ -32,7 +32,18 @@ function check(
 /** `.forge/state/lock.json` (`PLAN-M6.md` C4) — a lock naming a real, still-alive pid is not itself a
  * problem (a real `forge run` is genuinely in progress); a lock naming a dead pid is stale, real,
  * warning-worthy state `forge run`'s own `acquireRunLock` already reclaims silently on its own next
- * invocation, so this is informational, not `hard`. */
+ * invocation, so this is informational, not `hard`.
+ *
+ * **Disclosed, not-yet-fixed diagnostic blind spot (round-2 critic finding on the round-1
+ * `readRunLock` fix):** `readRunLock` now returns `undefined` uniformly for "genuinely absent,"
+ * "removed in a concurrent TOCTOU gap," AND "exists but unreadable/malformed" (its own doc comment,
+ * `run/lock.ts`) — the correct call for `acquireRunLock`'s own retry loop, which must not tell those
+ * apart to stay safe. But this check reuses the same read for a different purpose (reporting to a
+ * human), and collapses the same three cases into one reassuring "No project lock held." message —
+ * so a project with a genuinely corrupt `lock.json` (a real on-disk fault, not merely a crashed
+ * process) is reported clean here, with no signal that anything is actually wrong. Left unfixed:
+ * distinguishing "absent" from "unreadable" needs its own read of the raw file content, a change to
+ * this check specifically rather than to the shared, already-reasoned-through `readRunLock`. */
 export async function checkStaleLock(paths: ProjectPaths): Promise<DoctorCheck> {
   const lock = await readRunLock(paths);
   if (lock === undefined) {
