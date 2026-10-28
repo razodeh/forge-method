@@ -5981,14 +5981,31 @@ describe('M16 naming rule (specs/22 M16 P1) — an empty `-t` selection exits 0,
   }
 
   /** Every `describe(` title's literal string argument in `text`, found the same way vitest finds a
-   * title: not evaluated, just read off the source. A title built from an expression (not a plain
-   * string literal) is not a title this scan can read, and is out of scope the same way a dynamic
-   * `describe` title is out of scope for any static naming-rule check. */
+   * title: not evaluated, just read off the source. A `describe(a + b + ..., fn)` title built from 2+
+   * plain string literals joined by `+` is reconstructed in full here -- not just read off the first
+   * literal -- before the M16/M17 substring check below ever runs; reconstruction stops at the first
+   * `+` not immediately followed by another literal, so a literal joined to a non-literal expression
+   * (a variable, an interpolated template literal, a function call) still reads as just its first
+   * segment, same as before this hardening, and remains out of scope for this static scan the same way
+   * a fully dynamic `describe` title is. This hardening exists because a real naming violation once sat
+   * entirely in the second segment of such a concatenation and was invisible to this check -- silently
+   * skipped by its own `if (!title.includes('M1x')) continue;` -- for 2 full rounds before a critic
+   * caught it by hand. */
   function describeTitlesIn(text: string): string[] {
     const titles: string[] = [];
     const re = /\bdescribe\(\s*(['"])((?:\\.|(?!\1).)*)\1/g;
+    const nextLiteralSegment = /^\s*\+\s*(['"])((?:\\.|(?!\1).)*)\1/;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) titles.push(m[2]!.replace(/\\(.)/g, '$1'));
+    while ((m = re.exec(text))) {
+      let title = m[2]!.replace(/\\(.)/g, '$1');
+      let rest = text.slice(re.lastIndex);
+      let sm: RegExpMatchArray | null;
+      while ((sm = nextLiteralSegment.exec(rest))) {
+        title += sm[2]!.replace(/\\(.)/g, '$1');
+        rest = rest.slice(sm[0].length);
+      }
+      titles.push(title);
+    }
     return titles;
   }
 
@@ -6920,11 +6937,32 @@ describe('M17 naming rule (specs/22 M17 P1) (SPEC-QUESTIONS.md Q313) — an empt
       .filter((file) => file.length > 0 && /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(file));
   }
 
+  /** Every `describe(` title's literal string argument in `text`, found the same way vitest finds a
+   * title: not evaluated, just read off the source. A `describe(a + b + ..., fn)` title built from 2+
+   * plain string literals joined by `+` is reconstructed in full here -- not just read off the first
+   * literal -- before the M16/M17 substring check below ever runs; reconstruction stops at the first
+   * `+` not immediately followed by another literal, so a literal joined to a non-literal expression
+   * (a variable, an interpolated template literal, a function call) still reads as just its first
+   * segment, same as before this hardening, and remains out of scope for this static scan the same way
+   * a fully dynamic `describe` title is. This hardening exists because a real naming violation once sat
+   * entirely in the second segment of such a concatenation and was invisible to this check -- silently
+   * skipped by its own `if (!title.includes('M1x')) continue;` -- for 2 full rounds before a critic
+   * caught it by hand. */
   function describeTitlesIn(text: string): string[] {
     const titles: string[] = [];
     const re = /\bdescribe\(\s*(['"])((?:\\.|(?!\1).)*)\1/g;
+    const nextLiteralSegment = /^\s*\+\s*(['"])((?:\\.|(?!\1).)*)\1/;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) titles.push(m[2]!.replace(/\\(.)/g, '$1'));
+    while ((m = re.exec(text))) {
+      let title = m[2]!.replace(/\\(.)/g, '$1');
+      let rest = text.slice(re.lastIndex);
+      let sm: RegExpMatchArray | null;
+      while ((sm = nextLiteralSegment.exec(rest))) {
+        title += sm[2]!.replace(/\\(.)/g, '$1');
+        rest = rest.slice(sm[0].length);
+      }
+      titles.push(title);
+    }
     return titles;
   }
 
