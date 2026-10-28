@@ -179,6 +179,28 @@ async function readManifestModules(paths: ProjectPaths): Promise<readonly Manife
 const INSTALL_LOCK_REL_PATH = 'module-install.lock';
 const MAX_LOCK_ATTEMPTS = 100;
 
+/** Thrown only by the `verifyFence` callback `withManifestLock` hands to every `fn` -- never by
+ * anything else, and never expected to escape `withManifestLock` itself. See `withManifestLock`'s own
+ * doc comment ("write-time fencing") and `collection-lock.ts`'s own identical mechanism (this file's
+ * own sibling, same root cause, independently applied here since this lock shares no code with that
+ * one). Exported so a test can assert a fence loss was genuinely detected. */
+export class ManifestLockFenceLostError extends Error {
+  constructor() {
+    super(
+      "module-install.lock's own fence check failed immediately before a write: this process can " +
+        'no longer prove it holds the lock (another process now provably does). Aborting this write ' +
+        'attempt; the full acquire loop will run again from scratch.',
+    );
+    this.name = 'ManifestLockFenceLostError';
+  }
+}
+
+/** The identical, deliberately small and separate budget `collection-lock.ts`'s own
+ * `MAX_FENCE_RETRIES` doc comment explains in full: bounds re-acquisitions after a CONFIRMED fence
+ * loss specifically, never ordinary acquire contention (`MAX_LOCK_ATTEMPTS` above still governs
+ * that). */
+const MAX_FENCE_RETRIES = 10;
+
 /** How long an AMBIGUOUS lock (`readLockPid` returning `undefined`: missing, unreadable, or
  * non-numeric content) may sit before this process reclaims it anyway -- the identical mechanism
  * and literal value already proven safe one commit later in this same round by `migrate/lock.ts`'s
@@ -242,7 +264,22 @@ async function readLockPid(lockAbs: AbsolutePath): Promise<number | undefined> {
  * reclaiming on that basis let this process delete a brand-new, genuinely live lock a different
  * process legitimately created in the gap between the ambiguous read and the reclaim. Only a lock
  * this process can actually read AND prove names a dead pid is real, positive evidence of staleness;
- * `undefined` is retried instead, never reclaimed. */
+ * `undefined` is retried instead, never reclaimed.
+ *
+ * **Deeper, CONFIRMED bug underneath all of the above, closed here: write-time fencing.** A dedicated
+ * investigation found that `open(path, 'wx')` itself -- the "exclusive, atomic at the OS level" create
+ * this doc comment's own second paragraph relies on -- can, under dense, synchronous create/delete
+ * churn against the identical lock-file path from many real processes at once, let TWO concurrent
+ * creates BOTH report success, with neither ever seeing `EEXIST`. Confirmed identical in substance to
+ * `collection-lock.ts`'s own `withCollectionLock` (closed the same way) and `@forge/telemetry`'s own
+ * `withEventLogLock` (the sibling that cannot share code with either, across the package boundary):
+ * see `collection-lock.ts`'s own top doc comment for the complete empirical repro and reasoning, not
+ * re-derived a third time here. `fn` is now handed a `verifyFence` callback it must call immediately
+ * before its own real write (`writeManifestDocument`) actually commits; `withManifestLock` is the only
+ * thing that ever catches the `ManifestLockFenceLostError` it throws on a lost fence, and responds by
+ * abandoning the attempt (never touching the lock file, which may now be a different process's own
+ * legitimate lock) and re-entering the full acquire loop from scratch, including a fresh `fn` call
+ * that re-reads `manifest.yaml` fresh before computing anything again. */
 /** Exported so `overlay.ts`'s own `overlayAdd` serializes against the identical lock — one project
  * has one install lock regardless of whether the operation in flight is a module or an overlay one,
  * since both mutate the same `manifest.yaml`.
@@ -267,16 +304,12 @@ async function readLockPid(lockAbs: AbsolutePath): Promise<number | undefined> {
  * (the original round-1 bug this whole lock exists to avoid repeating). `clock` is injected
  * (`QUALITY-BAR.md` R10) purely to compute that age deterministically in a test; production callers
  * never pass one, taking `SYSTEM_CLOCK`. */
-export async function withManifestLock<T>(
-  paths: ProjectPaths,
-  fn: () => Promise<T>,
-  clock: Clock = SYSTEM_CLOCK,
-): Promise<T> {
-  const lockAbs = paths.resolveState(INSTALL_LOCK_REL_PATH);
-  await mkdir(path.dirname(lockAbs), { recursive: true });
-
-  let acquired = false;
-  for (let attempt = 0; attempt < MAX_LOCK_ATTEMPTS && !acquired; attempt += 1) {
+/** The original acquire loop, unchanged in substance from before this fix -- extracted purely so
+ * `withManifestLock` below can call it again, from scratch, after a confirmed write-time fence loss.
+ * Returns `true` once genuinely acquired, `false` once `MAX_LOCK_ATTEMPTS` is exhausted while still
+ * unacquired. */
+async function acquireManifestLockOnce(lockAbs: AbsolutePath, clock: Clock): Promise<boolean> {
+  for (let attempt = 0; attempt < MAX_LOCK_ATTEMPTS; attempt += 1) {
     try {
       const handle = await open(lockAbs, 'wx');
       try {
@@ -285,7 +318,7 @@ export async function withManifestLock<T>(
       } finally {
         await handle.close();
       }
-      acquired = true;
+      return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const existingPid = await readLockPid(lockAbs);
@@ -294,7 +327,7 @@ export async function withManifestLock<T>(
         // holds the lock a moment ago. Age-gated on the lock FILE's own measured `mtime`, the
         // identical mechanism `migrate/lock.ts`'s own `acquireMigrateLock` already proved safe for
         // this exact "ambiguous, not stale" case -- see `AMBIGUOUS_LOCK_GRACE_MS`'s own doc comment
-        // and this function's own doc comment for the confirmed before/after this closes.
+        // and `withManifestLock`'s own doc comment for the confirmed before/after this closes.
         const ageMs = await stat(lockAbs)
           .then((info) => Date.parse(clock.now()) - info.mtimeMs)
           .catch(() => undefined);
@@ -312,15 +345,62 @@ export async function withManifestLock<T>(
       await rm(lockAbs, { force: true });
     }
   }
-  if (!acquired) {
-    throw new ForgeError('CFG-047', undefined);
-  }
+  return false;
+}
 
-  try {
-    return await fn();
-  } finally {
+/** Deletes `lockAbs` only once re-confirming it still names THIS process's own pid -- the identical
+ * fail-closed "don't touch what might now be someone else's real lock" discipline `verifyFence`
+ * below applies at write time, applied once more here at the one other moment this function ever
+ * removes the lock file. */
+async function releaseManifestLockIfStillOwned(lockAbs: AbsolutePath): Promise<void> {
+  const pid = await readLockPid(lockAbs);
+  if (pid === process.pid) {
     await rm(lockAbs, { force: true });
   }
+}
+
+export async function withManifestLock<T>(
+  paths: ProjectPaths,
+  // `verifyFence`: `fn` MUST call this immediately before its own real write (`writeManifestDocument`)
+  // actually commits -- see this function's own doc comment above ("write-time fencing," the
+  // identical mechanism and root cause `collection-lock.ts`'s own top doc comment explains in full;
+  // this file's own version is independently implemented, not imported, since this lock shares no
+  // code with that one). `verifyFence` re-reads `module-install.lock` fresh and throws
+  // `ManifestLockFenceLostError` the instant it no longer names this process's own pid -- caught only
+  // here, which responds by abandoning the attempt and re-entering the FULL acquire loop from
+  // scratch (never a bare retry of the write with now-stale manifest data).
+  fn: (verifyFence: () => Promise<void>) => Promise<T>,
+  clock: Clock = SYSTEM_CLOCK,
+): Promise<T> {
+  const lockAbs = paths.resolveState(INSTALL_LOCK_REL_PATH);
+  await mkdir(path.dirname(lockAbs), { recursive: true });
+
+  for (let fenceRetry = 0; fenceRetry <= MAX_FENCE_RETRIES; fenceRetry += 1) {
+    const acquired = await acquireManifestLockOnce(lockAbs, clock);
+    if (!acquired) {
+      throw new ForgeError('CFG-047', undefined);
+    }
+
+    const verifyFence = async (): Promise<void> => {
+      const pid = await readLockPid(lockAbs);
+      if (pid !== process.pid) {
+        throw new ManifestLockFenceLostError();
+      }
+    };
+
+    try {
+      const result = await fn(verifyFence);
+      await releaseManifestLockIfStillOwned(lockAbs);
+      return result;
+    } catch (error) {
+      if (error instanceof ManifestLockFenceLostError) {
+        continue;
+      }
+      await releaseManifestLockIfStillOwned(lockAbs);
+      throw error;
+    }
+  }
+  throw new ForgeError('CFG-047', undefined);
 }
 
 /** `list` — every real, installed module row from the real, current manifest. */
@@ -634,7 +714,9 @@ export async function moduleAdd(
   source: string,
   options: InstallOptions,
 ): Promise<InstallChangeReport> {
-  return withManifestLock(ctx.paths, () => moduleAddLocked(ctx, id, source, options));
+  return withManifestLock(ctx.paths, (verifyFence) =>
+    moduleAddLocked(ctx, id, source, options, verifyFence),
+  );
 }
 
 async function moduleAddLocked(
@@ -642,6 +724,7 @@ async function moduleAddLocked(
   id: string,
   source: string,
   options: InstallOptions,
+  verifyFence: () => Promise<void>,
 ): Promise<InstallChangeReport> {
   const doc = await readManifestDoc(ctx.paths);
   // Ids are one shared namespace across modules and overlays (`overlayAdd`'s own identical check
@@ -694,6 +777,9 @@ async function moduleAddLocked(
       checksum: bundle.checksum,
       source,
     };
+    // Write-time fencing (see `withManifestLock`'s own doc comment): re-confirm, immediately before
+    // this commits, that this process still, genuinely, holds the lock.
+    await verifyFence();
     await writeManifestDocument(ctx.paths, {
       version: 1,
       modules: [...doc.modules, record],
@@ -783,12 +869,13 @@ export async function moduleRemove(
   ctx: ModuleCommandContext,
   id: string,
 ): Promise<InstallChangeReport> {
-  return withManifestLock(ctx.paths, () => moduleRemoveLocked(ctx, id));
+  return withManifestLock(ctx.paths, (verifyFence) => moduleRemoveLocked(ctx, id, verifyFence));
 }
 
 async function moduleRemoveLocked(
   ctx: ModuleCommandContext,
   id: string,
+  verifyFence: () => Promise<void>,
 ): Promise<InstallChangeReport> {
   const doc = await readManifestDoc(ctx.paths);
   const entry = doc.modules.find((module) => module.id === id);
@@ -810,6 +897,9 @@ async function moduleRemoveLocked(
   const destAbs = ctx.paths.resolveWithin(`.forge/modules/${id}`);
   await rm(destAbs, { recursive: true, force: true });
 
+  // Write-time fencing (see `withManifestLock`'s own doc comment): re-confirm, immediately before
+  // this commits, that this process still, genuinely, holds the lock.
+  await verifyFence();
   await writeManifestDocument(ctx.paths, {
     version: 1,
     modules: doc.modules.filter((module) => module.id !== id),
@@ -836,7 +926,9 @@ export async function moduleUpdate(
   source: string,
   options: InstallOptions,
 ): Promise<InstallChangeReport> {
-  return withManifestLock(ctx.paths, () => moduleUpdateLocked(ctx, id, source, options));
+  return withManifestLock(ctx.paths, (verifyFence) =>
+    moduleUpdateLocked(ctx, id, source, options, verifyFence),
+  );
 }
 
 async function moduleUpdateLocked(
@@ -844,6 +936,7 @@ async function moduleUpdateLocked(
   id: string,
   source: string,
   options: InstallOptions,
+  verifyFence: () => Promise<void>,
 ): Promise<InstallChangeReport> {
   const doc = await readManifestDoc(ctx.paths);
   const entry = doc.modules.find((module) => module.id === id);
@@ -919,6 +1012,9 @@ async function moduleUpdateLocked(
       checksum: bundle.checksum,
       source,
     };
+    // Write-time fencing (see `withManifestLock`'s own doc comment): re-confirm, immediately before
+    // this commits, that this process still, genuinely, holds the lock.
+    await verifyFence();
     await writeManifestDocument(ctx.paths, {
       version: 1,
       modules: doc.modules.map((module) => (module.id === id ? record : module)),

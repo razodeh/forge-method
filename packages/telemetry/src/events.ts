@@ -251,6 +251,41 @@ const EVENT_LOG_MAX_LOCK_ATTEMPTS = 200;
 const EVENT_LOG_LOCK_RETRY_DELAY_MS = 25;
 const EVENT_LOG_STALE_EMPTY_LOCK_MS = 2000;
 
+/** **CONFIRMED, deeper bug underneath the empty-lock-age reasoning above, closed here: write-time
+ * fencing.** A dedicated investigation found that `writeFileSync(path, pid, {flag:'wx'})` itself --
+ * the "synchronous, atomic, no preemption point" exclusive create this file's own doc comment above
+ * relies on -- can, under dense, synchronous create/delete churn against the identical lock-file path
+ * from many real processes at once, let TWO concurrent creates BOTH report success, with neither ever
+ * seeing `EEXIST`. The existing read-back-immediately-after-create check is structurally BLIND to
+ * this: whichever process wins one of the two independently-successful creates always sees its OWN
+ * just-written content on that immediate readback. Confirmed identical in substance to
+ * `@forge/cli`'s own `withCollectionLock` (`commands/collection-lock.ts`, closed the same way) -- see
+ * that module's own top doc comment for the complete empirical repro and reasoning, not re-derived a
+ * third time here (this function's own doc comment above already explains why this is an independent
+ * implementation, never an import, across the package boundary). `operation` is now handed a
+ * `verifyFence` callback it must call immediately before its own real write (`appendLineWithFsync`)
+ * actually commits; `withEventLogLock` is the only thing that ever catches the
+ * `EventLogLockFenceLostError` it throws on a lost fence, and responds by abandoning the attempt
+ * (never touching the lock file, which may now be a different process's own legitimate lock) and
+ * re-entering the full acquire loop from scratch, including a fresh `operation` call that re-
+ * determines the true last `seq` fresh before computing anything again. */
+export class EventLogLockFenceLostError extends Error {
+  constructor() {
+    super(
+      "events.lock's own fence check failed immediately before a write: this process can no longer " +
+        'prove it holds the lock (another process now provably does). Aborting this write attempt; ' +
+        'the full acquire loop will run again from scratch.',
+    );
+    this.name = 'EventLogLockFenceLostError';
+  }
+}
+
+/** The identical, deliberately small and separate budget `@forge/cli`'s own `collection-lock.ts`
+ * `MAX_FENCE_RETRIES` doc comment explains in full: bounds re-acquisitions after a CONFIRMED fence
+ * loss specifically, never ordinary acquire contention (`EVENT_LOG_MAX_LOCK_ATTEMPTS` above still
+ * governs that). */
+const EVENT_LOG_MAX_FENCE_RETRIES = 10;
+
 /** `process.kill(pid, 0)` sends no signal, only checks; throws `ESRCH` for a dead pid, `EPERM` for a
  * live one this process cannot signal (still alive, so this counts as alive too) — the identical,
  * tiny technique `@forge/cli`'s own `isProcessAlive` (`commands/run/lock.ts`) already uses, copied
@@ -265,32 +300,12 @@ function isEventLogLockOwnerAlive(pid: number): boolean {
   }
 }
 
-async function withEventLogLock<T>(
-  projectRoot: string,
-  runId: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  const runDir = path.dirname(eventLogPath(projectRoot, runId));
-  try {
-    await fsp.mkdir(runDir, { recursive: true });
-  } catch (cause) {
-    // The identical code `appendLineWithFsync`'s own `mkdir` failure already uses below: both are the
-    // same real failure class ("can't create this run's own directory"), now reachable from this
-    // function first (it runs before `appendLineWithFsync` ever does) rather than only from there.
-    throw new TelemetryError(
-      {
-        code: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',
-        message: `Failed to create the event log directory for run "${runId}": ${errorMessage(cause)}`,
-        remedy:
-          'Verify the project root is correct, this process has permission to write .forge/state/, and the disk is not full.',
-      },
-      { cause },
-    );
-  }
-  const resolved = path.join(runDir, 'events.lock');
-
-  let acquired = false;
-  for (let attempt = 0; attempt < EVENT_LOG_MAX_LOCK_ATTEMPTS && !acquired; attempt += 1) {
+/** The original acquire loop, unchanged in substance from before this fix -- extracted purely so
+ * `withEventLogLock` below can call it again, from scratch, after a confirmed write-time fence loss.
+ * Returns `true` once genuinely acquired, `false` once `EVENT_LOG_MAX_LOCK_ATTEMPTS` is exhausted
+ * while still unacquired. */
+async function acquireEventLogLockOnce(resolved: string): Promise<boolean> {
+  for (let attempt = 0; attempt < EVENT_LOG_MAX_LOCK_ATTEMPTS; attempt += 1) {
     try {
       // Synchronous, deliberately: a single call does create+write+close with no `await` (no Node
       // microtask yield, no OS-scheduler preemption point) between the file coming into existence and
@@ -309,7 +324,7 @@ async function withEventLogLock<T>(
         );
         continue;
       }
-      acquired = true;
+      return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const ownerPidText = await fsp
@@ -364,19 +379,91 @@ async function withEventLogLock<T>(
       await new Promise((resolveDelay) => setTimeout(resolveDelay, EVENT_LOG_LOCK_RETRY_DELAY_MS));
     }
   }
-  if (!acquired) {
-    throw new TelemetryError({
-      code: 'TELEMETRY-EVENT-LOG-LOCK-EXHAUSTED',
-      message: `Could not acquire the event log lock for run "${runId}" after ${String(EVENT_LOG_MAX_LOCK_ATTEMPTS)} attempts.`,
-      remedy:
-        'Check for a stuck or crashed process holding .forge/state/runs/<runId>/events.lock; remove it by hand if no real process owns it.',
-    });
-  }
-  try {
-    return await operation();
-  } finally {
+  return false;
+}
+
+/** Deletes `resolved` only once re-confirming it still names THIS process's own pid -- the identical
+ * fail-closed "don't touch what might now be someone else's real lock" discipline `verifyFence`
+ * below applies at write time, applied once more here at the one other moment this function ever
+ * removes the lock file. */
+async function releaseEventLogLockIfStillOwned(resolved: string): Promise<void> {
+  const current = await fsp
+    .readFile(resolved, 'utf8')
+    .then((text) => text.trim())
+    .catch(() => undefined);
+  if (current === String(process.pid)) {
     await fsp.rm(resolved, { force: true });
   }
+}
+
+async function withEventLogLock<T>(
+  projectRoot: string,
+  runId: string,
+  // `verifyFence`: `operation` MUST call this immediately before its own real write
+  // (`appendLineWithFsync`) actually commits -- see `EventLogLockFenceLostError`'s own doc comment
+  // above ("write-time fencing") for the full mechanism.
+  operation: (verifyFence: () => Promise<void>) => Promise<T>,
+): Promise<T> {
+  const runDir = path.dirname(eventLogPath(projectRoot, runId));
+  try {
+    await fsp.mkdir(runDir, { recursive: true });
+  } catch (cause) {
+    // The identical code `appendLineWithFsync`'s own `mkdir` failure already uses below: both are the
+    // same real failure class ("can't create this run's own directory"), now reachable from this
+    // function first (it runs before `appendLineWithFsync` ever does) rather than only from there.
+    throw new TelemetryError(
+      {
+        code: 'TELEMETRY-EVENT-LOG-WRITE-FAILED',
+        message: `Failed to create the event log directory for run "${runId}": ${errorMessage(cause)}`,
+        remedy:
+          'Verify the project root is correct, this process has permission to write .forge/state/, and the disk is not full.',
+      },
+      { cause },
+    );
+  }
+  const resolved = path.join(runDir, 'events.lock');
+
+  for (let fenceRetry = 0; fenceRetry <= EVENT_LOG_MAX_FENCE_RETRIES; fenceRetry += 1) {
+    const acquired = await acquireEventLogLockOnce(resolved);
+    if (!acquired) {
+      throw new TelemetryError({
+        code: 'TELEMETRY-EVENT-LOG-LOCK-EXHAUSTED',
+        message: `Could not acquire the event log lock for run "${runId}" after ${String(EVENT_LOG_MAX_LOCK_ATTEMPTS)} attempts.`,
+        remedy:
+          'Check for a stuck or crashed process holding .forge/state/runs/<runId>/events.lock; remove it by hand if no real process owns it.',
+      });
+    }
+
+    const verifyFence = async (): Promise<void> => {
+      const readBack = await fsp
+        .readFile(resolved, 'utf8')
+        .then((text) => text.trim())
+        .catch(() => undefined);
+      if (readBack !== String(process.pid)) {
+        throw new EventLogLockFenceLostError();
+      }
+    };
+
+    try {
+      const result = await operation(verifyFence);
+      await releaseEventLogLockIfStillOwned(resolved);
+      return result;
+    } catch (error) {
+      if (error instanceof EventLogLockFenceLostError) {
+        continue;
+      }
+      await releaseEventLogLockIfStillOwned(resolved);
+      throw error;
+    }
+  }
+  throw new TelemetryError({
+    code: 'TELEMETRY-EVENT-LOG-LOCK-EXHAUSTED',
+    message:
+      `Could not durably hold the event log lock for run "${runId}": the fence-retry budget ` +
+      `(${String(EVENT_LOG_MAX_FENCE_RETRIES)}) was exhausted after repeated, confirmed fence losses.`,
+    remedy:
+      'This indicates unusually dense cross-process contention on this exact lock file; retrying the command is usually sufficient.',
+  });
 }
 
 function parseEventLine(line: string, runId: string): ForgeEvent {
@@ -556,7 +643,7 @@ export async function appendEvent(
   // (`withEventLogLock`'s own doc comment has the full real-live-run-found reasoning for why this
   // second layer is not redundant with the first).
   return enqueueForRun(cacheKey, () =>
-    withEventLogLock(projectRoot, runId, async () => {
+    withEventLogLock(projectRoot, runId, async (verifyFence) => {
       const lastSeq = await determineLastSeq(projectRoot, runId);
       const seq = lastSeq + 1;
       const redactedPayload = redactPayload(
@@ -573,6 +660,13 @@ export async function appendEvent(
       // call simply re-reads the real file fresh regardless, which already lands on the right answer
       // either way (unchanged if the rollback worked, past the phantom's own seq if it didn't) with no
       // separate bookkeeping needed for this case at all.
+      //
+      // Write-time fencing (see `EventLogLockFenceLostError`'s own doc comment above): re-confirm,
+      // immediately before this commits, that this process still, genuinely, holds the lock. A lost
+      // fence here means `lastSeq`/`seq` above were computed from a read this process can no longer
+      // prove was exclusive -- `withEventLogLock` unwinds to a fresh acquire-and-redetermine instead
+      // of ever letting this append land.
+      await verifyFence();
       await appendLineWithFsync(eventLogPath(projectRoot, runId), `${JSON.stringify(fullEvent)}\n`);
       return fullEvent;
     }),

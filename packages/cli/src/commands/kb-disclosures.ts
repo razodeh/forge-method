@@ -169,7 +169,7 @@ function nextDisclosureId(disclosures: readonly Disclosure[]): string {
 async function withDisclosuresLock<T>(
   paths: ProjectPaths,
   clock: Clock,
-  operation: () => Promise<T>,
+  operation: (verifyFence: () => Promise<void>) => Promise<T>,
   maxLockAttempts?: number,
 ): Promise<T> {
   return withCollectionLock(
@@ -244,6 +244,12 @@ async function writeDisclosuresCandidate(
     readonly by: string;
     readonly summary: string;
   },
+  // Write-time fencing (see `collection-lock.ts`'s own top doc comment): called immediately before
+  // the real `writeFileAtomic` commit below, as close to it as this call shape allows -- both of
+  // this function's own callers (`appendDisclosure`, `resolveDisclosure`) route through here rather
+  // than each remembering its own call, so there is exactly one place in this file that can forget
+  // it, not two.
+  verifyFence: () => Promise<void>,
 ): Promise<void> {
   const document = {
     type: 'Disclosure' as const,
@@ -271,6 +277,7 @@ async function writeDisclosuresCandidate(
       `disclosuresFileSchema rejected a disclosures.md write: ${parsed.error.message}`,
     );
   }
+  await verifyFence();
   await writeFileAtomic(
     paths.resolveWithin(disclosuresPath(kbRoot)),
     `---\n${YAML.stringify(parsed.data)}---\n`,
@@ -301,20 +308,25 @@ export async function appendDisclosure(
   return withDisclosuresLock(
     paths,
     clock,
-    async () => {
+    async (verifyFence) => {
       const existing = await readDisclosuresCandidate(paths, kbRoot);
       const id = nextDisclosureId(existing.disclosures);
       const today = clock.now().slice(0, 10);
-      await writeDisclosuresCandidate(paths, kbRoot, {
-        ...existing,
-        disclosures: [
-          ...existing.disclosures,
-          { id, ...input, sources: [...input.sources], resolved: false },
-        ],
-        today,
-        by: input.owner,
-        summary: `Disclosed ${input.kind} ${id}: ${input.summary}`,
-      });
+      await writeDisclosuresCandidate(
+        paths,
+        kbRoot,
+        {
+          ...existing,
+          disclosures: [
+            ...existing.disclosures,
+            { id, ...input, sources: [...input.sources], resolved: false },
+          ],
+          today,
+          by: input.owner,
+          summary: `Disclosed ${input.kind} ${id}: ${input.summary}`,
+        },
+        verifyFence,
+      );
       return id;
     },
     maxLockAttempts,
@@ -347,7 +359,7 @@ export async function resolveDisclosure(
   return withDisclosuresLock(
     paths,
     clock,
-    async () => {
+    async (verifyFence) => {
       const existing = await readDisclosuresCandidate(paths, kbRoot);
       const target = existing.disclosures.find((disclosure) => disclosure.id === input.id);
       if (target === undefined) {
@@ -366,13 +378,18 @@ export async function resolveDisclosure(
             }
           : disclosure,
       );
-      await writeDisclosuresCandidate(paths, kbRoot, {
-        ...existing,
-        disclosures: resolved,
-        today,
-        by: input.by,
-        summary: `Resolved ${input.id}: ${input.reason}`,
-      });
+      await writeDisclosuresCandidate(
+        paths,
+        kbRoot,
+        {
+          ...existing,
+          disclosures: resolved,
+          today,
+          by: input.by,
+          summary: `Resolved ${input.id}: ${input.reason}`,
+        },
+        verifyFence,
+      );
     },
     maxLockAttempts,
   );

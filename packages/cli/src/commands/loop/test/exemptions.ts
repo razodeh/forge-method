@@ -175,7 +175,7 @@ function nextExemptionId(exemptions: readonly Exemption[], testId: string): stri
 async function withExemptionsLock<T>(
   paths: ProjectPaths,
   clock: Clock,
-  operation: () => Promise<T>,
+  operation: (verifyFence: () => Promise<void>) => Promise<T>,
   maxLockAttempts?: number,
 ): Promise<T> {
   return withCollectionLock(
@@ -226,7 +226,7 @@ export async function appendExemption(
   const id = await withExemptionsLock(
     paths,
     clock,
-    async () => {
+    async (verifyFence) => {
       const existing = await readFrontMatter(paths, relativePath);
       const priorExemptions: readonly unknown[] = Array.isArray(existing?.['exemptions'])
         ? existing['exemptions']
@@ -266,6 +266,12 @@ export async function appendExemption(
           `exemptionsFileSchema rejected a new exemption: ${parsed.error.message}`,
         );
       }
+      // Write-time fencing (see `collection-lock.ts`'s own top doc comment): re-confirm, as close to
+      // the real write as this call shape allows, that this process still, genuinely, holds the
+      // lock before the candidate above is allowed to actually commit. A caller whose fence has been
+      // lost here never reaches `writeFileAtomic` at all -- `withExemptionsLock` unwinds to a fresh
+      // acquire-and-recompute instead.
+      await verifyFence();
       await writeFileAtomic(
         paths.resolveWithin(relativePath),
         `---\n${YAML.stringify(parsed.data)}---\n`,

@@ -185,8 +185,51 @@ export async function acquireMigrateLock(
   }
 }
 
-/** Releases `.forge/migrate/lock.json`. A no-op if it is already absent (the identical tolerance
- * `releaseRunLock` already establishes). */
+/** **CONFIRMED, deeper bug underneath every reasoning gap this file's own header and
+ * `readMigrateLock`'s own doc comment already closed, closed here too: write-time fencing.** A
+ * dedicated investigation found that `open(path, 'wx')` itself -- the exclusive-create guarantee
+ * `acquireMigrateLock`'s own read-back-after-write already partially defends, below -- can, under
+ * dense, synchronous create/delete churn against the identical lock-file path from many real
+ * processes at once, let TWO concurrent creates BOTH report success, with neither ever seeing
+ * `EEXIST`. See `@forge/cli`'s own `collection-lock.ts` (top doc comment) for the complete empirical
+ * repro and reasoning, confirmed identical in substance here, not re-derived a third time.
+ *
+ * Like `run/lock.ts`'s own `acquireRunLock`/`releaseRunLock`, this lock is a manual acquire/release
+ * bracket, not a generic wrapper around one caller-supplied `operation` -- there is no single call
+ * inside this file this function could fence on its own. `assertMigrateLockStillHeld` below is this
+ * lock's own version of the identical `verifyFence` primitive the other four locks each apply inside
+ * their own wrapper: `migrate/run.ts`'s own apply loop calls it immediately before its own real,
+ * shared-file write (`writeLedger`) actually commits, for every entry in the loop, not merely once at
+ * the top -- the lock is held across the WHOLE loop (potentially many real migration-script runs,
+ * each its own slow, real side effect), so the exposure window this check narrows is the longest of
+ * any of this codebase's five lock sites, not the shortest. */
+export async function assertMigrateLockStillHeld(paths: ProjectPaths): Promise<void> {
+  const current = await readMigrateLock(paths);
+  if (current?.pid !== process.pid) {
+    // `current?.pid ?? 0`: the ordinary, expected case is a real, different pid (another process's
+    // own independently-successful create landed); `0` is a rare, honestly-labelled sentinel for the
+    // narrower case where the lock file is now simply gone/unreadable rather than reassigned --
+    // `RUN-157`'s own `pid: number` shape has no "unknown" variant, and inventing one is out of scope
+    // for this fix (`current?.pid` is `undefined` only when nothing provable currently holds the
+    // lock at all, not when a different process provably does).
+    throw new ForgeError('RUN-157', { pid: current?.pid ?? 0 });
+  }
+}
+
+/** Releases `.forge/migrate/lock.json`, but only once re-confirming it still names THIS process's own
+ * pid (or is already absent) -- the identical fail-closed "don't touch what might now be someone
+ * else's real lock" discipline `assertMigrateLockStillHeld` above applies at write time, applied once
+ * more here at the one other moment this file ever removes the lock file. Unlike `run/lock.ts`'s own
+ * `releaseRunLock`, this lock has no `forge doctor --fix`-style "force-clear a DIFFERENT process's
+ * dead-pid lock on a human's behalf" call site to stay compatible with (grep-confirmed: this file's
+ * own `releaseMigrateLock` has exactly one real caller, `migrate/run.ts`'s own `finally`), so adding
+ * this check here is unconditionally safe, not merely risk-reduced the way it would be for
+ * `run/lock.ts`. A no-op if the file is already absent (the identical tolerance `releaseRunLock`
+ * already establishes), or if it now names a different, genuinely live pid. */
 export async function releaseMigrateLock(paths: ProjectPaths): Promise<void> {
-  await rm(lockPath(paths), { force: true });
+  const resolved = lockPath(paths);
+  const current = await readMigrateLock(paths);
+  if (current === undefined || current.pid === process.pid) {
+    await rm(resolved, { force: true });
+  }
 }

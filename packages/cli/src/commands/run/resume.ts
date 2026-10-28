@@ -26,7 +26,7 @@ import {
   acquireRunLock,
   isProcessAlive,
   readRunLock,
-  releaseRunLock,
+  releaseRunLockIfStillOwned,
   type RunLock,
 } from './lock.ts';
 import { installRunSignalHandlers, type RunDeps } from './run.ts';
@@ -165,6 +165,6 @@ export async function resumeWorkflow(
   } finally {
     removeSignalHandlers();
     await shim?.cleanup();
-    await releaseRunLock(deps.paths);
+    await releaseRunLockIfStillOwned(deps.paths, lock);
   }
 }

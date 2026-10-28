@@ -36,6 +36,43 @@
  * complete record of why this was fixed and reverified, not escalated, despite being found on the
  * third and final allowed gauntlet round.
  *
+ * **CONFIRMED, DEEPER bug underneath all of the above, closed here: write-time fencing.** A dedicated
+ * investigation (direct, instrumented, reproduced — not speculation) found that the exclusive-create
+ * primitive itself (`writeFileSync(path, pid, {flag:'wx'})`) can, under dense, synchronous
+ * create/delete-churn against the identical lock-file path (NOT generic CPU/disk load — specifically
+ * many real processes doing this exact retry/polling pattern at once), let TWO concurrent `wx` creates
+ * BOTH report success, with NEITHER ever seeing `EEXIST`. The existing "trust, but verify" read-back
+ * immediately after create (above) is structurally BLIND to this: a process that wins one of two
+ * independently-successful creates always sees its OWN just-written content on that immediate
+ * readback — nothing about its own local view can reveal that a second process, elsewhere, separately
+ * also believes it holds the identical lock. In the captured repro, one process's own entire
+ * `operation()` (read current state → compute a candidate → write) ran to completion while a second
+ * process's own independent create ALSO succeeded partway through; both went on to compute the
+ * identical next value from the same stale prior state, and whichever one's final `writeFileAtomic`
+ * rename landed last silently overwrote the other's entire write — the exact live CI failure this
+ * closes (20 real OS processes expected to survive with 20 distinct ids; 16 distinct ids observed).
+ *
+ * The fix is a fencing-token / optimistic-concurrency check, not a new acquire-time mechanism (acquire
+ * already has the strongest practical check available at that moment — see above): `operation` is now
+ * handed a `verifyFence` callback it MUST call immediately before its own real write actually commits
+ * (as close to that write as this call shape structurally allows — nothing else awaited in between).
+ * `verifyFence` re-reads the lock file fresh and throws `LockFenceLostError` the instant it no longer
+ * names this process's own pid. `withCollectionLock` itself is the only thing that ever catches that
+ * error: on catch, it does NOT touch the lock file (which may now be a different process's own
+ * genuinely legitimate lock — reclaiming it would just relocate the same bug), and does NOT retry just
+ * the write with now-stale data — it abandons the whole attempt and re-enters the FULL acquire loop
+ * from scratch, including a fresh `operation` call that re-reads whatever the current, possibly now
+ * different, state actually is before computing anything again. This narrows the real exposure window
+ * from "this process's entire read-compute-write operation" down to "the gap between one final read
+ * and the one immediate write that follows it" — not a mathematical impossibility proof (a fully
+ * airtight fix would replace this create/delete-churn locking scheme with a persistent lock file plus
+ * a true OS advisory lock held on a stable fd, e.g. `flock`-style — bigger, riskier, and deliberately
+ * NOT attempted here), but a large, real, honestly-described reduction in risk. The same release-time
+ * discipline is applied once more, symmetrically: the lock file is only ever deleted (on success, on a
+ * genuine operation failure, or after an exhausted acquire) once this function has re-confirmed it
+ * still names this process's own pid — the identical "don't touch what might now be someone else's
+ * real lock" reasoning, applied at the one other moment this function ever removes the file.
+ *
  * @see SPEC-QUESTIONS.md Q285
  * @see GAUNTLET-LOG.md ## M15 P6
  */
@@ -48,6 +85,30 @@ import type { ForgeError } from '@forge/core/errors';
 import { readTextFile, type AbsolutePath, type ProjectPaths } from '@forge/core/fs';
 
 import { isProcessAlive } from './run/lock.ts';
+
+/** Thrown only by the `verifyFence` callback `withCollectionLock` hands to every `operation` — never
+ * by anything else, and never expected to escape `withCollectionLock` itself (which is the only thing
+ * that ever catches it; see this module's own top doc comment, "write-time fencing"). Exported so a
+ * test can assert a fence loss was detected at all, not papered over by some other error shape. */
+export class LockFenceLostError extends Error {
+  constructor(lockFileName: string) {
+    super(
+      `${lockFileName}'s own lock fence check failed immediately before a write: this process can no ` +
+        'longer prove it holds the lock (another process now provably does). Aborting this write ' +
+        'attempt; the full acquire loop will run again from scratch.',
+    );
+    this.name = 'LockFenceLostError';
+  }
+}
+
+/** Bounded re-acquisitions after a CONFIRMED fence loss specifically — deliberately separate from, and
+ * much smaller than, `maxAttempts`/`DEFAULT_MAX_LOCK_ATTEMPTS` above: those bound ordinary contention
+ * (waiting out ANY live rival or a self-healing ambiguous lock), a genuinely common case under real
+ * load. A confirmed fence loss is the rare, specific OS-level anomaly this module's own top doc
+ * comment describes — it should never need many retries in practice, and a bound this low still
+ * leaves an enormous margin while preventing a pathological run of repeated losses from spinning
+ * forever. */
+const MAX_FENCE_RETRIES = 10;
 
 /** `200` (5s at `LOCK_RETRY_DELAY_MS` below) -- the ORIGINAL production value (`e2a42d5`), restored
  * here as this function's own default after a round-3 critic finding on a round-2 regression: round 2
@@ -85,30 +146,19 @@ const LOCK_RETRY_DELAY_MS = 25;
  * anything a human would read as "stuck." */
 const STALE_EMPTY_LOCK_MS = 2000;
 
-export async function withCollectionLock<T>(
-  paths: ProjectPaths,
+/** The original acquire loop, unchanged in substance from before this fix: exclusive-create, read
+ * back to confirm this process's own write landed, age-gated reclaim of a dead-owner or genuinely
+ * stale-empty lock. Extracted to its own function purely so `withCollectionLock` below can call it
+ * again, from scratch, after a confirmed write-time fence loss -- see this module's own top doc
+ * comment ("write-time fencing") for why a fresh, full re-acquisition (never a bare retry of the
+ * write alone) is the only correct response to that. Returns `true` once genuinely acquired, `false`
+ * once `maxAttempts` is exhausted while still unacquired. */
+async function acquireCollectionLockOnce(
+  resolved: AbsolutePath,
   clock: Clock,
-  lockFileName: string,
-  // The caller builds its own, fully-typed `ForgeError` (each collection file's own real code --
-  // `GATE-515` for `Exemption`, `KB-018` for `Disclosure` -- has its own message/remedy text naming
-  // ITS OWN file) rather than this generic module hardcoding either one or erasing the per-code
-  // detail typing through a loosely-typed intermediate shape.
-  onExhausted: (maxAttempts: number) => ForgeError,
-  operation: () => Promise<T>,
-  // Round-3 addition: an injectable override of `DEFAULT_MAX_LOCK_ATTEMPTS` (`200`/5s), the identical
-  // "optional param, appended last, defaulted to the production constant" shape `module.ts`'s own
-  // `withManifestLock` (`clock`) and `migrate/lock.ts`'s own `acquireMigrateLock` (`maxWaitMs`) already
-  // establish. Production callers never pass this -- only `kb-disclosures.test.ts`'s own combined-suite
-  // stress test does, explicitly, for the scheduling-contention reason this constant's own doc comment
-  // explains above.
-  maxAttempts: number = DEFAULT_MAX_LOCK_ATTEMPTS,
-): Promise<T> {
-  const stateDir = paths.resolveState('.');
-  await mkdir(stateDir, { recursive: true });
-  const resolved = path.join(stateDir, lockFileName) as AbsolutePath;
-
-  let acquired = false;
-  for (let attempt = 0; attempt < maxAttempts && !acquired; attempt += 1) {
+  maxAttempts: number,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
       // Synchronous, deliberately: a single call does create+write+close with no `await` (no Node
       // microtask yield, no OS-scheduler preemption point) between the file coming into existence
@@ -117,7 +167,12 @@ export async function withCollectionLock<T>(
       // Trust, but verify: read the file straight back and confirm it is still, exactly, our own
       // pid before treating the lock as genuinely acquired (`wx`'s own atomicity guarantee does not
       // reliably hold under this environment's real I/O contention -- `withExemptionsLock`'s own
-      // original doc comment, M15 P6 round 2, has the full empirical record).
+      // original doc comment, M15 P6 round 2, has the full empirical record). As this module's own
+      // top doc comment explains, this check alone is NOT sufficient against the deeper, confirmed
+      // double-success race -- it is still worth keeping (it catches the ordinary, non-pathological
+      // "someone else's write landed where mine should have" case cheaply, at acquire time, without
+      // waiting for a write-time fence check later) but `verifyFence` below is what actually closes
+      // the gap this cannot see.
       let readBack: string | undefined;
       try {
         readBack = readFileSync(resolved, 'utf8').trim();
@@ -132,7 +187,7 @@ export async function withCollectionLock<T>(
         await new Promise((resolveDelay) => setTimeout(resolveDelay, LOCK_RETRY_DELAY_MS));
         continue;
       }
-      acquired = true;
+      return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const ownerPidText = (await readTextFile(resolved).catch(() => '')).trim();
@@ -171,12 +226,85 @@ export async function withCollectionLock<T>(
       await new Promise((resolveDelay) => setTimeout(resolveDelay, LOCK_RETRY_DELAY_MS));
     }
   }
-  if (!acquired) {
-    throw onExhausted(maxAttempts);
-  }
-  try {
-    return await operation();
-  } finally {
+  return false;
+}
+
+/** Deletes `resolved` only once re-confirming it still names THIS process's own pid -- the identical
+ * fail-closed "don't touch what might now be someone else's real lock" discipline `verifyFence` (in
+ * `withCollectionLock` below) applies at write time, applied once more here at the one other moment
+ * this module ever removes the lock file. A mismatch (or the file already being gone) is silently
+ * accepted and left untouched: either this process already lost the fence (handled elsewhere, never
+ * reaching this function) or another process's own legitimate lock now sits at this path, and
+ * deleting it would simply relocate the exact bug this whole mechanism exists to prevent. */
+async function releaseCollectionLockIfStillOwned(resolved: AbsolutePath): Promise<void> {
+  const current = await readTextFile(resolved).catch(() => undefined);
+  if (current?.trim() === String(process.pid)) {
     await rm(resolved, { force: true });
   }
+}
+
+export async function withCollectionLock<T>(
+  paths: ProjectPaths,
+  clock: Clock,
+  lockFileName: string,
+  // The caller builds its own, fully-typed `ForgeError` (each collection file's own real code --
+  // `GATE-515` for `Exemption`, `KB-018` for `Disclosure` -- has its own message/remedy text naming
+  // ITS OWN file) rather than this generic module hardcoding either one or erasing the per-code
+  // detail typing through a loosely-typed intermediate shape.
+  onExhausted: (maxAttempts: number) => ForgeError,
+  // `verifyFence`: `operation` MUST call this immediately before its own real write actually commits
+  // (nothing else awaited in between) -- see this module's own top doc comment ("write-time
+  // fencing") for the full mechanism and why this closes a confirmed, deeper race the acquire loop
+  // above cannot see on its own. Every real caller (`appendExemption`, `appendDisclosure`,
+  // `resolveDisclosure`) does this; there is no way to call `withCollectionLock` without being handed
+  // the check, which is as close to "impossible to skip without visibly skipping it" as this
+  // callback shape allows without disproportionate restructuring.
+  operation: (verifyFence: () => Promise<void>) => Promise<T>,
+  // Round-3 addition: an injectable override of `DEFAULT_MAX_LOCK_ATTEMPTS` (`200`/5s), the identical
+  // "optional param, appended last, defaulted to the production constant" shape `module.ts`'s own
+  // `withManifestLock` (`clock`) and `migrate/lock.ts`'s own `acquireMigrateLock` (`maxWaitMs`) already
+  // establish. Production callers never pass this -- only `kb-disclosures.test.ts`'s own combined-suite
+  // stress test does, explicitly, for the scheduling-contention reason this constant's own doc comment
+  // explains above.
+  maxAttempts: number = DEFAULT_MAX_LOCK_ATTEMPTS,
+): Promise<T> {
+  const stateDir = paths.resolveState('.');
+  await mkdir(stateDir, { recursive: true });
+  const resolved = path.join(stateDir, lockFileName) as AbsolutePath;
+
+  for (let fenceRetry = 0; fenceRetry <= MAX_FENCE_RETRIES; fenceRetry += 1) {
+    const acquired = await acquireCollectionLockOnce(resolved, clock, maxAttempts);
+    if (!acquired) {
+      throw onExhausted(maxAttempts);
+    }
+
+    const verifyFence = async (): Promise<void> => {
+      const readBack = await readTextFile(resolved).catch(() => undefined);
+      if (readBack?.trim() !== String(process.pid)) {
+        throw new LockFenceLostError(lockFileName);
+      }
+    };
+
+    try {
+      const result = await operation(verifyFence);
+      await releaseCollectionLockIfStillOwned(resolved);
+      return result;
+    } catch (error) {
+      if (error instanceof LockFenceLostError) {
+        // This process no longer has any basis to believe it holds the lock -- never reclaim (the
+        // file may now be a different process's own genuinely legitimate lock) and never retry just
+        // the write: re-enter the FULL acquire loop from scratch, including a fresh `operation` call
+        // on the next iteration that re-reads whatever the current, possibly now different, state
+        // actually is.
+        continue;
+      }
+      await releaseCollectionLockIfStillOwned(resolved);
+      throw error;
+    }
+  }
+  // Exhausted the (deliberately small, deliberately rare-in-practice) fence-retry budget, not the
+  // ordinary acquire-contention budget -- still surfaced as the identical typed "could not get a
+  // durable hold on this lock" refusal a caller already knows how to handle, rather than inventing a
+  // second, narrower error shape for what is, from a caller's perspective, the same outcome.
+  throw onExhausted(maxAttempts);
 }

@@ -31,7 +31,12 @@ import {
   type LauncherShim,
   type LauncherSpec,
 } from './launcher-shim.ts';
-import { acquireRunLock, releaseRunLock, type RunLock } from './lock.ts';
+import {
+  acquireRunLock,
+  assertRunLockStillHeld,
+  releaseRunLockIfStillOwned,
+  type RunLock,
+} from './lock.ts';
 
 export interface RunWorkflowOptions {
   readonly workflowId: string;
@@ -222,6 +227,12 @@ export async function runWorkflow(
     // what was fed into compiling its plan). `integrationTipAtStart`/`syncedFromTrunk` record the sync
     // just performed above, for audit — never read back by `resumeWorkflow`, which never re-syncs.
     const manifestPath = deps.paths.resolveState(`runs/${runId}/manifest.json`);
+    // Write-time fencing (see `acquireRunLock`'s own `assertRunLockStillHeld` doc comment, `./lock.ts`):
+    // re-confirm, immediately before each of this function's own two real shared-file writes below
+    // actually commits, that this process still, genuinely, holds the project run lock -- checked
+    // again before the SECOND write too, not only once before the first, since each is its own
+    // separate `await` and therefore its own separate window.
+    await assertRunLockStillHeld(deps.paths, lock);
     await writeFileAtomic(
       manifestPath,
       JSON.stringify({
@@ -238,6 +249,7 @@ export async function runWorkflow(
     );
     // `forge resume`'s own "the last (or given) run" (`03` §3.2.4) needs a real way to find "the
     // last" one — this is that pointer, updated every time a new run actually starts.
+    await assertRunLockStillHeld(deps.paths, lock);
     await writeFileAtomic(deps.paths.resolveState('last-run.json'), JSON.stringify({ runId }));
 
     removeSignalHandlers = installRunSignalHandlers();
@@ -273,7 +285,7 @@ export async function runWorkflow(
   } finally {
     removeSignalHandlers?.();
     await shim?.cleanup();
-    await releaseRunLock(deps.paths);
+    await releaseRunLockIfStillOwned(deps.paths, lock);
   }
 }
 

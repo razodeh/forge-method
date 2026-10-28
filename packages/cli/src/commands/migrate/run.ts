@@ -54,7 +54,7 @@ import { pathExists, readTextFile, writeFileAtomic, type ProjectPaths } from '@f
 import { killGroup } from '@forge/engine/dispatch';
 import { execa } from 'execa';
 
-import { acquireMigrateLock, releaseMigrateLock } from './lock.ts';
+import { acquireMigrateLock, assertMigrateLockStillHeld, releaseMigrateLock } from './lock.ts';
 import type { SpecCommandContext } from '../spec.ts';
 import {
   readMigrationEntries,
@@ -420,6 +420,16 @@ export async function migrateRun(
           [entry.id]: { appliedAt: clock.now(), phase: entry.phase },
         },
       };
+      // Write-time fencing (see `assertMigrateLockStillHeld`'s own doc comment, `./lock.ts`):
+      // re-confirm, immediately before this commits, that this process still, genuinely, holds the
+      // lock -- checked on EVERY iteration (the lock is held across this whole loop, potentially
+      // many slow real script runs), not merely once before the loop starts. A lost fence here means
+      // another process now provably holds this lock; this invocation must not write a ledger entry
+      // it can no longer prove exclusive ownership of, even though the migration script itself
+      // already ran and genuinely succeeded -- surfaced as a loud `RUN-157` failure rather than a
+      // silent, unrecorded success, which is strictly safer than this file's own pre-fix behavior
+      // (a silently lost ledger entry and a later re-run of the same script).
+      await assertMigrateLockStillHeld(ctx.paths);
       await writeLedger(ctx.paths, ledger);
       applied.push(entry.id);
     }

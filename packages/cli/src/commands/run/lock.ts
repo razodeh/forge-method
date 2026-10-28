@@ -122,6 +122,36 @@ const AMBIGUOUS_LOCK_RETRY_DELAY_MS = 10;
  *
  * @see SPEC-QUESTIONS.md Q359
  */
+/** **CONFIRMED, deeper bug underneath every reasoning gap this doc comment and `run/lock.ts`'s own
+ * siblings already closed, closed here too: write-time fencing.** A dedicated investigation found
+ * that `open(path, 'wx')` itself -- the "exclusive create, atomic at the OS level" guarantee this
+ * function's own doc comment above relies on -- can, under dense, synchronous create/delete churn
+ * against the identical lock-file path from many real processes at once, let TWO concurrent creates
+ * BOTH report success, with neither ever seeing `EEXIST`. See `@forge/cli`'s own `collection-lock.ts`
+ * (top doc comment) for the complete empirical repro and reasoning, confirmed identical in substance
+ * here, not re-derived a third time.
+ *
+ * Unlike `withCollectionLock`/`withManifestLock`/`withEventLogLock` (each a generic wrapper around a
+ * caller-supplied `operation`), `acquireRunLock`/`releaseRunLock` bracket an entire `forge run`/`forge
+ * resume` invocation manually — there is no single wrapped write this function itself could fence on
+ * its own. `assertRunLockStillHeld` below is this lock's own version of the identical `verifyFence`
+ * primitive: a caller (`run.ts`, `resume.ts`) that is about to commit a real, shared-file write while
+ * believing it holds this lock calls it immediately beforehand, and it throws the identical `CFG-002`
+ * a live rival already throws if the lock file no longer names this process's own pid. This is
+ * narrower than the other four locks' own fully automatic "unwind and re-acquire" loop — deliberately
+ * so, consistent with this lock's own already-disclosed asymmetry (no self-heal; `CFG-002`'s blast
+ * radius, two concurrent `forge run` supervisors, is the highest of the five, and this file's own
+ * doc comment above already keeps a human in the loop for a merely ambiguous lock, let alone a
+ * confirmed-lost one) — a caller that catches `CFG-002` here must treat the whole run as unable to
+ * continue, never silently retry the one write; a fresh `forge run`/`forge resume` invocation is what
+ * "re-enter the full acquire loop from scratch" means for this particular lock. */
+export async function assertRunLockStillHeld(paths: ProjectPaths, lock: RunLock): Promise<void> {
+  const current = await readRunLock(paths);
+  if (current?.pid !== lock.pid || current.runId !== lock.runId) {
+    throw new ForgeError('CFG-002', { pid: lock.pid, host: lock.host });
+  }
+}
+
 export async function acquireRunLock(paths: ProjectPaths, lock: RunLock): Promise<void> {
   const resolved = lockPath(paths);
   await mkdir(path.dirname(resolved), { recursive: true });
@@ -157,10 +187,45 @@ export async function acquireRunLock(paths: ProjectPaths, lock: RunLock): Promis
   throw new Error(`acquireRunLock: gave up after ${String(MAX_ACQUIRE_ATTEMPTS)} attempts`);
 }
 
+/** Releases `.forge/state/lock.json`, unconditionally — deliberately NOT given the release-time
+ * ownership re-check `collection-lock.ts`/`module.ts`/`events.ts` each now apply symmetrically at
+ * their own equivalent release step (their own doc comments explain that mechanism in full). This
+ * lock's own real callers are not only the normal end-of-run self-release (`run.ts`/`resume.ts`'s own
+ * `finally`, where this process genuinely still owns the lock the overwhelming majority of the time —
+ * `assertRunLockStillHeld` above, called before this lock's own two real shared-file writes, already
+ * narrows that remaining risk the same way the other four locks' write-time fence does) but also
+ * `forge doctor --fix`'s own `fixStaleLock` (`doctor/fix.ts`), which exists SPECIFICALLY to delete a
+ * lock naming a DIFFERENT, confirmed-dead pid on a human's behalf — an ownership check here would
+ * make that entire remedy a permanent no-op, since the deleting process's own pid is never the dead
+ * one it is trying to clear. `fixStaleLock` already gates on its own `isProcessAlive` check before
+ * ever calling this, so the one case this file's own release genuinely needs to protect against (this
+ * process deleting a DIFFERENT, still-live process's own legitimate lock) is not actually reachable
+ * through that call site. */
 export async function releaseRunLock(paths: ProjectPaths): Promise<void> {
   const resolved = lockPath(paths);
   if (!(await pathExists(resolved))) return;
   await rm(resolved, { force: true });
+}
+
+/** The ownership-checked release `run.ts`/`resume.ts`'s own `finally` blocks use instead of the bare
+ * `releaseRunLock` above -- this is the one place that unconditional version's own doc comment
+ * flags as the real residual risk `assertRunLockStillHeld` alone does not cover: if this process's
+ * fence was already lost earlier in the very same run (another process's own independently-
+ * successful create landed, `assertRunLockStillHeld` threw, and that threw all the way out to this
+ * `finally`), the plain `releaseRunLock` would otherwise delete that OTHER process's now-genuinely-
+ * legitimate lock on this process's own way out — defeating `CFG-002` a second way, on exit rather
+ * than on write. Deletes only when `lock.json` still names this exact `(pid, runId)` pair, or is
+ * already absent; a mismatch is left untouched. Not used by `doctor/fix.ts`'s own `fixStaleLock`,
+ * which legitimately needs to clear a DIFFERENT process's dead-pid lock and already gates on
+ * `isProcessAlive` itself before calling the unconditional version above. */
+export async function releaseRunLockIfStillOwned(
+  paths: ProjectPaths,
+  lock: RunLock,
+): Promise<void> {
+  const current = await readRunLock(paths);
+  if (current === undefined || (current.pid === lock.pid && current.runId === lock.runId)) {
+    await rm(lockPath(paths), { force: true });
+  }
 }
 
 /**

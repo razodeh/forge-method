@@ -151,13 +151,16 @@ export async function overlayAdd(
   source: string,
   options: InstallOptions,
 ): Promise<InstallChangeReport> {
-  return withManifestLock(ctx.paths, () => overlayAddLocked(ctx, source, options));
+  return withManifestLock(ctx.paths, (verifyFence) =>
+    overlayAddLocked(ctx, source, options, verifyFence),
+  );
 }
 
 async function overlayAddLocked(
   ctx: OverlayCommandContext,
   source: string,
   options: InstallOptions,
+  verifyFence: () => Promise<void>,
 ): Promise<InstallChangeReport> {
   const doc = await readManifestDocument(ctx.paths);
 
@@ -217,6 +220,9 @@ async function overlayAddLocked(
       checksum: bundle.checksum,
       source,
     };
+    // Write-time fencing (see `module.ts`'s own `withManifestLock` doc comment): re-confirm,
+    // immediately before this commits, that this process still, genuinely, holds the lock.
+    await verifyFence();
     await writeManifestDocument(ctx.paths, {
       version: 1,
       modules: doc.modules,
