@@ -31558,3 +31558,112 @@ tests): clean.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 P7` entry's second close-out addendum for this
 fix, dated 2026-10-27.
+
+## Q359 — CONFIRMED real data loss via "ambiguous lock age" treated as "stale, reclaim" across all 5
+real cross-process file locks in this codebase; closed in 4 rounds for the 3 siblings that still had
+it, plus a production-latency correction (owner-directed scope expansion, 2026-10-27/28)
+
+**What this closes.** Every real, hand-rolled cross-process file lock in this codebase (`.forge/`
+primitives guarding `forge run`, `forge test exempt`, `forge kb disclose`, telemetry's own event log,
+and `forge module`/`forge migrate`) shares one ancestor discipline: `Q285`'s own M15 P6 Decision 1
+("a lock naming a confirmed-dead pid is safe to reclaim; nothing else is"). Two of the five —
+`@forge/telemetry`'s `withEventLogLock` (`379eb26`) and `@forge/cli`'s `withCollectionLock`
+(`e2a42d5`, the M15 P10-extracted primitive `withExemptionsLock`/`withDisclosuresLock` both lean on) —
+were found and fixed for a real violation of that discipline earlier in this same hardening pass: both
+treated `readLock` returning `undefined` (this process could not currently PROVE a holder exists —
+a transient read race, not positive evidence of staleness) the same as a confirmed-dead pid, and
+reclaimed on it. A real, repeatable repro (28-process contention, 6 cycles each) corrupted 6-9 of 10
+real runs this way before the fix. This entry closes the same confirmed defect in the three remaining
+siblings — `@forge/cli`'s `acquireRunLock` (`run/lock.ts`), `withManifestLock` (`module.ts`), and
+`acquireMigrateLock` (`migrate/lock.ts`) — none of which shared any code with the first two fixes, so
+each needed its own independent repro and fix, not a shared patch.
+
+**Decision 1 — the three remaining siblings got real, measured proof before any fix, not an assumed
+parity with the first two.** `run/lock.ts`: 90 of 118 real concurrent runs crashed outright (an
+uncaught `JSON.parse` `SyntaxError`/`RUN-034` `ENOENT`, not even a silent reclaim — worse than the
+first two sites' own failure mode). `module.ts`: 10 of 10 runs crashed via a separate TOCTOU gap in
+the same function. `migrate/lock.ts`: confirmed via direct code reading, matching the same pattern.
+Fixed per-file: `readRunLock`/`readManifestLock`-style readers now fold every read/parse failure into
+one `undefined` ("ambiguous," never thrown), and each acquire loop was changed to treat `undefined`
+as "retry, do not reclaim" — `run/lock.ts` retries with a short fixed delay up to a bounded attempt
+cap, then fails permanently (see Decision 3); `module.ts` and `migrate/lock.ts` instead age-gate the
+retry against the lock file's own `mtime` (`AMBIGUOUS_LOCK_GRACE_MS = 2000`) and reclaim only once a
+lock has stayed ambiguous past that grace period — a genuine self-heal the first two sites' own
+simpler "confirmed-dead-pid-only" design didn't need, because an event log and a disclosures ledger
+don't have a "my own lock file became permanently corrupt and nobody will ever delete it" failure mode
+the way a long-lived `forge run`/migration lock plausibly does.
+
+**Decision 2 — `module.ts`'s FIRST attempt at this fix shipped with zero age-gate at all (an
+unconditional-retry-forever class of regression), caught by re-review, not by the original build.** A
+critic reviewing the first round found the ambiguous branch had no delay and no age-gate whatsoever,
+so a permanently-corrupted-but-readable lock failed in ~7ms, every time, forever — never self-healing,
+unlike its two now-fixed siblings, and a regression from even the ORIGINAL (buggy) behavior's own
+"eventually give up" shape. Fixed by porting `migrate/lock.ts`'s exact age-gate mechanism in a second
+round; re-verified empirically (before: ~7ms permanent failure; after: self-heals at ~2054ms, just
+past the grace period, never instant, never hung forever).
+
+**Decision 3 — `run/lock.ts` deliberately does NOT get the same age-gated self-heal its two
+newly-fixed siblings do, and this is a disclosed, reasoned asymmetry, not an oversight left
+unresolved.** `acquireRunLock`'s ambiguous branch retries at a short fixed delay up to a bounded cap
+(`MAX_ACQUIRE_ATTEMPTS = 100`), then throws a plain, untyped `Error` — requiring a human to run
+`forge doctor --reclaim-lock` to clear a permanently-ambiguous `lock.json`. `CFG-002` (this lock's own
+refusal code) exists specifically to prevent two concurrent `forge run` supervisors from driving the
+same project at once — the highest real blast radius of the five lock sites, since a wrong auto-
+reclaim here risks two engines mutating the same run state simultaneously, not merely a flaky
+disclosure/exemption append or a stalled migration. The Decision taken: keep `run/lock.ts`'s
+conservative "never auto-delete an ambiguous run-lock, always require a human" behavior as-is, rather
+than porting the other two siblings' self-heal to it for uniformity's own sake. A future piece that
+wants `run/lock.ts` to self-heal too should make that an explicit, separately-reasoned change — not
+assume parity with its siblings is automatically correct, given the asymmetric risk profile. (Two
+independent round-3 critics each found, independently, that earlier commit messages/doc comments in
+this exact work had mischaracterized `run/lock.ts` as "already fixed" alongside its two siblings —
+corrected; `run/lock.ts`'s own doc comment on `acquireRunLock` now states this Decision directly and
+cites this entry.)
+
+**Decision 4 — `collection-lock.ts`'s shared lock-wait budget is an INJECTABLE parameter defaulting to
+the original production value, not a globally-widened constant, even though the thing that actually
+needed widening was test-only.** The first attempt at fixing a real, reproduced test flake (the
+4-file combined acceptance command — `run/lock.test.ts` + `module.test.ts` + `migrate/run.test.ts` +
+`kb-disclosures.test.ts` — failed 4 of 5 runs, ~84 real concurrent processes exhausting
+`kb-disclosures.test.ts`'s own lock-wait budget; no data corruption ever observed, pure scheduling
+contention) simply doubled the shared `MAX_LOCK_ATTEMPTS` constant (200→400, 5s→10s) globally. A
+round-2 critic correctly flagged this as touching real production latency for `withDisclosuresLock`/
+`withExemptionsLock`'s two real callers (`forge kb disclose`/`disclose resolve`, `forge test exempt`)
+for a scenario (waiting out a genuinely still-alive rival process) that has nothing to do with the
+test-scheduling problem being fixed — a lower-risk, already-precedented alternative
+(`migrate/lock.ts`'s own injectable `maxWaitMs`) existed one function away and was unconsidered.
+Reverted the global default back to 200/5s and added an injectable `maxAttempts` parameter to
+`withCollectionLock` (threaded through `withDisclosuresLock`/`withExemptionsLock`), used explicitly
+(400) only by the one stress test that actually needs it; every real production call site is
+unaffected, confirmed by direct repro (a live-rival-holder lock now exhausts at ~5.4s again, not
+~10s).
+
+**Decision 5 — a test-side timeout margin was kept wide for cross-suite CI-gate contention risk even
+after the thing it was originally widened for (Decision 4) was reverted.** `exemptions.test.ts`'s own
+two `GATE-515` lock-exhausted timeout tests were widened 15s→20s alongside the Decision 4 budget
+change, then reverted back to 15s once that budget reverted — on the reasoning that restoring the
+production default restores the original margin. A round-3 critic pointed out this reasoning was only
+checked against isolated reruns and a hand-picked 4-file command, never against this repo's REAL CI
+acceptance gate: `vitest.config.ts` deliberately runs the whole workspace in one shared fork pool (no
+per-package `projects` isolation), and `.github/workflows/ci.yml`'s `seed` job exists specifically to
+run that same full-workspace suite twice under `--sequence.shuffle`, to catch exactly this class of
+cross-test scheduling contention — under which `kb-disclosures.test.ts`'s own new 28-worker stress
+test (added fixing this entry's own Decision 1) shares the same pool as `exemptions.test.ts`'s tight
+timing assertions. Rather than prove a negative via an expensive full-suite run, the margin was simply
+kept at 20s (a test timeout costs nothing in production, unlike Decision 4's constant). Two
+independent re-review critics then each ran the actual adjacent-contention scenario
+(`exemptions.test.ts` concurrently with `kb-disclosures.test.ts`'s own stress test) and both measured
+the GATE-515 tests still completing in ~5.4-5.5s — comfortable ~14.5s/3.6x headroom, confirming the
+defensive margin is not merely cautious but genuinely necessary evidence the original "isolated reruns
+are enough" reasoning lacked.
+
+**Discloses, not fixed here.** `forge doctor`'s own `checkStaleLock` collapses "no lock file" and "a
+lock file that exists but can't be read/parsed" into the same "No project lock held" report — a
+genuinely corrupt `run/lock.ts` lock is therefore invisible to `forge doctor` today, the same way it
+used to be invisible to the acquire path before this entry's own fixes. Disclosed via a doc comment on
+`checkStaleLock` (`packages/cli/src/commands/doctor/locks-and-worktrees.ts`); not fixed, since the
+correct fix (a dedicated raw-content read inside that one check, not a change to the shared
+`readRunLock`) is its own separably-scoped piece of work.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M15 P6` entry's lock-reliability close-out addendum for
+this fix, dated 2026-10-27/28.
