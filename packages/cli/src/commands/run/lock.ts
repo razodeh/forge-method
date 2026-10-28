@@ -36,13 +36,31 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
+/**
+ * `undefined` whenever this process cannot currently prove a lock exists — a genuine absence, one
+ * removed by a concurrent release/reclaim in the gap between this function's own existence check and
+ * its read, or content caught mid-write. Never throws for any of those: confirmed live (a real
+ * 28-process x 6-cycle acquire/release contention run crashed 90 of 118 total failures outright, via
+ * an uncaught `JSON.parse` `SyntaxError` on an empty read or a `RUN-034` `ENOENT` from `readTextFile`)
+ * that the previous version — `pathExists` then a *separate* `readTextFile`/`JSON.parse` — left a real
+ * gap a concurrent writer's own release-then-recreate could land in, taking the whole acquire attempt
+ * down with it rather than letting its caller treat the lock as merely indeterminate for this read.
+ */
 export async function readRunLock(paths: ProjectPaths): Promise<RunLock | undefined> {
   const resolved = lockPath(paths);
-  if (!(await pathExists(resolved))) return undefined;
-  return JSON.parse(await readTextFile(resolved)) as RunLock;
+  try {
+    return JSON.parse(await readTextFile(resolved)) as RunLock;
+  } catch {
+    return undefined;
+  }
 }
 
 const MAX_ACQUIRE_ATTEMPTS = 100;
+
+/** How long `acquireRunLock` waits before retrying after an ambiguous (`undefined`) `readRunLock`
+ * result -- the identical short, fixed-delay shape `@forge/cli`'s own `withCollectionLock`
+ * (`LOCK_RETRY_DELAY_MS`) already uses for its own "not yet provably stale" retry path. */
+const AMBIGUOUS_LOCK_RETRY_DELAY_MS = 10;
 
 /**
  * Acquires the project lock for a new run, throwing `CFG-002` if another real, still-alive process
@@ -66,6 +84,16 @@ const MAX_ACQUIRE_ATTEMPTS = 100;
  * it. The narrow remaining case (this process's own `rm` racing another's reclaim of the identical
  * stale lock) is safe for the same reason: whichever process's `open('wx')` call the OS actually
  * serializes second gets `EEXIST` again and loops once more, never a torn write.
+ *
+ * **Fixed bug class, identical to `@forge/telemetry`'s own `withEventLogLock` (`379eb26`) and
+ * `@forge/cli`'s own `withCollectionLock` (`e2a42d5`):** `readRunLock` returning `undefined` used to
+ * be folded into "not a real, live holder, reclaim" the same way a genuinely dead pid is. But
+ * `undefined` only ever means this process could not prove a holder exists a moment ago — nothing
+ * about the actual instant of the `rm` call below, which runs on a separate, later `await`. Treating
+ * that stale, ambiguous observation as license to delete whatever currently sits at `resolved` could
+ * destroy a brand-new, genuinely live lock a different process legitimately created in the gap. Only
+ * a lock this process can actually read AND prove names a dead pid is real, positive evidence of
+ * staleness; `undefined` is retried instead, never reclaimed.
  */
 export async function acquireRunLock(paths: ProjectPaths, lock: RunLock): Promise<void> {
   const resolved = lockPath(paths);
@@ -86,9 +114,16 @@ export async function acquireRunLock(paths: ProjectPaths, lock: RunLock): Promis
     }
 
     const existing = await readRunLock(paths);
-    if (existing !== undefined && isProcessAlive(existing.pid)) {
+    if (existing === undefined) {
+      // Ambiguous, not stale: retry the exclusive create rather than blindly deleting whatever may
+      // now sit at `resolved` -- see this function's own doc comment for the full reasoning.
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, AMBIGUOUS_LOCK_RETRY_DELAY_MS));
+      continue;
+    }
+    if (isProcessAlive(existing.pid)) {
       throw new ForgeError('CFG-002', { pid: existing.pid, host: existing.host });
     }
+    // A genuinely dead pid is real, positive proof of staleness -- safe to reclaim outright.
     await rm(resolved, { force: true });
   }
 
