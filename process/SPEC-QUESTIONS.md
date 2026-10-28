@@ -31846,3 +31846,172 @@ rather than reintroduce the blind spot.**
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's workspace-floor addendum, dated
 2026-10-27.
+
+## Q364 — CONFIRMED LIVE DATA CORRUPTION: the OS-level exclusive-create primitive itself can double-
+succeed under real contention, underneath all 5 of this codebase's cross-process file locks, closed
+in 3 rounds (the single most severe defect found this milestone, owner-directed scope expansion,
+2026-10-28)
+
+**What this closes.** A real CI push of this milestone's accumulated hardening work failed on
+multiple `floor` job legs (ubuntu-latest and macos-latest, nodes 20/22/24 — 6 jobs total, run
+`40678754407`) with a genuine, confirmed data-integrity failure: `exemptions.test.ts`'s own "20 real,
+separate OS processes, released together, all survive with 20 distinct ids" test got only 16 distinct
+ids. Not a timeout, not a clean `GATE-515 lock-exhausted` refusal (a separate, narrower issue the same
+run also surfaced — see Decision 5 below) — a genuine duplicate-id collision: at least two pairs of
+concurrent, separate OS processes computed and wrote the identical exemption id, with one process's
+entire append silently vanishing under the other's later atomic rename.
+
+Every real cross-process file lock in this codebase (`.forge/state/*.lock`) does its ENTIRE
+read-modify-write for the file it protects — read current state, compute the next value, write the
+new state — inside the single critical section the lock exists to serialize. For two processes to
+compute and write the identical id, the lock's own mutual exclusion itself had to fail: two processes
+both genuinely believing, at the same time, that they alone held the lock.
+
+**Decision 1 — the root cause is a genuine, previously-unknown fault in the OS/filesystem's own
+`O_CREAT|O_EXCL` ("`wx`") exclusivity guarantee, not a logic bug in any of this project's own prior
+hardening.** A dedicated investigation reproduced the failure directly, repeatedly, with full
+instrumentation (timestamped, per-pid event logs across real, separate OS processes) against the real
+production code, not a model: under dense, rapid create-and-delete churn on the IDENTICAL lock-file
+path across many real, competing processes — the specific access pattern a real, loaded CI runner
+produces and a quiet dev machine does not (confirmed: generic background CPU+disk load alone produced
+zero violations across 1600+ trials; only dense synchronous retry-loop I/O at the actual acquire
+decision points reproduced it reliably) — two concurrent `wx`-flagged create attempts on the same path
+can BOTH report success, with NEITHER ever observing `EEXIST`. Independently confirmed that every
+higher-level piece of this project's prior lock-reliability work (dead-pid detection, stale-age gating,
+`isProcessAlive`, `nextExemptionId`'s own max-finding logic, `writeFileAtomic`'s own rename-based
+durability) behaved correctly throughout the captured repro — none of that reasoning was wrong. The
+existing "trust but verify" readback (reading a lock file back immediately after creating it, to
+confirm it still names this process's own pid — the mitigation M15 P6 round 2 added for a DIFFERENT,
+already-fixed bug) is structurally BLIND to this exact failure: the process that wins a duplicate,
+independently-successful create always sees its OWN just-written content on readback, since it IS the
+write that landed moments before. There is nothing visible from either winner's own local vantage
+point that reveals the other also, separately, believes it holds the identical lock. The vulnerable
+window is not narrow — in the captured repro, one process's entire read-compute-write operation ran to
+completion while a second process's own independent create ALSO succeeded partway through it.
+
+Confirmed present in BOTH structural families this codebase uses for its 5 real locks — (1) synchronous
+`writeFileSync(path, pid, {flag:'wx'})` plus an immediate synchronous readback (`collection-lock.ts`'s
+`withCollectionLock`, backing `exemptions.lock`/`disclosures.lock`; `@forge/telemetry`'s own, separately
+implemented `withEventLogLock`), and (2) the async `fsPromises.open(path,'wx')` → `writeFile`→`sync`→
+`close` shape (`run/lock.ts`'s `acquireRunLock`; `module.ts`'s `withManifestLock`; `migrate/lock.ts`'s
+`acquireMigrateLock`, which also has an async readback) — whether a readback step exists makes no
+measurable difference, confirmed by direct, faithful ports of each shape reproducing the identical
+double-success outcome independently. All 5 real cross-process locks in this codebase were exposed.
+
+**Decision 2 — the fix is write-time "fencing" (an optimistic-concurrency/fencing-token pattern),
+deliberately NOT a switch to a different lock primitive (e.g. a persistent, `flock`-style OS advisory
+lock).** Rather than trust "I believe I hold the lock" (formed at acquire time) as sufficient license
+to commit the shared file's real write, each lock now re-verifies, immediately before its real write
+(with nothing else awaited in between), that the lock file still names this process's own pid — making
+the protected RESOURCE itself refuse a write from a process that can no longer prove exclusive
+ownership at write-time, rather than trusting an earlier, never-re-checked belief. This narrows the
+exposure window from "this process's entire read-compute-write operation" down to "the gap between one
+final read and the one immediate write that follows it" — explicitly NOT a mathematical impossibility
+proof (a fully airtight fix would mean replacing create/delete-churn locking with a persistent lock
+file plus a true OS advisory lock held on a stable fd, which needs its own careful empirical
+verification, including cross-platform `flock`-equivalent availability — deliberately out of this
+fix's scope, a disclosed, deferred, bigger and riskier option for a future piece if this mitigation
+ever proves insufficient in practice). On a lost fence: `collection-lock.ts`/`telemetry`'s
+`withEventLogLock`/`module.ts`'s `withManifestLock` force a full re-acquisition with a fresh read (a
+new `LockFenceLostError`/`EventLogLockFenceLostError`/`ManifestLockFenceLostError`, bounded retry,
+separate from the ordinary contention budget); `run/lock.ts`/`migrate/lock.ts` use a manual
+acquire/release bracket rather than a wrapped callback, so a lost fence there (`assertRunLockStillHeld`/
+`assertMigrateLockStillHeld`) instead aborts the current operation loudly (`CFG-002`/`RUN-157`) — a
+deliberate, disclosed asymmetry tied to each lock's own existing risk profile (see Decision 3).
+
+**Decision 3 — `run/lock.ts` aborting the WHOLE run on a lost fence, rather than retrying, is a
+deliberate continuation of this lock's own pre-existing design philosophy, not a new, harsher failure
+mode.** `acquireRunLock` already threw `CFG-002` immediately, with zero retry, the instant it found a
+confirmed-live rival holder during ordinary acquisition — `CFG-002` exists specifically to prevent two
+concurrent `forge run` supervisors from driving the same project simultaneously, the highest real blast
+radius of the five locks (see this entry's own forerunner, the lock-self-heal-asymmetry decision this
+piece's own citations point back to). The write-time fence simply extends that identical "a different,
+live process now provably holds this" response to the write-time case. The real exposure is narrower
+than it first sounds: both of `run.ts`'s own fence checks fire only in the first fraction of a second
+of a run (persisting `manifest.json`/`last-run.json` at start), never during the long multi-step
+execution that follows — a long-running, otherwise-healthy run is not newly at risk of dying mid-flight
+over this.
+
+**Decision 4 — the fencing boundary must cover EVERY real write a lock protects, not just the one a
+critic happened to point at first; two real gaps were found and closed across rounds 1-2.** Round 1's
+own fix, reviewed by 3 independent critics, correctly fenced the write each lock's doc comments named
+as "the" protected write — but missed two others the SAME locks' own doc comments equally named as
+protected: `module.ts`/`overlay.ts`'s `installBundleTree`/`rm(destAbs,...)` calls (explicitly named,
+in `module.ts`'s own pre-existing header comment, as one of "the last two calls" `withManifestLock`
+exists to serialize — the fence only reached the other one), and `@forge/telemetry`'s own
+`determineLastSeq`→`truncateTornTrailingWrite` repair-write (a narrower, rarer trigger — only the
+torn-trailing-write repair path, not every append). Both were found by a dedicated completeness-audit
+critic re-deriving every real write under every lock from scratch, independent of what earlier critics
+already said was checked — closed in round 2, each verified empirically (idempotency of
+`installBundleTree` under a forced double-run confirmed directly, not assumed; `events.ts`'s repair
+fence given its own, separately-timed check rather than relocating the main fence, since relocating it
+would only move the identical gap rather than close it).
+
+**Decision 5 — a fix's own NEW tests must exercise the real call sites, not a synthetic stand-in; round
+2 shipped two tests that looked like real coverage but provided none, caught only by direct mutation
+testing.** Round 2 closed decision 4's two gaps in production code correctly, and added new tests
+claiming to verify them — but a round-2 critic proved, by literally commenting out the real
+`verifyFence()` calls in the actual `moduleAddLocked`/`moduleRemoveLocked`/`moduleUpdateLocked`/
+`overlayAddLocked`/`truncateTornTrailingWrite` and re-running the suite, that it stayed 100% green
+either way: the module.ts/overlay.ts tests only drove `withManifestLock`'s own generic retry mechanism
+through a hand-written synthetic callback, never the real functions; the events.ts test's injected
+anomaly handed back already-healed, newline-terminated content, so the function's own early-return
+skipped the fenced branch entirely before ever reaching it. Round 3 closed this by driving the real
+public API (`moduleAdd`/`moduleRemove`/`moduleUpdate`/`overlayAdd`) with the anomaly injected at the
+precise moment, asserting a write-call-COUNT (not final state, since a later, already-correctly-tested
+fence catches a persistent rival regardless, making final state identical either way and useless as a
+signal) — and by feeding `determineLastSeq` genuinely stale, torn content instead of a fresh re-read.
+Every one of round 3's own mutation-testing claims was independently reproduced twice more by two
+further critics before this landed. This recurrence of the exact "a fix that looks right under
+inspection but provides zero real signal under execution" pattern — already recorded once this
+milestone as its own standing lesson (`Q362`) — is the clearest evidence yet that lesson generalizes
+beyond its original naming-convention-extractor context: it applies just as much to a mocked unit
+test's own call graph as to a regex's own capture group.
+
+**Decision 6 (separate, narrower, found in the same real CI run — not a cause of Decision 1's bug,
+confirmed independently) — `exemptions.test.ts`'s own 28-process stress test lacked the wider
+lock-attempt budget this exact bug class's EARLIER fix (`Q359` Decision 4) had already given its
+siblings.** `Q359` Decision 4 made `collection-lock.ts`'s shared attempt budget injectable, widened
+only for `kb-disclosures.test.ts`'s own 28-process stress test, on the premise that `exemptions.test.ts`
+"is not part of the 4-file combined acceptance suite" whose scheduling contention motivated the
+widening — false under the real CI gate, which runs the entire 755-file suite in one shared fork pool
+regardless of which hand-picked command a test happens to be grouped with in a human-run acceptance
+check. Fixed by giving `exemptions.test.ts`'s own stress test the identical override its sibling
+already had, and by keeping `exemptions.test.ts`'s own `GATE-515` timeout-margin tests defensively wide
+(20s) rather than reverting them, specifically because the real gate's cross-suite contention is not
+cheaply provable safe from isolated/hand-picked reruns alone.
+
+**Discloses, not fixed here.** (1) `installBundleTree`'s own fence, while correct, covers a real gap
+less tightly than the universal "one read, one immediate write" framing this fix's doc comments repeat
+elsewhere: the real commit happens several real, awaited syscalls (a full recursive copy, an fsync)
+after the fence check's own read returns, made safe only by `installBundleTree`'s own confirmed
+idempotency-under-retry, not by proximity to the fence. (2) `RUN-157` (migrate lock)'s existing
+message/remedy text ("gave up waiting for it to finish... remove the lock file by hand") was written
+for its original, pre-this-fix meaning (an ordinary acquire-time budget exhaustion) and is reused,
+undocumented as a deliberate choice, for the new write-time fence-loss case, where this process never
+waited at all — it already held the lock, may have already run a migration script to completion, and
+only then discovered a rival now holds the lock. The message's "gave up waiting" framing is literally
+false in that case, and omits the one genuinely new, actionable fact this specific failure mode
+produces (per `migrate/run.ts`'s own code comment: the current entry's script may have already run
+successfully but was deliberately left unrecorded in the ledger). A real, user-facing diagnostics
+accuracy gap, not a correctness or data-safety defect — the actual behavior (abort loudly, never
+silently record an unconfirmed ledger entry) is correct and safe either way; recommended follow-up is
+a distinct message/remedy for this one throw site, the way `@forge/telemetry`'s own analogous
+fence-exhaustion case already correctly gets its own distinctly-worded error rather than reusing one
+written for a different circumstance. (3) The new `module-install-fence-real-paths.test.ts` is not
+referenced from `module.ts`'s/`module.test.ts`'s own doc comments — a true orphan from either file's
+own perspective, matching (not introducing) an identical pre-existing gap `backup-retry.test.ts` has
+relative to `backup.ts`.
+
+**Verification, final state.** Three full rounds, 7 independent critic reviews total across the whole
+saga (3 in round 1, 2 in round 2, 2 in round 3), every mutation-testing claim in the final round
+independently reproduced twice more before landing. The real, originally-failing CI test
+(`exemptions.test.ts`'s "20 real, separate OS processes... all survive with 20 distinct ids") and every
+sibling multi-process stress test across all 5 locks: clean across dozens of fresh runs by multiple
+independent reviewers, with the sole recurring exception being the already-disclosed, pre-existing
+`GATE-515`/`KB-018` lock-wait-budget-exhaustion flake class under genuine heavy host contention (never,
+in any run, a lost or duplicated id — the actual property this fix exists to guarantee). `pnpm
+typecheck`/`pnpm lint`: clean at every round.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's write-time-fencing close-out
+addendum, dated 2026-10-28.
