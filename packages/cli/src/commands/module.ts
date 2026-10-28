@@ -179,9 +179,21 @@ async function readManifestModules(paths: ProjectPaths): Promise<readonly Manife
 const INSTALL_LOCK_REL_PATH = 'module-install.lock';
 const MAX_LOCK_ATTEMPTS = 100;
 
+/** `undefined` for every case this process cannot currently prove holds the lock — a genuinely
+ * absent file, one removed by a concurrent reclaim in the TOCTOU gap between this function's own
+ * existence check and its read (confirmed live: a real 28-process x 6-iteration contention run
+ * crashed up to 20 of 28 workers outright on an uncaught `RUN-034` from exactly this gap before this
+ * fix, `readTextFile` throwing ENOENT because `pathExists` and the read were two separate, non-atomic
+ * steps), or unparseable content. Never throws: a single `readTextFile` catch covers both "missing"
+ * and "existed a moment ago, gone by the time of the actual read" in one step, rather than `pathExists`
+ * then a separate `readTextFile` leaving a gap a concurrent writer's own release/reclaim can land in. */
 async function readLockPid(lockAbs: AbsolutePath): Promise<number | undefined> {
-  if (!(await pathExists(lockAbs))) return undefined;
-  const raw = (await readTextFile(lockAbs)).trim();
+  let raw: string;
+  try {
+    raw = (await readTextFile(lockAbs)).trim();
+  } catch {
+    return undefined;
+  }
   const pid = Number(raw);
   return Number.isInteger(pid) ? pid : undefined;
 }
@@ -197,7 +209,16 @@ async function readLockPid(lockAbs: AbsolutePath): Promise<number | undefined> {
  * level — never a separate "check, then write" pair, so two installs starting in the same instant
  * cannot both believe they hold the lock the way an unlocked read-then-write already proved they
  * could for the manifest itself.
- */
+ *
+ * **Fixed bug class, identical to `@forge/telemetry`'s own `withEventLogLock` (`379eb26`) and this
+ * package's own `withCollectionLock` (`e2a42d5`):** `readLockPid` returning `undefined` used to be
+ * folded into "not a real, live holder, reclaim" alongside a genuinely dead pid. But `undefined` only
+ * ever means "this process could not prove a holder exists a moment ago" — it says nothing about
+ * whether one exists *right now*, at the actual instant of the `rm` call below. Unconditionally
+ * reclaiming on that basis let this process delete a brand-new, genuinely live lock a different
+ * process legitimately created in the gap between the ambiguous read and the reclaim. Only a lock
+ * this process can actually read AND prove names a dead pid is real, positive evidence of staleness;
+ * `undefined` is retried instead, never reclaimed. */
 /** Exported so `overlay.ts`'s own `overlayAdd` serializes against the identical lock — one project
  * has one install lock regardless of whether the operation in flight is a module or an overlay one,
  * since both mutate the same `manifest.yaml`. */
@@ -219,12 +240,16 @@ export async function withManifestLock<T>(paths: ProjectPaths, fn: () => Promise
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
       const existingPid = await readLockPid(lockAbs);
-      if (existingPid !== undefined && isProcessAlive(existingPid)) {
+      if (existingPid === undefined) {
+        // Ambiguous, not stale: this process cannot currently prove anything about who (if anyone)
+        // holds the lock. Retry the exclusive create rather than reclaiming -- see this function's
+        // own doc comment for the full reasoning and the confirmed crash this already caused.
+        continue;
+      }
+      if (isProcessAlive(existingPid)) {
         throw new ForgeError('CFG-047', undefined);
       }
-      // Either the lock names a dead pid, or it was unreadable/mid-write — either way it is not a
-      // real, live holder, so it is reclaimed and the next loop iteration retries the exclusive
-      // create (which itself resolves any remaining race against a concurrent reclaimer).
+      // A genuinely dead pid is real, positive proof of staleness -- safe to reclaim outright.
       await rm(lockAbs, { force: true });
     }
   }
