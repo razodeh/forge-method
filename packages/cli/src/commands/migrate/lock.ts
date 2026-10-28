@@ -10,19 +10,24 @@
  * scope; this file is that decision. The shape is deliberately `commands/run/lock.ts`'s own, already
  * reviewed, already fixed-after-a-critic-round pattern (`.forge/state/lock.json`, `acquireRunLock`),
  * reused rather than re-derived — `isProcessAlive` is imported from it directly, not duplicated. It
- * differs in one load-bearing way: `acquireRunLock` REFUSES outright (`CFG-002`) when another live
- * process already holds it, because only one real supervisor may ever drive a run. Two `forge migrate
- * run` invocations naming different, unrelated migration ids are not mutually exclusive in that
- * sense — both are legitimate and both must eventually succeed — so this lock WAITS (bounded,
- * polling) for the holder to finish rather than refusing, and only throws once that wait is
- * genuinely exhausted.
+ * differs from that reused shape in (at least) two load-bearing ways, not one: (1) `acquireRunLock`
+ * REFUSES outright (`CFG-002`) when another live process already holds it, because only one real
+ * supervisor may ever drive a run. Two `forge migrate run` invocations naming different, unrelated
+ * migration ids are not mutually exclusive in that sense — both are legitimate and both must
+ * eventually succeed — so this lock WAITS (bounded, polling) for the holder to finish rather than
+ * refusing, and only throws once that wait is genuinely exhausted. (2) This file's own ambiguous-lock
+ * handling (below) is a GENUINE age-gated self-heal, reclaiming an unreadable lock once it has
+ * measurably sat that way past `AMBIGUOUS_LOCK_GRACE_MS` — `acquireRunLock` deliberately has no such
+ * self-heal at all for its own identically-shaped ambiguous case (a bounded retry, then a permanent,
+ * plain `Error`); see that function's own disclosure comment (`run/lock.ts`) for why this asymmetry
+ * is suspected, not confirmed, deliberate.
  *
- * Also layers the read-back-after-write and age-gated-reclaim protections this codebase's own
- * cross-process locking experience calls for beyond a bare `open(path, 'wx')`: the exclusive create
- * is fsynced then immediately read back to confirm THIS process's own write is the one that landed
- * (never assumed from the absence of an `EEXIST` alone), and a lock whose `startedAt` is older than
- * `MAX_LOCK_AGE_MS` is reclaimed as a last-resort self-healing fallback even when `isProcessAlive`
- * alone would read "alive" (a pid can be reused by an unrelated process across a long enough gap).
+ * Also layers the read-back-after-write protection this codebase's own cross-process locking
+ * experience calls for beyond a bare `open(path, 'wx')`: the exclusive create is fsynced then
+ * immediately read back to confirm THIS process's own write is the one that landed (never assumed
+ * from the absence of an `EEXIST` alone), and a lock whose `startedAt` is older than `MAX_LOCK_AGE_MS`
+ * is reclaimed as a last-resort self-healing fallback even when `isProcessAlive` alone would read
+ * "alive" (a pid can be reused by an unrelated process across a long enough gap).
  *
  * @see specs/03 §3.2.5
  * @see specs/12 F-DATA-6

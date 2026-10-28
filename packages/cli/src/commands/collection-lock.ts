@@ -49,21 +49,36 @@ import { readTextFile, type AbsolutePath, type ProjectPaths } from '@forge/core/
 
 import { isProcessAlive } from './run/lock.ts';
 
-/** `400` (10s at `LOCK_RETRY_DELAY_MS` below), not the original `200` (5s) -- raised by a round-2
- * critic finding on this milestone's own lock-reliability round: `kb-disclosures.test.ts`,
- * `run/lock.test.ts`, and `module.test.ts` each independently added their own real, 28-OS-process
- * stress test for this exact bug class, and running all three together (as the gauntlet's own
- * specified acceptance command does) spikes to up to ~84 real, competing child processes at once --
- * confirmed live at an 80% failure rate (4/5 runs) for exactly this reason: `kb-disclosures.test.ts`'s
- * OWN 28-worker test exhausted the original 5s budget under that COMBINED host load, not because any
- * lock was actually held longer by its true owner, but because real OS scheduling contention across
- * ~84 competing processes slows down every single `open`+`writeFile`+`sync`+`close`/`stat` cycle this
- * loop depends on. The data-integrity assertion itself (no lost/duplicated id) was never violated in
- * any failing run -- a budget problem under combined test-suite load, not a correctness regression,
- * so the fix widens the budget rather than touching the locking logic itself. Still finite and still
- * a real, named `KB-018`/`GATE-515` refusal if a lock is EVER wedged for 10 real seconds -- this is
- * headroom for legitimate contention, not an unbounded wait. */
-const MAX_LOCK_ATTEMPTS = 400;
+/** `200` (5s at `LOCK_RETRY_DELAY_MS` below) -- the ORIGINAL production value (`e2a42d5`), restored
+ * here as this function's own default after a round-3 critic finding on a round-2 regression: round 2
+ * had raised this globally to `400` (10s) to fix a test-SCHEDULING problem (below), but doing so widened
+ * real wall-clock wait time for every real production caller too (`withDisclosuresLock`/
+ * `withExemptionsLock`, backing `forge kb disclose`/`disclose resolve`/`forge test exempt`) for the one
+ * scenario where this constant actually governs anything in production: waiting out a genuine, still-
+ * alive rival process holding the lock for the whole budget. (An ambiguous/corrupted lock self-heals via
+ * the separate, untouched `STALE_EMPTY_LOCK_MS` age-gate below regardless of this constant -- this
+ * constant specifically bounds "wait out a live rival holder," never "self-heal from corruption.") Doubling
+ * that real wait was never something any real `forge kb disclose`/`forge test exempt` user asked for or
+ * benefited from; it was purely a side effect of fixing unrelated test-process scheduling contention.
+ *
+ * The actual problem this constant's own widening fixed: `kb-disclosures.test.ts`, `run/lock.test.ts`,
+ * and `module.test.ts` each independently added their own real, 28-OS-process stress test for this
+ * exact bug class, and running all three together (as the gauntlet's own specified acceptance command
+ * does) spikes to up to ~84 real, competing child processes at once -- confirmed live at an 80% failure
+ * rate (4/5 runs) for exactly this reason: `kb-disclosures.test.ts`'s OWN 28-worker test exhausted the
+ * original 5s budget under that COMBINED host load, not because any lock was actually held longer by
+ * its true owner, but because real OS scheduling contention across ~84 competing processes slows down
+ * every single `open`+`writeFile`+`sync`+`close`/`stat` cycle this loop depends on. The data-integrity
+ * assertion itself (no lost/duplicated id) was never violated in any failing run -- a budget problem
+ * under combined test-suite load, not a correctness regression.
+ *
+ * Fix direction (round 3): rather than widen the shared default (round 2's choice, reverted above), this
+ * function now takes `maxAttempts` as an explicit, injectable parameter (the identical precedented shape
+ * `migrate/lock.ts`'s own `acquireMigrateLock` already uses for its `maxWaitMs`) -- production callers
+ * take this default (`200`/5s, restored) unchanged, and only the specific tests that genuinely need the
+ * wider `400`/10s budget for combined-suite scheduling-contention reasons pass that value explicitly. See
+ * `withDisclosuresLock`'s/`withExemptionsLock`'s own doc comments for how each threads this through. */
+const DEFAULT_MAX_LOCK_ATTEMPTS = 200;
 const LOCK_RETRY_DELAY_MS = 25;
 /** See `withExemptionsLock`'s own original doc comment (M15 P6) for the full reasoning: well above
  * any real `open`+`writeFile`+`sync`+`close` sequence even under heavy contention, well below
@@ -80,13 +95,20 @@ export async function withCollectionLock<T>(
   // detail typing through a loosely-typed intermediate shape.
   onExhausted: (maxAttempts: number) => ForgeError,
   operation: () => Promise<T>,
+  // Round-3 addition: an injectable override of `DEFAULT_MAX_LOCK_ATTEMPTS` (`200`/5s), the identical
+  // "optional param, appended last, defaulted to the production constant" shape `module.ts`'s own
+  // `withManifestLock` (`clock`) and `migrate/lock.ts`'s own `acquireMigrateLock` (`maxWaitMs`) already
+  // establish. Production callers never pass this -- only `kb-disclosures.test.ts`'s own combined-suite
+  // stress test does, explicitly, for the scheduling-contention reason this constant's own doc comment
+  // explains above.
+  maxAttempts: number = DEFAULT_MAX_LOCK_ATTEMPTS,
 ): Promise<T> {
   const stateDir = paths.resolveState('.');
   await mkdir(stateDir, { recursive: true });
   const resolved = path.join(stateDir, lockFileName) as AbsolutePath;
 
   let acquired = false;
-  for (let attempt = 0; attempt < MAX_LOCK_ATTEMPTS && !acquired; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts && !acquired; attempt += 1) {
     try {
       // Synchronous, deliberately: a single call does create+write+close with no `await` (no Node
       // microtask yield, no OS-scheduler preemption point) between the file coming into existence
@@ -150,7 +172,7 @@ export async function withCollectionLock<T>(
     }
   }
   if (!acquired) {
-    throw onExhausted(MAX_LOCK_ATTEMPTS);
+    throw onExhausted(maxAttempts);
   }
   try {
     return await operation();

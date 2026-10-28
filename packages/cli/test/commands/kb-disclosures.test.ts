@@ -485,10 +485,19 @@ describe('appendDisclosure — real cross-process concurrency', () => {
    * trigger the real bug (an indeterminate lock age folded into "assume stale, reclaim immediately"
    * rather than "unknown, wait and retry") — each worker needs several of its OWN immediately-
    * repeated acquire/release cycles for another process's own read to land in that gap often enough
-   * to matter. */
+   * to matter.
+   *
+   * `maxLockAttempts` (round 3): each worker's own `appendDisclosure` call passes this straight
+   * through as its optional 5th argument -- this test's own caller passes `400` (not the restored
+   * `200`/5s production default) specifically because this exact test, run as part of the gauntlet's
+   * own specified 4-file combined acceptance command, is the one `collection-lock.ts`'s own
+   * `DEFAULT_MAX_LOCK_ATTEMPTS` doc comment names as empirically needing the wider budget to survive
+   * ~84-real-process combined-suite scheduling contention -- see that doc comment for the full
+   * reproduction. */
   async function writeMultiAppendConcurrencyWorker(
     workerPath: string,
     appendsPerWorker: number,
+    maxLockAttempts: number,
   ): Promise<void> {
     const source = `
 import { existsSync } from 'node:fs';
@@ -508,7 +517,7 @@ for (let i = 0; i < ${String(appendsPerWorker)}; i += 1) {
     summary: \`race worker-\${index}-append-\${i}\`,
     owner: 'alice',
     sources: [{ kind: 'human', ref: 'race' }],
-  });
+  }, ${String(maxLockAttempts)});
   ids.push(id);
 }
 process.stdout.write(JSON.stringify({ index, ids }));
@@ -539,7 +548,12 @@ process.stdout.write(JSON.stringify({ index, ids }));
     const workerPath = path.join(workerDir, 'worker.mts');
     const workerCount = 28;
     const appendsPerWorker = 6;
-    await writeMultiAppendConcurrencyWorker(workerPath, appendsPerWorker);
+    // `400`, not the restored `200`/5s production default -- this is the exact test `collection-
+    // lock.ts`'s own `DEFAULT_MAX_LOCK_ATTEMPTS` doc comment names as needing the wider budget to
+    // survive real OS-scheduling contention under the gauntlet's own 4-file combined acceptance
+    // command (up to ~84 competing processes at once). See that doc comment for the full repro.
+    const maxLockAttempts = 400;
+    await writeMultiAppendConcurrencyWorker(workerPath, appendsPerWorker, maxLockAttempts);
     const gatePath = path.join(workerDir, 'gate');
     const projectDir = paths.resolveWithin('.');
 

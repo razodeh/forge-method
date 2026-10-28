@@ -94,6 +94,32 @@ const AMBIGUOUS_LOCK_RETRY_DELAY_MS = 10;
  * destroy a brand-new, genuinely live lock a different process legitimately created in the gap. Only
  * a lock this process can actually read AND prove names a dead pid is real, positive evidence of
  * staleness; `undefined` is retried instead, never reclaimed.
+ *
+ * **Disclosed asymmetry (round 3, correcting round-1/round-2 doc comments elsewhere in this codebase
+ * that mischaracterized this function as one of two "siblings" that already has the complete fix
+ * below): unlike `migrate/lock.ts`'s own `acquireMigrateLock` and `module.ts`'s own
+ * `withManifestLock`, this function's ambiguous (`undefined`) branch has NO self-heal path at all.**
+ * Both of those siblings reclaim an ambiguous/unreadable lock once it has measurably sat that way
+ * past their own age-gate grace window (`AMBIGUOUS_LOCK_GRACE_MS`), closing exactly the "a
+ * permanently-corrupted lock file wedges this forever" failure mode. This function does something
+ * narrower instead: it retries the exclusive create at a fixed `AMBIGUOUS_LOCK_RETRY_DELAY_MS` delay,
+ * bounded by `MAX_ACQUIRE_ATTEMPTS`, and once that budget is exhausted while STILL ambiguous, throws a
+ * plain, untyped `Error` ("gave up after N attempts") — not a `ForgeError`, and not a self-heal. A
+ * lock that is permanently ambiguous (hand-edited, genuinely corrupted on disk) therefore stays wedged
+ * until a human runs `forge doctor --reclaim-lock` to clear it by hand; it never recovers on its own
+ * the way the two siblings above now do.
+ *
+ * This asymmetry is SUSPECTED, not confirmed, deliberate: this file's own header doc comment's
+ * reasoning for never force-reclaiming a live-pid-held lock (`CFG-002` guards against two concurrent
+ * `forge run` supervisors mutating the same project at once — the highest-risk scenario of the three
+ * locks) plausibly extends to the ambiguous case too (an unreadable lock might still be a live
+ * supervisor whose write is mid-flight), which would make "require a human in the loop" the right
+ * call here even though it is not for the other two locks. But that extension has not actually been
+ * decided and recorded — it is this comment's own inference, not a reviewed decision. Changing this
+ * behavior (adding the identical age-gated self-heal the other two locks have) is a real design
+ * question for a human to decide and record, not something this comment or any fix-the-doc-comment
+ * pass should do unilaterally. See SPEC-QUESTIONS.md (pending entry on lock self-heal asymmetry) for
+ * the eventual decision record.
  */
 export async function acquireRunLock(paths: ProjectPaths, lock: RunLock): Promise<void> {
   const resolved = lockPath(paths);

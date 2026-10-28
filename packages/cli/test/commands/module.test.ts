@@ -686,17 +686,21 @@ describe('moduleAdd/moduleRemove — cross-namespace and concurrency (critic-rou
     await rm(lockPath, { force: true });
   });
 
-  // Regression for a CONFIRMED round-2 critic finding, a real bug in the round-1 fix above: unlike
-  // its two siblings fixed in the same round (`run/lock.ts`'s own `AMBIGUOUS_LOCK_RETRY_DELAY_MS`,
-  // `migrate/lock.ts`'s own `AMBIGUOUS_LOCK_GRACE_MS`), `withManifestLock`'s own ambiguous-retry
-  // branch (`existingPid === undefined`) used to have NO delay and NO age-gate at all. A critic
-  // constructed exactly the scenario below -- a permanently-malformed-but-stably-readable lock file
-  // (non-numeric content, a realistic disk-corruption/hand-edit scenario) -- and confirmed: pre-fix,
-  // this burned through all `MAX_LOCK_ATTEMPTS` in ~7ms, every time, throwing `CFG-047` forever with
-  // zero backoff and zero self-heal path. Fixed the identical way `migrate/lock.ts`'s own
-  // `acquireMigrateLock` already proves safe: age-gated on the lock FILE's own measured `mtime`, so
-  // this must now take measurably LONGER than an instant (past its own `AMBIGUOUS_LOCK_GRACE_MS`)
-  // before it self-heals, rather than either failing permanently or reclaiming unsafely on sight.
+  // Regression for a CONFIRMED round-2 critic finding, a real bug in the round-1 fix above:
+  // `withManifestLock`'s own ambiguous-retry branch (`existingPid === undefined`) used to have NO
+  // delay and NO age-gate at all. `migrate/lock.ts`'s own `acquireMigrateLock` is the sibling with the
+  // FULL fix (a genuine age-gated self-heal) this module now mirrors via its own
+  // `AMBIGUOUS_LOCK_GRACE_MS`. `run/lock.ts`'s own `AMBIGUOUS_LOCK_RETRY_DELAY_MS` lent only its
+  // naming convention for the fixed retry delay, NOT the self-heal mechanism itself -- `run/lock.ts`
+  // deliberately has no age-gate at all for its own ambiguous case (see `acquireRunLock`'s own
+  // disclosure comment). A critic constructed exactly the scenario below -- a
+  // permanently-malformed-but-stably-readable lock file (non-numeric content, a realistic
+  // disk-corruption/hand-edit scenario) -- and confirmed: pre-fix, this burned through all
+  // `MAX_LOCK_ATTEMPTS` in ~7ms, every time, throwing `CFG-047` forever with zero backoff and zero
+  // self-heal path. Fixed the identical way `migrate/lock.ts`'s own `acquireMigrateLock` already
+  // proves safe: age-gated on the lock FILE's own measured `mtime`, so this must now take measurably
+  // LONGER than an instant (past its own `AMBIGUOUS_LOCK_GRACE_MS`) before it self-heals, rather than
+  // either failing permanently or reclaiming unsafely on sight.
   it('a permanently-malformed-but-readable lock (non-numeric content) self-heals after its own grace period, never failing instantly and never reclaiming on sight', async () => {
     const project = await createTestProject();
     const lockPath = project.paths.resolveState('module-install.lock');
@@ -756,6 +760,8 @@ const REPO_ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
  *    different file, a different abstraction layer, a far wider blast radius than this one lock) —
  *    retried here so this test's own real, load-bearing assertion (no lost or duplicated id, ever)
  *    is never masked by an unrelated, already-disclosed-elsewhere race.
+ *
+ * @see SPEC-QUESTIONS.md Q285
  */
 async function writeManifestLockWorker(workerPath: string, itersPerWorker: number): Promise<void> {
   const source = `

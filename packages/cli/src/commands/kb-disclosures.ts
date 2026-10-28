@@ -159,10 +159,18 @@ function nextDisclosureId(disclosures: readonly Disclosure[]): string {
   return `${definition.idPrefix}-${String(next).padStart(definition.idWidth, '0')}`;
 }
 
+/** `maxLockAttempts` -- round-3 addition: threads `withCollectionLock`'s own injectable attempt-budget
+ * override through to `appendDisclosure`/`resolveDisclosure` (this function's only two callers). Left
+ * `undefined` (the default, every real production call), `withCollectionLock` applies its own restored
+ * original default (`200`/5s) -- the identical "optional, appended last, undefined means take the
+ * callee's own default" shape used one layer down. Only `kb-disclosures.test.ts`'s own combined-suite,
+ * 28-OS-process stress test passes an explicit wider value, for the real scheduling-contention reason
+ * `collection-lock.ts`'s own `DEFAULT_MAX_LOCK_ATTEMPTS` doc comment explains. */
 async function withDisclosuresLock<T>(
   paths: ProjectPaths,
   clock: Clock,
   operation: () => Promise<T>,
+  maxLockAttempts?: number,
 ): Promise<T> {
   return withCollectionLock(
     paths,
@@ -171,6 +179,7 @@ async function withDisclosuresLock<T>(
     (maxAttempts) =>
       new ForgeError('KB-018', { id: '', reason: 'lock-exhausted', max: maxAttempts }),
     operation,
+    maxLockAttempts,
   );
 }
 
@@ -277,29 +286,39 @@ export interface AppendDisclosureInput {
 
 /** Appends one new, unresolved `DISC-###` entry to `kb/disclosures.md`, creating it if absent, under a
  * real cross-process lock. Returns the newly allocated id. Never removes or rewrites an existing
- * entry -- the append-only half of "a disclosure is never deleted, only resolved with a reason." */
+ * entry -- the append-only half of "a disclosure is never deleted, only resolved with a reason."
+ *
+ * `maxLockAttempts` (round 3): an optional, test-only override of the lock's own attempt budget --
+ * `undefined` (every real `forge kb disclose` call) takes `withCollectionLock`'s own restored
+ * production default (`200`/5s); see `withDisclosuresLock`'s own doc comment just above. */
 export async function appendDisclosure(
   paths: ProjectPaths,
   kbRoot: string,
   clock: Clock,
   input: AppendDisclosureInput,
+  maxLockAttempts?: number,
 ): Promise<string> {
-  return withDisclosuresLock(paths, clock, async () => {
-    const existing = await readDisclosuresCandidate(paths, kbRoot);
-    const id = nextDisclosureId(existing.disclosures);
-    const today = clock.now().slice(0, 10);
-    await writeDisclosuresCandidate(paths, kbRoot, {
-      ...existing,
-      disclosures: [
-        ...existing.disclosures,
-        { id, ...input, sources: [...input.sources], resolved: false },
-      ],
-      today,
-      by: input.owner,
-      summary: `Disclosed ${input.kind} ${id}: ${input.summary}`,
-    });
-    return id;
-  });
+  return withDisclosuresLock(
+    paths,
+    clock,
+    async () => {
+      const existing = await readDisclosuresCandidate(paths, kbRoot);
+      const id = nextDisclosureId(existing.disclosures);
+      const today = clock.now().slice(0, 10);
+      await writeDisclosuresCandidate(paths, kbRoot, {
+        ...existing,
+        disclosures: [
+          ...existing.disclosures,
+          { id, ...input, sources: [...input.sources], resolved: false },
+        ],
+        today,
+        by: input.owner,
+        summary: `Disclosed ${input.kind} ${id}: ${input.summary}`,
+      });
+      return id;
+    },
+    maxLockAttempts,
+  );
 }
 
 export interface ResolveDisclosureInput {
@@ -313,40 +332,50 @@ export interface ResolveDisclosureInput {
  * never shrink: the structural half of "a disclosure is never deleted," independent of whatever a
  * future caller might otherwise be tempted to splice out. `@throws {ForgeError}` `KB-018`
  * `'not-found'` (no entry has this id) or `'already-resolved'` (a resolution is a one-way door, never
- * re-applied). */
+ * re-applied).
+ *
+ * `maxLockAttempts` (round 3): the identical optional, test-only lock-budget override
+ * `appendDisclosure`'s own doc comment explains -- `undefined` for every real `forge kb disclose
+ * resolve` call. */
 export async function resolveDisclosure(
   paths: ProjectPaths,
   kbRoot: string,
   clock: Clock,
   input: ResolveDisclosureInput,
+  maxLockAttempts?: number,
 ): Promise<void> {
-  return withDisclosuresLock(paths, clock, async () => {
-    const existing = await readDisclosuresCandidate(paths, kbRoot);
-    const target = existing.disclosures.find((disclosure) => disclosure.id === input.id);
-    if (target === undefined) {
-      throw new ForgeError('KB-018', { id: input.id, reason: 'not-found' });
-    }
-    if (target.resolved) {
-      throw new ForgeError('KB-018', { id: input.id, reason: 'already-resolved' });
-    }
-    const today = clock.now().slice(0, 10);
-    const resolved: readonly Disclosure[] = existing.disclosures.map((disclosure) =>
-      disclosure.id === input.id
-        ? {
-            ...disclosure,
-            resolved: true,
-            resolution: { reason: input.reason, by: input.by, at: today },
-          }
-        : disclosure,
-    );
-    await writeDisclosuresCandidate(paths, kbRoot, {
-      ...existing,
-      disclosures: resolved,
-      today,
-      by: input.by,
-      summary: `Resolved ${input.id}: ${input.reason}`,
-    });
-  });
+  return withDisclosuresLock(
+    paths,
+    clock,
+    async () => {
+      const existing = await readDisclosuresCandidate(paths, kbRoot);
+      const target = existing.disclosures.find((disclosure) => disclosure.id === input.id);
+      if (target === undefined) {
+        throw new ForgeError('KB-018', { id: input.id, reason: 'not-found' });
+      }
+      if (target.resolved) {
+        throw new ForgeError('KB-018', { id: input.id, reason: 'already-resolved' });
+      }
+      const today = clock.now().slice(0, 10);
+      const resolved: readonly Disclosure[] = existing.disclosures.map((disclosure) =>
+        disclosure.id === input.id
+          ? {
+              ...disclosure,
+              resolved: true,
+              resolution: { reason: input.reason, by: input.by, at: today },
+            }
+          : disclosure,
+      );
+      await writeDisclosuresCandidate(paths, kbRoot, {
+        ...existing,
+        disclosures: resolved,
+        today,
+        by: input.by,
+        summary: `Resolved ${input.id}: ${input.reason}`,
+      });
+    },
+    maxLockAttempts,
+  );
 }
 
 /** One row of the MERGED ledger view `forge kb disclosures`/`forge doctor` both read -- a real,

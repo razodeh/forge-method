@@ -162,11 +162,21 @@ function nextExemptionId(exemptions: readonly Exemption[], testId: string): stri
  * reclaim's own `ENOENT` race against a concurrent read-back) now lives in that shared module's own
  * doc comment, extracted rather than duplicated so this piece's own sibling collection file
  * (`kb/disclosures.md`, M15 P10) does not re-fight the identical hard concurrency problem from
- * scratch. See `SPEC-QUESTIONS.md`'s own `## Q285` for the complete record. */
+ * scratch. See `SPEC-QUESTIONS.md`'s own `## Q285` for the complete record.
+ *
+ * `maxLockAttempts` (round 3): threads `withCollectionLock`'s own injectable attempt-budget override
+ * through to `appendExemption` (this function's only caller). `undefined` (every real `forge test
+ * exempt` call, and this file's own tests today) takes `withCollectionLock`'s own restored production
+ * default (`200`/5s) -- see `collection-lock.ts`'s own `DEFAULT_MAX_LOCK_ATTEMPTS` doc comment. Added
+ * for symmetry with `kb-disclosures.ts`'s own identical `withDisclosuresLock` parameter, not because
+ * this file's own tests currently need the wider budget: `exemptions.test.ts` is not part of the
+ * 4-file combined acceptance suite whose own real OS-process-scheduling contention is what the wider
+ * value exists for. */
 async function withExemptionsLock<T>(
   paths: ProjectPaths,
   clock: Clock,
   operation: () => Promise<T>,
+  maxLockAttempts?: number,
 ): Promise<T> {
   return withCollectionLock(
     paths,
@@ -175,6 +185,7 @@ async function withExemptionsLock<T>(
     (maxAttempts) =>
       new ForgeError('GATE-515', { testId: '', reason: 'lock-exhausted', max: maxAttempts }),
     operation,
+    maxLockAttempts,
   );
 }
 
@@ -199,61 +210,70 @@ export interface AppendExemptionInput {
  * -- a refused or failed declaration records no event for an exemption that was never actually
  * durable. `undefined` `runId` (no real `forge run` in progress, the common case: this command has
  * exactly one real caller, `forge test exempt`, which no shipped workflow ever runs as a step) emits
- * nothing, the identical `FORGE_RUN_ID`-gated stance `check-telemetry.ts`'s own doc comment explains. */
+ * nothing, the identical `FORGE_RUN_ID`-gated stance `check-telemetry.ts`'s own doc comment explains.
+ *
+ * `maxLockAttempts` (round 3): the identical optional, test-only lock-budget override
+ * `withExemptionsLock`'s own doc comment explains -- `undefined` for every real call. */
 export async function appendExemption(
   paths: ProjectPaths,
   reportsRoot: string,
   clock: Clock,
   input: AppendExemptionInput,
   telemetry: { readonly projectRoot: string; readonly runId: string | undefined },
+  maxLockAttempts?: number,
 ): Promise<string> {
   const relativePath = exemptionsPath(reportsRoot);
-  const id = await withExemptionsLock(paths, clock, async () => {
-    const existing = await readFrontMatter(paths, relativePath);
-    const priorExemptions: readonly unknown[] = Array.isArray(existing?.['exemptions'])
-      ? existing['exemptions']
-      : [];
-    const priorChangelog: readonly unknown[] = Array.isArray(existing?.['changelog'])
-      ? existing['changelog']
-      : [];
-    const priorRevision = typeof existing?.['revision'] === 'number' ? existing['revision'] : 0;
-    const today = clock.now().slice(0, 10);
-    const id = nextExemptionId(
-      priorExemptions.filter((row): row is Exemption => exemptionSchema.safeParse(row).success),
-      input.testId,
-    );
-    const candidate = {
-      type: 'Exemption' as const,
-      schemaVersion: 1,
-      title: 'Exemption register',
-      status: 'active',
-      created: (existing?.['created'] as string | undefined) ?? today,
-      updated: today,
-      revision: priorRevision + 1,
-      author: input.owner,
-      changelog: [
-        ...priorChangelog,
-        {
-          revision: priorRevision + 1,
-          date: today,
-          by: input.owner,
-          summary: `Exempted ${input.testId} (${id}).`,
-        },
-      ],
-      exemptions: [...priorExemptions, { id, ...input }],
-    };
-    const parsed = exemptionsFileSchema.safeParse(candidate);
-    if (!parsed.success) {
-      throw new RangeError(
-        `exemptionsFileSchema rejected a new exemption: ${parsed.error.message}`,
+  const id = await withExemptionsLock(
+    paths,
+    clock,
+    async () => {
+      const existing = await readFrontMatter(paths, relativePath);
+      const priorExemptions: readonly unknown[] = Array.isArray(existing?.['exemptions'])
+        ? existing['exemptions']
+        : [];
+      const priorChangelog: readonly unknown[] = Array.isArray(existing?.['changelog'])
+        ? existing['changelog']
+        : [];
+      const priorRevision = typeof existing?.['revision'] === 'number' ? existing['revision'] : 0;
+      const today = clock.now().slice(0, 10);
+      const id = nextExemptionId(
+        priorExemptions.filter((row): row is Exemption => exemptionSchema.safeParse(row).success),
+        input.testId,
       );
-    }
-    await writeFileAtomic(
-      paths.resolveWithin(relativePath),
-      `---\n${YAML.stringify(parsed.data)}---\n`,
-    );
-    return id;
-  });
+      const candidate = {
+        type: 'Exemption' as const,
+        schemaVersion: 1,
+        title: 'Exemption register',
+        status: 'active',
+        created: (existing?.['created'] as string | undefined) ?? today,
+        updated: today,
+        revision: priorRevision + 1,
+        author: input.owner,
+        changelog: [
+          ...priorChangelog,
+          {
+            revision: priorRevision + 1,
+            date: today,
+            by: input.owner,
+            summary: `Exempted ${input.testId} (${id}).`,
+          },
+        ],
+        exemptions: [...priorExemptions, { id, ...input }],
+      };
+      const parsed = exemptionsFileSchema.safeParse(candidate);
+      if (!parsed.success) {
+        throw new RangeError(
+          `exemptionsFileSchema rejected a new exemption: ${parsed.error.message}`,
+        );
+      }
+      await writeFileAtomic(
+        paths.resolveWithin(relativePath),
+        `---\n${YAML.stringify(parsed.data)}---\n`,
+      );
+      return id;
+    },
+    maxLockAttempts,
+  );
   await emitExemptionDeclaredTelemetry({
     projectRoot: telemetry.projectRoot,
     runId: telemetry.runId,

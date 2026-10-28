@@ -248,19 +248,25 @@ async function readLockPid(lockAbs: AbsolutePath): Promise<number | undefined> {
  * since both mutate the same `manifest.yaml`.
  *
  * **Round-2 critic fix, a real regression in the round-1 fix above:** the ambiguous (`undefined`)
- * branch below used to retry the exclusive create with no delay and no age-gate at all — unlike this
- * same round's two siblings (`run/lock.ts`'s own `AMBIGUOUS_LOCK_RETRY_DELAY_MS` and `migrate/lock.
- * ts`'s own `AMBIGUOUS_LOCK_GRACE_MS`), both of which this file's own `AMBIGUOUS_LOCK_GRACE_MS`/
- * `AMBIGUOUS_LOCK_RETRY_DELAY_MS` constants now mirror. A critic constructed a
- * permanently-malformed-but-stably-readable `module-install.lock` (non-numeric content — a realistic
- * disk-corruption or hand-edit scenario) and confirmed: before this fix, this burned through all
- * `MAX_LOCK_ATTEMPTS` in ~7ms, every time, throwing `CFG-047` with zero backoff and zero self-heal
- * path — a permanent, misleading failure needing a human to delete the lock file by hand. After this
- * fix, the identical lock file self-heals once it has genuinely sat unreadable for longer than
- * `AMBIGUOUS_LOCK_GRACE_MS`, taking measurably longer than an instant rather than either failing
- * permanently or reclaiming unsafely with zero delay (the original round-1 bug this whole lock exists
- * to avoid repeating). `clock` is injected (`QUALITY-BAR.md` R10) purely to compute that age
- * deterministically in a test; production callers never pass one, taking `SYSTEM_CLOCK`. */
+ * branch below used to retry the exclusive create with no delay and no age-gate at all. `migrate/
+ * lock.ts`'s own `acquireMigrateLock` is the sibling with the FULL fix this file's own
+ * `AMBIGUOUS_LOCK_GRACE_MS` mirrors directly: a genuinely age-gated self-heal, reclaiming an ambiguous
+ * lock only once it has measurably sat unreadable past a real grace window. `run/lock.ts`'s own
+ * `AMBIGUOUS_LOCK_RETRY_DELAY_MS` is a narrower, DIFFERENT thing this file's own
+ * `AMBIGUOUS_LOCK_RETRY_DELAY_MS` constant borrows only the delay-before-retry idea from, not the
+ * self-heal mechanism itself — `run/lock.ts` deliberately has NO age-gate at all for its own ambiguous
+ * case (a bounded retry, then a permanent, plain `Error`; see `acquireRunLock`'s own disclosure
+ * comment for why `CFG-002`'s higher safety bar makes that a suspected-deliberate asymmetry, not a
+ * gap this round also closed). A critic constructed a permanently-malformed-but-stably-readable
+ * `module-install.lock` (non-numeric content — a realistic disk-corruption or hand-edit scenario) and
+ * confirmed: before this fix, this burned through all `MAX_LOCK_ATTEMPTS` in ~7ms, every time,
+ * throwing `CFG-047` with zero backoff and zero self-heal path — a permanent, misleading failure
+ * needing a human to delete the lock file by hand. After this fix, the identical lock file self-heals
+ * once it has genuinely sat unreadable for longer than `AMBIGUOUS_LOCK_GRACE_MS`, taking measurably
+ * longer than an instant rather than either failing permanently or reclaiming unsafely with zero delay
+ * (the original round-1 bug this whole lock exists to avoid repeating). `clock` is injected
+ * (`QUALITY-BAR.md` R10) purely to compute that age deterministically in a test; production callers
+ * never pass one, taking `SYSTEM_CLOCK`. */
 export async function withManifestLock<T>(
   paths: ProjectPaths,
   fn: () => Promise<T>,
