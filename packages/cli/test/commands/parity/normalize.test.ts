@@ -255,8 +255,8 @@ describe('ignore-json-pointers: RFC 6901 + RFC 6902 "remove", this piece’s own
 });
 
 describe(
-  'redact-json-pointers: a structural, pointer-targeted SUBSTRING redaction, never a field ' +
-    'deletion (specs/22 M17 P14) (Q317 Decision 8 follow-up)',
+  'redact-json-pointers (specs/22 M17 P14) (Q317 Decision 8 follow-up): a structural, pointer-' +
+    'targeted SUBSTRING redaction, never a field deletion',
   () => {
     function redact(pattern: string, replacement: string): (text: string) => string {
       return fieldRedactor(pattern, replacement, () => {
