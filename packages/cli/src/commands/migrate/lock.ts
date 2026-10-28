@@ -28,7 +28,7 @@
  * @see specs/12 F-DATA-6
  * @see specs/22 M17 P18
  */
-import { mkdir, open, rm } from 'node:fs/promises';
+import { mkdir, open, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { SYSTEM_CLOCK, type Clock } from '@forge/core';
@@ -58,6 +58,15 @@ const POLL_INTERVAL_MS = 100;
  * against a legitimately still-running holder. */
 const MAX_LOCK_AGE_MS = 6 * 60 * 60 * 1000;
 
+/** How long an UNREADABLE (not merely dead-pid) lock may sit before this process reclaims it anyway —
+ * the identical short, fixed grace `@forge/cli`'s own `withCollectionLock` uses for its own empty-lock
+ * case (`STALE_EMPTY_LOCK_MS`, `e2a42d5`). Gated on the lock FILE's own measured `mtime` age, never on
+ * content parseability: a genuine TOCTOU gap (the true owner releasing one lock and creating its own
+ * next one) resolves on the very next retry well under this, while a permanently corrupt file (a hand
+ * edit, a real filesystem fault) still eventually self-heals instead of waiting on `maxWaitMs` with no
+ * holder pid this function could ever name in a `RUN-157`. */
+const AMBIGUOUS_LOCK_GRACE_MS = 2000;
+
 function lockPath(paths: ProjectPaths): AbsolutePath {
   return paths.resolveWithin(LOCK_RELATIVE_PATH);
 }
@@ -69,10 +78,15 @@ function isMigrateLock(value: unknown): value is MigrateLock {
   return typeof candidate['pid'] === 'number' && typeof candidate['startedAt'] === 'string';
 }
 
-/** A lock file that cannot be read at all (missing, unreadable, malformed) is treated as absent —
- * `acquireMigrateLock`'s own retry loop then attempts the identical exclusive create a real absence
- * would, which is the safe reading either way: a genuinely absent lock and an unreadable one both
- * mean "nothing provably holds this right now." */
+/** A lock file that cannot be read at all (missing, unreadable, malformed) comes back as `undefined`
+ * — but, unlike this function's own previous doc comment claimed, that is NOT license for
+ * `acquireMigrateLock`'s own retry loop to reclaim (force-delete) whatever currently sits at this
+ * path: an unreadable read proves nothing about the actual instant a reclaim would run at, only about
+ * a moment already in the past. `undefined` here means "retry the exclusive create without touching
+ * anything," never "nothing provably holds this right now, so deleting it is safe" — the identical
+ * reasoning gap already fixed in `@forge/telemetry`'s own `withEventLogLock` (`379eb26`) and
+ * `@forge/cli`'s own `withCollectionLock` (`e2a42d5`). See `acquireMigrateLock`'s own handling of this
+ * return value below. */
 async function readMigrateLock(paths: ProjectPaths): Promise<MigrateLock | undefined> {
   const resolved = lockPath(paths);
   if (!(await pathExists(resolved))) return undefined;
@@ -124,10 +138,35 @@ export async function acquireMigrateLock(
 
     const existing = await readMigrateLock(paths);
     const now = Date.parse(clock.now());
+
+    if (existing === undefined) {
+      // CONFIRMED bug class, identical to `379eb26`/`e2a42d5`: an unreadable lock used to be folded
+      // into "stale, reclaim immediately" alongside a genuinely dead pid. But it proves nothing about
+      // whether a lock exists at the actual instant the `rm` below would run -- a concurrent holder's
+      // own legitimate release-then-recreate can land in exactly that gap, and this process would then
+      // delete a brand-new, genuinely live lock out from under it.
+      //
+      // Gated on the lock FILE's own measured age instead (`AMBIGUOUS_LOCK_GRACE_MS`, the identical
+      // mechanism `withCollectionLock` already proved safe, `e2a42d5`) rather than on `deadline`: there
+      // is no holder pid to name in a `RUN-157` if this wait ever timed out while still ambiguous, and
+      // a genuine TOCTOU gap resolves on the very next retry, well under this grace window -- only a
+      // lock that is STILL unreadable after sitting untouched for real, measured seconds is actually
+      // safe to reclaim. `stat` itself failing (the file is genuinely absent right now) is never
+      // reclaimable anyway -- there is nothing there to delete, and the next exclusive-create attempt
+      // above resolves it normally either way.
+      const ageMs = await stat(resolved)
+        .then((info) => now - info.mtimeMs)
+        .catch(() => undefined);
+      if (ageMs !== undefined && ageMs > AMBIGUOUS_LOCK_GRACE_MS) {
+        await rm(resolved, { force: true });
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+      continue;
+    }
+
     const stale =
-      existing === undefined ||
-      !isProcessAlive(existing.pid) ||
-      now - Date.parse(existing.startedAt) > MAX_LOCK_AGE_MS;
+      !isProcessAlive(existing.pid) || now - Date.parse(existing.startedAt) > MAX_LOCK_AGE_MS;
     if (stale) {
       await rm(resolved, { force: true });
       continue;

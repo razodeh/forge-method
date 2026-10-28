@@ -730,6 +730,66 @@ describe('migrateRun: the cross-process lock (critic-reproduced: 12 F-DATA-6, th
     });
   });
 
+  // Regression for a CONFIRMED reasoning gap, identical to the already-fixed `withEventLogLock`
+  // (`379eb26`, `@forge/telemetry`) and `withCollectionLock` (`e2a42d5`, this package's own
+  // `collection-lock.ts`): `acquireMigrateLock` (`commands/migrate/lock.ts`) used to fold an
+  // UNREADABLE lock (`readMigrateLock` returning `undefined` -- missing, unreadable, or malformed)
+  // into "stale, reclaim immediately" right alongside a genuinely dead pid. A real multi-process
+  // stress repro (28 processes x 6 sequential acquire/release cycles, the identical volume
+  // `e2a42d5`'s own regression test uses) did not surface observable ledger loss for THIS file
+  // specifically -- `acquireMigrateLock` WAITS for a live holder rather than refusing outright the
+  // way `acquireRunLock`/`withManifestLock` do, which narrows (but does not close) the same window --
+  // so this is a targeted, direct test of the fixed condition instead of a full concurrency repro.
+  //
+  // A hand-written, permanently malformed lock file (never valid JSON, so `readMigrateLock` always
+  // returns `undefined` for it, exactly the "ambiguous" case) proves two things the pre-fix code got
+  // wrong: it must NOT be reclaimed immediately (the pre-fix behavior) just because it is unreadable,
+  // and the overall wait must NOT give up with a fabricated `RUN-157` pid either, since no real holder
+  // was ever identified. The fix instead gates reclaiming an unreadable lock on its own measured file
+  // age (`AMBIGUOUS_LOCK_GRACE_MS` = 2s, the identical mechanism `withCollectionLock` already proved
+  // safe) -- so this call must take measurably LONGER than its own much shorter `lockWaitMs` (150ms)
+  // before it self-heals and succeeds, never failing fast with a bogus RUN-157.
+  it('an unreadable (never-parseable) lock.json is never reclaimed immediately, and the wait is never abandoned with a fabricated holder pid -- it self-heals once the file is genuinely old enough', async () => {
+    const project = await createTestProject();
+    await writeMigrations(
+      project,
+      `migrations:
+  - id: alpha-expand
+    phase: expand
+    release: 1
+`,
+    );
+    await writeCountingScript(project, 'alpha-expand');
+    await put(project, '.forge/migrate/lock.json', 'not valid json {{{');
+
+    const start = Date.now();
+    // The REAL wall clock, deliberately (the same reason the live-holder test above gives): the
+    // fixed behavior is gated on the lock file's own real `stat` age, which a frozen `FAKE_CLOCK`
+    // cannot advance. `lockWaitMs` (150) is deliberately far shorter than the real ~2s self-heal
+    // window -- proving the wait is not bounded by `lockWaitMs` while still ambiguous.
+    const outcome = await migrateRun(
+      ctx(project),
+      project.dir,
+      { phase: 'expand' },
+      SYSTEM_CLOCK,
+      undefined,
+      150,
+    );
+    const elapsedMs = Date.now() - start;
+
+    if (outcome.kind !== 'ok') throw new Error('expected a real result, not a thrown RUN-157');
+    expect(outcome.result).toEqual({
+      phase: 'expand',
+      applied: ['alpha-expand'],
+      failed: 0,
+      errors: 0,
+    });
+    // The real, load-bearing assertion: this took far longer than the 150ms `lockWaitMs` -- proof the
+    // ambiguous lock was retried (not reclaimed on sight) rather than failing fast, exactly the gap
+    // between the pre-fix "reclaim immediately" behavior and this fix's own age-gated self-heal.
+    expect(elapsedMs).toBeGreaterThan(1000);
+  }, 10_000);
+
   it('a live pid whose lock is far older than the age ceiling is reclaimed anyway (the last-resort self-healing fallback)', async () => {
     const project = await createTestProject();
     await writeMigrations(
