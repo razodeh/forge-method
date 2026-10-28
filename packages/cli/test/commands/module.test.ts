@@ -1,7 +1,7 @@
 /**
  * `forge module <list|info|add|remove|update>` (`19` §19.5, `PLAN-M11.md` P5).
  */
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 // Test-only (`*.test.ts` files are exempted from the "no bare tmpdir" rule — see
@@ -9,15 +9,12 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
 import { Writable } from 'node:stream';
 
 import { execa } from 'execa';
 import * as YAML from 'yaml';
 import { afterEach, describe, expect, it } from 'vitest';
-
-import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
 
 import {
   ManifestLockFenceLostError,
@@ -880,150 +877,6 @@ describe('withManifestLock — write-time fencing at the EARLY write point (roun
     const result = await withManifestLock(project.paths, () => Promise.resolve('reacquired'));
     expect(result).toBe('reacquired');
   });
-});
-
-// --- withManifestLock: real cross-process stress repro (critic-disclosed reasoning gap, fixed) ----
-
-const execFileAsync = promisify(execFile);
-
-/** `withManifestLock`'s own module path, resolved as a real filesystem path — the worker script below
- * needs an absolute import, not a relative one (the identical reason `exemptions.test.ts`'s own
- * worker does, `packages/cli/test/commands/loop/test/exemptions.test.ts`). */
-const MODULE_MODULE_PATH = fileURLToPath(new URL('../../src/commands/module.ts', import.meta.url));
-
-/** The repo root, not the system tmpdir — the identical reasoning `exemptions.test.ts`'s own
- * `REPO_ROOT` doc comment already gives (a bare `@forge/core` import needs the real,
- * pnpm-workspace-linked `node_modules/`; `.forge-test-scratch/` is outside `node_modules/` and
- * already `.gitignore`d). */
-const REPO_ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
-
-/** Every one of these workers does `itersPerWorker` SEQUENTIAL `withManifestLock` calls, each
- * appending its own unique id to a shared `ledgerPath` JSON array read-modify-write — the identical
- * "many real OS processes, each cycling acquire/operate/release many times against the SAME lock
- * name" shape `e2a42d5`'s own `writeMultiAppendConcurrencyWorker` (`exemptions.test.ts`) proved
- * necessary to reliably trigger this exact bug class (a single acquire/release per worker does not
- * give the race enough chances to land).
- *
- * Two kinds of failure are retried here, deliberately NOT asserted against directly:
- *  - `CFG-047`: `withManifestLock` refuses outright rather than queueing when another real, live
- *    process currently holds the lock (its own documented design, unlike `withCollectionLock`, which
- *    polls) — ordinary contention under N parallel workers, not the bug this harness exists to find.
- *  - any OTHER error: a confirmed, PRE-EXISTING, and separate race in `@forge/core/fs`'s own
- *    `ProjectPaths.resolveState`/`resolveContained` (`realpathOfDeepestExistingAncestor`'s own
- *    `existsSync` check and its later, separate `realpathSync` call are two steps, not one — a
- *    concurrent delete of the resolved path between them throws an uncaught `ENOENT`), reproduced
- *    directly while building this test and confirmed to fire identically before and after the
- *    `readLockPid`/`withManifestLock` fix this test exists to cover. Out of scope for this fix (a
- *    different file, a different abstraction layer, a far wider blast radius than this one lock) —
- *    retried here so this test's own real, load-bearing assertion (no lost or duplicated id, ever)
- *    is never masked by an unrelated, already-disclosed-elsewhere race.
- *
- * @see SPEC-QUESTIONS.md Q285
- */
-async function writeManifestLockWorker(workerPath: string, itersPerWorker: number): Promise<void> {
-  const source = `
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { ProjectPaths } from '@forge/core/fs';
-import { withManifestLock } from ${JSON.stringify(MODULE_MODULE_PATH)};
-
-const [, , dir, index, gatePath, ledgerPath] = process.argv;
-const paths = new ProjectPaths(dir);
-const deadline = Date.now() + 10_000;
-while (!existsSync(gatePath)) {
-  if (Date.now() > deadline) throw new Error('gate file never appeared');
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-const ids = [];
-for (let i = 0; i < ${String(itersPerWorker)}; i += 1) {
-  const id = \`w\${index}-\${i}\`;
-  for (;;) {
-    try {
-      await withManifestLock(paths, async () => {
-        let current = [];
-        try {
-          current = JSON.parse(readFileSync(ledgerPath, 'utf8'));
-        } catch {
-          current = [];
-        }
-        current.push(id);
-        writeFileSync(ledgerPath, JSON.stringify(current));
-      });
-      break;
-    } catch (error) {
-      await sleep(5 + Math.floor(Math.random() * 15));
-    }
-  }
-  ids.push(id);
-}
-process.stdout.write(JSON.stringify({ index, ids }));
-`;
-  await writeFile(workerPath, source, 'utf8');
-}
-
-describe('withManifestLock — real cross-process concurrency (critic-disclosed: an unreadable lock used to be reclaimed like a dead one)', () => {
-  // Regression for the identical reasoning gap already fixed in `@forge/telemetry`'s own
-  // `withEventLogLock` (`379eb26`) and this package's own `withCollectionLock` (`e2a42d5`):
-  // `readLockPid` returning `undefined` (missing, or read in the TOCTOU gap between its own
-  // existence check and the actual read) used to be folded into "not a real, live holder, reclaim"
-  // right alongside a genuinely dead pid. Confirmed directly before fixing, not assumed: at 28
-  // workers x 6 sequential acquire/operate/release cycles each (168 total, the identical volume
-  // `e2a42d5`'s own regression test uses), the pre-fix code crashed 14-20 of 28 real worker processes
-  // per run, every single run (10/10), with an uncaught `RUN-034` from `readTextFile` hitting exactly
-  // that TOCTOU gap, and 3 of 10 runs also lost real appends outright (as few as 155 of 168 ids
-  // actually surviving in the shared ledger). Ten repeated runs against the fixed code: zero
-  // `readLockPid`-attributable crashes and zero lost appends, every time.
-  it('28 real, separate OS processes x 6 sequential withManifestLock operations each (168 total), never lose or duplicate an id', async () => {
-    const project = await createTestProject();
-    await mkdir(path.join(REPO_ROOT, '.forge-test-scratch'), { recursive: true });
-    const workerDir = await mkdtemp(path.join(REPO_ROOT, '.forge-test-scratch', 'manifest-lock-'));
-    registerCleanup(workerDir);
-    const workerPath = path.join(workerDir, 'worker.mts');
-    const workerCount = 28;
-    const itersPerWorker = 6;
-    await writeManifestLockWorker(workerPath, itersPerWorker);
-    const gatePath = path.join(workerDir, 'gate');
-    const ledgerPath = path.join(workerDir, 'ledger.json');
-    await writeFile(ledgerPath, '[]', 'utf8');
-    const projectDir = project.paths.resolveWithin('.');
-
-    const launches = Array.from({ length: workerCount }, (_unused, index) =>
-      execFileAsync(
-        process.execPath,
-        [
-          TS_NODE_FLAG,
-          '--disable-warning=ExperimentalWarning',
-          workerPath,
-          projectDir,
-          String(index),
-          gatePath,
-          ledgerPath,
-        ],
-        { cwd: workerDir },
-      ),
-    );
-    // Every worker is now spawned and spinning on the gate file -- release them all at once.
-    await writeFile(gatePath, 'go', 'utf8');
-    const results = await Promise.all(launches);
-
-    const parsedResults = results.map(
-      ({ stdout }) => JSON.parse(stdout) as { readonly index: number; readonly ids: string[] },
-    );
-    expect(parsedResults).toHaveLength(workerCount);
-    const allIds = parsedResults.flatMap((result) => result.ids);
-    const expectedTotal = workerCount * itersPerWorker;
-    expect(allIds).toHaveLength(expectedTotal);
-
-    const ledgerIds = JSON.parse(await readFile(ledgerPath, 'utf8')) as readonly string[];
-    // The real, load-bearing assertion: every one of the 168 ids a worker believes it successfully
-    // wrote under the lock actually survives in the shared ledger, with none lost to another
-    // process's own stale read winning a lock it was never entitled to reclaim, and none duplicated.
-    expect(new Set(ledgerIds).size).toBe(expectedTotal);
-    expect(allIds.every((id) => ledgerIds.includes(id))).toBe(true);
-  }, 60_000);
 });
 
 describe('installBundleTree — round-2 critic fixes', () => {

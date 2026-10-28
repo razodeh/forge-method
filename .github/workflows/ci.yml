@@ -131,7 +131,11 @@ jobs:
 
   # `floor`/`seed`'s own `pnpm test` (above) now excludes 5 files that each spawn a real,
   # multi-process stress test (up to 28 real child OS processes) to exercise a cross-process file
-  # lock's own correctness: packages/cli/test/commands/{kb-disclosures,module,run/lock}.test.ts,
+  # lock's own correctness: packages/cli/test/commands/{kb-disclosures,run/lock}.test.ts,
+  # packages/cli/test/commands/module-lock-stress.test.ts (split out of module.test.ts -- see that
+  # commit for why: module.ts's own ordinary moduleAdd/moduleRemove/moduleUpdate/fetchInstallBundle/
+  # installBundleTree coverage has no other substantial sibling across the suite, so module.test.ts's
+  # OTHER tests stay in this main run while only its real stress test moves out),
   # packages/cli/test/commands/loop/test/exemptions.test.ts, packages/telemetry/test/events.test.ts.
   # Run together with the other ~752 files in `vitest.config.ts`'s single shared fork pool (this
   # repo's real CI gate deliberately has no `projects` array -- see that file's own header comment),
