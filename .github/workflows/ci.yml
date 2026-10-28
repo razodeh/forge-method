@@ -154,16 +154,27 @@ jobs:
   # files, capping real peak concurrent processes at one file's own worst case (28) instead of the
   # combined spike.
   lock-stress:
-    name: lock-stress (sequential)
-    runs-on: ubuntu-latest
-    # Single OS/node combo, not the full `floor` matrix (ubuntu-latest/node 22, same choice `seed`
-    # above already makes for the identical class of auxiliary, non-matrix job). The lock mechanism
-    # itself is cross-platform Node.js code -- its correctness was already validated extensively on
-    # this session's own dev machine and via 7+ independent critic reviews (`Q359`), including the
-    # original double-wx-create race that the write-time fencing work (Q364) closed. This job exists
-    # to catch CI-SCALE SCHEDULING regressions (too many concurrent child processes), not to
-    # re-litigate that correctness, so one representative, cheap leg is sufficient.
+    name: lock-stress (sequential, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Two OS legs (ubuntu-latest + windows-latest), node 22 only -- not the full `floor` matrix. A
+    # single ubuntu-only leg was this job's first cut, but a re-review critic correctly pushed back:
+    # the real contention failures this job exists to catch were originally observed on ubuntu-latest,
+    # windows-latest, AND macos-latest, and this exact spawn/process-management code path has a real,
+    # repeated history of Windows-ONLY regressions this milestone (`SPEC-QUESTIONS.md` Q340's drive-
+    # letter/pathToFileURL + worker_threads breakage, Q353's own 4-round Windows-hardening saga --
+    # shell resolution, PATH casing, process-group kill, env threading) -- all in this same spawn/
+    # process-management layer. "The lock LOGIC is cross-platform-correct" (already established via
+    # 7+ critic reviews, `Q359`/`Q364`) does not imply "the CI-scale SCHEDULING margin holds on
+    # Windows" (never established) -- `CreateProcess`'s own overhead/scheduling characteristics differ
+    # fundamentally from POSIX fork. macos-latest is deliberately left out of this job's own matrix:
+    # unlike ubuntu/windows, it gets only 3 vCPUs instead of 4 on this public repo's free-tier runners,
+    # so its own real exhaustion risk is covered by -- and would surface loudest in -- the main
+    # `floor` matrix's own macos legs regardless of what this isolated job does.
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
