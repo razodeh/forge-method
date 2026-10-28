@@ -165,9 +165,26 @@ async function readFileOrUndefined(target: string): Promise<string | undefined> 
 
 if (runs.length === 0) {
   describe('SessionRequest.vetFileAccess (SPEC-QUESTIONS.md Q347) -- live SDK-transport confirmation', () => {
-    it.skip('no FORGE_LIVE=1, or no real credential available -- skipped, never a fake run', () => {
-      // Intentionally empty: see this file's own top doc comment.
-    });
+    // A runtime `testCtx.skip()`, not the static `it.skip(...)` modifier -- the identical shape
+    // `sdk.conformance.test.ts`/`cli.conformance.test.ts` already use for this exact same
+    // `planLiveRuns`-gated fallback. `vitest list` (which `workspace-floor.test.ts`'s own
+    // "no test file can escape collection" check shells out to) determines a test's skip state
+    // statically, at COLLECTION time, without ever calling its body -- so `it.skip(name, fn)` is
+    // invisible to `vitest list --json`'s output the moment it is this file's ONLY registered test
+    // (confirmed directly: vitest's own `formatCollectedAsJSON` in `cli-api.js` does
+    // `if (test.result().state === "skipped") continue;`, dropping every statically-skipped test
+    // before it ever reaches the JSON it prints). A plain `it(name, fn)` registers as "would run"
+    // at collection time regardless of what `fn` itself later does, so calling `testCtx.skip()`
+    // from inside the body -- a RUNTIME decision `vitest list` never executes far enough to see --
+    // reports identically as "skipped" on a real `run`, while still being visible to `list`.
+    it(
+      liveEnv['FORGE_LIVE'] !== '1'
+        ? 'skipped: FORGE_LIVE is not set to "1"'
+        : 'skipped: FORGE_LIVE=1 but no real credential (ANTHROPIC_API_KEY or a claude subscription login) is available',
+      (testCtx) => {
+        testCtx.skip();
+      },
+    );
   });
 } else {
   for (const run of runs) {
