@@ -212,6 +212,10 @@ async function overlayAddLocked(
     await scanBundleForSafety(bundle.path);
 
     const destAbs = ctx.paths.resolveWithin(`.forge/overlays/${parsed.id}`);
+    // Write-time fencing (see `module.ts`'s own `withManifestLock` doc comment): a round-2 critic
+    // finding -- this real write into `.forge/overlays/<id>/`, this lock's own protected scope, was
+    // unfenced, identical to `module.ts`'s own `moduleAddLocked`/`moduleUpdateLocked` gap.
+    await verifyFence();
     await installBundleTree(destAbs, bundle.path);
 
     const record: InstalledOverlayRow = {

@@ -6,7 +6,7 @@
  * @see specs/03 §3.2.4
  */
 import { execFile, spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { TS_NODE_FLAG } from '../../../../../scripts/lib/node-ts-flag.mjs';
 import {
   acquireRunLock,
+  assertRunLockStillHeld,
   isProcessAlive,
   readRunLock,
   releaseRunLock,
@@ -33,6 +34,19 @@ function lockFor(overrides: Partial<RunLock> = {}): RunLock {
     startedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   };
+}
+
+/** A real, genuinely-dead pid — spawned then confirmed exited — standing in for a rival process whose
+ * own independently-successful lock-file create has since landed and finished, the identical technique
+ * `collection-lock.test.ts`'s own `realDeadPid` already establishes for this exact anomaly-injection
+ * shape. A real, once-live, now-dead pid (never a fabricated number like `999999`) keeps this honest
+ * about what a real pid actually looks like on disk. */
+async function realDeadPid(): Promise<number> {
+  const child = spawn('node', ['-e', 'process.exit(0)']);
+  const pid = child.pid;
+  if (pid === undefined) throw new Error('child process has no pid');
+  await new Promise((resolve) => child.on('exit', resolve));
+  return pid;
 }
 
 describe('isProcessAlive', () => {
@@ -113,6 +127,78 @@ describe('acquireRunLock / readRunLock / releaseRunLock', () => {
     await releaseRunLock(project.paths);
     expect(await readRunLock(project.paths)).toBeUndefined();
     await expect(releaseRunLock(project.paths)).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * `assertRunLockStillHeld`'s own write-time fencing (`CFG-002` on a lost fence) — the identical
+ * anomaly-injection technique `collection-lock.test.ts`'s own top doc comment establishes: directly
+ * reassigning the lock file to a different real pid mid-operation stands in for the confirmed
+ * double-`wx`-create race this mechanism exists to close, without needing to trigger that real
+ * OS-level race itself.
+ *
+ * This is also the direct, falsifiable regression test for a round-2 critic finding: the first
+ * version of this function threw `CFG-002` reporting the CALLER's own `lock.pid`/`lock.host` --
+ * making the thrown error claim the rival holding the project is the caller itself. Asserting on the
+ * error's actual `pid`/`host` payload (not merely that SOME `CFG-002` is thrown) is what actually
+ * proves this: a test that only checked the error code would have passed just as happily against the
+ * buggy version.
+ */
+describe('assertRunLockStillHeld — write-time fencing', () => {
+  it('passes silently when the lock still names this exact (pid, runId) pair', async () => {
+    const project = await createTestProject();
+    const myLock = lockFor({ runId: 'run-mine' });
+    await acquireRunLock(project.paths, myLock);
+    await expect(assertRunLockStillHeld(project.paths, myLock)).resolves.toBeUndefined();
+  });
+
+  it('throws CFG-002 naming the RIVAL’s own pid/host -- never the caller’s own -- once the lock file has been reassigned', async () => {
+    const project = await createTestProject();
+    const myLock = lockFor({ runId: 'run-mine', host: 'my-host' });
+    await acquireRunLock(project.paths, myLock);
+
+    const rivalPid = await realDeadPid();
+    const rivalLock = lockFor({ pid: rivalPid, host: 'rival-host', runId: 'run-rival' });
+    // THE INJECTED ANOMALY: another process's own independently-successful `wx` create lands,
+    // reassigning the lock file out from under this process -- this process's own in-flight `myLock`
+    // has no way to observe that through anything it has already read.
+    await writeFile(project.paths.resolveState('lock.json'), JSON.stringify(rivalLock), 'utf8');
+
+    await expect(assertRunLockStillHeld(project.paths, myLock)).rejects.toMatchObject({
+      code: 'CFG-002',
+      // THE FIX, DIRECTLY DEMONSTRATED: the rival's own pid/host, not `myLock`'s (the caller's own).
+      details: { pid: rivalPid, host: 'rival-host' },
+    });
+  });
+
+  it('throws CFG-002 with the runId mismatch too (same pid, different runId -- a reused pid racing a new run)', async () => {
+    const project = await createTestProject();
+    const myLock = lockFor({ runId: 'run-mine', host: 'my-host' });
+    await acquireRunLock(project.paths, myLock);
+
+    const rivalLock = lockFor({ host: 'rival-host', runId: 'run-rival' });
+    await writeFile(project.paths.resolveState('lock.json'), JSON.stringify(rivalLock), 'utf8');
+
+    await expect(assertRunLockStillHeld(project.paths, myLock)).rejects.toMatchObject({
+      code: 'CFG-002',
+      details: { pid: rivalLock.pid, host: 'rival-host' },
+    });
+  });
+
+  it('throws CFG-002 with the honest `0`/`unknown` sentinel -- never crashing, never the caller’s own values -- when the lock file is now genuinely unreadable (the ambiguous case)', async () => {
+    const project = await createTestProject();
+    const myLock = lockFor({ runId: 'run-mine', host: 'my-host' });
+    await acquireRunLock(project.paths, myLock);
+
+    // The lock file is now gone entirely -- `readRunLock` returns `undefined`, the genuinely
+    // ambiguous case `migrate/lock.ts`'s own `assertMigrateLockStillHeld` already has an honest
+    // sentinel for (`pid: 0`); this function's own fix mirrors that, extended to `host`.
+    await rm(project.paths.resolveState('lock.json'), { force: true });
+
+    await expect(assertRunLockStillHeld(project.paths, myLock)).rejects.toMatchObject({
+      code: 'CFG-002',
+      details: { pid: 0, host: 'unknown' },
+    });
   });
 });
 

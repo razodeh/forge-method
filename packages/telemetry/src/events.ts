@@ -517,9 +517,34 @@ function parseEventLine(line: string, runId: string): ForgeEvent {
  * the same way any other write to this file is. Run before this run's own next append ever gets a
  * chance to glue its own new line directly onto the dangling fragment with no separator (confirmed
  * empirically to otherwise corrupt every event after it, not just the torn one). A no-op, not called at
- * all, when the content already ends cleanly. */
-async function truncateTornTrailingWrite(filePath: string, content: string): Promise<void> {
+ * all, when the content already ends cleanly.
+ *
+ * **Write-time fencing, a narrower but real gap a round-2 critic found: this is itself a real write
+ * into the lock-protected `events.ndjson`, called from `determineLastSeq` — before `appendEvent`'s own
+ * main `verifyFence()` call (immediately before `appendLineWithFsync`) ever runs.** Moving that main
+ * fence check earlier (to before `determineLastSeq`) was considered and rejected: `determineLastSeq`
+ * itself `await`s a real file read (and, on this repair path, a real write) before `appendEvent` goes
+ * on to compute `seq` and build `fullEvent` — reintroducing exactly the same unfenced gap for the
+ * MAIN append this whole mechanism exists to close, just moved earlier rather than removed. This
+ * repair write gets its OWN, separate, earlier `verifyFence` call instead — called immediately before
+ * it actually commits, only on the path that is about to write at all, exactly like every other real
+ * write this round's fix fences. `determineLastSeq` needs no other value computed before the fence
+ * check (the seq number itself depends only on content already read above, with nothing to lose by
+ * fencing again right here), so narrowing the fence to just this call site is strictly safe, never a
+ * narrower guarantee than fencing the whole function would give for the value `determineLastSeq`
+ * itself returns. */
+async function truncateTornTrailingWrite(
+  filePath: string,
+  content: string,
+  verifyFence: () => Promise<void>,
+): Promise<void> {
   if (content === '' || content.endsWith('\n')) return;
+  // Write-time fencing (see this function's own doc comment above): re-confirm, immediately before
+  // this repair write actually commits, that this process still, genuinely, holds the lock. A lost
+  // fence here propagates out through `determineLastSeq`/`appendEvent`'s own `operation` callback,
+  // caught only by `withEventLogLock`, which responds the same way it does for a fence lost at the
+  // main append: abandon this attempt and re-enter the full acquire-and-redetermine loop from scratch.
+  await verifyFence();
   const cleanContent = content.slice(0, content.lastIndexOf('\n') + 1);
   try {
     const handle = await fsp.open(filePath, 'w');
@@ -552,8 +577,14 @@ async function truncateTornTrailingWrite(filePath: string, content: string): Pro
  * per-process cache of this value is unsafe the instant a second real process can also write, which
  * `appendEvent`'s own real callers (a spawned command-step subprocess, the main engine process) now
  * provably are. Called only while `appendEvent` holds `withEventLogLock`, so this real read is the
- * one place genuinely safe to trust as "the true current last seq." */
-async function determineLastSeq(projectRoot: string, runId: string): Promise<number> {
+ * one place genuinely safe to trust as "the true current last seq." `verifyFence` is threaded through
+ * only so `truncateTornTrailingWrite`'s own repair write can fence itself separately (see that
+ * function's own doc comment) — this function's own ordinary, non-repair read path never calls it. */
+async function determineLastSeq(
+  projectRoot: string,
+  runId: string,
+  verifyFence: () => Promise<void>,
+): Promise<number> {
   const filePath = eventLogPath(projectRoot, runId);
   let content: string;
   try {
@@ -570,7 +601,7 @@ async function determineLastSeq(projectRoot: string, runId: string): Promise<num
       { cause: error },
     );
   }
-  await truncateTornTrailingWrite(filePath, content);
+  await truncateTornTrailingWrite(filePath, content, verifyFence);
   const lines = splitCompleteLines(content);
   const lastLine = lines[lines.length - 1];
   if (lastLine === undefined) return 0;
@@ -644,7 +675,7 @@ export async function appendEvent(
   // second layer is not redundant with the first).
   return enqueueForRun(cacheKey, () =>
     withEventLogLock(projectRoot, runId, async (verifyFence) => {
-      const lastSeq = await determineLastSeq(projectRoot, runId);
+      const lastSeq = await determineLastSeq(projectRoot, runId, verifyFence);
       const seq = lastSeq + 1;
       const redactedPayload = redactPayload(
         event.payload,

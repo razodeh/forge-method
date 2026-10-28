@@ -1,8 +1,8 @@
 /**
  * `forge module <list|info|add|remove|update>` (`19` §19.5, `PLAN-M11.md` P5).
  */
-import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 // Test-only (`*.test.ts` files are exempted from the "no bare tmpdir" rule — see
 // `packages/extensions/test/install/npm-fixture-registry.ts`'s own identical note).
@@ -20,6 +20,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
 
 import {
+  ManifestLockFenceLostError,
   moduleAdd,
   moduleInfo,
   moduleList,
@@ -92,6 +93,19 @@ async function tempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), prefix));
   registerCleanup(dir);
   return dir;
+}
+
+/** A real, genuinely-dead pid — spawned then confirmed exited — standing in for a rival process whose
+ * own independently-successful lock-file create has since landed, the identical technique
+ * `collection-lock.test.ts`'s own `realDeadPid` already establishes for this exact anomaly-injection
+ * shape. A real, once-live, now-dead pid (never a fabricated number) keeps this honest about what a
+ * real pid actually looks like on disk. */
+async function realDeadPid(): Promise<number> {
+  const child = spawn('node', ['-e', 'process.exit(0)']);
+  const pid = child.pid;
+  if (pid === undefined) throw new Error('child process has no pid');
+  await new Promise((resolve) => child.on('exit', resolve));
+  return pid;
 }
 
 function nullWritable(): Writable {
@@ -723,6 +737,149 @@ describe('moduleAdd/moduleRemove — cross-namespace and concurrency (critic-rou
     // reclaimed the stale file and released its own newly-acquired lock afterward.
     expect(existsSync(lockPath)).toBe(false);
   }, 10_000);
+});
+
+/**
+ * `withManifestLock`'s own write-time fencing — the identical anomaly-injection technique
+ * `collection-lock.test.ts`'s own top doc comment establishes, ported here: directly reassigning the
+ * lock file to a different real pid mid-operation stands in for the confirmed double-`wx`-create race
+ * this mechanism exists to close, without needing to trigger that real OS-level race itself.
+ *
+ * Framed around the EARLY write point specifically (`moduleAddLocked`/`moduleUpdateLocked`'s own
+ * `installBundleTree` call, `moduleRemoveLocked`'s own `rm(destAbs, ...)` call) — a round-2 critic
+ * finding: this fence check did not exist at all before this round, only the LATER one (immediately
+ * before `writeManifestDocument`) did. The mechanism itself (a lost fence aborts `fn()` and
+ * `withManifestLock` re-enters its full acquire-and-`fn()` loop from scratch) is identical regardless
+ * of which of the two fenced points inside `fn()` detects the loss, so this doubles as the dedicated
+ * test for `withManifestLock`'s own general fence-loss retry path too — zero dedicated test existed
+ * for either before this round (round 1 verified it only by inspection and analogy).
+ */
+describe('withManifestLock — write-time fencing at the EARLY write point (round-2 critic: installBundleTree/rm were unfenced)', () => {
+  it('WITHOUT a fence check at the early write point: a lock file reassigned to a different process mid-operation lets a stale write silently overwrite a concurrent write (the exact confirmed data-loss shape, counterfactual)', async () => {
+    const project = await createTestProject();
+    const dataPath = project.paths.resolveState('shared.json');
+    const lockPath = project.paths.resolveState('module-install.lock');
+    const rivalPid = await realDeadPid();
+
+    await withManifestLock(project.paths, () => {
+      writeFileSync(dataPath, JSON.stringify(['seed']));
+      return Promise.resolve();
+    });
+
+    // One full `withManifestLock` call whose own `fn` deliberately does NOT call `verifyFence` before
+    // its own early write -- reproducing, on purpose, exactly the vulnerable shape this round's fix 2
+    // closes (every real `module.ts`/`overlay.ts` call site DOES call it now; this is the
+    // counterfactual proving why it was needed).
+    await withManifestLock(project.paths, () => {
+      const before = JSON.parse(readFileSync(dataPath, 'utf8')) as string[];
+
+      // THE INJECTED ANOMALY: between this process's own read above and its write below, the
+      // confirmed real race fires -- another process's own independently-successful `wx` create
+      // lands, that other process performs its own full read-modify-write of the SAME shared file,
+      // then releases.
+      writeFileSync(lockPath, String(rivalPid));
+      const concurrentWrite = [...before, 'concurrent-writer-entry'];
+      writeFileSync(dataPath, JSON.stringify(concurrentWrite));
+      writeFileSync(lockPath, String(process.pid)); // the rival "hands back" the lock file
+
+      // No `verifyFence()` call here -- the pre-fix-2 shape for the early write point. This process
+      // now commits its OWN candidate, computed from the STALE `before` read, clobbering the
+      // concurrent writer's entry outright.
+      const staleCandidate = [...before, 'this-process-entry'];
+      writeFileSync(dataPath, JSON.stringify(staleCandidate));
+      return Promise.resolve();
+    });
+
+    const final = JSON.parse(readFileSync(dataPath, 'utf8')) as string[];
+    // THE BUG, DIRECTLY DEMONSTRATED: the concurrent writer's own entry is gone.
+    expect(final).not.toContain('concurrent-writer-entry');
+    expect(final).toContain('this-process-entry');
+  });
+
+  it('WITH the fence check at the early write point: the identical injected anomaly is detected, the stale write never lands, and a full re-acquire-and-recompute preserves BOTH writers instead of losing one', async () => {
+    const project = await createTestProject();
+    const dataPath = project.paths.resolveState('shared.json');
+    const lockPath = project.paths.resolveState('module-install.lock');
+    const rivalPid = await realDeadPid();
+
+    await withManifestLock(project.paths, () => {
+      writeFileSync(dataPath, JSON.stringify(['seed']));
+      return Promise.resolve();
+    });
+
+    let callCount = 0;
+    const result = await withManifestLock(project.paths, async (verifyFence) => {
+      callCount += 1;
+      const before = JSON.parse(readFileSync(dataPath, 'utf8')) as string[];
+
+      if (callCount === 1) {
+        // THE IDENTICAL INJECTED ANOMALY as the test above.
+        writeFileSync(lockPath, String(rivalPid));
+        const concurrentWrite = [...before, 'concurrent-writer-entry'];
+        writeFileSync(dataPath, JSON.stringify(concurrentWrite));
+
+        // THE FIX (fix 2): `verifyFence` is called immediately before the early write would commit
+        // (standing in for `installBundleTree`/`rm(destAbs, ...)`), and it must throw -- this process
+        // can no longer prove it holds the lock.
+        await expect(verifyFence()).rejects.toThrow(ManifestLockFenceLostError);
+
+        // The lock file still names the rival, not this process -- release it now (standing in for
+        // that other, real process genuinely finishing and releasing on its own), so the retry
+        // below's own fresh acquire can win it honestly.
+        await rm(lockPath, { force: true });
+
+        // Propagate the SAME error `verifyFence` itself threw -- exactly what a real call site does
+        // (`moduleAddLocked`/`moduleUpdateLocked`/`moduleRemoveLocked`/`overlayAddLocked` never
+        // swallow a fence loss, never retry just the write).
+        throw new ManifestLockFenceLostError();
+      }
+
+      // SECOND call (the full re-acquire this fix exists to force): must see the CONCURRENT writer's
+      // entry that landed during the first attempt -- proof this is a genuinely fresh read (and, for
+      // the real `installBundleTree` call site, a genuinely fresh `fn()` invocation that re-fetches
+      // the bundle and re-runs the install from scratch), not a replay of stale data.
+      expect(before).toContain('concurrent-writer-entry');
+      await verifyFence();
+      const candidate = [...before, 'this-process-entry'];
+      writeFileSync(dataPath, JSON.stringify(candidate));
+      return 'committed';
+    });
+
+    expect(result).toBe('committed');
+    expect(callCount).toBe(2);
+    const final = JSON.parse(readFileSync(dataPath, 'utf8')) as string[];
+    // THE FIX, DIRECTLY DEMONSTRATED: neither writer's entry is lost.
+    expect(final).toContain('concurrent-writer-entry');
+    expect(final).toContain('this-process-entry');
+  });
+
+  it('verifyFence passes silently when nothing has disturbed the lock (the ordinary, overwhelmingly common case)', async () => {
+    const project = await createTestProject();
+    let fenceCalls = 0;
+    const result = await withManifestLock(project.paths, async (verifyFence) => {
+      await verifyFence();
+      fenceCalls += 1;
+      await verifyFence();
+      fenceCalls += 1;
+      return 'ok';
+    });
+    expect(result).toBe('ok');
+    expect(fenceCalls).toBe(2);
+  });
+
+  it('a genuine, unrelated fn failure still releases the lock normally (fencing never changes ordinary error handling)', async () => {
+    const project = await createTestProject();
+    await expect(
+      withManifestLock(project.paths, () => {
+        throw new RangeError('unrelated failure');
+      }),
+    ).rejects.toThrow(RangeError);
+
+    // The lock must have been released despite the failure -- a second call must acquire cleanly and
+    // quickly, not wait out a lock this process itself failed to release.
+    const result = await withManifestLock(project.paths, () => Promise.resolve('reacquired'));
+    expect(result).toBe('reacquired');
+  });
 });
 
 // --- withManifestLock: real cross-process stress repro (critic-disclosed reasoning gap, fixed) ----

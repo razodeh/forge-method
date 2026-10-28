@@ -820,6 +820,113 @@ describe('migrateRun: the cross-process lock (critic-reproduced: 12 F-DATA-6, th
   });
 });
 
+/**
+ * `assertMigrateLockStillHeld`'s own write-time fencing (`RUN-157` on a lost fence) -- the identical
+ * anomaly-injection technique `collection-lock.test.ts`'s own top doc comment establishes, ported here:
+ * a migration script's own real side effect reassigns the lock file to a different real pid mid-loop,
+ * standing in for the confirmed double-`wx`-create race this mechanism exists to close, without
+ * needing to trigger that real OS-level race itself. Round-2 critic finding: this abort path previously
+ * had zero dedicated test coverage of its own (verified only by inspection and analogy to
+ * `withCollectionLock`'s own already-tested mechanism).
+ */
+describe('assertMigrateLockStillHeld — write-time fencing (specs/22 M17 P18)', () => {
+  it('RUN-157 fires naming the rival pid, and the apply loop stops immediately: no further entry is applied, and the entry whose own script run coincided with the lost fence is never recorded in the ledger either', async () => {
+    const project = await createTestProject();
+    await writeMigrations(
+      project,
+      `migrations:
+  - id: alpha-expand
+    phase: expand
+    release: 1
+  - id: beta-expand
+    phase: expand
+    release: 1
+`,
+    );
+
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)']);
+    const rivalPid = child.pid;
+    if (rivalPid === undefined) throw new Error('expected a real pid');
+    await new Promise((resolve) => child.on('exit', resolve));
+
+    // THE INJECTED ANOMALY: alpha-expand's own script, as a side effect of genuinely running,
+    // reassigns the lock file to a different real pid -- standing in for another process's own
+    // independently-successful create landing mid-loop.
+    await put(
+      project,
+      `${SCRIPTS_DIR}/alpha-expand.mjs`,
+      "import { appendFileSync, writeFileSync } from 'node:fs';\n" +
+        "appendFileSync('applied.log', 'alpha-expand\\n');\n" +
+        `writeFileSync('.forge/migrate/lock.json', JSON.stringify({ pid: ${String(rivalPid)}, startedAt: new Date().toISOString() }));\n`,
+    );
+    await writeCountingScript(project, 'beta-expand');
+
+    await expect(
+      migrateRun(ctx(project), project.dir, { phase: 'expand' }, FAKE_CLOCK),
+    ).rejects.toMatchObject({ code: 'RUN-157', details: { pid: rivalPid } });
+
+    // alpha-expand's own script genuinely ran (the anomaly fired as ITS side effect, not instead of
+    // it)...
+    expect(await appliedLogEntries(project)).toEqual(['alpha-expand']);
+    // ...but the loop stopped the instant the fence was lost: beta-expand's own script never ran, and
+    // alpha-expand's own ledger entry never landed either -- `assertMigrateLockStillHeld` throws
+    // BEFORE `writeLedger` commits, so a migration whose script genuinely succeeded is still never
+    // silently recorded once this process can no longer prove it holds the lock (the exact "loud
+    // failure over a silently lost ledger entry" tradeoff `migrateRun`'s own fencing call site
+    // documents).
+    expect(await ledger(project)).toBeUndefined();
+  });
+
+  it('a lost fence is detected on the SECOND entry too, not only the first -- the check runs on every loop iteration, not merely once before the loop starts', async () => {
+    const project = await createTestProject();
+    await writeMigrations(
+      project,
+      `migrations:
+  - id: alpha-expand
+    phase: expand
+    release: 1
+  - id: beta-expand
+    phase: expand
+    release: 1
+  - id: gamma-expand
+    phase: expand
+    release: 1
+`,
+    );
+
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)']);
+    const rivalPid = child.pid;
+    if (rivalPid === undefined) throw new Error('expected a real pid');
+    await new Promise((resolve) => child.on('exit', resolve));
+
+    await writeCountingScript(project, 'alpha-expand');
+    // THE INJECTED ANOMALY, on the SECOND entry this time.
+    await put(
+      project,
+      `${SCRIPTS_DIR}/beta-expand.mjs`,
+      "import { appendFileSync, writeFileSync } from 'node:fs';\n" +
+        "appendFileSync('applied.log', 'beta-expand\\n');\n" +
+        `writeFileSync('.forge/migrate/lock.json', JSON.stringify({ pid: ${String(rivalPid)}, startedAt: new Date().toISOString() }));\n`,
+    );
+    await writeCountingScript(project, 'gamma-expand');
+
+    await expect(
+      migrateRun(ctx(project), project.dir, { phase: 'expand' }, FAKE_CLOCK),
+    ).rejects.toMatchObject({ code: 'RUN-157', details: { pid: rivalPid } });
+
+    // alpha-expand's own ledger entry DID land (its own fence check passed, before beta's own script
+    // ever ran and reassigned the lock) -- proof this is a real per-iteration check, not a one-time
+    // check before the loop even starts.
+    expect(await ledger(project)).toEqual({
+      v: 1,
+      applied: { 'alpha-expand': { appliedAt: FAKE_CLOCK.now(), phase: 'expand' } },
+    });
+    // beta-expand's own script ran, but its own fence check failed immediately after -- its own
+    // ledger entry never lands, and gamma-expand's own script never runs at all.
+    expect(await appliedLogEntries(project)).toEqual(['alpha-expand', 'beta-expand']);
+  });
+});
+
 // --- the real, compiled CLI entry point, as a subprocess (the exit-code contract and --json) -------
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../..');

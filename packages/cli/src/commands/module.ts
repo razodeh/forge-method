@@ -54,7 +54,11 @@
  * Every gate above throws *before* any filesystem write for this install/update (`installBundleTree`/
  * `writeManifestDocument` are both the last two calls in every success path, and every early-return
  * path is a `throw`): a refusal at any gate leaves `manifest.yaml` and `.forge/modules/`/
- * `.forge/overlays/` exactly as they were.
+ * `.forge/overlays/` exactly as they were. Both of those two calls, plus `moduleRemoveLocked`'s own
+ * `rm(destAbs, ...)`, now also call `verifyFence()` immediately beforehand (a round-2 critic finding:
+ * the write-time fence this file's own `withManifestLock` doc comment describes originally covered
+ * only `writeManifestDocument`, leaving `installBundleTree`/`rm(destAbs, ...)` — real writes into this
+ * same lock's own protected `.forge/modules/<id>/`/`.forge/overlays/<id>/` scope — unfenced).
  *
  * @see specs/03 §3.2.8
  * @see specs/19 §19.5
@@ -769,6 +773,18 @@ async function moduleAddLocked(
     await runModuleConformance(bundle.path as AbsolutePath, { workDir: options.workDir });
 
     const destAbs = ctx.paths.resolveWithin(`.forge/modules/${id}`);
+    // Write-time fencing (see `withManifestLock`'s own doc comment): `installBundleTree` below is a
+    // real write into `.forge/modules/<id>/`, this lock's own protected scope, just as much as
+    // `writeManifestDocument` is -- a critic round found this earlier write unfenced, letting the
+    // identical double-wx-create race this whole mechanism exists to close land here instead, just
+    // relocated to a different write path within the same lock's own protected scope. A fence loss
+    // here aborts BEFORE `installBundleTree` ever runs in this attempt, so the retry this triggers
+    // (the full `withManifestLock` acquire-and-`fn()` loop, from scratch) starts clean rather than
+    // needing `installBundleTree` itself to be idempotent against a half-finished prior attempt --
+    // though it independently is: it stages into a fresh, uniquely-named directory and publishes via
+    // `rm`-then-`rename`, so re-running it a second time against the same `destAbs` from a fresh
+    // `bundle.path` fetch produces the identical result either way.
+    await verifyFence();
     await installBundleTree(destAbs, bundle.path);
 
     const record: InstalledModuleRow = {
@@ -895,6 +911,12 @@ async function moduleRemoveLocked(
   }
 
   const destAbs = ctx.paths.resolveWithin(`.forge/modules/${id}`);
+  // Write-time fencing (see `withManifestLock`'s own doc comment, and `moduleAddLocked`'s own
+  // identical reasoning above): this `rm` is a real write into `.forge/modules/<id>/`, this lock's own
+  // protected scope, unfenced before this fix. `force: true` already makes a second `rm` of the same
+  // (now-absent) path a safe no-op, so a fresh `fn()` retry after a fence loss here re-runs this `rm`
+  // without any inconsistency.
+  await verifyFence();
   await rm(destAbs, { recursive: true, force: true });
 
   // Write-time fencing (see `withManifestLock`'s own doc comment): re-confirm, immediately before
@@ -1004,6 +1026,9 @@ async function moduleUpdateLocked(
     await runModuleConformance(bundle.path as AbsolutePath, { workDir: options.workDir });
 
     const destAbs = ctx.paths.resolveWithin(`.forge/modules/${id}`);
+    // Write-time fencing (see `withManifestLock`'s own doc comment, and `moduleAddLocked`'s own
+    // identical reasoning above): this write is unfenced the same way `moduleAddLocked`'s own call was.
+    await verifyFence();
     await installBundleTree(destAbs, bundle.path);
 
     const record: InstalledModuleRow = {

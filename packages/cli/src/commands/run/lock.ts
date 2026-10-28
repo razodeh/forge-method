@@ -148,7 +148,15 @@ const AMBIGUOUS_LOCK_RETRY_DELAY_MS = 10;
 export async function assertRunLockStillHeld(paths: ProjectPaths, lock: RunLock): Promise<void> {
   const current = await readRunLock(paths);
   if (current?.pid !== lock.pid || current.runId !== lock.runId) {
-    throw new ForgeError('CFG-002', { pid: lock.pid, host: lock.host });
+    // Report the RIVAL's pid/host, matching every other real `CFG-002` throw site
+    // (`acquireRunLock`'s own `existing.pid`/`existing.host`, `resume.ts`'s pre-flight check) -- never
+    // the caller's own `lock.pid`/`lock.host`, which would make this message claim the rival is the
+    // caller itself. `current` is `undefined` only in the genuinely ambiguous case (the lock file is
+    // now missing/unreadable rather than reassigned to a different real holder); `migrate/lock.ts`'s
+    // own `assertMigrateLockStillHeld` already has the honest pattern for that case (an explicit `0`
+    // sentinel for `pid`, since `RUN-157`'s own shape has no "unknown" variant either) -- mirrored here
+    // for `host` too, since `CFG-002`'s own `host: string` has no "unknown" variant of its own.
+    throw new ForgeError('CFG-002', { pid: current?.pid ?? 0, host: current?.host ?? 'unknown' });
   }
 }
 
