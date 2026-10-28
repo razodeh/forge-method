@@ -138,7 +138,19 @@ const MAX_FENCE_RETRIES = 10;
  * `migrate/lock.ts`'s own `acquireMigrateLock` already uses for its `maxWaitMs`) -- production callers
  * take this default (`200`/5s, restored) unchanged, and only the specific tests that genuinely need the
  * wider `400`/10s budget for combined-suite scheduling-contention reasons pass that value explicitly. See
- * `withDisclosuresLock`'s/`withExemptionsLock`'s own doc comments for how each threads this through. */
+ * `withDisclosuresLock`'s/`withExemptionsLock`'s own doc comments for how each threads this through.
+ *
+ * **Round 5 correction:** round 3 scoped "genuinely need the wider budget" to "is in the gauntlet's
+ * hand-picked 4-file acceptance command" and, on that premise, left `exemptions.test.ts`'s own
+ * identically-shaped 28-process stress test on the restored `200`/5s default. That scoping was wrong:
+ * this repo's real CI gate (`vitest.config.ts`, deliberately no `projects` array) runs every test file
+ * in ONE shared fork pool, so `exemptions.test.ts`'s own stress test is exposed to the exact same
+ * cross-file scheduling contention as `kb-disclosures.test.ts`'s -- confirmed live, `GATE-515`
+ * `'lock-exhausted'` on real `floor`/`seed` CI jobs spanning ubuntu-latest and macos-latest across
+ * nodes 20/22/24 (run `40678754407`). The real rule is "any test that drives THIS function under heavy
+ * concurrent-lock stress needs the wider budget, regardless of which hand-picked command happens to
+ * list it" -- `exemptions.test.ts`'s own stress test now passes `400` too, for the identical reason
+ * `kb-disclosures.test.ts`'s does. */
 const DEFAULT_MAX_LOCK_ATTEMPTS = 200;
 const LOCK_RETRY_DELAY_MS = 25;
 /** See `withExemptionsLock`'s own original doc comment (M15 P6) for the full reasoning: well above

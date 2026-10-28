@@ -579,6 +579,7 @@ process.stdout.write(JSON.stringify({ index, id }));
 async function writeMultiAppendConcurrencyWorker(
   workerPath: string,
   appendsPerWorker: number,
+  maxLockAttempts: number,
 ): Promise<void> {
   const source = `
 import { existsSync } from 'node:fs';
@@ -598,7 +599,7 @@ for (let i = 0; i < ${String(appendsPerWorker)}; i += 1) {
     reason: 'r',
     owner: 'alice',
     expiry: '2026-12-01',
-  }, { projectRoot: dir, runId: undefined });
+  }, { projectRoot: dir, runId: undefined }, ${String(maxLockAttempts)});
   ids.push(id);
 }
 process.stdout.write(JSON.stringify({ index, ids }));
@@ -664,6 +665,14 @@ describe('appendExemption — real cross-process concurrency', () => {
   // written. This is the identical root cause and fix as `@forge/telemetry`'s own `withEventLogLock`
   // regression test (`packages/telemetry/test/events.test.ts`), independently reproduced here against
   // this module's own, separate implementation.
+  //
+  // `maxLockAttempts` (round 5): passes `400`, not the restored `200`/5s production default -- the
+  // exact test `collection-lock.ts`'s own `DEFAULT_MAX_LOCK_ATTEMPTS` doc comment names as needing the
+  // wider budget, alongside `kb-disclosures.test.ts`'s own identically-shaped 28-worker stress test
+  // (both drive `withCollectionLock` under heavy concurrent-lock stress; this repo's real CI gate runs
+  // every test file in one shared fork pool, so this file's own stress test is exposed to the exact
+  // same cross-file scheduling contention kb-disclosures.test.ts's is, confirmed live via a real
+  // `GATE-515 lock-exhausted` CI failure, run 40678754407).
   it('28 real, separate OS processes x 6 sequential appends each (168 total), released together, never lose or duplicate an id', async () => {
     const { paths } = await freshProject();
     await mkdir(path.join(REPO_ROOT, '.forge-test-scratch'), { recursive: true });
@@ -672,7 +681,8 @@ describe('appendExemption — real cross-process concurrency', () => {
     const workerPath = path.join(workerDir, 'worker.mts');
     const workerCount = 28;
     const appendsPerWorker = 6;
-    await writeMultiAppendConcurrencyWorker(workerPath, appendsPerWorker);
+    const maxLockAttempts = 400;
+    await writeMultiAppendConcurrencyWorker(workerPath, appendsPerWorker, maxLockAttempts);
     const gatePath = path.join(workerDir, 'gate');
     const projectDir = paths.resolveWithin('.');
 

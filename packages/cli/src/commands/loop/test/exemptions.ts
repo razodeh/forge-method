@@ -166,12 +166,17 @@ function nextExemptionId(exemptions: readonly Exemption[], testId: string): stri
  *
  * `maxLockAttempts` (round 3): threads `withCollectionLock`'s own injectable attempt-budget override
  * through to `appendExemption` (this function's only caller). `undefined` (every real `forge test
- * exempt` call, and this file's own tests today) takes `withCollectionLock`'s own restored production
- * default (`200`/5s) -- see `collection-lock.ts`'s own `DEFAULT_MAX_LOCK_ATTEMPTS` doc comment. Added
- * for symmetry with `kb-disclosures.ts`'s own identical `withDisclosuresLock` parameter, not because
- * this file's own tests currently need the wider budget: `exemptions.test.ts` is not part of the
- * 4-file combined acceptance suite whose own real OS-process-scheduling contention is what the wider
- * value exists for. */
+ * exempt` call) takes `withCollectionLock`'s own restored production default (`200`/5s) -- see
+ * `collection-lock.ts`'s own `DEFAULT_MAX_LOCK_ATTEMPTS` doc comment. Added for symmetry with
+ * `kb-disclosures.ts`'s own identical `withDisclosuresLock` parameter.
+ *
+ * **Round 5 correction:** this comment originally said this file's own tests didn't need the wider
+ * budget because `exemptions.test.ts` "is not part of the 4-file combined acceptance suite" whose
+ * scheduling contention motivated it. That was wrong: this repo's real CI gate runs every test file in
+ * ONE shared fork pool (`vitest.config.ts`, deliberately no `projects` array), so `exemptions.test.ts`'s
+ * own 28-process stress test IS exposed to the identical cross-file contention `kb-disclosures.test.ts`'s
+ * is -- confirmed live via a real `GATE-515 lock-exhausted` CI failure (run `40678754407`). That test now
+ * passes `400` too, the same as `kb-disclosures.test.ts`'s own equivalent. */
 async function withExemptionsLock<T>(
   paths: ProjectPaths,
   clock: Clock,
