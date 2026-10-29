@@ -139,7 +139,23 @@ export async function acquireMigrateLock(
       // filesystem, but this is exactly the layer the lesson above asks for): fall through to the
       // same contention handling any other EEXIST gets, rather than trusting the create blindly.
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      // A real CI failure on `next` (run 40813893964, job 123250350362, `lock-stress (sequential,
+      // windows-latest)`) crashed a spawned fixture process outright with a raw `EPERM` from
+      // `open(path, 'wx')` above, not the `EEXIST` this catch block otherwise expects, under dense
+      // create/delete churn from many real processes racing the same lock path. Confirmed against
+      // libuv's own `src/win/fs.c` (`fs__open`): Windows' `CreateFile`+`CREATE_NEW` (what libuv maps
+      // `wx` to) is not as strictly atomic under this kind of churn as POSIX's `O_EXCL` -- a lost race
+      // there can surface as `ERROR_ACCESS_DENIED` (Node's `EPERM`) instead of `ERROR_FILE_EXISTS`
+      // (`EEXIST`). Treated identically to `EEXIST` here, on win32 only -- the same fix
+      // `@forge/telemetry`'s own `acquireEventLogLockOnce` (`events.ts`) already applies, there for the
+      // sync `writeFileSync(..., {flag:'wx'})` surface rather than this function's async
+      // `fsPromises.open(path, 'wx')` surface, but both funnel through the identical libuv code path;
+      // see that function's own doc comment for the fuller empirical record. POSIX's own `O_EXCL` is
+      // already atomic, so an `EPERM` there remains a real, unrelated failure that must still
+      // propagate.
+      const isWindowsCreateRace = process.platform === 'win32' && code === 'EPERM';
+      if (code !== 'EEXIST' && !isWindowsCreateRace) throw error;
     }
 
     const existing = await readMigrateLock(paths);

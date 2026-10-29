@@ -36,7 +36,19 @@ const REPORTS_ROOT = 'docs/forge/reports';
 
 const dirs: string[] = [];
 afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    dirs
+      .splice(0)
+      // `maxRetries`/`retryDelay`: the identical Windows `EBUSY` cleanup race
+      // `commands/run/helpers.ts`'s own `cleanupAll` already documents in full (a real CI failure on
+      // `next`, run 40813893964, job 123250350362, `lock-stress (sequential, windows-latest)`) -- one
+      // of this file's own 50 spawned worker processes can have exited while Windows has not yet fully
+      // released every handle it held somewhere under this directory, and unlike POSIX, Windows cannot
+      // remove a file/dir while ANY handle to it is still open, even briefly. `fs.rm`'s own documented
+      // `maxRetries`/`retryDelay` option exists for exactly this transient-handle-release class of
+      // error and is a no-op on POSIX, where this race does not occur.
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })),
+  );
 });
 
 const REPO_ROOT = fileURLToPath(new URL('../../../../..', import.meta.url));

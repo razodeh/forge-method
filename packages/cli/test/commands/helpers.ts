@@ -33,7 +33,19 @@ export function registerCleanup(dir: string): void {
 }
 
 export async function cleanupAll(): Promise<void> {
-  await Promise.all(cleanupDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    cleanupDirs
+      .splice(0)
+      // `maxRetries`/`retryDelay`: the identical Windows `EBUSY` cleanup race `run/helpers.ts`'s own
+      // `cleanupAll` already documents in full (a real CI failure on `next`, run 40813893964, job
+      // 123250350362, `lock-stress (sequential, windows-latest)`) -- a spawned worker's own OS process
+      // can have exited while Windows has not yet fully released every handle it held somewhere under
+      // this directory, and unlike POSIX, Windows cannot remove a file/dir while ANY handle to it is
+      // still open, even briefly. `fs.rm`'s own documented `maxRetries`/`retryDelay` option exists for
+      // exactly this transient-handle-release class of error and is a no-op on POSIX, where this race
+      // does not occur.
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })),
+  );
 }
 
 export async function createTestProject(): Promise<TestProject> {
