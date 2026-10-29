@@ -32197,3 +32197,54 @@ is the next actual Windows CI run).
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's Windows-lock-stress close-out
 addendum, dated 2026-10-28/29.
+
+## Q367 — `Q366`'s own fix exposed a SECOND, different Windows-only defect one layer deeper — a
+recurrence of the already-known `Q340` drive-letter/ESM-URL bug class, this time inside this
+session's own newly-created test files (owner-directed scope expansion, 2026-10-29)
+
+**What this closes.** The real CI run that first validated `Q366`'s fix (`40879015373`, job
+`123465219539`) confirmed `events.ts` (the file all 3 of `Q366`'s own fixes directly targeted) now
+passes cleanly on Windows (48/48) — but the OTHER 4 files in the same `lock-stress` job, all newly
+created this session when `Q365`'s own coverage-floor fix split each heavy stress test into its own
+sibling file, failed completely with a different, unrelated error: `Error
+[ERR_UNSUPPORTED_ESM_URL_SCHEME]: ... On Windows, absolute paths must be valid file:// URLs. Received
+protocol 'd:'`.
+
+**Decision 1 — root cause confirmed as an exact recurrence of `Q340`'s own already-diagnosed bug
+class, not a new mechanism.** All 4 files share one pattern: a `*_MODULE_PATH` constant (a raw OS
+filesystem path, computed via `fileURLToPath(new URL(...))`) gets injected directly, as a literal
+ESM import specifier, into a dynamically-generated `worker.mts` source string written to disk and
+spawned as a real child process. Node's ESM specifier resolution parses any specifier already shaped
+like `[a-zA-Z][a-zA-Z0-9+.-]*:` directly via `new URL(specifier)` — and a Windows drive-letter path
+(`D:\a\forge-method\...`) matches that shape, so `D:` gets read as the URL's own *scheme*, which the
+loader then rejects (only `file`/`data`/`node` are allowed). Reproduced directly, without a Windows
+machine, via `new URL('D:\\a\\forge-method\\...')` → `{ protocol: 'd:' }` on a POSIX dev machine.
+POSIX absolute paths never hit this (they parse as ordinary relative-URL text, not scheme-shaped),
+which is exactly why this was invisible until these exact newly-created files first ran on real
+Windows CI.
+
+**Decision 2 — fixed by reusing an already-established pattern, found in 3 other places in this
+exact codebase, not invented fresh.** `packages/cli/bin/preflight.cjs`'s `distEntryUrl`, `scripts/
+run-tests.mjs`'s `guardUrl`, and `scripts/lib/node-ts-flag.mjs`'s own `--import` resolution all
+already wrap an OS path with `pathToFileURL(...).href` before handing it to anything ESM-resolution-
+shaped — this is literally `Q340`'s own original fix, applied once already elsewhere in this
+codebase. Applied the identical wrap at all 11 real injection sites found across the whole repo (7 in
+the 4 originally-failing files; a disclosed, deferred 4 more in 2 OTHER files — `packages/core/test/
+artifacts/append-only-evidence.test.ts`, `packages/cli/test/commands/evidence/prune-multiprocess.
+test.ts` — sharing the identical generated-worker pattern but not yet exercised on Windows CI, closed
+in a prompt same-day follow-up once found). A comprehensive, multi-angle repo-wide grep (raw
+unwrapped injections; every `_MODULE_PATH`/`.href` specifier site; every file matching the shared
+`worker.mts`-generation naming convention; every other template-literal source-generator in the repo
+for the same pattern) confirmed these 11 are the complete set — no 12th site exists.
+
+**Decision 3 — this is a real-time illustration of why this milestone's own hardening work keeps
+finding new instances of already-known bug classes in freshly-written code, not evidence any single
+fix was incomplete.** The 4 originally-vulnerable files did not exist before this same session's own
+`Q365` coverage-floor split — they were newly written, inheriting the exact already-documented `Q340`
+gotcha because nothing in this repo's own authoring process (lint rule, code-review checklist,
+template) currently catches "a raw fs path handed to something that will parse it as a URL" at write
+time. Not fixed here (a static-analysis rule or authoring template would be the real structural fix);
+disclosed as a real, recurring risk for any FUTURE generated-worker-script file this codebase adds.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's Windows-lock-stress close-out
+addendum, dated 2026-10-29.

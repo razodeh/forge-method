@@ -25232,3 +25232,15 @@ test.ts` flake, re-confirmed clean in isolation.
 
 ---
 
+## M17 Phase A — Windows-lock-stress close-out, addendum: a second, different Windows-only defect one layer deeper (Q367, owner-directed scope expansion, 2026-10-29)
+
+**What this closes.** The real CI run validating Q366's fix confirmed `events.ts` now passes cleanly on Windows (48/48) — but the other 4 newly-split lock-stress files (created this same session by Q365's own coverage-floor fix) failed completely with a different error: `ERR_UNSUPPORTED_ESM_URL_SCHEME ... Received protocol 'd:'`.
+
+**Root cause: an exact recurrence of the already-known Q340 bug class**, not a new mechanism. All 4 files inject a raw OS filesystem path directly as a literal ESM import specifier into a dynamically-generated `worker.mts` source string. Node's ESM resolution parses any scheme-shaped specifier via `new URL(...)`, and a Windows drive-letter path matches that shape — `D:` gets read as the URL's own scheme, which the loader rejects. Reproduced directly without a Windows machine (`new URL('D:\\...')` → `protocol: 'd:'`). Fixed by reusing the identical `pathToFileURL(...).href` pattern already established in 3 other places in this exact codebase (Q340's own original fix) — applied at all 11 real injection sites found repo-wide via a multi-angle grep (7 in the originally-failing files, plus 4 more in 2 other files sharing the identical pattern but not yet exercised on Windows CI, found and closed in a same-day follow-up).
+
+**Why this kept happening**: the 4 originally-vulnerable files didn't exist before this same session's own Q365 split — they were newly written, inheriting an already-documented gotcha because nothing in this repo's authoring process currently catches "a raw fs path handed to something that will parse it as a URL" at write time. Disclosed, not fixed here (a lint rule or template would be the real structural fix) — a real, standing risk for any future generated-worker-script file.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q367` (new).
+
+---
+
