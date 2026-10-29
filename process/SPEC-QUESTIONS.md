@@ -32015,3 +32015,99 @@ typecheck`/`pnpm lint`: clean at every round.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's write-time-fencing close-out
 addendum, dated 2026-10-28.
+
+## Q365 — the real CI gate's own capacity, not lock correctness, was the remaining blocker after Q364:
+isolating 5 real multi-process stress tests into their own sequential job, and the hard per-file
+coverage floor that isolation nearly broke (owner-directed scope expansion, 2026-10-28)
+
+**What this closes.** After `Q364`'s write-time fencing landed and was pushed to the real CI gate,
+two consecutive real runs (`40678754407`, `40762005195`) both still failed — but every single failure,
+across every leg, was a clean `KB-018`/`GATE-515 lock-exhausted` refusal, never a lost or duplicated
+id. This repo's real CI gate runs its entire ~757-file suite in ONE shared fork pool (`vitest.config.ts`
+deliberately has no `projects` array). 5 of those files each spawn a real multi-process stress test
+(up to 28 real child OS processes) to exercise a cross-process lock's own correctness; running
+concurrently with each other AND the other ~750 files, real combined contention on GitHub-hosted
+runners (4 vCPU ubuntu/windows, 3 vCPU macos, confirmed via `gh api` — this is a public, personal-
+account repo, not an org, so larger hosted runners aren't available) repeatedly spiked past 80+
+concurrent processes, exhausting even an already-widened lock-wait budget (both 200 and 400 attempts
+failed the same way in real CI). This entry is purely a CI-SCHEDULING/CAPACITY fix — the underlying
+lock correctness was already closed and validated by `Q364`.
+
+**Decision 1 — a dedicated, sequential `lock-stress` job, not sharding, not bigger runners, not
+shrinking test concurrency.** A dedicated investigation evaluated four real options with concrete
+evidence, not inference: (a) vitest's own `--shard` flag — computed the REAL sha1-hash bucket
+assignment for the actual 757-file set at several shard counts; at the natural count=4, 3 of the 5
+heavy files land in the SAME shard (not a hypothetical worst case — the actual deterministic outcome),
+and `ci-ok`'s all-must-succeed gate means sharding only relocates failure probability, never lowers
+it — rejected. (b) Bigger/self-hosted runners — confirmed via `gh api` that larger GitHub-hosted
+runners require an org on a paid plan (this repo is a personal account) and zero self-hosted runners
+are registered; a self-hosted runner on a public repo triggered by `pull_request` is also a real,
+non-trivial security exposure — rejected as not currently accessible. (c) Shrinking stress-test worker
+counts (28→15) — `Q285`'s own disclosed "20-way proven, not formally higher" ceiling is about DATA-LOSS
+correctness, a different question from scheduling budget, and 28 workers × 6 appends was itself a
+deliberate, evidence-based choice (1 append/worker at even 20-30 workers did NOT reliably reproduce
+the real historical bug `Q364`'s own lineage exists to catch) — rejected as trading away real
+regression-catching power for a problem with a better fix available. (d) **Chosen**: isolate the 5
+heavy files into a new `lock-stress` CI job, run with `--no-file-parallelism` to force TRUE sequential
+execution among just them. Critically, isolation ALONE is not sufficient — the gauntlet's own earlier
+"4-file combined acceptance command" evidence (`Q359` Decision 4) already showed these files running
+concurrently WITH EACH OTHER (nothing else competing) spiking to ~84 processes and failing 4 of 5
+runs at the original 200-attempt budget; only forced sequential execution caps real peak concurrency
+at one file's own worst case (28).
+
+**Decision 2 — `lock-stress` runs on `ubuntu-latest` AND `windows-latest`, deliberately not
+`macos-latest`.** A re-review critic correctly pushed back on an initial ubuntu-only leg: this exact
+spawn/process-management code path has a real, repeated history of Windows-ONLY regressions this
+milestone (`Q340`'s drive-letter/`pathToFileURL`+`worker_threads` breakage; `Q353`'s own 4-round
+Windows-hardening saga) — "the lock LOGIC is cross-platform-correct" (`Q359`/`Q364`, 7+ critic rounds)
+does not imply "the CI-SCALE SCHEDULING margin holds on Windows" (never established; `CreateProcess`'s
+own overhead/scheduling differs fundamentally from POSIX fork). `macos-latest` is deliberately left
+out of this job's own matrix: a final reviewing critic flagged that the main `floor` matrix's own
+macos legs no longer run these 5 files AT ALL once excluded there too, so this is a real, narrow,
+disclosed gap (not fully closed this round) rather than a non-issue as first framed — a cheap future
+follow-up (add `macos-latest` to this job's 2-item matrix list), not blocking this round.
+
+**Decision 3 — isolating a file from the coverage-measured run can silently drop its own source
+module below this repo's HARD per-file coverage floor, and this very nearly shipped broken.** The
+first cut of this fix excluded all 5 whole test files from `pnpm test`'s coverage-measured run. A
+final reviewing critic — after the builder's own disclosed-but-unmeasured risk assessment repeatedly
+stalled under this session's sustained, extreme host contention (confirmed independently by three
+separate attempts, including the orchestrator's own) — built a fast, scoped, grep-verified
+sibling-test-file list (not a full ~226-file package run, which kept crashing on an unrelated
+pre-existing flake) and got REAL, measured numbers: `module.ts`'s sibling-only coverage was below floor
+on all four metrics; `kb-disclosures.ts` and `run/lock.ts` failed branches by 12-14 points; `exemptions.ts`
+missed branches by 1.43 points. **This was not a soft, catchable-later risk**: `vitest.config.ts`'s
+`coverage.thresholds` sets `perFile: true` as a HARD check vitest itself enforces INSIDE the main
+`pnpm test` command, before `scripts/check-coverage-ratchet.mjs`'s own soft, `--update`-able ratchet
+ever runs — a real per-file miss would have failed `pnpm test` itself, across all 10 `floor` legs and
+`seed` simultaneously, on the very next real push. The fix (applied identically to all 4 affected
+files, following the first one's own precedent): split ONLY each file's real multi-process stress
+test(s) into a new sibling file (e.g. `module-lock-stress.test.ts`) that moves into the isolated job;
+every OTHER test in the original file — the ordinary command-logic coverage — stays in the main run.
+`kb-disclosures.ts` needed one further round after its split still fell 1.74 points short on branches:
+the exact remaining gap was measured precisely (four specific, genuinely untested defensive branches:
+a malformed-event-payload guard, a non-string corrupt-row-id fallback, an id-exhausted ceiling with a
+direct precedent already tested for `Exemption`'s own identical pattern, and a write-time schema-reject
+check) and closed with three small, targeted, real (mock-free) tests — not a contrived test, not a
+disclosed carve-out, because the real, precise cause was known rather than guessed at.
+
+**Decision 4 — the coverage-completeness proof (this session's own established technique, from
+`test/workspace-floor.test.ts`) was re-run after every single structural change, not just once at the
+end.** The baseline file count moved from 757 → 758 (module split) → 761 (3 more splits) across this
+saga; at each step, the union of what the main run's own `vitest list --json` returns and what the
+`lock-stress` job's own list returns was proven, directly, to equal the real baseline exactly once
+each, zero overlap — never trusted from a prior step's own math once the file set changed again.
+
+**Discloses, not fixed here.** (1) `macos-latest` is not part of `lock-stress`'s own matrix (Decision
+2) — a real, narrow gap, not yet closed. (2) No real GitHub Actions dry-run of this exact fix happened
+before landing — consistent with this session's own established, repeatedly-successful pattern
+(`Q340`/`Q341` were themselves found exactly this way, on the first real push) of using the next real
+`next` push as the oracle for CI-scale questions a local dev machine cannot faithfully reproduce,
+given the new risk this round adds (one more OS leg of an already-isolated, already-validated job) is
+narrow and cheaply fixable if red. (3) `packages/cli` has no entry at all in `coverage-ratchet.json`
+(pre-existing, unrelated to this fix) — a real reviewing critic confirmed this means a CLI coverage
+drop from this fix could never have tripped that specific ratchet either way, independent of the hard
+per-file floor risk this entry's Decision 3 actually closed.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's CI-capacity close-out addendum,
+dated 2026-10-28.
