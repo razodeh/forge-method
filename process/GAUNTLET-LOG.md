@@ -25216,3 +25216,19 @@ test.ts` flake, re-confirmed clean in isolation.
 
 ---
 
+## M17 Phase A — Windows-lock-stress close-out: the first real Windows run found 3 genuine defects, and the first fix was itself too narrow (Q366, owner-directed scope expansion, 2026-10-28/29)
+
+**What this closes.** Q365's new `windows-latest` leg of the `lock-stress` job ran this codebase's 5 real cross-process locks on Windows for the first time ever, and found 3 genuine defects on its first attempt — the identical job's `ubuntu-latest` leg passed 55/55 in the same run, confirming these are real Windows-only issues, not noise.
+
+**Round 1** fixed all 3 in `events.ts` and 4 test-cleanup sites: (1) `EBUSY` on scratch-dir cleanup (Windows won't rmdir a directory while any handle inside it is still open) — fixed with `fs.rm`'s own documented `maxRetries`/`retryDelay` option; (2) a lock-file race surfacing as `EPERM` instead of `EEXIST` under dense create/delete churn — confirmed genuine and independently corroborated (libuv source + real GitHub issues with measured failure rates), fixed by treating `EPERM` as `EEXIST`, strictly win32-gated; (3) a **real production data-integrity bug**: append-mode file handles on Windows strip the write access truncate() needs, silently breaking the fsync-failure rollback path and leaving failed-write bytes on disk — fixed by switching to explicit-offset writes under the function's own existing exclusive lock.
+
+**Two independent re-review critics both found round 1 was too narrow** — the identical gap, independently discovered: this milestone's earlier lock-reliability work (Q359/Q364) already established the SAME mutual-exclusion bug class spans 5 lock implementations, not 1, and the other 4 (`collection-lock.ts`, `run/lock.ts`, `migrate/lock.ts`, `module.ts`) share the identical libuv exposure round 1's fix-2 only closed in `events.ts`. Worse: `run/lock.ts` and `module.ts` were already being stressed on Windows in the SAME CI job — the very next run was likely to crash again, with the identical signature, in a different file, inside the job this fix was supposed to have fixed. A separate completeness sweep also found 2 more unpatched cleanup sites sharing fix-1's exposure, one with a HIGHER worker count (50) than any file that actually failed.
+
+**Round 2** closed both gaps: the identical win32-gated EPERM treatment applied consistently across all 5 lock implementations (grep-confirmed byte-identical logic), and the same retry option added to the 2 remaining cleanup sites. A third, final critic independently re-verified every claim — including re-deriving "exactly 5 real locks exist" from scratch — before this was considered closed.
+
+**Net result**: a real production data-integrity bug and two real Windows-only test-infrastructure races, closed across all 5 lock implementations this milestone's lock-reliability work covers — with the same "fix that looks complete but isn't" pattern already recorded once this milestone (Q362) recurring here across which files got a fix, not which branches a test covers. One disclosed, honest gap remains: `migrate/lock.ts`'s own fix has no dedicated Windows stress test yet, verified only by code-review parity with its 4 siblings — the real, final proof for everything in this entry is the next actual Windows CI run, since no builder or critic in this chain had access to a real Windows machine.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q366` (new).
+
+---
+

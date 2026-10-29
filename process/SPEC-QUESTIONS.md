@@ -32111,3 +32111,89 @@ per-file floor risk this entry's Decision 3 actually closed.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's CI-capacity close-out addendum,
 dated 2026-10-28.
+
+## Q366 — the first-ever real Windows run of this codebase's 5 cross-process locks found 3 genuine
+defects, including a real production data-integrity bug; the fix's own first cut was itself too
+narrow, closed in 2 rounds (owner-directed scope expansion, 2026-10-28/29)
+
+**What this closes.** `Q365`'s new `lock-stress` CI job added a `windows-latest` leg specifically
+because this exact spawn/process-management code path has a real, repeated history of Windows-ONLY
+regressions this milestone (`Q340`, `Q353`). That leg's very first real run (CI run `40813893964`,
+job `123250350362`) found 3 genuine defects immediately — none of them hypothetical, all first
+discovered by this one real run, because this was the first time these exact 5 lock implementations
+had ever executed on Windows at all. The `ubuntu-latest` leg of the SAME job, running the SAME 55
+tests, passed cleanly (55/55) in the SAME run — confirming these are genuinely Windows-specific, not
+contention noise.
+
+**Decision 1 — `EBUSY` on scratch-directory cleanup, fixed with Node's own documented mechanism for
+exactly this error class.** Windows refuses to `rmdir`/unlink a directory while any process still
+holds an open handle to something inside it — unlike POSIX, where an unlinked-but-open file is fine.
+A spawned worker's own `execFile` promise resolving does not guarantee Windows has released every
+handle by the moment the parent's own cleanup `rm()` call runs immediately after. Fixed by adding
+`fs.rm`'s own documented `{maxRetries: 10, retryDelay: 100}` option (the standard, ecosystem-known
+fix for this exact transient Windows condition) to every affected cleanup call — ultimately 6 call
+sites across 2 rounds (see Decision 3).
+
+**Decision 2 — a genuine Windows `EEXIST`→`EPERM` substitution under dense lock-file create/delete
+churn, independently corroborated from primary source, not guessed.** `@forge/telemetry`'s own
+`acquireEventLogLockOnce` crashed with a raw, uncaught `EPERM` from `writeFileSync(path, pid,
+{flag:'wx'})` inside a 16-process stress test. Confirmed, by two independent re-review critics
+reading libuv's own `src/win/fs.c` directly (not taking the builder's word for it) and finding real,
+independent third-party corroboration (GitHub issues documenting the identical phenomenon, with one
+citing measured failure rates — 8/85 before a fix, 0/110 after): Windows' `CreateFile`+`CREATE_NEW`
+is less strictly atomic than POSIX `O_EXCL` under this exact access pattern, and a lost race can
+surface as `EPERM` instead of `EEXIST`. Fixed by treating `EPERM` as equivalent to `EEXIST`, strictly
+gated to `process.platform === 'win32'` (so POSIX's own, already-atomic `O_EXCL` behavior is
+provably unchanged) — the bounded retry loop beneath this check means even a genuinely-different,
+non-transient Windows `EPERM` (a real permissions problem, an antivirus lock) still fails loudly
+after its own budget, never silently masked or hung forever.
+
+**Decision 3 — the fix's own FIRST cut was itself too narrow, caught by re-review before landing,
+the same "fix that looks complete but isn't" pattern this milestone has already recorded once
+(`Q362`) — recurring here across which FILES got a fix, not which branches a test covers.** Round 1
+fixed Decision 1/2's mechanism in exactly the one file (`events.ts`) and the 4 test files the one
+real CI failure happened to name. Two independent re-review critics both, separately, found the
+identical gap: this milestone's own earlier lock-reliability work (`Q359`/`Q364`) established that
+the IDENTICAL "ambiguous lock" mutual-exclusion bug class spans 5 real lock implementations, not 1 —
+`collection-lock.ts`, `run/lock.ts`, `migrate/lock.ts`, and `module.ts` all share the SAME underlying
+libuv `CreateFile`+`CREATE_NEW` exposure Decision 2 found in `events.ts` (2 via the identical sync
+`writeFileSync` surface, 2 via the async `fsPromises.open` surface — both funnel through the same
+libuv code path, so the risk applies to both API shapes identically). Worse: `run/lock.ts` and
+`module.ts` were ALREADY being stressed, on Windows, in this exact same CI job (`run-lock-stress.
+test.ts`, `module-lock-stress.test.ts`) — meaning the very next Windows run was likely to crash
+again, with the identical `EPERM` signature, just relocated to a different file, inside the job this
+fix was supposed to have already turned green. A separate completeness grep (independently re-derived
+by both critics, not trusting round 1's own scope) also found 2 more bare-`rm`-with-no-retry cleanup
+sites sharing Decision 1's identical exposure (`evidence/prune-multiprocess.test.ts`'s 50-worker
+stress test — a HIGHER worker count than any of the 4 files that actually failed — and a shared
+`cleanupAll` helper used by `migrate/run.test.ts`). Round 2 closed both gaps: the identical
+win32-gated EPERM treatment applied consistently across all 5 lock implementations (grep-confirmed
+byte-identical logic in each), and the identical retry option added to the 2 remaining cleanup
+sites. A third, final reviewing critic independently re-verified every one of round 2's own claims
+(including re-deriving the "exactly 5 real locks, `atomic.ts`'s own `wx` usage is architecturally
+safe via per-process-unique temp paths" claim from scratch) before this was considered closed.
+
+**Decision 4 — one of the 3 original defects was a REAL production data-integrity bug, not just test
+infrastructure, and deserved the most careful review of the three.** `appendLineWithFsync` opened
+`events.ndjson` with append-mode (`'a'`), which on Windows strips `FILE_WRITE_DATA` from the handle's
+access mask (grants only `FILE_APPEND_DATA`) — so the existing fsync-failure rollback's own
+`handle.truncate(preWriteSize)` call silently failed on Windows (swallowed by a pre-existing
+`.catch(() => undefined)`), leaving a failed write's bytes on disk undeleted. Fixed by opening with
+`O_CREAT|O_RDWR` (no append flag) and writing at the already-tracked `preWriteSize` offset explicitly,
+relying on the function's own pre-existing exclusive lock+fence to serialize writers instead of OS-
+level append-positioning atomicity, which was never actually load-bearing given that lock already
+exists. Independently re-traced by a re-review critic with the same rigor as this milestone's own
+write-time-fencing work (`Q364`): confirmed no staleness window between the fresh size read and the
+write, confirmed strictly equivalent-or-safer than the old approach, confirmed correct.
+
+**Discloses, not fixed here.** `migrate/lock.ts`'s own `acquireMigrateLock` now has the identical
+EPERM fix applied (Decision 3), but is not currently exercised by any dedicated Windows-leg stress
+test (no `migrate-lock-stress.test.ts` exists in the `lock-stress` job's own file list) — its
+Windows behavior is verified by code-review parity with the other 4 locks, not by a live Windows CI
+run, the same epistemic status every fix in this entry has (no Windows machine was available to any
+builder or critic in this chain; all verification is either POSIX-run-as-no-op confirmation, or
+grounded in libuv primary source plus independent third-party corroboration — the real, final proof
+is the next actual Windows CI run).
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's Windows-lock-stress close-out
+addendum, dated 2026-10-28/29.
