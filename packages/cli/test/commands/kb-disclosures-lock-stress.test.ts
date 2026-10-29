@@ -35,7 +35,22 @@ import { appendDisclosure, loadDisclosures } from '../../src/commands/kb-disclos
 
 const dirs: string[] = [];
 afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    dirs
+      .splice(0)
+      // `maxRetries`/`retryDelay`: the identical, shared root cause disclosed by a real CI failure
+      // on `next` (run 40813893964, job 123250350362, `lock-stress (sequential, windows-latest)`) in
+      // this job's 3 sibling files (`EBUSY: resource busy or locked, rmdir ...`) -- a spawned
+      // worker's own OS process can have exited (its `execFile` promise resolved) while Windows has
+      // not yet fully released every handle it held somewhere under this directory; unlike POSIX,
+      // Windows cannot remove a file/dir while ANY handle to it is still open, even briefly. This
+      // file was not among the ones that happened to hit it in that specific run, but shares the
+      // byte-identical cleanup pattern and real process volume (28 workers x 6 sequential ops), so it
+      // gets the identical fix pre-emptively. `fs.rm`'s own documented `maxRetries`/`retryDelay`
+      // option exists for exactly this transient-handle-release class of error (`EBUSY`/`ENOTEMPTY`/
+      // `EPERM`/`EMFILE`/`ENFILE`) and is a no-op on POSIX, where this race does not occur.
+      .map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })),
+  );
 });
 
 async function freshProject(): Promise<ProjectPaths> {

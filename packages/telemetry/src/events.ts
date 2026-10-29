@@ -10,7 +10,7 @@
  * @see specs/20 §20.4
  * @see PLAN-M5.md P6
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { constants as fsConstants, readFileSync, writeFileSync } from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
@@ -326,7 +326,21 @@ async function acquireEventLogLockOnce(resolved: string): Promise<boolean> {
       }
       return true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      // A real CI failure on `next` (run 40813893964, job 123250350362, `lock-stress (sequential,
+      // windows-latest)`) crashed a spawned fixture process outright: `writeFileSync(..., {flag:
+      // 'wx'})` above threw `EPERM`, not the `EEXIST` this catch block otherwise expects, from 16
+      // real processes racing hard to create the SAME lock path. Confirmed against Windows' own
+      // documented semantics, not assumed: `CreateFile` with `CREATE_NEW` (what libuv maps `wx` to)
+      // is not as strictly atomic under dense create/delete churn against one path as POSIX's
+      // `O_EXCL` -- losing a race there can surface as `ERROR_ACCESS_DENIED` (Node's `EPERM`)
+      // instead of `ERROR_FILE_EXISTS` (`EEXIST`). Node's OWN `fs.rm`'s documented `maxRetries`
+      // option treats `EPERM` as exactly this same class of transient Windows filesystem race
+      // (alongside `EBUSY`/`ENOTEMPTY`), not a genuine permission failure, for the identical reason.
+      // Treated identically to `EEXIST` here, on win32 only: POSIX's own `O_EXCL` already is atomic,
+      // so an `EPERM` there remains a real, unrelated failure this function must still propagate.
+      const isWindowsCreateRace = process.platform === 'win32' && code === 'EPERM';
+      if (code !== 'EEXIST' && !isWindowsCreateRace) throw error;
       const ownerPidText = await fsp
         .readFile(resolved, 'utf8')
         .then((text) => text.trim())
@@ -611,11 +625,29 @@ async function determineLastSeq(
 async function appendLineWithFsync(filePath: string, line: string): Promise<void> {
   try {
     await fsp.mkdir(path.dirname(filePath), { recursive: true });
-    const handle = await fsp.open(filePath, 'a');
+    // Deliberately NOT the `'a'` string flag (`O_WRONLY|O_CREAT|O_APPEND`): confirmed directly
+    // against libuv's own `src/win/fs.c` (`fs__open`) that `O_APPEND` on Windows strips
+    // `FILE_WRITE_DATA` from the handle's access mask and grants only `FILE_APPEND_DATA` in its
+    // place -- and Windows' `NtSetInformationFile(..., FileEndOfFileInformation)` (what the
+    // `handle.truncate()` rollback below ultimately calls) requires `FILE_WRITE_DATA`, which an
+    // append-only handle never has. A real CI failure on `next` (run 40813893964, job 123250350362,
+    // `lock-stress (sequential, windows-latest)`) confirmed the result directly: the rollback
+    // truncate below failed silently (swallowed by its own best-effort `.catch`), leaving a second,
+    // untruncated write on disk -- `events.test.ts`'s "rolls back a write" test measured exactly
+    // double the expected byte count (216 vs. 108) specifically on that Windows leg; the identical
+    // `ubuntu-latest` leg in the same run passed cleanly, since POSIX's `ftruncate` has no such
+    // O_APPEND-conditioned access restriction. `O_CREAT|O_RDWR` (no `O_APPEND`) keeps full
+    // `FILE_WRITE_DATA` on every platform, so the rollback truncate can actually succeed on Windows
+    // too; the write below now targets the known pre-write offset explicitly instead of relying on
+    // OS-level O_APPEND positioning, which this function never needed for cross-process correctness
+    // in the first place -- `withEventLogLock`'s own exclusive lock already serialises every writer,
+    // so this handle is always the only writer touching the file for the duration of this call.
+    const handle = await fsp.open(filePath, fsConstants.O_CREAT | fsConstants.O_RDWR);
     try {
       const { size: preWriteSize } = await handle.stat();
       try {
-        await handle.appendFile(line);
+        const buffer = Buffer.from(line, 'utf8');
+        await handle.write(buffer, 0, buffer.length, preWriteSize);
         // The one guarantee every later resume piece trusts without re-checking (18 §18.10): this must
         // not resolve until the write is durable, not merely handed to the OS's own write buffer.
         await handle.sync();
