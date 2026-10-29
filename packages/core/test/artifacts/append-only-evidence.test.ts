@@ -25,7 +25,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -197,6 +197,16 @@ const WRITE_NEW_FILE_ATOMIC_MODULE_PATH = fileURLToPath(
   new URL('../../src/fs/atomic.ts', import.meta.url),
 );
 
+/** The generated worker source below injects this path as a literal ESM import specifier. That
+ * specifier is wrapped in `pathToFileURL(...).href` at the injection site, never used as the raw OS
+ * path directly — the identical `Q340` bug class (CI run `40879015373`, job `123465219539`,
+ * `lock-stress (sequential, windows-latest)`): on Windows an un-wrapped drive-letter path (`D:\...`)
+ * has its `D:` read by Node's WHATWG-URL-based ESM specifier parser as a URL *scheme*, throwing
+ * `ERR_UNSUPPORTED_ESM_URL_SCHEME ... protocol 'd:'`. POSIX absolute paths happen to parse as valid
+ * relative-URL references, which is why this never surfaced on macOS/Linux. Matches the already-
+ * established fix for this exact class elsewhere in this codebase (`preflight.cjs`'s `distEntryUrl`,
+ * `scripts/run-tests.mjs`'s `guardUrl`, `scripts/lib/node-ts-flag.mjs`'s own `--import` resolution). */
+
 /** The repo root, not the system tmpdir -- the identical reasoning `kb-disclosures.test.ts`'s own
  * `REPO_ROOT` doc comment already gives (a bare `@forge/core` import needs the real,
  * pnpm-workspace-linked `node_modules/`; `.forge-test-scratch/` is outside `node_modules/` and already
@@ -210,7 +220,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
 async function writeRaceWorker(workerPath: string): Promise<void> {
   const source = `
 import { existsSync } from 'node:fs';
-import { writeNewFileAtomic } from ${JSON.stringify(WRITE_NEW_FILE_ATOMIC_MODULE_PATH)};
+import { writeNewFileAtomic } from ${JSON.stringify(pathToFileURL(WRITE_NEW_FILE_ATOMIC_MODULE_PATH).href)};
 
 const [, , targetPath, index, gatePath] = process.argv;
 const deadline = Date.now() + 10_000;
