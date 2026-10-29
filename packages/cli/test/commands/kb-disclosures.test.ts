@@ -10,8 +10,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { ProjectPaths, type Clock } from '@forge/core';
+import { pathExists } from '@forge/core/fs';
+import { disclosuresFileSchema } from '@forge/schemas';
 import { appendEvent } from '@forge/telemetry/events';
 import { afterEach, describe, expect, it } from 'vitest';
+import * as YAML from 'yaml';
 
 import { appendExemption } from '../../src/commands/loop/test/exemptions.ts';
 import {
@@ -240,6 +243,134 @@ describe('a corrupt kb/disclosures.md (one valid row, one schema-invalid row)', 
     await expect(
       resolveDisclosure(paths, 'kb', fakeClock(), { id: 'DISC-001', reason: 'r', by: 'alice' }),
     ).rejects.toMatchObject({ code: 'KB-018', details: { id: 'DISC-002', reason: 'corrupt' } });
+  });
+});
+
+describe("nextDisclosureId — id-exhausted ceiling (specs/22 M15 P10, mirrors nextExemptionId's own GATE-515 id-exhausted test)", () => {
+  it('refuses once idWidth digits are full (KB-018 id-exhausted), rather than silently wrapping or colliding', async () => {
+    // Seeds 999 entries by writing the fixture directly (not via 999 real appendDisclosure calls,
+    // each its own lock-acquire + full read-modify-write -- correct but needlessly slow for a fixture
+    // this function's own real work never has to build) -- only the real 1000th call under test goes
+    // through appendDisclosure itself.
+    const paths = await freshProject();
+    await mkdir(paths.resolveWithin('kb'), { recursive: true });
+    const disclosures = Array.from({ length: 999 }, (_unused, index) => ({
+      id: `DISC-${String(index + 1).padStart(3, '0')}`,
+      kind: 'known-gap' as const,
+      summary: 'r',
+      owner: 'alice',
+      sources: [{ kind: 'human' as const, ref: 'x' }],
+      resolved: false,
+    }));
+    const seed = {
+      type: 'Disclosure' as const,
+      schemaVersion: 1,
+      title: 'Disclosure register',
+      status: 'active',
+      created: '2026-09-30',
+      updated: '2026-09-30',
+      revision: 1,
+      author: 'alice',
+      changelog: [],
+      disclosures,
+    };
+    expect(disclosuresFileSchema.safeParse(seed).success).toBe(true);
+    await writeFile(
+      paths.resolveWithin('kb/disclosures.md'),
+      `---\n${YAML.stringify(seed)}---\n`,
+      'utf8',
+    );
+    expect((await loadDisclosures(paths, 'kb')).disclosures).toHaveLength(999);
+
+    await expect(
+      appendDisclosure(paths, 'kb', fakeClock(), {
+        kind: 'known-gap',
+        summary: 'the 1000th disclosure',
+        owner: 'alice',
+        sources: [{ kind: 'human', ref: 'x' }],
+      }),
+    ).rejects.toMatchObject({ code: 'KB-018', details: { reason: 'id-exhausted' } });
+
+    // Refused, not a corrupting partial write: the 999 already-recorded entries are untouched.
+    expect((await loadDisclosures(paths, 'kb')).disclosures).toHaveLength(999);
+  });
+});
+
+describe('readDisclosuresCandidate — a corrupt row with no readable id of its own', () => {
+  it('names the row by its index (KB-018 corrupt), when the corrupt row itself has no string id to name', async () => {
+    const paths = await freshProject();
+    await mkdir(paths.resolveWithin('kb'), { recursive: true });
+    // The second row has no `id` field at all -- a hand-edit or partial migration this strict, no
+    // less genuine than writeCorruptDisclosuresFile's own missing-`owner` row above, just missing a
+    // different required field. Index 1 (0-indexed, second row), not DISC-002: there is no id on this
+    // row at all for the error to name.
+    const text = [
+      '---',
+      'type: Disclosure',
+      'schemaVersion: 1',
+      'title: Disclosure register',
+      'status: active',
+      'created: 2026-09-30',
+      'updated: 2026-09-30',
+      'revision: 1',
+      'author: alice',
+      'changelog:',
+      '  - revision: 1',
+      '    date: 2026-09-30',
+      '    by: alice',
+      '    summary: seeded for a corruption test',
+      'disclosures:',
+      '  - id: DISC-001',
+      '    kind: trade-off',
+      '    summary: a real, valid, unresolved disclosure',
+      '    owner: alice',
+      '    sources:',
+      '      - kind: human',
+      '        ref: x',
+      '    resolved: false',
+      '  - kind: known-gap',
+      '    summary: no id field at all -- the index-based fallback must name this row',
+      '    owner: bob',
+      '    sources:',
+      '      - kind: human',
+      '        ref: y',
+      '    resolved: false',
+      '---',
+      '',
+    ].join('\n');
+    await writeFile(paths.resolveWithin('kb/disclosures.md'), text, 'utf8');
+
+    await expect(
+      appendDisclosure(paths, 'kb', fakeClock(), {
+        kind: 'trade-off',
+        summary: 'a third disclosure',
+        owner: 'carol',
+        sources: [{ kind: 'human', ref: 'z' }],
+      }),
+    ).rejects.toMatchObject({ code: 'KB-018', details: { id: 'index 1', reason: 'corrupt' } });
+  });
+});
+
+describe('writeDisclosuresCandidate — write-time schema-reject paranoia check', () => {
+  it('throws when the write candidate itself would be schema-invalid, even though no on-disk row is corrupt', async () => {
+    // AppendDisclosureInput's own type never enforces `owner`'s min(1) at the call boundary (it is a
+    // plain `string`, not a runtime-checked one) -- an empty owner sails through `readDisclosuresCandidate`
+    // (nothing on disk is corrupt; this is a brand-new project) and only the final, write-time
+    // `disclosuresFileSchema.safeParse` right before the real `writeFileAtomic` commit catches it. This is
+    // exactly the paranoia check's own job: proving the whole candidate document is still schema-valid
+    // immediately before it is durably written, not trusting every caller to have validated its own input.
+    const paths = await freshProject();
+    const attempt = appendDisclosure(paths, 'kb', fakeClock(), {
+      kind: 'trade-off',
+      summary: 'x',
+      owner: '',
+      sources: [{ kind: 'human', ref: 'x' }],
+    });
+    await expect(attempt).rejects.toThrow(RangeError);
+    await expect(attempt).rejects.toThrow(/disclosuresFileSchema rejected a disclosures\.md write/);
+
+    // Refused outright: nothing was ever written -- not even a partial file.
+    expect(await pathExists(paths.resolveWithin('kb/disclosures.md'))).toBe(false);
   });
 });
 
