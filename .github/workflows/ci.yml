@@ -131,12 +131,16 @@ jobs:
 
   # `floor`/`seed`'s own `pnpm test` (above) now excludes 5 files that each spawn a real,
   # multi-process stress test (up to 28 real child OS processes) to exercise a cross-process file
-  # lock's own correctness: packages/cli/test/commands/{kb-disclosures,run/lock}.test.ts,
-  # packages/cli/test/commands/module-lock-stress.test.ts (split out of module.test.ts -- see that
-  # commit for why: module.ts's own ordinary moduleAdd/moduleRemove/moduleUpdate/fetchInstallBundle/
-  # installBundleTree coverage has no other substantial sibling across the suite, so module.test.ts's
-  # OTHER tests stay in this main run while only its real stress test moves out),
-  # packages/cli/test/commands/loop/test/exemptions.test.ts, packages/telemetry/test/events.test.ts.
+  # lock's own correctness: packages/cli/test/commands/kb-disclosures-lock-stress.test.ts,
+  # packages/cli/test/commands/run/run-lock-stress.test.ts,
+  # packages/cli/test/commands/module-lock-stress.test.ts, and
+  # packages/cli/test/commands/loop/test/exemptions-lock-stress.test.ts -- each split out of its own
+  # ordinary-coverage sibling (module.test.ts/kb-disclosures.test.ts/lock.test.ts/exemptions.test.ts
+  # respectively, the first in `58df03f`, the other three together in a later commit -- see those
+  # commits for why: each source file's own ordinary command-logic coverage has no other substantial
+  # sibling across the suite, so each original file's OTHER tests stay in this main run while only its
+  # real stress test(s) move out), plus packages/telemetry/test/events.test.ts (not split; a separate
+  # package with its own disclosed sibling-coverage situation, out of scope for the above).
   # Run together with the other ~752 files in `vitest.config.ts`'s single shared fork pool (this
   # repo's real CI gate deliberately has no `projects` array -- see that file's own header comment),
   # real combined contention on GitHub-hosted runners (4 vCPU ubuntu/windows, 3 vCPU macos for this
