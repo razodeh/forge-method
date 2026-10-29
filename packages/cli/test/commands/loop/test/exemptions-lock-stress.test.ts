@@ -25,7 +25,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { ProjectPaths } from '@forge/core';
@@ -68,6 +68,16 @@ const EXEMPTIONS_MODULE_PATH = fileURLToPath(
   new URL('../../../../src/commands/loop/test/exemptions.ts', import.meta.url),
 );
 
+/** The generated worker sources below inject this path as a literal ESM import specifier (2 sites).
+ * Each is wrapped in `pathToFileURL(...).href` at the injection site, never used as the raw OS path
+ * directly — the identical `Q340` bug class (CI run `40879015373`, job `123465219539`, `lock-stress
+ * (sequential, windows-latest)`): on Windows an un-wrapped drive-letter path (`D:\...`) has its `D:`
+ * read by Node's WHATWG-URL-based ESM specifier parser as a URL *scheme*, throwing
+ * `ERR_UNSUPPORTED_ESM_URL_SCHEME ... protocol 'd:'`. POSIX absolute paths happen to parse as valid
+ * relative-URL references, which is why this never surfaced on macOS/Linux. Matches the already-
+ * established fix for this exact class elsewhere in this codebase (`preflight.cjs`'s `distEntryUrl`,
+ * `scripts/run-tests.mjs`'s `guardUrl`, `scripts/lib/node-ts-flag.mjs`'s own `--import` resolution). */
+
 /** The repo root -- NOT the system tmpdir: a bare `@forge/core` import only resolves from somewhere
  * Node's own ESM resolver can walk up from and find the real, pnpm-workspace-linked `node_modules/`
  * (a round-1 gauntlet critic's own fix attempt hit `ERR_MODULE_NOT_FOUND` from a system-tmpdir worker
@@ -102,7 +112,7 @@ async function writeConcurrencyWorker(workerPath: string): Promise<void> {
   const source = `
 import { existsSync } from 'node:fs';
 import { ProjectPaths } from '@forge/core/fs';
-import { appendExemption } from ${JSON.stringify(EXEMPTIONS_MODULE_PATH)};
+import { appendExemption } from ${JSON.stringify(pathToFileURL(EXEMPTIONS_MODULE_PATH).href)};
 
 const [, , dir, index, gatePath] = process.argv;
 const paths = new ProjectPaths(dir);
@@ -143,7 +153,7 @@ async function writeMultiAppendConcurrencyWorker(
   const source = `
 import { existsSync } from 'node:fs';
 import { ProjectPaths } from '@forge/core/fs';
-import { appendExemption } from ${JSON.stringify(EXEMPTIONS_MODULE_PATH)};
+import { appendExemption } from ${JSON.stringify(pathToFileURL(EXEMPTIONS_MODULE_PATH).href)};
 
 const [, , dir, index, gatePath] = process.argv;
 const paths = new ProjectPaths(dir);

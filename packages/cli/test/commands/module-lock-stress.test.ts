@@ -23,7 +23,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -42,6 +42,17 @@ const execFileAsync = promisify(execFile);
  * needs an absolute import, not a relative one (the identical reason `exemptions.test.ts`'s own
  * worker does, `packages/cli/test/commands/loop/test/exemptions.test.ts`). */
 const MODULE_MODULE_PATH = fileURLToPath(new URL('../../src/commands/module.ts', import.meta.url));
+
+/** The generated worker source below injects this path as a literal ESM import specifier
+ * (`import { withManifestLock } from "..."`). That specifier is wrapped in `pathToFileURL(...).href`
+ * at the injection site, never used as the raw OS path directly — the identical `Q340` bug class
+ * (CI run `40879015373`, job `123465219539`, `lock-stress (sequential, windows-latest)`): on Windows
+ * an un-wrapped drive-letter path (`D:\...`) has its `D:` read by Node's WHATWG-URL-based ESM
+ * specifier parser as a URL *scheme*, throwing `ERR_UNSUPPORTED_ESM_URL_SCHEME ... protocol 'd:'`.
+ * POSIX absolute paths happen to parse as valid relative-URL references, which is why this never
+ * surfaced on macOS/Linux. Matches the already-established fix for this exact class elsewhere in this
+ * codebase (`preflight.cjs`'s `distEntryUrl`, `scripts/run-tests.mjs`'s `guardUrl`, `scripts/lib/
+ * node-ts-flag.mjs`'s own `--import` resolution). */
 
 /** The repo root, not the system tmpdir — the identical reasoning `exemptions.test.ts`'s own
  * `REPO_ROOT` doc comment already gives (a bare `@forge/core` import needs the real,
@@ -76,7 +87,7 @@ async function writeManifestLockWorker(workerPath: string, itersPerWorker: numbe
   const source = `
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { ProjectPaths } from '@forge/core/fs';
-import { withManifestLock } from ${JSON.stringify(MODULE_MODULE_PATH)};
+import { withManifestLock } from ${JSON.stringify(pathToFileURL(MODULE_MODULE_PATH).href)};
 
 const [, , dir, index, gatePath, ledgerPath] = process.argv;
 const paths = new ProjectPaths(dir);
