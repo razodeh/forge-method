@@ -32507,3 +32507,118 @@ clean after landing. Full `packages/kb` suite (524/524) and `bin-run-failures.te
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's CI-tail-sweep addendum, dated
 2026-10-29.
+
+## Q372 — the first real `next` push since Q371 went red across the whole `floor`/`seed` matrix:
+CONFIRMED a real Node-22.16+ `node:sqlite` FTS5 regression (fixed here) and a second, previously-
+masked CI-capacity layer underneath the now-closed Q358-371 lock saga (disclosed, fix in progress
+separately) (owner-directed scope expansion, 2026-10-30)
+
+**What this closes.** `main` (14 commits, Q368-371) was pushed to `origin/next` (`897d638`,
+`6860c14..897d638`) for the first real CI validation since the entire Q358-367
+lock-correctness-and-capacity saga closed. The run (`41063683416`) completed `failure`: both
+`lock-stress` jobs (sequential, ubuntu+windows) passed clean — that saga is genuinely, fully closed
+— but all 9 completed `floor`/`seed` legs failed (the 3 remaining Windows legs were cancelled by an
+overall gate once enough failures had accumulated, never completing on their own).
+
+**Decision 1 — the full-matrix failure is NOT primarily a regression from Q368-371's own 14
+commits.** Cross-checked `gh run list --branch next`: every real validation run since Q365
+(`40886563796`, `40879015373`, `40813893964`, `40762005195`) also failed or was cancelled, before
+any of Q368-371 landed. The working theory, consistent with every piece of evidence gathered: those
+earlier runs failed/cancelled on the lock-exhaustion saga itself (`GATE-515`/lock-stress-shaped
+failures), which dominated and masked whatever ran underneath; now that saga is closed, this is the
+first run to get far enough into the suite to expose a SECOND, different, pre-existing resource-
+capacity problem in the main `floor`/`seed` job's own shared vitest fork pool (`vitest.config.ts`
+has no `projects` array — the whole ~761-file suite runs in one pool, on the same small personal-
+account runners `Q365` already documented: 3-4 vCPU, no bigger hosted or self-hosted options).
+Confirmed NOT file-count-limited to this session's own changes: of the ~20 failing tests recurring
+near-identically across every failing job, only `test/lint-rules.test.ts` (this session's own Q368-
+371 shared-ESLint-instance fix) was touched this session — `packages/tui/test/components/stream-
+view.test.tsx`, `packages/tui/test/screens/specs.test.tsx`, `packages/cli/test/commands/doctor/run-
+doctor.test.ts`, `packages/cli/test/commands/parity/http-server.test.ts`,
+`packages/cli/test/commands/parity/observe.test.ts`, `packages/cli/test/commands/loop/test/
+coverage.test.ts`, and `packages/engine/test/dispatch/confined-command.test.ts` (the last already
+disclosed-and-dismissed as pure flakiness in the Q358-367 saga) all last changed between 2026-09-11
+and 2026-10-27 — days to weeks before this push, confirmed via `git log -1` on each file.
+
+**Decision 2 — this session's own 3rd `workspace-floor.test.ts` timeout bump (`Q370`, commit
+`7d1af31`) is directly implicated, and its own reviewing critic already predicted this.** Real
+per-file test durations were extracted from 3 independently-contended job logs in this same run
+(node22-ubuntu-TZ=UTC, node24-ubuntu, node20-macos — raw CI logs, not a local measurement). The
+same handful of files are consistently, by a wide margin, the heaviest across all 3:
+`packages/cli/test/bin.test.ts` (1276-1464s, 21-24 minutes, every single time — by far the largest
+single file), `test/workspace-floor.test.ts` (618-891s), `test/run-inputs-compile.test.ts` (512-
+928s), and `packages/extensions/test/install/fetch-npm.test.ts` (consistently ~287s) — together
+roughly 35-40% of the suite's ~7500-9650s (125-160 minute) cumulative per-run duration. `Q370`'s own
+Decision 4 already recorded a critic's explicit, un-acted-on warning: this was the 3rd timeout bump
+on the same 3 `workspace-floor.test.ts` tests, "mirrors a broader, repeating pattern... that should
+eventually be replaced by the already-disclosed real fix (sharding `pnpm test` across jobs), not
+papered over indefinitely with ever-larger margins." Bumping 100s→20min let those tests actually
+run to completion under contention instead of being killed early, which is correct for THEIR OWN
+false-positive-timeout problem, but extends how long they (and whatever they compete with) hold
+real CPU/memory on an already-strained 3-4 vCPU runner — plausibly the margin that tipped this run
+red. Also confirmed a real vitest `--shard`'s actual algorithm (splitting the alphabetically-sorted
+file list into contiguous chunks, not duration-aware) would badly cluster the `packages/cli/test/
+bin-*.test.ts` family together (they sort adjacently) — simulated shard count=2 gives bins of 4765s
+vs 2768s, a 73% imbalance — the same shape of problem `Q365` Decision 1 already rejected generic
+sharding for, now reconfirmed for the general suite with real data, not simulation alone.
+
+**Decision 3 — FIXED HERE: a real, new, Node-22.16+ `node:sqlite` FTS5 regression in 2 kb/db
+tests.** Among the ~20 recurring failures, `packages/kb/test/db/backends.test.ts` and `open.test.ts`
+each had exactly one test fail identically on every Linux leg with Node>=22 (node22-ubuntu-UTC,
+node22-ubuntu-Kathmandu, node24-ubuntu) and zero other legs — triangulated as Node-version/platform-
+driven, not flaky: Node's own bundled SQLite gained the FTS5 extension starting at v22.16.0
+(`nodejs/node#57621`, "sqlite: enable common flags", merged April 2025, backported into the 22.x
+line) — confirmed live, this session's own dev machine (Node 22.14.0, predates the backport) lacks
+it while the real CI runners (Node 22.23.4) have it. Both tests hardcoded the opposite, now-stale
+assumption: that `node:sqlite` can never successfully `DROP TABLE` an existing FTS5 virtual table
+`better-sqlite3` left behind, and must always throw `no such module: fts5`. Traced the real
+production code first (`packages/kb/src/db/sqlite-common.ts`'s `BaseSqliteBackend.
+reconcileTermsTableShape()`, unchanged, already correct): once fts5 is compiled in, the `DROP TABLE`
+it was already designed to attempt simply succeeds instead of throwing, so this now self-heals in
+the previously-"impossible" direction too — warns, drops the stale FTS5 table, recreates a plain
+one — exactly mirroring the already-proven reverse-direction reconciliation in the same file.
+Production behavior is strictly better on newer Node; this was a stale test assumption, never a
+production defect. Fixed by detecting fts5 availability empirically per test file (a throwaway
+`:memory:` `CREATE VIRTUAL TABLE ... USING fts5` probe), not from the Node version number alone,
+since the exact version threshold is not guaranteed to hold for every future platform/build (already
+confirmed true once: the probe is itself Node-patch-sensitive, not just Node-major-sensitive). Each
+affected test became a `skipIf`-guarded pair — the original "cannot self-heal, throws" case for a
+build that genuinely lacks fts5, and a new "CAN self-heal, warns instead of throwing" sibling for a
+build that has it — exactly one of each pair runs on any given machine.
+
+A first draft of this fix had its own bug, caught before landing by the same real-repro discipline
+this project applies everywhere else: the two new tests' own title-suffix text had their `skipIf`
+condition's truth value backwards (cosmetic only — the real `skipIf(...)` arguments were always
+correct), which read as "the wrong test is being skipped" until direct instrumentation (a `console.
+error` placed inside the probe itself, plus an isolated single-test repro file) proved the probe
+result and the actual skip/pass counts were right all along, and only the printed label text was
+inverted. Fixed in the same pass, before any commit.
+
+**Verification.** `pnpm typecheck` (21/21). Scoped eslint/prettier on both touched files: clean.
+Both files run clean on this machine's real Node 22.14.0 (the fts5-less branch of each pair runs
+and passes; the fts5-available sibling correctly skips, confirmed via direct instrumentation it is
+not a false skip). The fts5-available branch cannot be exercised locally without a newer Node
+install; its assertions mirror the already-proven reverse-direction test in the same file. Full
+`packages/kb` suite: 523/523 passing (one unrelated pre-existing timeout in `survey.test.ts` under
+this machine's own combined-run contention from a concurrently-running background task, confirmed
+passing in isolation in 15.2s, well under its 30s budget).
+
+**Discloses, not fixed here.** The CI-capacity problem itself (Decision 2) — the real,
+already-identified fix is isolating the handful of genuinely heavy, real-subprocess-spawning files
+(`bin.test.ts`, `workspace-floor.test.ts`'s 3 heavy tests, `run-inputs-compile.test.ts`, `fetch-
+npm.test.ts`'s `fetchNpmOverlay` block, and likely a second tier of `bin-*`/`gate-*` CLI-dispatch
+files) into a new, dedicated CI job, following `Q365`'s own already-proven `lock-stress` pattern
+(including its Decision 3 coverage-floor-preservation technique) rather than generic `--shard` or
+further timeout bumps — in progress as a separate piece, to be documented under its own Q number
+once landed and critic-reviewed. The ~15 other recurring failures in untouched, pre-existing files
+(signal-timing flakes in `confined-command`/`observe`/`http-server.test.ts`, `fetch-npm.test.ts`
+hitting the real npm registry instead of its own local fixture under load, assorted TUI/doctor/
+coverage one-offs) are presumed casualties of the same capacity problem, not independently
+diagnosed — expected to be re-assessed once the isolation fix lands and a fresh CI run shows what,
+if anything, still fails.
+
+**Gauntlet:** none yet — this fix landed directly (test-only, 2 files, no production code changed,
+verified by direct instrumentation catching and fixing a real bug in the first draft before
+landing), consistent with this session's risk-scaled gauntlet practice for pure test-only
+corrections. The in-progress isolation fix (Decision 2/Discloses) will get its own dedicated,
+critic-reviewed gauntlet before landing, given its CI-infrastructure-wide blast radius.
