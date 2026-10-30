@@ -1,8 +1,11 @@
 # PLAN-M17 — Harden, then falsify: prove it somewhere FORGE did not build
 
-**Status: DRAFT for owner review. Nothing here is built; nothing here is committed.** Post-v1.0, after
-M16. Pieces take the next free `SPEC-QUESTIONS.md` number at commit time (`Q313` as this draft is
-written); the log entry is `## M17 P<n>` in `process/GAUNTLET-LOG.md`. M16 pieces are cited as `M16 P<n>`.
+**Status: Phase A (hardening) in progress; most pieces below are landed, not merely drafted** — including
+P10's retry wiring (`decideRetry`/`computeBackoff` through `run-engine.ts`'s `driveToCompletion`), which is
+genuinely live in production, not a plan. The `m17-hardened` tag has not been cut yet; Phase B (the trial)
+has not started. Pieces take the next free `SPEC-QUESTIONS.md` number at commit time (`Q313` as this draft
+was first written); the log entry is `## M17 P<n>` in `process/GAUNTLET-LOG.md`. M16 pieces are cited as
+`M16 P<n>`.
 
 **Line references are given where a read-only audit on 2026-10-11 (main at `d73cf5b`) confirmed them.**
 Each piece's own BUILD step re-checks them; code moves.

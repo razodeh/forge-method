@@ -86,9 +86,10 @@ function classifyVcsFailure(failure: StepFailureInfo): FailureClass {
   // prefixes), so they reach this function through `failure.code` exactly the same way. Deliberately left
   // to fall through to `transient` below rather than given a dedicated `policy` mapping of their own: this
   // classifier's own established stance for a VCS-shaped code with no test coverage yet (the paragraph
-  // above, for `VCS-NOT-A-REPO`/`VCS-DIRTY-TREE`) applies here too, and P16's own retry loop has no
-  // production caller regardless (this file's own `prompt`-case comment below has the fuller "why this
-  // still matters only for `06` §6.8's classification, not a live retry, today" reasoning) -- verified,
+  // above, for `VCS-NOT-A-REPO`/`VCS-DIRTY-TREE`) applies here too: leaving these at the shared
+  // `transient` default only changes how quickly the never-retry rule escalates a second identical
+  // occurrence (`06` §6.8), not whether it does, which is a real retry concern now that `driveToCompletion`
+  // (`run-engine.ts`, `specs/22` M17 P10) genuinely retries a `transient` failure in production -- verified,
   // not silently unconsidered (`packages/engine/test/failures/classify.test.ts`).
   return 'transient';
 }
@@ -207,11 +208,20 @@ export function classifyFailure(outcome: StepOutcome): FailureClass {
       // Mandate explicitly forbids, just reached through the retry layer instead of this step's own
       // internal loop. Found by a round-1 gauntlet critic who reproduced the fall-through directly.
       if (failure.code === 'RUN-113') return 'policy';
+      // `RUN-084` (`PLAN-M13.md` P7): the declared output is absent specifically because the agent's own
+      // resolved grant has `tools.write: false` -- structurally, not merely in practice, no retry of the
+      // identical step can ever satisfy it, the same "this run's own state lacks something no retry of
+      // the identical step can supply" reasoning `RUN-108`/`elicit`/`claim` already have above. Distinct
+      // from plain `RUN-083` (a declared output that is absent or fails its schema for any OTHER reason,
+      // immediately below): that case stays `validation`, since a retry genuinely can produce the
+      // missing/invalid output when the cause isn't the grant itself. `implement-story.workflow.yaml`'s
+      // own steps that declare `retryOn: [validation]` would otherwise retry a `RUN-084` step for real
+      // (`run-engine.ts`'s `driveToCompletion`, `specs/22` M17 P10, now a genuine production caller) and
+      // burn a full retry attempt on a failure nothing about retrying ever changes.
+      if (failure.code === 'RUN-084') return 'policy';
       // A declared output that is absent or fails its schema is `06` §6.8's own `validation` example
       // ("output failed schema/contract"), whichever of the two it was: `onFailure`/`retry` then apply as
-      // for any other step failure. (Retrying a session that could not write is futile when the cause is
-      // the agent's grant, `RUN-084`, but the never-retry rule already escalates the second identical
-      // failure, and the retry loop has no production caller yet, `PLAN-M11.md` P11.)
+      // for any other step failure.
       return 'validation';
     case 'telemetry':
     case 'unsupported':

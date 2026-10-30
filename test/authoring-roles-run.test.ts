@@ -817,7 +817,13 @@ describe('P15: the new HandoffRecord outputs are not satisfied by a wrong or mis
       },
     );
     const failed = eventsFor(all, 'StepFailed', stepNodeId(reviewStages));
-    expect(failed.length).toBe(1);
+    // `RUN-083` classifies `validation` (`classify.ts`), which is in the default `retryOn` set and
+    // `specs/06` §6.8's own "validation | output failed schema/contract | retry once... then
+    // escalate" rule -- `driveToCompletion` (`run-engine.ts`, `specs/22` M17 P10, now a genuine
+    // production caller) retries this step once before escalating, and `executeStep` (`dispatch/
+    // execute.ts`) emits its own `StepFailed` for EVERY attempt, retried or not -- so the identical
+    // failure (the register entry is never corrected between attempts) is reported twice, not once.
+    expect(failed.length).toBe(2);
     expect(JSON.stringify(failed[0]?.payload)).toMatch(/RUN-083/);
     expect(JSON.stringify(failed[0]?.payload)).toMatch(/stage-plan-review/);
   });
@@ -842,7 +848,9 @@ describe('P15: the new HandoffRecord outputs are not satisfied by a wrong or mis
       'p15-adv-store-submission',
     );
     const failed = eventsFor(all, 'StepFailed', stepNodeId(storeSubmission));
-    expect(failed.length).toBe(1);
+    // See the previous test's own comment: RUN-083 is `validation`, retried once then escalated
+    // (`specs/06` §6.8, `specs/22` M17 P10), and `executeStep` emits one `StepFailed` per attempt.
+    expect(failed.length).toBe(2);
     expect(JSON.stringify(failed[0]?.payload)).toMatch(/RUN-083/);
     expect(JSON.stringify(failed[0]?.payload)).toMatch(/store-submission-record/);
   });
@@ -861,7 +869,9 @@ describe('P15: the new HandoffRecord outputs are not satisfied by a wrong or mis
       },
     );
     const failed = eventsFor(all, 'StepFailed', stepNodeId(reviewStages));
-    expect(failed.length).toBe(1);
+    // See the first test's own comment: RUN-083 is `validation`, retried once then escalated
+    // (`specs/06` §6.8, `specs/22` M17 P10), and `executeStep` emits one `StepFailed` per attempt.
+    expect(failed.length).toBe(2);
     expect(JSON.stringify(failed[0]?.payload)).toMatch(/RUN-083/);
   });
 });
