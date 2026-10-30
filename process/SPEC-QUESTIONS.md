@@ -32315,3 +32315,137 @@ change. `pnpm typecheck`/lint/prettier clean throughout.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's CI-tail-sweep addendum, dated
 2026-10-29.
+
+## Q369 — CI-tail sweep: 3 unrelated fixes (fetch-npm timeouts, a real Node-22-only dependency
+pin, a stale claim-coverage exemption), plus 2 newly-surfaced Node-20 defects disclosed but not
+yet fixed (owner-directed scope expansion, 2026-10-29)
+
+**What this closes.** 3 of the remaining pre-existing CI-tail items from the same post-Q367
+sweep as Q368.
+
+**Decision 1 — `fetch-npm.test.ts`'s 4 universal 60s timeouts: real contention, not a logic bug.**
+All 5 tests in the `fetchNpmOverlay` describe block do a real local HTTP fixture registry + a real
+`npm pack` subprocess round trip — consistently <1s in isolation, but the identical signature
+(exactly 4-5 of 5 timing out at the 60000ms default) recurred identically across a real CI run on
+`main`'s tip and a second real run on `next` 280 commits later. Matches the exact shape of an
+already-fixed, immediately-preceding commit's own contention diagnosis for 2 different tests. Fixed
+by raising all 5 tests' timeout to 120s, following that commit's own established
+`SLOW_TEST_TIMEOUT_MS` naming convention. Two independent critics each reproduced the precedent
+commit, confirmed the describe block's own operations are real-but-bounded (no masking risk), and
+ran the file fresh — 24/24 passing both times, consistently ~300-700ms per test.
+
+**Decision 2 — `better-sqlite3@13.0.3`'s `engines.node: ">=22"` silently broke Node 20 install, not
+a build/prebuild failure.** pnpm silently skips installing an optionalDependency whose `engines`
+field doesn't match the running Node — so on every node-20 CI leg, `better-sqlite3` was simply never
+installed, confirmed directly (both critics independently reproduced `Cannot find module
+'better-sqlite3'` on a real Node 20.19.6 binary). Fixed by downgrading to `12.11.1` (confirmed the
+latest 12.x release, `engines: "20.x || 22.x || 23.x || 24.x || 25.x || 26.x"` — covers the full CI
+matrix). `packages/kb/src/db/open.ts`'s existing 3-tier fallback (better-sqlite3 → node:sqlite →
+JsonBackend) falling through to JsonBackend on Node 20 is confirmed intentional, spec'd behavior
+(specs/02 §2.1), not a defect in itself.
+
+**Decision 3 — the fix's own first-draft verification claim was itself overclaimed, caught by 2
+independent critics who re-ran the cited evidence rather than trusting it, and corrected before
+landing.** The original commit claimed the fix made 6 named node-20-failing test files pass; in
+reality only `kb-rules.test.ts` is actually fixed by this change. The other 5 were still failing
+post-fix on a real Node 20.19.6 binary, for two separate, previously-undisclosed reasons — not this
+fix's root cause:
+  - `packages/kb/test/db/{backends,open,rebuild,read}.test.ts` exercise `NodeSqliteBackend` directly
+    via `require('node:sqlite')`, which does not exist at all on Node 20 (it is Node>=22-only) — no
+    Node-major-version guard exists anywhere in these files. **Disclosed, not yet fixed.**
+  - `packages/cli/test/bin-run-failures.test.ts` fails for a reason wholly unrelated to
+    better-sqlite3: `packages/cli/bin/forge.mjs` spawns
+    `node --experimental-strip-types src/bin.ts`, and that flag does not exist on real Node 20.19.6
+    despite the launcher's own code comment claiming it was backported there. **Disclosed, not yet
+    fixed.**
+  Both critics independently reproduced this by building a baseline worktree at the pre-fix commit,
+  running all 6 named files under a real Node 20.19.6 binary with and without the fix, and
+  cross-checking against the real CI run (`36286349494`) the original commit cited as its own
+  evidence — the per-file failure counts match exactly, confirming this fix closes only the subset
+  of node-20 failures the version-pin mismatch actually caused. The commit message was amended
+  before landing to state this precisely rather than the original overclaim.
+
+**Decision 4 — `brief-write-paths-in-claim.test.ts`'s claim-coverage checker had one stale
+`EXEMPT` entry, not a structural gap.** The checker's `EXEMPT` mechanism already has the right tool
+for "a brief names a write-shaped path that isn't a real write through this generically-dispatched
+step" (`.forge/` sits in `NEVER_WRITABLE_GLOBS` for every generic dispatch) — the actual defect was
+one `EXEMPT` entry targeting a sentence that no longer exists in the current `adopt-tests.md` brief
+(revised since, adding 3 new write-shaped sentences mentioning
+`.forge/test-translators/<layer>.<ext>` that were never added to the exemption list). Fixed by
+replacing the 1 stale entry with 3 accurate ones. Both critics independently reverted the fix,
+reran, and got exactly the 3 "outside its claim" failures the new entries address, verbatim-matching
+the real brief's current sentences — proving the gap was real, not fabricated. Confirmed the 3 new
+regexes are tightly scoped (long literal quotes, not loose wildcards) so a future unrelated
+write-shaped sentence can't silently piggyback on them.
+
+**Verification.** `pnpm typecheck` (21/21), scoped lint/prettier, and the 3 touched test files
+(68 tests total) all run clean after landing, including a full `pnpm install` lockfile regeneration
+(the better-sqlite3 commit's cherry-pick onto current `main` hit a routine, non-logic lockfile
+conflict against an unrelated interim dependency addition — resolved by regenerating, not
+hand-merging, confirmed zero stale `13.0.3` references remain anywhere in the lockfile).
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's CI-tail-sweep addendum, dated
+2026-10-29.
+
+## Q370 — CI-tail sweep: 4 more unrelated fixes (CI provisioning, a real production
+misclassification in the retry engine, a DNS allowlist gap, another timeout bump) (owner-directed
+scope expansion, 2026-10-29)
+
+**What this closes.** 4 more of the remaining pre-existing CI-tail items from the same post-Q367
+sweep as Q368/Q369.
+
+**Decision 1 — `.github/workflows/ci.yml` needed real `pytest`/`claude` provisioning, confirmed
+load-bearing.** `reporter.test.ts` needs pytest to exist at all; `dispatch/init.test.ts` genuinely
+needs a real `claude` binary on PATH (confirmed: it does not override `PATH`/env, unlike every
+"claude missing" test, which each builds its own isolated empty-PATH fixture via `mkdtemp`). Fixed
+by adding `actions/setup-python@v5`+`pip install pytest` and a stub `claude` executable (prints a
+version ≥2.0.0, satisfying the real `probeCliVersion` check) to PATH in both `floor` and `seed`
+jobs only. Two independent critics parsed the live YAML programmatically to confirm exact job
+placement, executed the extracted heredoc script for real to confirm no shell-injection risk and
+correct behavior, and confirmed (one critic, empirically) the stub is harmless on the one other real
+`claude` invocation path (`probeAuthAvailability`'s unconditional auth-status probe) even though the
+original commit's "no other invocation anywhere" claim was not literally true — cosmetic, no
+behavior risk.
+
+**Decision 2 — a REAL production misclassification: `RUN-084` (write-policy-forbidden,
+structurally unretryable) was being classified `'validation'` (retryable) instead of `'policy'`.**
+Confirmed via a full raise-site census (exactly one raise site, `outputs.ts`'s
+`checkDeclaredOutputs`, gated on a step's own static resolved agent definition, which cannot change
+between retries) and cross-checked against `resume/orchestrate.ts`, which *already* special-cased
+RUN-084 as deterministic-non-retryable at resume time — this fix closes a gap `SPEC-QUESTIONS.md`
+had already disclosed (the resume path and the classify path disagreed). Fixed by adding RUN-084 to
+`classifyFailure`'s `'policy'` branch, mirroring an identical existing `elicit`/`claim`/`RUN-108`
+pattern in the same function. Confirmed structurally enforced, not just conventional:
+`RetryableFailureClass` is a closed 5-value type that a `'policy'` classification cannot satisfy, so
+no workflow author can ever get a policy failure retried, and `StepFailed` still fires once per
+attempt regardless — a policy failure is surfaced exactly as before, just without wasting a retry.
+Two independent critics each built a clean pre-fix baseline and reproduced the exact predicted
+16-failure/56-pass split, then confirmed 72/72 post-fix, then independently swept beyond the
+author's own named test list for other `classifyFailure`/`RUN-084`/retry-telemetry consumers (one
+critic found and ran 4 additional test files the original sweep had missed: 147/147 passing) —
+zero discrepancies found from either critic, on any angle.
+
+**Decision 3 — `network-guard.mjs`'s `DNS_METHODS` allowlist was missing `resolveTlsa`, a real
+newer Node `dns` API.** Confirmed real and correctly dated (added in Node v22.15.0/v23.9.0 per the
+upstream Node PR) by one critic via direct upstream-source confirmation, since neither this
+machine's Node 22.14.0 nor this repo's pinned `@types/node` version has it yet — inert-but-correct
+here, will activate on CI's newer Node patch. The patch loop already no-ops on any missing method,
+so no risk either way.
+
+**Decision 4 — `workspace-floor.test.ts`'s 3 real-subprocess tests needed another timeout bump**,
+from 100s to 1.2M ms (20 min), sized at ~2.5x the worst real CI-observed duration (452540ms) in
+this repo's own logs. One critic traced this is the 3rd adjustment to these same 3 literals since
+originally landing unguarded in September, and flagged (not blocking) that this mirrors a broader,
+repeating pattern across this session's own CI-hardening work (ci.yml's own job-level timeouts have
+also been bumped repeatedly) that should eventually be replaced by the already-disclosed real fix
+(sharding `pnpm test` across jobs), not papered over indefinitely with ever-larger margins. Both
+critics confirmed the new ceiling stays comfortably inside the enclosing job-level budgets and the
+3 tests' own real elapsed time in multiple fresh local runs.
+
+**Verification.** `pnpm typecheck` (21/21), `pnpm build`, scoped lint/prettier, and the directly
+affected test files (173 tests across `authoring-roles-run.test.ts`, `network-guard.test.ts`,
+`workspace-floor.test.ts`) all pass clean after landing; `ci.yml` reparsed successfully as valid
+YAML post-cherry-pick.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's CI-tail-sweep addendum, dated
+2026-10-29.

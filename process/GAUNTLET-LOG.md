@@ -25258,3 +25258,21 @@ A counterfactual regression check (one critic, on the pre-fix base commit under 
 
 ---
 
+
+## M17 Phase A — CI-tail sweep: fetch-npm timeouts, a real Node-22-only dependency pin, a stale claim exemption (Q369, owner-directed scope expansion, 2026-10-29)
+
+**What this closes.** 3 more of the post-Q367 CI-tail items. `fetch-npm.test.ts`'s 4 universal timeouts: real subprocess+HTTP contention under the full suite, fixed by raising to 120s following an already-established naming convention. `better-sqlite3@13.0.3`'s `engines.node: ">=22"` silently broke Node 20 install (pnpm skips a mismatched optionalDependency rather than failing loudly) — fixed by downgrading to the latest 12.x (`12.11.1`), which covers the full CI matrix. `brief-write-paths-in-claim.test.ts` had one stale `EXEMPT` entry targeting a sentence no longer in the current `adopt-tests.md` brief, while 3 new write-shaped sentences were never added — fixed by replacing it with 3 accurate entries.
+
+**A real correction caught before landing.** 2 independent critics re-ran the sqlite fix's own cited evidence rather than trusting it, and found the original commit overclaimed: only 1 of 6 named test files was actually fixed by the version-pin change. The other 5 fail for two separate, previously-undisclosed reasons — `packages/kb/test/db/{backends,open,rebuild,read}.test.ts` use `node:sqlite` directly with no Node-major guard (doesn't exist on Node 20 at all), and `packages/cli/test/bin-run-failures.test.ts`'s dev launcher (`forge.mjs`) spawns `node --experimental-strip-types`, which doesn't exist on real Node 20.19.6 despite its own comment claiming otherwise. Both disclosed as separate, not-yet-fixed defects in `SPEC-QUESTIONS.md` `Q369`; the landed commit message was corrected to state this precisely.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q369` (new).
+
+---
+
+## M17 Phase A — CI-tail sweep: CI provisioning, a real production misclassification in the retry engine, a DNS allowlist gap, another timeout bump (Q370, owner-directed scope expansion, 2026-10-29)
+
+**What this closes.** 4 more post-Q367 CI-tail items. `ci.yml` needed real `pytest`+stub-`claude` provisioning for 2 tests that genuinely need them on PATH. `classifyFailure` was misclassifying `RUN-084` (a structurally-unretryable write-policy failure, confirmed via a full raise-site census) as `'validation'` instead of `'policy'` — a real production bug, independently confirmed from multiple angles by 2 critics (raise-site census, resume-path cross-check that already special-cased it, type-level retry enforcement, exact baseline/post-fix count reproduction, and an extended test-consumer sweep beyond the original file list). `network-guard.mjs`'s DNS allowlist was missing a real, newer Node API (`resolveTlsa`). `workspace-floor.test.ts` needed a 3rd timeout bump on the same 3 real-subprocess tests — flagged by a critic as part of a broader, repeating "bump the timeout" pattern across this session's CI-hardening work that should eventually be replaced by sharding `pnpm test`, not indefinitely widened margins.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q370` (new).
+
+---
