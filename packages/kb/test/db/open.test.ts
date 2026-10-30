@@ -7,6 +7,7 @@
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type * as NodeFs from 'node:fs';
+import { createRequire } from 'node:module';
 import type * as NodeModule from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,6 +15,8 @@ import path from 'node:path';
 import { isForgeError } from '@forge/core';
 import { ProjectPaths } from '@forge/core/fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const require = createRequire(import.meta.url);
 
 /** `node:sqlite` is a Node>=22-only built-in (`specs/02` §2.1) — confirmed live, on a real Node
  * 20.19.6 binary `openKbIndex` cannot reach `NodeSqliteBackend` at all (the module does not exist to
@@ -23,6 +26,32 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * (`specs/02` §2.1), not a bug this test should flag. `SPEC-QUESTIONS.md` Q369/Q370. */
 const NODE_SQLITE_AVAILABLE = Number(process.versions.node.split('.')[0]) >= 22;
 const NODE_SQLITE_SKIP_REASON = `node:sqlite requires Node >=22, running on Node ${process.versions.node}`;
+
+/** Whether this Node's own bundled SQLite has the FTS5 extension compiled in for `node:sqlite` —
+ * see `backends.test.ts`'s own identical constant for why this is detected empirically (by actually
+ * trying it) rather than assumed from the version number alone, and why that matters here: once FTS5
+ * is compiled in, `openKbIndex`'s own `tryNodeSqlite` tier no longer fails to construct against a
+ * pre-existing FTS5 terms table (`NodeSqliteBackend`'s own `reconcileTermsTableShape` self-heals
+ * instead), so it is no longer true that this case "falls through" past that tier at all. */
+const NODE_SQLITE_HAS_FTS5 = (() => {
+  if (!NODE_SQLITE_AVAILABLE) return false;
+  try {
+    const nodeSqlite = require('node:sqlite') as {
+      DatabaseSync: new (path: string) => { exec(sql: string): unknown; close(): void };
+    };
+    const probe = new nodeSqlite.DatabaseSync(':memory:');
+    try {
+      probe.exec('CREATE VIRTUAL TABLE forge_fts5_probe USING fts5(x)');
+      return true;
+    } catch {
+      return false;
+    } finally {
+      probe.close();
+    }
+  } catch {
+    return false;
+  }
+})();
 
 let projectRoot: string | undefined;
 
@@ -115,29 +144,73 @@ describe('openKbIndex — with both native backends made deliberately unloadable
 });
 
 describe('openKbIndex — a pre-existing index.db with an incompatible terms table shape', () => {
-  it('falls through to node:sqlite failing, then the JSON backend, rather than propagating a raw fts5 error', async () => {
-    const paths = freshProject();
+  it.skipIf(NODE_SQLITE_HAS_FTS5)(
+    `falls through to node:sqlite failing, then the JSON backend, rather than propagating a raw fts5 error${
+      NODE_SQLITE_HAS_FTS5
+        ? ` (skipped: this Node's own node:sqlite build has fts5 compiled in -- see the sibling case below)`
+        : ''
+    }`,
+    async () => {
+      const paths = freshProject();
 
-    // Build a real index.db with better-sqlite3's own FTS5 terms table first (the real environment
-    // has it installed), then simulate it becoming unavailable — node:sqlite alone cannot self-heal
-    // an FTS5 table it has no module for (backends.test.ts covers that directly); this test checks
-    // the outer openKbIndex path degrades gracefully instead of surfacing that raw error.
-    const { openKbIndex: openReal } = await import('../../src/db/open.ts');
-    openReal(paths).close();
+      // Build a real index.db with better-sqlite3's own FTS5 terms table first (the real
+      // environment has it installed), then simulate it becoming unavailable — on a Node whose
+      // node:sqlite build lacks fts5 (NODE_SQLITE_HAS_FTS5 above), node:sqlite alone cannot
+      // self-heal an FTS5 table it has no module for (backends.test.ts covers that directly); this
+      // test checks the outer openKbIndex path degrades gracefully instead of surfacing that raw
+      // error. Once node:sqlite's own build DOES have fts5 (the sibling case below), this no longer
+      // falls through at all — see that case for why.
+      const { openKbIndex: openReal } = await import('../../src/db/open.ts');
+      openReal(paths).close();
 
-    mockNodeModuleRequire(['better-sqlite3']);
-    const { openKbIndex } = await import('../../src/db/open.ts');
-    const { JsonBackend } = await import('../../src/db/json-backend.ts');
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      mockNodeModuleRequire(['better-sqlite3']);
+      const { openKbIndex } = await import('../../src/db/open.ts');
+      const { JsonBackend } = await import('../../src/db/json-backend.ts');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    let backend: ReturnType<typeof openKbIndex> | undefined;
-    expect(() => {
-      backend = openKbIndex(paths);
-    }).not.toThrow();
-    expect(backend).toBeInstanceOf(JsonBackend);
-    warnSpy.mockRestore();
-    backend?.close();
-  });
+      let backend: ReturnType<typeof openKbIndex> | undefined;
+      expect(() => {
+        backend = openKbIndex(paths);
+      }).not.toThrow();
+      expect(backend).toBeInstanceOf(JsonBackend);
+      warnSpy.mockRestore();
+      backend?.close();
+    },
+  );
+
+  it.skipIf(!NODE_SQLITE_HAS_FTS5)(
+    `keeps node:sqlite (self-healed) rather than falling through, once its own build has fts5 compiled in${
+      NODE_SQLITE_HAS_FTS5
+        ? ''
+        : ` (skipped: this Node's own node:sqlite build has no fts5 module${NODE_SQLITE_AVAILABLE ? '' : `, or no node:sqlite at all (${NODE_SQLITE_SKIP_REASON})`})`
+    }`,
+    async () => {
+      // Node's own bundled SQLite gained the FTS5 extension starting at v22.16.0
+      // (`nodejs/node#57621`, backported into the 22.x line) -- on such a build, node:sqlite's own
+      // DROP TABLE on an existing FTS5 virtual table now succeeds instead of throwing "no such
+      // module: fts5", so NodeSqliteBackend's own reconcileTermsTableShape() (sqlite-common.ts)
+      // self-heals instead of throwing, and openKbIndex keeps this tier rather than falling all the
+      // way through to JsonBackend.
+      const paths = freshProject();
+
+      const { openKbIndex: openReal } = await import('../../src/db/open.ts');
+      openReal(paths).close();
+
+      mockNodeModuleRequire(['better-sqlite3']);
+      const { openKbIndex } = await import('../../src/db/open.ts');
+      const { NodeSqliteBackend } = await import('../../src/db/node-sqlite-backend.ts');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      let backend: ReturnType<typeof openKbIndex> | undefined;
+      expect(() => {
+        backend = openKbIndex(paths);
+      }).not.toThrow();
+      expect(backend).toBeInstanceOf(NodeSqliteBackend);
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
+      backend?.close();
+    },
+  );
 });
 
 describe('openKbIndex — a genuine filesystem obstruction, not a missing module', () => {

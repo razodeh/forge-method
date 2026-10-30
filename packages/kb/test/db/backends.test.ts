@@ -29,6 +29,35 @@ const require = createRequire(import.meta.url);
 const NODE_SQLITE_AVAILABLE = Number(process.versions.node.split('.')[0]) >= 22;
 const NODE_SQLITE_SKIP_REASON = `node:sqlite requires Node >=22, running on Node ${process.versions.node}`;
 
+/** Whether this Node's own bundled SQLite has the FTS5 extension compiled in for `node:sqlite`.
+ * Node gained this starting at v22.16.0 (`nodejs/node#57621`, backported into the 22.x line) — but
+ * detected empirically, by actually trying it, rather than assumed from the version number alone:
+ * confirmed live that a real Node 22.14.0 binary (predating the backport) lacks it while a real
+ * 22.23.4 one (postdating it) has it, so "Node >=22" alone is not a reliable signal, and neither is
+ * any single threshold guaranteed to hold for every future platform/build combination. Before this
+ * was compiled in, `node:sqlite`'s own `DROP TABLE` on an existing FTS5 virtual table — and even just
+ * opening a connection to a file that has one — threw `no such module: fts5`; once it is compiled in,
+ * both succeed, which changes which of the two cases below actually applies on a given machine. */
+const NODE_SQLITE_HAS_FTS5 = (() => {
+  if (!NODE_SQLITE_AVAILABLE) return false;
+  try {
+    const { DatabaseSync } = require('node:sqlite') as {
+      DatabaseSync: new (path: string) => SqliteConnectionLike;
+    };
+    const probe = new DatabaseSync(':memory:');
+    try {
+      probe.exec('CREATE VIRTUAL TABLE forge_fts5_probe USING fts5(x)');
+      return true;
+    } catch {
+      return false;
+    } finally {
+      probe.close();
+    }
+  } catch {
+    return false;
+  }
+})();
+
 let scratchDirs: string[] = [];
 
 function freshDir(): string {
@@ -188,27 +217,78 @@ describe.skipIf(!NODE_SQLITE_AVAILABLE)(
     NODE_SQLITE_AVAILABLE ? '' : ` (skipped: ${NODE_SQLITE_SKIP_REASON})`
   }`,
   () => {
-    it('node:sqlite cannot self-heal an FTS5 table left by better-sqlite3, and says so plainly', () => {
-      // Models a real scenario: .forge/state/index.db is derived, rebuildable state that can travel
-      // between machines/CI runners with different native-binding availability. Verified this
-      // direction genuinely cannot self-heal: node:sqlite has no FTS5 module loaded at all, and
-      // *dropping* a virtual table needs its module registered, not only reading or writing it — so
-      // node:sqlite's own DROP TABLE on an existing FTS5 table throws the identical
-      // "no such module: fts5" it would throw trying to use the table at all. NodeSqliteBackend
-      // construction throwing here (rather than silently limping along) is what lets openKbIndex's own
-      // existing try/catch fall through to JsonBackend instead — see open.test.ts for that path.
-      const dbPath = path.join(freshDir(), 'index.db');
+    it.skipIf(NODE_SQLITE_HAS_FTS5)(
+      `node:sqlite cannot self-heal an FTS5 table left by better-sqlite3, and says so plainly${
+        NODE_SQLITE_HAS_FTS5
+          ? ` (skipped: this Node's own node:sqlite build has fts5 compiled in -- see the sibling case below)`
+          : ''
+      }`,
+      () => {
+        // Models a real scenario: .forge/state/index.db is derived, rebuildable state that can
+        // travel between machines/CI runners with different native-binding availability. Verified
+        // this direction genuinely cannot self-heal ON A NODE WHOSE node:sqlite BUILD LACKS FTS5
+        // (NODE_SQLITE_HAS_FTS5 above): node:sqlite has no FTS5 module loaded at all, and *dropping*
+        // a virtual table needs its module registered, not only reading or writing it — so
+        // node:sqlite's own DROP TABLE on an existing FTS5 table throws the identical
+        // "no such module: fts5" it would throw trying to use the table at all. NodeSqliteBackend
+        // construction throwing here (rather than silently limping along) is what lets openKbIndex's
+        // own existing try/catch fall through to JsonBackend instead — see open.test.ts for that
+        // path. Once node:sqlite's own build DOES have fts5 (the sibling case below), this direction
+        // self-heals instead of throwing — see that case for why.
+        const dbPath = path.join(freshDir(), 'index.db');
 
-      const Database = require('better-sqlite3') as new (path: string) => SqliteConnectionLike;
-      const sqlite = new SqliteBackend(new Database(dbPath));
-      sqlite.upsertEntry(entry());
-      sqlite.close();
+        const Database = require('better-sqlite3') as new (path: string) => SqliteConnectionLike;
+        const sqlite = new SqliteBackend(new Database(dbPath));
+        sqlite.upsertEntry(entry());
+        sqlite.close();
 
-      const { DatabaseSync } = require('node:sqlite') as {
-        DatabaseSync: new (path: string) => SqliteConnectionLike;
-      };
-      expect(() => new NodeSqliteBackend(new DatabaseSync(dbPath))).toThrow(/fts5/i);
-    });
+        const { DatabaseSync } = require('node:sqlite') as {
+          DatabaseSync: new (path: string) => SqliteConnectionLike;
+        };
+        expect(() => new NodeSqliteBackend(new DatabaseSync(dbPath))).toThrow(/fts5/i);
+      },
+    );
+
+    it.skipIf(!NODE_SQLITE_HAS_FTS5)(
+      `node:sqlite CAN self-heal an FTS5 table left by better-sqlite3 once its own build has fts5 compiled in, warning rather than throwing${
+        NODE_SQLITE_HAS_FTS5
+          ? ''
+          : ` (skipped: this Node's own node:sqlite build has no fts5 module -- see the sibling case above)`
+      }`,
+      () => {
+        // Node's own bundled SQLite gained the FTS5 extension starting at v22.16.0
+        // (`nodejs/node#57621`, backported into the 22.x line) -- on such a build, node:sqlite's own
+        // DROP TABLE on an existing FTS5 virtual table now succeeds instead of throwing "no such
+        // module: fts5", so BaseSqliteBackend's own reconcileTermsTableShape() (sqlite-common.ts)
+        // self-heals in THIS direction too, exactly like the already-proven reverse direction below:
+        // it warns, drops the stale FTS5 table, and recreates a plain one. NodeSqliteBackend
+        // construction succeeds rather than throwing, and the backend is immediately usable --
+        // openKbIndex (open.test.ts) keeps this tier instead of falling through to JsonBackend.
+        const dbPath = path.join(freshDir(), 'index.db');
+
+        const Database = require('better-sqlite3') as new (path: string) => SqliteConnectionLike;
+        const sqlite = new SqliteBackend(new Database(dbPath));
+        sqlite.upsertEntry(entry());
+        sqlite.close();
+
+        const { DatabaseSync } = require('node:sqlite') as {
+          DatabaseSync: new (path: string) => SqliteConnectionLike;
+        };
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        let nodeSqlite: NodeSqliteBackend | undefined;
+        expect(() => {
+          nodeSqlite = new NodeSqliteBackend(new DatabaseSync(dbPath));
+        }).not.toThrow();
+        expect(warnSpy).toHaveBeenCalled();
+        warnSpy.mockRestore();
+
+        expect(() => {
+          nodeSqlite?.upsertEntry(entry({ id: 'KB-ARCH-0002' }));
+        }).not.toThrow();
+        expect(nodeSqlite?.search('asynchronous').map((hit) => hit.id)).toContain('KB-ARCH-0002');
+        nodeSqlite?.close();
+      },
+    );
 
     it('reconciles a plain terms table left by node:sqlite when better-sqlite3 later opens the same file', () => {
       const dbPath = path.join(freshDir(), 'index.db');
