@@ -16,6 +16,28 @@ import { describe, expect, it } from 'vitest';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * Shared timeout for this file's 3 real-subprocess tests (`vitest list` twice, `tsc --listFiles`
+ * once per tsconfig) — deliberately one constant, not three separately-tuned numbers, so a future
+ * drift in any one measurement does not need re-deriving individually (the same reasoning each of
+ * the 3 call sites below already gives). Module-scoped rather than local to one `describe` block
+ * because the third test lives in a different one (`every source file in the repository is
+ * typechecked`).
+ *
+ * Previously `100_000` (3x the slowest of the three's own isolated measurement, ~30s, plus margin;
+ * see `M14-AGENT-NOTES.md`, `M14 P45`) — real evidence, not a guess, but still hit for real: CI run
+ * `40886563796` (every `floor` matrix leg, plus `seed`) shows these tests' own real elapsed time
+ * (the clean, ANSI-stripped per-test duration vitest's reporter prints next to each `×`, not the
+ * generic "Test timed out in 100000ms" message, which only ever echoes the configured ceiling, never
+ * the real elapsed time) reaching as high as 452540ms under the genuine contention of the full,
+ * unscoped monorepo suite running concurrently — the identical "real execution cost outpacing the
+ * old ceiling" class commit `40519da` already fixed once this session for two other, unrelated,
+ * real-subprocess-heavy tests. Sized at roughly 2.5x that worst real observed value, the same margin
+ * ratio `.github/workflows/ci.yml`'s own `floor` job `timeout-minutes` comment already uses for the
+ * identical problem, rather than the bare next multiple of 10_000.
+ */
+const SUBPROCESS_HEAVY_TEST_TIMEOUT_MS = 1_200_000;
+
 /** Workspace roots declared in `pnpm-workspace.yaml`, per `specs/02` §2.2. */
 const WORKSPACE_ROOTS = ['packages', 'tools', 'modules'] as const;
 
@@ -367,17 +389,19 @@ describe('no test file can escape collection', () => {
   }
 
   // `collectedTestFiles` shells out to `vitest list`; measured isolated duration ~24s (its higher
-  // sample; see `M14-AGENT-NOTES.md`, `M14 P45`). The explicit timeout below is not 3x *this*
-  // test's own number: it is shared, deliberately, with the slowest of this file's 3
-  // subprocess-heavy tests (the `tsc --listFiles` one below, ~30s measured) — one uniform, safe
-  // budget sized at 3x the slowest of the three plus real margin (not the bare next multiple of
-  // 10_000), capped at the `21` §21.1 e2e ceiling, rather than three separately-tuned numbers that
-  // would need re-deriving individually if any one measurement drifts.
-  it('collects exactly the test files that exist, so a green run cannot mean "found nothing"', () => {
-    // Set equality, not a subset check: a subset check passes when the globs and the walk share
-    // the same blind spot, which is precisely how the previous version failed.
-    expect(collectedTestFiles()).toEqual(findTestFiles(''));
-  }, 100_000);
+  // sample; see `M14-AGENT-NOTES.md`, `M14 P45`). The explicit timeout below (`SUBPROCESS_HEAVY_TEST_TIMEOUT_MS`,
+  // defined at module scope so the third subprocess-heavy test in the other `describe` block below can
+  // share it too) is shared, deliberately, across all 3 of this file's subprocess-heavy tests — see
+  // that constant's own comment for why 100_000 (its previous value) was not enough.
+  it(
+    'collects exactly the test files that exist, so a green run cannot mean "found nothing"',
+    () => {
+      // Set equality, not a subset check: a subset check passes when the globs and the walk share
+      // the same blind spot, which is precisely how the previous version failed.
+      expect(collectedTestFiles()).toEqual(findTestFiles(''));
+    },
+    SUBPROCESS_HEAVY_TEST_TIMEOUT_MS,
+  );
 
   it('has no symlinks, which specs/02 §2.7 forbids and which this walk cannot follow', () => {
     const symlinks: string[] = [];
@@ -436,40 +460,44 @@ describe('no test file can escape collection', () => {
   // higher sample; `M14-AGENT-NOTES.md`, `M14 P45`). Shares the file's uniform timeout — see the
   // comment on "collects exactly the test files..." above for why it isn't computed from this
   // test's own number.
-  it('collects a test planted anywhere a future piece might put one', () => {
-    // PLAN-M1.md P2 and P3 add scripts under `scripts/`; a test beside one of them landed squarely
-    // in the previous globs' blind spot.
-    const planted = [
-      'probe-root.test.ts',
-      'scripts/probe.test.ts',
-      'test/probe.test.mts',
-      // A package-level `specs/` directory: previously excluded at any depth, so a failing test here
-      // was invisible to the globs and to this walk at the same time.
-      'tools/lint-fixture/specs/probe.test.ts',
-      // A dot-directory: excluded wholesale by both mechanisms until this case was added.
-      'test/.hidden-probe/probe.test.ts',
-      // `.mjs`, which PLAN-M1 P1b names explicitly and no case previously covered.
-      'test/probe-planted.test.mjs',
-    ];
-    try {
-      for (const file of planted) {
-        mkdirSync(path.dirname(path.join(repoRoot, file)), { recursive: true });
-        writeFileSync(
-          path.join(repoRoot, file),
-          "import { it } from 'vitest';\nit('planted', () => undefined);\n",
-        );
+  it(
+    'collects a test planted anywhere a future piece might put one',
+    () => {
+      // PLAN-M1.md P2 and P3 add scripts under `scripts/`; a test beside one of them landed squarely
+      // in the previous globs' blind spot.
+      const planted = [
+        'probe-root.test.ts',
+        'scripts/probe.test.ts',
+        'test/probe.test.mts',
+        // A package-level `specs/` directory: previously excluded at any depth, so a failing test here
+        // was invisible to the globs and to this walk at the same time.
+        'tools/lint-fixture/specs/probe.test.ts',
+        // A dot-directory: excluded wholesale by both mechanisms until this case was added.
+        'test/.hidden-probe/probe.test.ts',
+        // `.mjs`, which PLAN-M1 P1b names explicitly and no case previously covered.
+        'test/probe-planted.test.mjs',
+      ];
+      try {
+        for (const file of planted) {
+          mkdirSync(path.dirname(path.join(repoRoot, file)), { recursive: true });
+          writeFileSync(
+            path.join(repoRoot, file),
+            "import { it } from 'vitest';\nit('planted', () => undefined);\n",
+          );
+        }
+        const collected = new Set(collectedTestFiles());
+        expect(planted.filter((file) => !collected.has(file))).toEqual([]);
+      } finally {
+        // Remove the directories too: an empty directory is invisible to `git status`, so residue
+        // would survive review and change what a later walk sees.
+        for (const file of planted) rmSync(path.join(repoRoot, file), { force: true });
+        for (const directory of ['tools/lint-fixture/specs', 'test/.hidden-probe']) {
+          rmSync(path.join(repoRoot, directory), { recursive: true, force: true });
+        }
       }
-      const collected = new Set(collectedTestFiles());
-      expect(planted.filter((file) => !collected.has(file))).toEqual([]);
-    } finally {
-      // Remove the directories too: an empty directory is invisible to `git status`, so residue
-      // would survive review and change what a later walk sees.
-      for (const file of planted) rmSync(path.join(repoRoot, file), { force: true });
-      for (const directory of ['tools/lint-fixture/specs', 'test/.hidden-probe']) {
-        rmSync(path.join(repoRoot, directory), { recursive: true, force: true });
-      }
-    }
-  }, 100_000);
+    },
+    SUBPROCESS_HEAVY_TEST_TIMEOUT_MS,
+  );
 });
 
 describe('production source lives where the coverage globs look', () => {
@@ -589,58 +617,62 @@ describe('every source file in the repository is typechecked', () => {
 
   // Runs a real `tsc --listFiles --noEmit` per tsconfig — real, heavyweight compiler subprocesses,
   // the same class of cost `pnpm typecheck` itself pays. Measured isolated duration ~30s (its
-  // higher sample; `M14-AGENT-NOTES.md`, `M14 P45`) — the slowest of this file's 3 subprocess-heavy
-  // tests, so the explicit timeout below (shared uniformly across all 3; see the first test's own
-  // comment) is sized from this one: 3x that plus real margin, capped at the `21` §21.1 e2e ceiling.
-  it('has no file outside the tsconfig project, since an unchecked file is outside the discipline', () => {
-    // Every tsconfig in the repository, not only the root one. Requiring each file to appear in the
-    // *root* project would mean the first real package (`PLAN-M1.md` P2) could not be added without
-    // editing this test — an invariant that blocks the plan is a broken invariant.
-    //
-    // `--noEmit` still exits non-zero on a type error, which would surface here as an unhelpful set
-    // difference. Capture the output either way and let the diagnostics be the failure message.
-    const projects = ['tsconfig.json', ...findTsconfigs('')];
-    const listed = new Set<string>();
-    for (const project of projects) {
-      let output: string;
-      try {
-        output = execFileSync(
-          'node',
-          ['node_modules/typescript/bin/tsc', '-p', project, '--listFiles', '--noEmit'],
-          { cwd: repoRoot, encoding: 'utf8' },
-        );
-      } catch (error) {
-        const diagnostics = (error as { stdout?: string }).stdout ?? String(error);
-        throw new Error(
-          `tsc reported errors in ${project}, so its file list cannot be trusted:\n${diagnostics
-            .split('\n')
-            .filter((line) => line.includes('error TS'))
-            .join('\n')}`,
-        );
+  // higher sample; `M14-AGENT-NOTES.md`, `M14 P45`). Shares `SUBPROCESS_HEAVY_TEST_TIMEOUT_MS`
+  // (module scope, above) with the other 2 subprocess-heavy tests in this file — see that
+  // constant's own comment for the real CI evidence behind its current value.
+  it(
+    'has no file outside the tsconfig project, since an unchecked file is outside the discipline',
+    () => {
+      // Every tsconfig in the repository, not only the root one. Requiring each file to appear in the
+      // *root* project would mean the first real package (`PLAN-M1.md` P2) could not be added without
+      // editing this test — an invariant that blocks the plan is a broken invariant.
+      //
+      // `--noEmit` still exits non-zero on a type error, which would surface here as an unhelpful set
+      // difference. Capture the output either way and let the diagnostics be the failure message.
+      const projects = ['tsconfig.json', ...findTsconfigs('')];
+      const listed = new Set<string>();
+      for (const project of projects) {
+        let output: string;
+        try {
+          output = execFileSync(
+            'node',
+            ['node_modules/typescript/bin/tsc', '-p', project, '--listFiles', '--noEmit'],
+            { cwd: repoRoot, encoding: 'utf8' },
+          );
+        } catch (error) {
+          const diagnostics = (error as { stdout?: string }).stdout ?? String(error);
+          throw new Error(
+            `tsc reported errors in ${project}, so its file list cannot be trusted:\n${diagnostics
+              .split('\n')
+              .filter((line) => line.includes('error TS'))
+              .join('\n')}`,
+          );
+        }
+        for (const line of output.split('\n')) {
+          if (!line.startsWith(repoRoot) || line.includes('node_modules')) continue;
+          listed.add(path.relative(repoRoot, line.trim()).split(path.sep).join('/'));
+        }
       }
-      for (const line of output.split('\n')) {
-        if (!line.startsWith(repoRoot) || line.includes('node_modules')) continue;
-        listed.add(path.relative(repoRoot, line.trim()).split(path.sep).join('/'));
-      }
-    }
 
-    const onDisk: string[] = [];
-    const walk = (relative: string): void => {
-      for (const entry of readdirSync(path.join(repoRoot, relative), { withFileTypes: true })) {
-        if (IGNORED_DIRECTORIES.has(entry.name)) continue;
-        if (relative === '' && IGNORED_ROOT_DIRECTORIES.has(entry.name)) continue;
-        const next = relative === '' ? entry.name : `${relative}/${entry.name}`;
-        if (IGNORED_PATHS.has(next)) continue;
-        if (entry.isDirectory()) walk(next);
-        else if (SOURCE_FILE.test(entry.name)) onDisk.push(next);
-      }
-    };
-    walk('');
+      const onDisk: string[] = [];
+      const walk = (relative: string): void => {
+        for (const entry of readdirSync(path.join(repoRoot, relative), { withFileTypes: true })) {
+          if (IGNORED_DIRECTORIES.has(entry.name)) continue;
+          if (relative === '' && IGNORED_ROOT_DIRECTORIES.has(entry.name)) continue;
+          const next = relative === '' ? entry.name : `${relative}/${entry.name}`;
+          if (IGNORED_PATHS.has(next)) continue;
+          if (entry.isDirectory()) walk(next);
+          else if (SOURCE_FILE.test(entry.name)) onDisk.push(next);
+        }
+      };
+      walk('');
 
-    // A file typechecked by nothing is outside the discipline this floor exists to install — which
-    // is how `scripts/` and then `eslint.config.js` each slipped through in turn.
-    expect(onDisk.filter((file) => !listed.has(file)).sort()).toEqual([]);
-  }, 100_000);
+      // A file typechecked by nothing is outside the discipline this floor exists to install — which
+      // is how `scripts/` and then `eslint.config.js` each slipped through in turn.
+      expect(onDisk.filter((file) => !listed.has(file)).sort()).toEqual([]);
+    },
+    SUBPROCESS_HEAVY_TEST_TIMEOUT_MS,
+  );
 });
 
 describe('every workspace package is reached by the floor commands', () => {
