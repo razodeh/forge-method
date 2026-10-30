@@ -604,6 +604,23 @@ function claimCovers(
 // ---------------------------------------------------------------------------------------------------
 
 /**
+ * `adopt-tests.md` is shared by two dispatch paths for the identical `propose` brief text: `forge test
+ * adopt --agent` (`adopt-agent.ts`, `assembleAgentSession` with `callerConfinesWrites: true`, which
+ * really writes the translator, bypassing claim enforcement entirely) and this workflow's own generic
+ * `kind: agent` dispatch (`forge run adopt-tests`), which never can -- `.forge/` sits in
+ * `NEVER_WRITABLE_GLOBS` for every generically-dispatched agent step's own write claim regardless of
+ * what `produces` says (`20` §20.2/§20.5, `@forge/engine/rca/fix-scan.ts`), a structural floor no
+ * `produces` glob could lift, as `adopt-tests.workflow.yaml`'s own doc comment explains at length.
+ * Exempted here only for this generic-dispatch reading of the same shared brief.
+ */
+const ADOPT_TESTS_TRANSLATOR_EXEMPTION_WHY =
+  'the brief is shared by both forge test adopt --agent (adopt-agent.ts, which really writes it, ' +
+  "bypassing claim enforcement entirely) and this workflow's own generic kind: agent dispatch " +
+  '(forge run adopt-tests), which cannot: .forge/ is in NEVER_WRITABLE_GLOBS for every agent ' +
+  "step's claim regardless of what produces says (20 §20.2/§20.5, fix-scan.ts) -- exempted here " +
+  'only for this generic-dispatch reading of the same shared brief';
+
+/**
  * Brief-named paths the agent is NOT told to write, though the extractor reads them as writes. An entry
  * applies only to the `sentence` it names (a pattern the brief's sentence must match), so a later, real
  * write to the same path elsewhere in the brief is not silently exempted. An entry that matches no
@@ -726,13 +743,22 @@ const EXEMPT: readonly {
   {
     step: 'adopt-tests:propose',
     path: '.forge/test-translators/x.x',
-    sentence: /Otherwise,\s+write\s+the\s+parsing\s+logic\s+yourself/,
-    why:
-      'the brief is shared by both forge test adopt --agent (adopt-agent.ts, which really writes it, ' +
-      "bypassing claim enforcement entirely) and this workflow's own generic kind: agent dispatch " +
-      '(forge run adopt-tests), which cannot: .forge/ is in NEVER_WRITABLE_GLOBS for every agent ' +
-      "step's claim regardless of what produces says (20 §20.2/§20.5, fix-scan.ts) -- exempted here " +
-      'only for this generic-dispatch reading of the same shared brief',
+    sentence:
+      /write\s+a\s+translator\s+script,\s+committed\s+to\s+the\s+project\s+at\s+exactly\s+`\.forge\/test-translators\/<layer>\.<ext>`\s+\(Node\s+by\s+default/,
+    why: ADOPT_TESTS_TRANSLATOR_EXEMPTION_WHY,
+  },
+  {
+    step: 'adopt-tests:propose',
+    path: '.forge/test-translators/x.x',
+    sentence:
+      /The\s+only\s+move\s+that\s+can\s+pass\s+is\s+to\s+write\s+a\s+translator\s+script,\s+committed\s+to\s+the\s+project\s+at\s+exactly\s+`\.forge\/test-translators\/<layer>\.<ext>`,\s+that\s+is\s+SELF-CONTAINED/,
+    why: ADOPT_TESTS_TRANSLATOR_EXEMPTION_WHY,
+  },
+  {
+    step: 'adopt-tests:propose',
+    path: '.forge/test-translators/unit.js',
+    sentence: /Instead,\s+write\s+`\.forge\/test-translators\/unit\.js`,\s+something\s+like:/,
+    why: ADOPT_TESTS_TRANSLATOR_EXEMPTION_WHY,
   },
 ];
 
