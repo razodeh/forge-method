@@ -271,6 +271,7 @@ const DNS_METHODS = /** @type {const} */ ([
   'resolvePtr',
   'resolveSoa',
   'resolveSrv',
+  'resolveTlsa',
   'resolveTxt',
   'reverse',
   // Not a query itself, but repointing a Resolver at a public nameserver turns a permitted host
