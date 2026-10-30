@@ -261,15 +261,43 @@ jobs:
     # Not resolved here; flagged for the critic round and, if it bites in practice, a future follow-up
     # (e.g. dropping one node version) rather than silently narrowed now on no real queuing evidence.
     #
-    # Disclosed evidentiary gap on `timeout-minutes` below: the 1276-1463s real bin.test.ts samples it
-    # was sized against (see the comment above this job) come from node22/24-ubuntu and node20-macos
-    # legs only -- none from a real `windows-latest` run. Node's own `child_process` spawn path on
-    # Windows is known to carry materially higher per-spawn overhead than POSIX fork/exec, and
-    # bin.test.ts does 196 real subprocess dispatches, so this margin is not evidence-backed on that
-    # OS the same way it is on the other two. Not resolved here (no real Windows sample exists yet for
-    # this specific job); flagged for the critic round and a real Windows timing sample before
-    # concluding the margin is actually safe there.
-    timeout-minutes: 40
+    # CONFIRMED LIVE REGRESSION, FIXED: the first real CI run of this job (run 41127527425,
+    # 2026-10-30) failed `packages/cli/test/bin.test.ts`'s own real "reports the real pid in `forge
+    # pause`/`forge abort`" test deterministically on every one of 5 completed non-Windows legs
+    # (node20/22/24-ubuntu, node20/24-macos), always the identical assertion: a bounded, real poll
+    # for a child's lock file to appear (100 attempts x 20ms, 2s total) never saw it. Root cause: the
+    # `test:heavy-subprocess` script (`package.json`) never got `--no-file-parallelism`, unlike
+    # `test:lock-stress`'s own precedent -- with only 3 files left in this job and nothing else to
+    # interleave with, vitest's default file-parallelism ran all 3 (each spawning its own real heavy
+    # subprocesses) fully concurrently against each other for nearly their whole duration, on a 3-4
+    # vCPU runner, concentrating exactly the contention that used to be diluted across ~754 files.
+    # That starved the slow-workflow child's own startup/lock-acquisition enough to miss the 2s budget
+    # every time, despite passing locally (292/292) where many more cores absorb the same concurrency
+    # without issue -- a dev-shell-vs-headless verification gap, not a logic bug in the test or the
+    # production lock/signal code. Fixed by adding `--no-file-parallelism`, matching `test:lock-
+    # stress` exactly.
+    #
+    # That fix has a real, measured cost: forcing these 3 files sequential moves this job's wall-clock
+    # from roughly the SLOWEST single file's duration to roughly their SUM. Real per-leg cumulative
+    # test-time samples from that same failed run (vitest's own reported "tests" duration, summed
+    # across the 3 concurrently-run files, still under the OLD un-fixed script): 1673s (node22-ubuntu),
+    # 2680s (node24-ubuntu), 3676s (node20-ubuntu), 3613s (node20-macos), and -- the real Windows
+    # sample, also from that same run, confirming the already-disclosed gap below was real: 4487s /
+    # 74.8 min (node20-windows), on a leg that ALSO showed 2 more real failures beyond the lock-poll
+    # one (a `forge test run` end-to-end case and its own `--timeout-ms` case), consistent with
+    # Windows's documented higher real subprocess-spawn overhead compounding this same contention.
+    # Sequential execution should remove the cross-file contention layer, but not Windows's own
+    # inherent per-spawn overhead, so that 74.8-minute figure is treated as a conservative (pessimistic
+    # but safe) floor rather than assumed to shrink. Raised generously rather than precisely to 120
+    # (above `floor`'s own 90-minute stopgap value, for the same "stopgap, not tuned" reasoning that
+    # justifies `seed`'s own 180 vs `floor`'s 90), giving real margin over that 74.8-minute figure plus
+    # install/build overhead; revisit once a real sequential-execution sample exists for every OS.
+    #
+    # Disclosed evidentiary gap, still open: no real sample of this job's SEQUENTIAL execution exists
+    # yet for any OS (today's run predates the `--no-file-parallelism` fix above) -- the numbers this
+    # timeout is sized against are all from the old, now-fixed concurrent-contention mode. Flagged for
+    # the next real CI run, which will be the first direct sequential-execution sample on every OS.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
