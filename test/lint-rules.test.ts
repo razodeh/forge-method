@@ -52,6 +52,36 @@ afterAll(() => {
 });
 
 /**
+ * One `ESLint` instance, reused by every call in this file instead of one `new ESLint({ cwd:
+ * repoRoot })` per case (this file was written with the latter, ~140 times across every describe
+ * block below counting the two in "the R10 rules reach every path that ships production code").
+ *
+ * `languageOptions.parserOptions.projectService: true` in `eslint.config.js` makes typescript-eslint
+ * open a persistent TypeScript project service per `ESLint` instance — the same incrementally-updated
+ * language service an editor keeps open for as long as it is running, explicitly designed to be
+ * created once and reused; typescript-eslint's own parser documents the always-up-to-date guarantee
+ * as holding for *that* usage, not for a fresh instance per call. Creating and discarding ~140 of
+ * them in one file instead builds ~140 separate whole-monorepo project services back to back, each
+ * one itself fairly heavy (full `tsconfig` project discovery, a TypeScript `Program` over everything
+ * `eslint.config.js`'s `tsconfig.json` project reaches) — cheap to repeat on a fast, idle developer
+ * machine (this file running alone here: ~1-3s total), far more expensive under the real CI matrix's
+ * documented constraint: this same repo's own `ci.yml` already has one confirmed, previously-fixed
+ * incident of GitHub's hosted runners' low memory ceiling (not a logic or rule bug) breaking a
+ * type-aware, whole-monorepo ESLint pass that is unremarkable on real developer hardware (see that
+ * file's own comment on the macOS `pnpm lint` OOM). Under `pnpm test`'s real full-suite contention —
+ * dozens of other forked test-file processes competing for the same constrained CPU/memory — the ~140
+ * built-and-discarded project services in this file are the same shape of resource pressure, and in a
+ * real CI run this file's own wall-clock cost is 10-40x its quiet-local one (19-45s there vs 1-3s
+ * here), consistent with exactly that. One shared instance removes the repeated construction
+ * entirely, which is also simply the correct, intended way to use `projectService: true` at all.
+ */
+let sharedEslint: ESLint | undefined;
+function getSharedEslint(): ESLint {
+  sharedEslint ??= new ESLint({ cwd: repoRoot });
+  return sharedEslint;
+}
+
+/**
  * Lints a snippet as production source and returns its messages.
  *
  * The snippet is written to disk and linted as a *file* rather than passed to `lintText` with a
@@ -67,7 +97,7 @@ async function lintProductionSource(
   const file = path.join(dir, `case.${extension}`);
   writeFileSync(file, code);
   try {
-    const eslint = new ESLint({ cwd: repoRoot });
+    const eslint = getSharedEslint();
     const [result] = await eslint.lintFiles([file]);
     return (result?.messages ?? []).map(
       (message) => `${message.ruleId ?? 'none'}: ${message.message}`,
@@ -318,7 +348,7 @@ describe('the R10 rules reach every path that ships production code', () => {
     'packages/core/src/helper.mjs',
     'tools/lint-fixture/.fixtures/case.ts',
   ])('keeps the determinism rules enabled for %s', async (file) => {
-    const eslint = new ESLint({ cwd: repoRoot });
+    const eslint = getSharedEslint();
     const config = (await eslint.calculateConfigForFile(path.join(repoRoot, file))) as {
       rules?: Record<string, unknown[]>;
     };
@@ -330,7 +360,7 @@ describe('the R10 rules reach every path that ships production code', () => {
   it.each(['test/network-guard.mjs', 'scripts/run-tests.mjs', 'test/setup.ts'])(
     'exempts the harness file %s, which pins the clock and the environment',
     async (file) => {
-      const eslint = new ESLint({ cwd: repoRoot });
+      const eslint = getSharedEslint();
       const config = (await eslint.calculateConfigForFile(path.join(repoRoot, file))) as {
         rules?: Record<string, unknown[]>;
       };
