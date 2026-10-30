@@ -232,6 +232,22 @@ describe('parseNpmPackJson', () => {
 });
 
 describe('fetchNpmOverlay', () => {
+  // Every test here starts a real local HTTP registry AND shells out to a real `npm pack` against
+  // it: comfortably inside the suite's 60s default alone (consistently well under 2s running in
+  // isolation -- confirmed by running this file alone, repeatedly), but confirmed load-sensitive
+  // under the resource contention of the complete, unscoped monorepo suite running concurrently
+  // (the exact same category `test(cli): double the timeout on two real, load-sensitive upgrade
+  // tests` already fixed for `backup.test.ts`/`run-upgrade.test.ts`): real CI evidence
+  // (`packages/extensions/test/install/fetch-npm.test.ts` failing identically across every OS/node/
+  // TZ job, always the same tests, each timing out at exactly 60000ms) shows this file's own total
+  // duration landing around 243s under the full suite -- roughly 4x the 60s default, not a quick
+  // error. The explicit 120s timeout below is doubled rather than raised globally, so the suite's
+  // real 60s hang-detection floor stays tight everywhere else; applied to every test in this
+  // `describe` (not only the ones a given run happens to catch at the contended moment), since all
+  // of them do the identical real subprocess + real local server round trip and any one of them can
+  // be the one a future run's scheduling happens to land on.
+  const SLOW_TEST_TIMEOUT_MS = 120_000;
+
   it('round-trips a real npm pack against a real fixture registry configured via the project .npmrc', async () => {
     const registry = await startNpmFixtureRegistry([
       {
@@ -262,7 +278,7 @@ describe('fetchNpmOverlay', () => {
     );
     expect(result.checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(result.integrity).toMatch(/^sha\d+-/);
-  });
+  }, SLOW_TEST_TIMEOUT_MS);
 
   it('resolves an unversioned spec to dist-tags.latest', async () => {
     const registry = await startNpmFixtureRegistry([
@@ -283,7 +299,7 @@ describe('fetchNpmOverlay', () => {
     });
 
     expect(result.manifestKind).toBe('module');
-  });
+  }, SLOW_TEST_TIMEOUT_MS);
 
   it('reads and respects a scoped, private-registry .npmrc entry — not the project default registry', async () => {
     const defaultRegistry = await startNpmFixtureRegistry([]); // hosts nothing at all
@@ -316,7 +332,7 @@ describe('fetchNpmOverlay', () => {
     // ...and the default registry (which hosts nothing) never did — proving the scoped `.npmrc`
     // entry was read and respected, not silently ignored in favour of the project default.
     expect(defaultRegistry.requestLog.length).toBe(0);
-  });
+  }, SLOW_TEST_TIMEOUT_MS);
 
   it('fails with a named error when the configured registry does not host the package', async () => {
     const registry = await startNpmFixtureRegistry([]); // hosts nothing
@@ -328,7 +344,7 @@ describe('fetchNpmOverlay', () => {
       fetchNpmOverlay('npm:@nope/does-not-exist@1.0.0', { workDir, cwd: projectDir }),
       'CFG-030',
     );
-  });
+  }, SLOW_TEST_TIMEOUT_MS);
 
   it('refuses a fetched package with no overlay.yaml/module.yaml, leaving no leaked scratch directory', async () => {
     const registry = await startNpmFixtureRegistry([
@@ -352,5 +368,5 @@ describe('fetchNpmOverlay', () => {
     // "clean up on any failure past mkdtemp" discipline the git channel's own gauntlet round
     // established (`GAUNTLET-LOG.md`'s M11 P1 entry, finding 1).
     expect(await readdir(workDir)).toEqual([]);
-  });
+  }, SLOW_TEST_TIMEOUT_MS);
 });
