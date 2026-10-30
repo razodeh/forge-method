@@ -25244,3 +25244,17 @@ test.ts` flake, re-confirmed clean in isolation.
 
 ---
 
+## M17 Phase A — CI-tail sweep: Node 24 silently changed `node --test`'s own default reporter, a real production defect, not just CI (Q368, owner-directed scope expansion, 2026-10-29)
+
+**What this closes.** After Q367 landed and the full fencing+capacity+Windows saga validated green on real CI (run `40886563796`), the user chose to keep going and fix the pre-existing tail rather than stop at that milestone. Part of that tail: 6 node24-only test failures, traced to one root cause.
+
+**Root cause: a real, live-reproduced production defect**, not a CI artifact. FORGE's own deterministic test-ecosystem detector (`nodeTestCommand()` in `packages/cli/src/commands/loop/test/detect.ts`) proposes a bare `node --test` for any project whose `scripts.test` already names it, relying on Node's own implicit default reporter to emit TAP. Node 24 changed that default (for non-TTY/piped stdout) from TAP to a human-readable "spec" reporter. Confirmed independently by the builder and both critics on real Node binaries spanning the repo's full floor (20/22 emit TAP by default; 24/26 emit spec by default) — any real FORGE user on Node 24+ with a bare `node --test` script gets silently-broken test detection in production, not merely a CI symptom.
+
+**Fixed at the real root.** `nodeTestCommand()` now pins `--test-reporter=tap` explicitly on all 3 variants (run/scope/filter). The shipped `adopt-tests.md` brief (read by a live authoring agent) now explicitly calls out the flag with the exact `run:` string to propose. Confirmed universal-safe (identical TAP output, stream routing, and exit codes) across the repo's entire Node >=20.10 floor by two independent critics, each on real binaries. 5 real, live-subprocess sibling test files updated to match; a repo-wide multi-angle sweep (by both critics, independently) confirmed no other site proposes or expects a bare `node --test` under `format: 'tap'`, and confirmed zero incidental damage elsewhere (one critic's broader sweep: 302/302 passing across 11 untouched sibling files). One originally-suspected 6th failing file (`hunk-mutation-sigkill.test.ts`) confirmed by all 3 reviewers to be unrelated (exercises vitest, never `node --test`) — left open, not silently assumed closed.
+
+A counterfactual regression check (one critic, on the pre-fix base commit under real Node 24) found 13 genuine failures directly attributable to the reporter-format change, proving the fix closes a real defect rather than coincidentally passing.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q368` (new).
+
+---
+

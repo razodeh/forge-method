@@ -32248,3 +32248,70 @@ disclosed as a real, recurring risk for any FUTURE generated-worker-script file 
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's Windows-lock-stress close-out
 addendum, dated 2026-10-29.
+
+## Q368 — Node 24 silently changed `node --test`'s own default reporter, breaking FORGE's TAP
+detection for real end users, not just CI (owner-directed CI-tail sweep, 2026-10-29)
+
+**What this closes.** The post-`Q367` real CI run (`40886563796`) that validated the full
+fencing+capacity+Windows saga left a tail of pre-existing, already-disclosed non-lock failures. Six
+of them, all on node24-only legs, traced to one root cause: FORGE's own deterministic test-ecosystem
+detector (`nodeTestCommand()`, `packages/cli/src/commands/loop/test/detect.ts`) proposes a bare
+`node --test` for any project whose `scripts.test` already names it, relying on Node's own implicit
+default reporter to emit TAP for FORGE's `format: 'tap'` parser to read.
+
+**Decision 1 — confirmed as a real production defect, not a CI artifact.** Node 24 changed
+`node --test`'s own default-reporter auto-selection for non-TTY/piped stdout from TAP to a
+human-readable "spec" reporter (no `ok`/`not ok` lines). Reproduced directly and independently by
+two separate critics on real Node binaries spanning the repo's full floor (20.19.6 / 22.14.0 /
+24.21.0 or 24.22.2 / 26.7.0): 20 and 22 both emit TAP by default; 24 and 26 both emit spec format by
+default. Any real FORGE user on Node 24+ with a bare `node --test` script gets silently-broken test
+detection — the TAP parser finds nothing parseable and the retry loop exhausts uselessly. This is not
+merely a test-fixture problem.
+
+**Decision 2 — fixed at the real root, not by patching fixtures around it.** `nodeTestCommand()`
+now pins `--test-reporter=tap` explicitly on all 3 variants (`run`/`scope`/`filter`) instead of
+relying on Node's implicit default. The shipped brief a live authoring agent reads when adopting
+tests for a project (`packages/templates/templates/briefs/adopt-tests.md`) was updated with an
+explicit, unambiguous callout to always propose the flag, with the exact `run:` string to emit.
+Both critics independently confirmed `--test-reporter=tap` is behaviorally identical (TAP output,
+identical stdout/stderr routing, identical exit codes) across the repo's entire targeted floor
+(specs/02, Node >=20.10) — this is a universal fix, not a Node-24-only special case — and confirmed
+FORGE's actual TAP-stream consumer (`runStructuredTestLayer` in `reporter.ts`) never inspects
+anything the flag could change except the TAP text itself, so the downstream contract is unaffected.
+
+**Decision 3 — verified complete via independent, multi-angle repo-wide sweeps, not just the
+originally-named files.** `detect.ts`'s `nodeTestCommand()` is confirmed the sole site in the
+detector proposing a bare `node --test` (checked `ecosystem.ts`'s `detectEcosystem` and all other
+detector paths). 5 real, live-subprocess sibling test files that exercise the identical
+`node --test` + `format: 'tap'` pairing were updated (`adopt-agent.test.ts`, `proof.test.ts`,
+`run.test.ts`, `structured-layer.test.ts`, `proof-sigkill.test.ts`), including a `proof.test.ts`
+translator script that manually parses TAP text via `startsWith('ok ')`/`'not ok '` and would have
+silently broken under Node 24's spec format. Deliberately left unchanged, each independently
+verified: `adopt-agent-output-schema.test.ts` (pure Zod-schema shape test, never a real subprocess),
+`hunk-mutation.test.ts`/`binding.test.ts` (already pin `--test-reporter=junit`), several
+`adopt-agent.test.ts` fixture occurrences that use `format: 'forge-json'` with a translator whose
+real stdout is captured but never read (confirmed via `reporter.ts`'s `runTranslator`), grant/vet
+pattern-matching tests elsewhere (string-matching/mocked, never a real subprocess — `node --test*`'s
+trailing `*` is a prefix match that already covers the new flag unchanged), and the generated
+fixture `fixtures/greenfield-service/.forge/briefs/adopt-tests.md` (a `forge:generated` snapshot
+whose drift check is pure self-consistency, not a diff against the live template, confirmed by
+reading `generated-header.ts`'s `hasGeneratedFileDrifted`).
+
+**Decision 4 — one originally-suspected sixth file, confirmed unrelated, left untouched.**
+`hunk-mutation-sigkill.test.ts` was initially grouped with these 6 node24-only failures but both the
+builder and both critics independently confirmed it exercises vitest directly, never `node --test`
+or TAP at all, and passes cleanly on real Node 24 with or without this fix — a separate, unaddressed
+issue, not silently assumed closed.
+
+**Verification.** Root cause reproduced on real Node binaries by 3 independent parties (builder +
+2 critics) across Node 20/22/24/26. A counterfactual regression check (one critic) on the pre-fix
+base commit under real Node 24 showed 13 genuine test failures across the touched files, directly
+attributable to the reporter-format change — proving the defect is real and the fix is what closes
+it, not a coincidental green run. Post-fix: the 6 touched test files (190 tests) pass on both Node 22
+and real Node 24 binaries, run fresh at least twice by the builder and independently reproduced by
+both critics (exact matching counts). A broader incidental-damage sweep (one critic ran 11 additional
+sibling files, 302 tests) found zero regressions anywhere else in the repo from the literal-string
+change. `pnpm typecheck`/lint/prettier clean throughout.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's CI-tail-sweep addendum, dated
+2026-10-29.
