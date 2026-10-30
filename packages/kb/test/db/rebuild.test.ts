@@ -25,6 +25,12 @@ import { parseKbTree, type KbTree } from '../../src/schema/tree.ts';
 const require = createRequire(import.meta.url);
 const FIXTURE_ROOT = path.resolve(import.meta.dirname, '../../../../fixtures/greenfield-service');
 
+/** `node:sqlite` is a Node>=22-only built-in (`specs/02` §2.1) — confirmed live, `require('node:sqlite')`
+ * below throws `Error: No such built-in module: node:sqlite` on a real Node 20.19.6 binary.
+ * `SPEC-QUESTIONS.md` Q369/Q370. */
+const NODE_SQLITE_AVAILABLE = Number(process.versions.node.split('.')[0]) >= 22;
+const NODE_SQLITE_SKIP_REASON = `node:sqlite requires Node >=22, running on Node ${process.versions.node}`;
+
 let scratchDirs: string[] = [];
 
 afterEach(() => {
@@ -61,8 +67,14 @@ const BACKENDS: readonly [string, BackendFactory][] = [
   ],
 ];
 
-describe.each(BACKENDS)('rebuildIndex — %s', (_name, createBackend) => {
-  it('finds the real fixture entry for a query matching its own statement', async () => {
+describe.each(BACKENDS)('rebuildIndex — %s', (name, createBackend) => {
+  // `node:sqlite` only: the other two entries (`SqliteBackend`, `JsonBackend`) always run — `skip`
+  // is `false` for them, so `t` below is the real, unconditional `it`.
+  const skip = name === 'NodeSqliteBackend' && !NODE_SQLITE_AVAILABLE;
+  const t = skip ? it.skip : it;
+  const suffix = skip ? ` (skipped: ${NODE_SQLITE_SKIP_REASON})` : '';
+
+  t(`finds the real fixture entry for a query matching its own statement${suffix}`, async () => {
     const paths = new ProjectPaths(FIXTURE_ROOT);
     const tree = await parseKbTree(paths);
     const backend = createBackend();
@@ -74,48 +86,63 @@ describe.each(BACKENDS)('rebuildIndex — %s', (_name, createBackend) => {
     backend.close();
   });
 
-  it('running rebuildIndex twice from the same tree produces identical search results', async () => {
-    const paths = new ProjectPaths(FIXTURE_ROOT);
-    const tree = await parseKbTree(paths);
-    const backend = createBackend();
+  t(
+    `running rebuildIndex twice from the same tree produces identical search results${suffix}`,
+    async () => {
+      const paths = new ProjectPaths(FIXTURE_ROOT);
+      const tree = await parseKbTree(paths);
+      const backend = createBackend();
 
-    rebuildIndex(tree, backend);
-    const first = backend.search('transactional database');
-    rebuildIndex(tree, backend);
-    const second = backend.search('transactional database');
+      rebuildIndex(tree, backend);
+      const first = backend.search('transactional database');
+      rebuildIndex(tree, backend);
+      const second = backend.search('transactional database');
 
-    expect(second).toEqual(first);
-    backend.close();
-  });
+      expect(second).toEqual(first);
+      backend.close();
+    },
+  );
 
-  it('running rebuildIndex twice from the same tree produces identical expand results', async () => {
-    const paths = new ProjectPaths(FIXTURE_ROOT);
-    const tree = await parseKbTree(paths);
-    const backend = createBackend();
+  t(
+    `running rebuildIndex twice from the same tree produces identical expand results${suffix}`,
+    async () => {
+      const paths = new ProjectPaths(FIXTURE_ROOT);
+      const tree = await parseKbTree(paths);
+      const backend = createBackend();
 
-    rebuildIndex(tree, backend);
-    const first = backend.expand(['KB-ARCH-0001'], 1);
-    rebuildIndex(tree, backend);
-    const second = backend.expand(['KB-ARCH-0001'], 1);
+      rebuildIndex(tree, backend);
+      const first = backend.expand(['KB-ARCH-0001'], 1);
+      rebuildIndex(tree, backend);
+      const second = backend.expand(['KB-ARCH-0001'], 1);
 
-    expect(second).toEqual(first);
-    backend.close();
-  });
+      expect(second).toEqual(first);
+      backend.close();
+    },
+  );
 });
 
 describe('rebuildIndex — same top result across every backend', () => {
-  it('returns KB-ARCH-0001 as the top hit for an unambiguous query, regardless of backend', async () => {
-    const paths = new ProjectPaths(FIXTURE_ROOT);
-    const tree = await parseKbTree(paths);
+  // This one test deliberately exercises ALL of `BACKENDS` together (that is its whole point — see
+  // the describe title) — skipped as a whole on Node <22 rather than silently dropping the
+  // `node:sqlite` iteration from its loop, since each backend's own `rebuildIndex` behaviour is
+  // already fully covered individually by the `describe.each` block above.
+  it.skipIf(!NODE_SQLITE_AVAILABLE)(
+    `returns KB-ARCH-0001 as the top hit for an unambiguous query, regardless of backend${
+      NODE_SQLITE_AVAILABLE ? '' : ` (skipped: ${NODE_SQLITE_SKIP_REASON})`
+    }`,
+    async () => {
+      const paths = new ProjectPaths(FIXTURE_ROOT);
+      const tree = await parseKbTree(paths);
 
-    for (const [, createBackend] of BACKENDS) {
-      const backend = createBackend();
-      rebuildIndex(tree, backend);
-      const hits = backend.search('transactional database');
-      expect(hits[0]?.id).toBe('KB-ARCH-0001');
-      backend.close();
-    }
-  });
+      for (const [, createBackend] of BACKENDS) {
+        const backend = createBackend();
+        rebuildIndex(tree, backend);
+        const hits = backend.search('transactional database');
+        expect(hits[0]?.id).toBe('KB-ARCH-0001');
+        backend.close();
+      }
+    },
+  );
 });
 
 describe('rebuildIndex — links, ADRs, diagrams, runbooks', () => {

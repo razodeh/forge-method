@@ -15,6 +15,15 @@ import { isForgeError } from '@forge/core';
 import { ProjectPaths } from '@forge/core/fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+/** `node:sqlite` is a Node>=22-only built-in (`specs/02` §2.1) — confirmed live, on a real Node
+ * 20.19.6 binary `openKbIndex` cannot reach `NodeSqliteBackend` at all (the module does not exist to
+ * probe), so the one test below that specifically asserts that tier gets selected would fail on
+ * Node <22 with a wrong-backend assertion, not a crash: `openKbIndex`'s own 3-tier fallback already
+ * degrades gracefully straight to `JsonBackend` instead, which is correct, spec'd behaviour
+ * (`specs/02` §2.1), not a bug this test should flag. `SPEC-QUESTIONS.md` Q369/Q370. */
+const NODE_SQLITE_AVAILABLE = Number(process.versions.node.split('.')[0]) >= 22;
+const NODE_SQLITE_SKIP_REASON = `node:sqlite requires Node >=22, running on Node ${process.versions.node}`;
+
 let projectRoot: string | undefined;
 
 function freshProject(): ProjectPaths {
@@ -72,16 +81,21 @@ describe('openKbIndex — real environment', () => {
 });
 
 describe('openKbIndex — with better-sqlite3 made deliberately unloadable', () => {
-  it('falls through to node:sqlite without throwing', async () => {
-    mockNodeModuleRequire(['better-sqlite3']);
+  it.skipIf(!NODE_SQLITE_AVAILABLE)(
+    `falls through to node:sqlite without throwing${
+      NODE_SQLITE_AVAILABLE ? '' : ` (skipped: ${NODE_SQLITE_SKIP_REASON})`
+    }`,
+    async () => {
+      mockNodeModuleRequire(['better-sqlite3']);
 
-    const { openKbIndex } = await import('../../src/db/open.ts');
-    const { NodeSqliteBackend } = await import('../../src/db/node-sqlite-backend.ts');
-    const paths = freshProject();
-    const backend = openKbIndex(paths);
-    expect(backend).toBeInstanceOf(NodeSqliteBackend);
-    backend.close();
-  });
+      const { openKbIndex } = await import('../../src/db/open.ts');
+      const { NodeSqliteBackend } = await import('../../src/db/node-sqlite-backend.ts');
+      const paths = freshProject();
+      const backend = openKbIndex(paths);
+      expect(backend).toBeInstanceOf(NodeSqliteBackend);
+      backend.close();
+    },
+  );
 });
 
 describe('openKbIndex — with both native backends made deliberately unloadable', () => {

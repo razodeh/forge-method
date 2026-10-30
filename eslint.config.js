@@ -230,6 +230,21 @@ const SYSTEM_CACHE_DIR_TS_DETERMINISM_SYNTAX_RULES = DETERMINISM_SYNTAX_RULES.fi
 );
 
 /**
+ * `packages/cli/bin/forge.mjs`'s own narrowed R10 carve-out (`SPEC-QUESTIONS.md` Q369). The dev/test
+ * launcher spawns its child with `{ ...process.env, TSX_DISABLE_CACHE: '1' }` — adding exactly one
+ * variable, never replacing the whole environment (`child_process.spawn`'s own `env` option REPLACES,
+ * not merges, whenever it is given at all, so "add one var" has no spelling that avoids reading
+ * `process.env` itself). Filtered by message text only, the identical "narrowed to just the entry
+ * this file needs off" discipline `SYSTEM_CACHE_DIR_TS_DETERMINISM_SYNTAX_RULES` above already
+ * establishes: every other real R10 ban (clock, randomness, the alias ban, the computed-key ban,
+ * unsorted listings, locale, host facts) stays fully on, since this file has no real reason to need
+ * any of those lifted.
+ */
+const FORGE_MJS_DETERMINISM_SYNTAX_RULES = DETERMINISM_SYNTAX_RULES.filter(
+  (rule) => !rule.message.includes('process.env directly'),
+);
+
+/**
  * QUALITY-BAR.md R11: cross-platform correctness — disk paths are composed with `node:path`, never
  * by concatenating a literal `/` separator, which is wrong on Windows. Not folded into
  * `DETERMINISM_SYNTAX_RULES` above: that array applies everywhere, and a global ban on `'/'` in a
@@ -626,6 +641,18 @@ export default tseslint.config(
     rules: {
       'no-console': 'off',
       '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
+  {
+    // `packages/cli/bin/forge.mjs` — the dev/test-only launcher (`PLAN-M6.md` C9, `SPEC-QUESTIONS.md`
+    // Q340/Q369), never shipped (excluded from `package.json`'s own `files`; `dist/forge.mjs` is the
+    // real, compiled, published binary). `no-restricted-syntax` (R10) is narrowed the identical way
+    // `BIN_TS_DETERMINISM_SYNTAX_RULES`/`SYSTEM_CACHE_DIR_TS_DETERMINISM_SYNTAX_RULES` already are —
+    // see `FORGE_MJS_DETERMINISM_SYNTAX_RULES`'s own doc comment for why `process.env` is the one,
+    // and only, selector this file's real code trips.
+    files: ['packages/cli/bin/forge.mjs'],
+    rules: {
+      'no-restricted-syntax': ['error', ...FORGE_MJS_DETERMINISM_SYNTAX_RULES],
     },
   },
   {

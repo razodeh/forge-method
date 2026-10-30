@@ -28,6 +28,13 @@ import { SqliteBackend } from '../../src/db/better-sqlite-backend.ts';
 import type { EntryRow } from '../../src/db/types.ts';
 
 const require = createRequire(import.meta.url);
+
+/** `node:sqlite` is a Node>=22-only built-in (`specs/02` §2.1) — confirmed live, `require('node:sqlite')`
+ * below throws `Error: No such built-in module: node:sqlite` on a real Node 20.19.6 binary.
+ * `SPEC-QUESTIONS.md` Q369/Q370. */
+const NODE_SQLITE_AVAILABLE = Number(process.versions.node.split('.')[0]) >= 22;
+const NODE_SQLITE_SKIP_REASON = `node:sqlite requires Node >=22, running on Node ${process.versions.node}`;
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -75,34 +82,39 @@ describe('readKbIndexEntries', () => {
     });
   });
 
-  it('reads an index written by each SQLite backend and by the JSON backend', () => {
-    for (const kind of ['better-sqlite3', 'node:sqlite', 'json'] as const) {
-      const { paths } = fresh();
-      mkdirSync(path.dirname(paths.resolveState('index.db')), { recursive: true });
-      let backend;
-      if (kind === 'json') backend = new JsonBackend(paths.resolveState('index.json'));
-      else if (kind === 'node:sqlite') {
-        const { DatabaseSync } = require('node:sqlite') as {
-          DatabaseSync: new (p: string) => ConstructorParameters<typeof NodeSqliteBackend>[0];
-        };
-        backend = new NodeSqliteBackend(new DatabaseSync(paths.resolveState('index.db')));
-      } else {
-        const Database = require('better-sqlite3') as new (
-          p: string,
-        ) => ConstructorParameters<typeof SqliteBackend>[0];
-        backend = new SqliteBackend(new Database(paths.resolveState('index.db')));
+  it.skipIf(!NODE_SQLITE_AVAILABLE)(
+    `reads an index written by each SQLite backend and by the JSON backend${
+      NODE_SQLITE_AVAILABLE ? '' : ` (skipped: ${NODE_SQLITE_SKIP_REASON})`
+    }`,
+    () => {
+      for (const kind of ['better-sqlite3', 'node:sqlite', 'json'] as const) {
+        const { paths } = fresh();
+        mkdirSync(path.dirname(paths.resolveState('index.db')), { recursive: true });
+        let backend;
+        if (kind === 'json') backend = new JsonBackend(paths.resolveState('index.json'));
+        else if (kind === 'node:sqlite') {
+          const { DatabaseSync } = require('node:sqlite') as {
+            DatabaseSync: new (p: string) => ConstructorParameters<typeof NodeSqliteBackend>[0];
+          };
+          backend = new NodeSqliteBackend(new DatabaseSync(paths.resolveState('index.db')));
+        } else {
+          const Database = require('better-sqlite3') as new (
+            p: string,
+          ) => ConstructorParameters<typeof SqliteBackend>[0];
+          backend = new SqliteBackend(new Database(paths.resolveState('index.db')));
+        }
+        backend.upsertEntry(row('ADR-0001', 'h1'));
+        backend.close();
+        const result = readKbIndexEntries(paths);
+        expect(result.status, kind).toBe('ok');
+        if (result.status === 'ok')
+          expect(
+            result.entries.map((e) => e.hash),
+            kind,
+          ).toEqual(['h1']);
       }
-      backend.upsertEntry(row('ADR-0001', 'h1'));
-      backend.close();
-      const result = readKbIndexEntries(paths);
-      expect(result.status, kind).toBe('ok');
-      if (result.status === 'ok')
-        expect(
-          result.entries.map((e) => e.hash),
-          kind,
-        ).toEqual(['h1']);
-    }
-  });
+    },
+  );
 
   it('an empty index is ok with no entries (synced, nothing to sync)', () => {
     const { paths } = fresh();
