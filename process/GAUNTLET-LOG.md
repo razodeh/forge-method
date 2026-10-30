@@ -25276,3 +25276,11 @@ A counterfactual regression check (one critic, on the pre-fix base commit under 
 **Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q370` (new).
 
 ---
+
+## M17 Phase A — CI-tail sweep close-out: Q369's 2 disclosed Node-20 defects fixed, one found already stale, one found one layer deeper (Q371, owner-directed scope expansion, 2026-10-29)
+
+**What this closes.** `Q369` disclosed 2 Node-20-only defects as found-but-not-fixed. The first ("`forge.mjs` errors on `--experimental-strip-types`") turned out to already be fixed by an earlier, unrelated commit (`99dc715`/`Q340`, 4 days before the disclosure) — but running the real repro on a real Node 20.19.6 binary surfaced a different, still-live defect one layer down: `tsx` (the Node-20 fallback mechanism) writes an on-disk cache that collided with a test's "no litter left in TMPDIR" guarantee. Fixed via `TSX_DISABLE_CACHE=1`, confirmed (by reading tsx's own bundled source, not just docs) to swap the on-disk cache for an in-memory one with no meaningful runtime cost, and confirmed the real shipped production binary was never exposed to this (dev/test-only). The second disclosed defect (missing Node-version guards on 4 `node:sqlite`-dependent kb test files) was fixed by mirroring this repo's own existing `it.skipIf`/precomputed-boolean skip convention.
+
+**Gauntlet:** see `SPEC-QUESTIONS.md`, `## Q371` (new).
+
+---

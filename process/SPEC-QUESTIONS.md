@@ -32449,3 +32449,61 @@ YAML post-cherry-pick.
 
 **Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's CI-tail-sweep addendum, dated
 2026-10-29.
+
+## Q371 — Q369's own 2 disclosed-but-not-yet-fixed Node-20 defects CLOSED, with one correction:
+the first was already stale on arrival (owner-directed scope expansion, 2026-10-29)
+
+**What this closes.** `Q369` disclosed 2 Node-20 CI-tail defects as found-but-not-fixed. Both are
+now closed, real Node 20.19.6 binary used throughout, confirmed by 2 independent critics.
+
+**Decision 1 — the first disclosed defect was already stale by the time it was disclosed.**
+`Q369`'s own description ("`forge.mjs` spawns `node --experimental-strip-types`, which errors on
+Node 20") had already been fixed 4 days earlier by an unrelated commit, `99dc715` (`Q340`, Oct 25),
+which replaced the hardcoded flag with a version-conditional `TS_NODE_FLAG` helper. Re-verified live
+on a real Node 20.19.6 binary: `node packages/cli/bin/forge.mjs` runs cleanly, no "bad option"
+error. Both critics independently confirmed this by reading `99dc715`'s own diff and cross-checking
+against `Q369`'s dated text.
+
+**Decision 2 — a DIFFERENT, still-live defect one layer down: tsx's own on-disk transform cache
+collided with a "no litter" test guarantee.** On Node <22.6, `TS_NODE_FLAG` falls back to `tsx`,
+which writes its own cache to `os.tmpdir()/tsx-<uid>`. 5 of `bin-run-failures.test.ts`'s 20 tests
+override `TMPDIR` to a scratch dir and assert it's empty after a run; on Node 20, tsx's cache landed
+inside that scratch dir, failing the assertion. Fixed by adding `TSX_DISABLE_CACHE: '1'` to the
+spawned child's env — confirmed, by reading tsx's own bundled source directly (not just its docs),
+that this swaps tsx's on-disk `FileCache` for a bare in-memory `Map`, with no retransform-per-require
+cost within one process (only cross-invocation persistence is lost). Both critics independently
+reverted the fix and reproduced the exact 5/20 failure signature, then restored it and reproduced
+20/20 passing, on both a real Node 20.19.6 binary and ambient Node 22.14.0. Both independently
+rebuilt the real shipped production binary (`dist/forge.mjs`) and grepped it for any trace of
+`tsx`/`TSX_DISABLE_CACHE` — zero hits, confirming real end users were never exposed to this, before
+or after (the dev/test-only launcher `bin/forge.mjs` is a different file from the shipped binary,
+confirmed via `packages/cli/package.json`'s own `bin`/`files` fields).
+
+**Decision 3 — the second disclosed defect (missing Node-version guards on
+`node:sqlite`-dependent kb tests) fixed via this repo's own established skip-guard convention.**
+Added a precomputed `NODE_SQLITE_AVAILABLE` boolean to each of the 4 affected files, consumed via
+`it.skipIf`/`describe.skipIf`, mirroring `events.test.ts`'s existing `canTestPermissionFailures`
+pattern exactly (confirmed structurally identical, not just superficially similar, by one critic).
+Both critics confirmed every real `require('node:sqlite')` call site across all 4 files is guarded,
+with no site missed. One critic found and ran the skip-visibility check directly: the skipped tests
+are individually invisible to `vitest list --json` on Node 20 (the same already-documented,
+pre-existing vitest@4.1.11 collection bug as `Q363`), but the FILE itself stays visible — the
+precedent's actual guarantee, which this fix correctly inherits rather than violates.
+
+**Two non-blocking notes from review, disclosed for awareness, not blocking.** (1) `TSX_DISABLE_CACHE`'s
+blast radius is wider than "tests only" — every real local `pnpm forge ...` invocation on Node <22.6
+now also runs with tsx's cache disabled, not just the test harness; measured real-world cost is
+currently zero (~1.00-1.03s either way on this codebase's size) but the commit's own doc comment
+frames the tradeoff only around unaffected npm consumers, not this wider local-dev case. (2) the
+`eslint.config.js` carve-out this fix needed uses the same message-text-filter mechanism as 3
+existing precedents in that file — structurally fragile in the abstract (a future rule-message
+rewording could silently desync it), but pre-existing design debt this commit inherits, not
+introduces.
+
+**Verification.** `pnpm typecheck` (21/21), scoped eslint/prettier on all 6 touched files, and the
+5 directly affected test files (103 tests: `bin-run-failures.test.ts` + the 4 kb db files) all pass
+clean after landing. Full `packages/kb` suite (524/524) and `bin-run-failures.test.ts` +
+`commands/run` (572/572) also confirmed clean by both critics on ambient Node 22.
+
+**Gauntlet:** see `GAUNTLET-LOG.md`'s own `## M17 Phase A` entry's CI-tail-sweep addendum, dated
+2026-10-29.
