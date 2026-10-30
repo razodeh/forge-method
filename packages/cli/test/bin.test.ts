@@ -1273,9 +1273,15 @@ describe('forge run/resume/pause/abort/lanes/logs/gate/merge (real subprocess di
       reject: false,
     });
     // A bounded, real wait for the lock file to actually exist -- polling, not a fixed sleep, since
-    // how long the child takes to acquire it is not this test's own concern to guess at.
+    // how long the child takes to acquire it is not this test's own concern to guess at. Widened from
+    // 100 attempts (2s total) after real evidence this bound was too tight under real CI contention:
+    // `SPEC-QUESTIONS.md` Q374's own `heavy-subprocess` CI job (run 41135486573) still missed it on 3
+    // of 6 completed non-Windows legs and both completed Windows legs, even running sequentially with
+    // nothing else to contend with -- a real, reversible-only-upward bound (it still requires the real
+    // lock to genuinely appear; this only grants more real time to see it), comfortably inside this
+    // suite's own 60s default `testTimeout`.
     const lockPath = path.join(dir, '.forge/state/lock.json');
-    for (let attempt = 0; attempt < 100 && !existsSync(lockPath); attempt += 1) {
+    for (let attempt = 0; attempt < 750 && !existsSync(lockPath); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     expect(existsSync(lockPath)).toBe(true);

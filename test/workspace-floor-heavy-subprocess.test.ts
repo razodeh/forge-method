@@ -158,9 +158,23 @@ describe('every source file in the repository is typechecked (heavy, real-subpro
               .join('\n')}`,
           );
         }
-        for (const line of output.split('\n')) {
-          if (!line.startsWith(repoRoot) || line.includes('node_modules')) continue;
-          listed.add(path.relative(repoRoot, line.trim()).split(path.sep).join('/'));
+        for (const rawLine of output.split('\n')) {
+          const line = rawLine.trim();
+          if (line === '' || line.includes('node_modules')) continue;
+          // `path.relative`, not a raw `line.startsWith(repoRoot)` string-prefix check: `tsc
+          // --listFiles`' own absolute-path output and `repoRoot` (built via `path.resolve`) are not
+          // guaranteed to agree on separator style, drive-letter case, or trailing separators on
+          // Windows, which made the old prefix check silently match ZERO lines there -- every on-disk
+          // file then read as "missing from tsc's list" (CONFIRMED LIVE: a real Windows CI run,
+          // reached for the first time once this test moved into its own dedicated job alongside
+          // Windows, reported ~1586 files "outside the tsconfig project," i.e. essentially the whole
+          // repo). `path.relative` resolves both arguments through Node's own platform-aware path
+          // parsing, so it is immune to exactly that class of mismatch on every OS. A line outside
+          // `repoRoot` entirely (`..`-prefixed) or still absolute (e.g. a different drive) is not a
+          // file this project covers.
+          const relative = path.relative(repoRoot, line);
+          if (relative.startsWith('..') || path.isAbsolute(relative)) continue;
+          listed.add(relative.split(path.sep).join('/'));
         }
       }
 
