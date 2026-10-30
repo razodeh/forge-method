@@ -32622,3 +32622,117 @@ verified by direct instrumentation catching and fixing a real bug in the first d
 landing), consistent with this session's risk-scaled gauntlet practice for pure test-only
 corrections. The in-progress isolation fix (Decision 2/Discloses) will get its own dedicated,
 critic-reviewed gauntlet before landing, given its CI-infrastructure-wide blast radius.
+
+## Q373 — Q372's disclosed CI-capacity gap CLOSED: a new `heavy-subprocess` job isolates the 3
+heaviest real-subprocess test files, following `lock-stress`'s own precedent, with 2 real critic
+rounds catching and fixing a silent-skip regression and a documentation loss before landing
+(owner-directed scope expansion, 2026-10-30)
+
+**What this closes.** `Q372` Decision 2 identified `packages/cli/test/bin.test.ts`,
+`test/run-inputs-compile.test.ts`, and `test/workspace-floor.test.ts`'s own 3
+`SUBPROCESS_HEAVY_TEST_TIMEOUT_MS`-tagged tests as the heaviest handful of files in the ~761-file
+suite (real evidence from run `41063683416`'s own job logs: `bin.test.ts` alone 1276-1463s on
+several legs), together ~35-40% of the suite's cumulative per-run duration, and recorded the
+already-disclosed real fix as isolating them into a dedicated CI job (`Q370` Decision 4's own
+un-acted-on critic warning, `Q365`'s `lock-stress` precedent) rather than another timeout bump or
+generic `--shard` (rejected twice now for the same alphabetically-clustering reason, `Q365`
+Decision 1, reconfirmed with real data this time).
+
+**Decision 1 — a new `heavy-subprocess` CI job, not `--shard`, following `lock-stress`'s own
+precedent exactly.** `packages/cli/test/bin.test.ts` (196 tests, real subprocess CLI dispatch) and
+`test/run-inputs-compile.test.ts` (93 tests, real e2e via the real `forge` binary) moved
+whole-file, zero code changes. `workspace-floor.test.ts`'s 3 heaviest tests split into a new
+`test/workspace-floor-heavy-subprocess.test.ts`; every other test in that file (symlink walk,
+planted-failure check, source-location/TS-only/line-ending floors) stays in the main run. Shared
+constants/walk functions factored into a new, non-test `test/workspace-floor-helpers.ts`
+(mirroring the existing `test/setup.ts`/`test/global-setup.ts` precedent for a plain file living
+directly under `test/`). `package.json`'s `"test"` script gained 3 more `--exclude` flags
+(mirroring the 5 existing `lock-stress` excludes); new `"test:heavy-subprocess"` script runs
+exactly those 3 files, no `--coverage` (matching `test:lock-stress`'s own precedent).
+
+`heavy-subprocess` mirrors `floor`'s full `[ubuntu-latest, macos-latest, windows-latest] × [20, 22,
+24]` matrix, deliberately NOT narrowed the way `lock-stress`'s was (`Q365` Decision 2: 2 OSes, node
+22 only): `lock-stress` could narrow because lock *correctness* was already established
+cross-platform by 7+ critic rounds before that job existed; there is no equivalent evidence for
+ordinary CLI dispatch, and this milestone's own history (`Q340`/`Q353`'s Windows-only spawn/path
+regressions, `Q368`'s Node-24 TAP-reporter regression) shows this exact class of code is node- and
+OS-sensitive. No Kathmandu-TZ duplicate: nothing in these 3 files is TZ-sensitive (confirmed by
+grep — only UTC-invariant `Date.now()`/`.toISOString()` usage). `timeout-minutes: 40`, sized
+against the worst real contended duration (~24.4 min for `bin.test.ts` alone) with real margin.
+
+**Decision 2 — measured the real coverage-floor risk for every isolation candidate before
+isolating it (`Q365` Decision 3's technique), not assumed.** Isolating `bin.test.ts` alone was
+found, by real scoped sibling-only coverage runs, to drop `packages/cli/src/init/package-root.ts`
+below its 85/80/85/85 hard floor (60% functions / 70% branches without it) — its
+`resolveOwnPackageRoot`/`readOwnPackageVersion` functions were previously exercised only
+incidentally, through CLI dispatch, never directly by the one test file dedicated to this module.
+Fixed at the real source: 3 direct tests added to `packages/cli/test/init/package-root.test.ts`
+(not the production code, which was untouched), re-measured at 100%/100%/100%/90%. Isolating
+`packages/extensions/test/install/fetch-npm.test.ts`'s `fetchNpmOverlay` describe block — the
+next-heaviest candidate by the same evidence — was also measured for real and found to drop
+`fetch-npm.ts` (a `CRITICAL_PACKAGES` module) to 64-80% across 3 of 4 metrics against its 90/85/90/
+90 floor, with no safe split available (every one of its own tests needs the real
+npm-pack-plus-HTTP-fixture-registry round trip, unlike `bin.test.ts`'s own clean whole-file move) —
+deliberately left in the main run, NOT isolated this round, logged as a deferred follow-up.
+
+Completeness re-proven via real `vitest list --json` (`Q365` Decision 4's own technique, not
+arithmetic alone): 754 files in the main run + 3 in `heavy-subprocess` + 5 in `lock-stress` = 762
+total, confirmed by direct set comparison to have zero overlap and zero gap.
+
+**Decision 3 — 2 independent critic rounds, in isolated worktrees, both returned "land with minor
+fixes," and both real issues they found were fixed before landing, not deferred.**
+
+1. *A silent regression that would have shipped invisibly.* `floor`/`seed` both install a stub
+   `claude` CLI onto `PATH` before `pnpm test` (`ci.yml`'s "Install a stub claude CLI..." step,
+   added yesterday in `ffa64cc6`) specifically so `bin.test.ts`'s own `REAL_ADAPTER_CLI`-gated test
+   — a real end-to-end `forge init` against a real (stubbed) platform-CLI preflight, the single
+   highest-value integration test in that file — runs for real rather than self-skipping. The new
+   `heavy-subprocess` job, as first drafted, had no such step. Verified directly (a standalone
+   probe script replicating `probeRealAdapterCli()`, run with and without the stub on `PATH`):
+   without it, `preflight()` returns `{ok: false}` and the test always, silently skips on every one
+   of the 9 new matrix legs — CI stays green either way, which is exactly the "quietly worse CI
+   state" a review like this exists to catch. `bin.test.ts` itself has zero code changes in this
+   piece (a whole-file move), so this was purely a CI-wiring omission, not a test-file defect.
+   Fixed by adding the identical stub-install step to `heavy-subprocess` (verified byte-identical to
+   `floor`'s own step; `setup-python`/`pytest` deliberately NOT added, since none of the 3 moved
+   files call it).
+2. *A real documentation loss, with a false claim papering over it.* The original
+   `IGNORED_PATHS`/`IGNORED_ROOT_DIRECTORIES` definitions in `workspace-floor.test.ts` carried ~230
+   lines of per-path justification comments, each tracing one exemption back to the plan/piece that
+   created it. The first draft's move to `workspace-floor-helpers.ts` deleted this entire block and
+   replaced it with one sentence claiming the comments were "now in `workspace-floor.test.ts` and
+   `workspace-floor-heavy-subprocess.test.ts`... just relocated here" — verified false (grepped the
+   whole repo for distinctive deleted phrases; zero matches anywhere). The `IGNORED_PATHS` *Set*
+   itself was never altered (42 entries, confirmed byte-identical before and after, both by the
+   critic and independently here), so this was a pure documentation/traceability loss, not a
+   test-correctness bug — but a real one, in a codebase whose documentation culture is built
+   entirely on this kind of plan-to-code traceability. Fixed by restoring every comment verbatim
+   into `workspace-floor-helpers.ts` (the correct new home, since that file now owns the Set), and
+   correcting the claim to match. The `IGNORED_ROOT_DIRECTORIES` comment's own dropped forensic
+   detail (the `.claude`-worktree-dedup incident, "a local, unscoped `pnpm test` run re-running one
+   file 70-81 times") was restored the same way.
+
+One disclosed, not-yet-resolved gap from the critic round: the 40-minute `heavy-subprocess` timeout
+was sized against real duration samples from node22/24-ubuntu and node20-macos only — no real
+`windows-latest` sample exists yet for this specific job, despite Windows being the OS this
+milestone's own history (`Q340`/`Q353`) shows is most likely to diverge for real subprocess-dispatch
+code, and Windows `child_process` spawn overhead being well-documented as higher than POSIX
+fork/exec. Not resolved here (no real sample to act on yet); disclosed directly in the job's own
+comment in `ci.yml`, flagged for a future follow-up once a real CI run produces one.
+
+**Verification.** `pnpm typecheck`: 21/21 clean (before and after the critic-driven fixes). YAML
+parses cleanly (`python3 -c "import yaml; yaml.safe_load(...)"`). Scoped `eslint`/`prettier --check`
+on every touched/new file: clean. `test/workspace-floor.test.ts` + `test/workspace-floor-heavy-
+subprocess.test.ts` together, `--no-file-parallelism` (avoiding the known local-only race between
+the two files' own real-filesystem walks, which cannot occur in real CI since they run in separate
+jobs on separate runners): 18/18 passing, ~107s. `packages/cli/test/init/package-root.test.ts`
+alone: 10/10 passing (7 pre-existing + 3 new). Real `pnpm test:heavy-subprocess` (all 3 isolated
+files together, exactly as CI will run it): 292/292 passing. `IGNORED_PATHS`/
+`IGNORED_ROOT_DIRECTORIES` set contents confirmed unchanged (42/3 entries respectively) after the
+comment-restoration fix.
+
+**Gauntlet:** 2 independent critics, each in its own isolated git worktree (per standing practice,
+given this piece's CI-infrastructure-wide blast radius) — both returned "land with minor fixes."
+Both real findings (the silent-skip regression, the documentation loss) were fixed directly before
+landing, verified, and folded into the landed commit; the one remaining disclosed gap (Windows
+timing margin) was left open, disclosed, not silently dropped.
