@@ -248,125 +248,145 @@ describe('fetchNpmOverlay', () => {
   // be the one a future run's scheduling happens to land on.
   const SLOW_TEST_TIMEOUT_MS = 120_000;
 
-  it('round-trips a real npm pack against a real fixture registry configured via the project .npmrc', async () => {
-    const registry = await startNpmFixtureRegistry([
-      {
-        scope: 'fixture',
-        name: 'overlay-fixture',
-        version: '1.0.0',
-        files: {
-          'overlay.yaml': 'name: fixture-overlay\nversion: 1.0.0\n',
-          'skills/example.md': '# Example\n',
+  it(
+    'round-trips a real npm pack against a real fixture registry configured via the project .npmrc',
+    async () => {
+      const registry = await startNpmFixtureRegistry([
+        {
+          scope: 'fixture',
+          name: 'overlay-fixture',
+          version: '1.0.0',
+          files: {
+            'overlay.yaml': 'name: fixture-overlay\nversion: 1.0.0\n',
+            'skills/example.md': '# Example\n',
+          },
         },
-      },
-    ]);
-    registries.push(registry);
-    const projectDir = await projectWithNpmrc(`registry=${registry.url}\n`);
-    const workDir = await freshDir();
+      ]);
+      registries.push(registry);
+      const projectDir = await projectWithNpmrc(`registry=${registry.url}\n`);
+      const workDir = await freshDir();
 
-    const result = await fetchNpmOverlay('npm:@fixture/overlay-fixture@1.0.0', {
-      workDir,
-      cwd: projectDir,
-    });
+      const result = await fetchNpmOverlay('npm:@fixture/overlay-fixture@1.0.0', {
+        workDir,
+        cwd: projectDir,
+      });
 
-    expect(result.manifestKind).toBe('overlay');
-    expect((await readFile(path.join(result.path, 'overlay.yaml'))).toString('utf8')).toBe(
-      'name: fixture-overlay\nversion: 1.0.0\n',
-    );
-    expect((await readFile(path.join(result.path, 'skills', 'example.md'))).toString('utf8')).toBe(
-      '# Example\n',
-    );
-    expect(result.checksum).toMatch(/^[0-9a-f]{64}$/);
-    expect(result.integrity).toMatch(/^sha\d+-/);
-  }, SLOW_TEST_TIMEOUT_MS);
+      expect(result.manifestKind).toBe('overlay');
+      expect((await readFile(path.join(result.path, 'overlay.yaml'))).toString('utf8')).toBe(
+        'name: fixture-overlay\nversion: 1.0.0\n',
+      );
+      expect(
+        (await readFile(path.join(result.path, 'skills', 'example.md'))).toString('utf8'),
+      ).toBe('# Example\n');
+      expect(result.checksum).toMatch(/^[0-9a-f]{64}$/);
+      expect(result.integrity).toMatch(/^sha\d+-/);
+    },
+    SLOW_TEST_TIMEOUT_MS,
+  );
 
-  it('resolves an unversioned spec to dist-tags.latest', async () => {
-    const registry = await startNpmFixtureRegistry([
-      {
-        scope: 'fixture',
-        name: 'latest-fixture',
-        version: '2.5.0',
-        files: { 'module.yaml': 'id: fm-fixture\nversion: 2.5.0\n' },
-      },
-    ]);
-    registries.push(registry);
-    const projectDir = await projectWithNpmrc(`registry=${registry.url}\n`);
-    const workDir = await freshDir();
+  it(
+    'resolves an unversioned spec to dist-tags.latest',
+    async () => {
+      const registry = await startNpmFixtureRegistry([
+        {
+          scope: 'fixture',
+          name: 'latest-fixture',
+          version: '2.5.0',
+          files: { 'module.yaml': 'id: fm-fixture\nversion: 2.5.0\n' },
+        },
+      ]);
+      registries.push(registry);
+      const projectDir = await projectWithNpmrc(`registry=${registry.url}\n`);
+      const workDir = await freshDir();
 
-    const result = await fetchNpmOverlay('npm:@fixture/latest-fixture', {
-      workDir,
-      cwd: projectDir,
-    });
+      const result = await fetchNpmOverlay('npm:@fixture/latest-fixture', {
+        workDir,
+        cwd: projectDir,
+      });
 
-    expect(result.manifestKind).toBe('module');
-  }, SLOW_TEST_TIMEOUT_MS);
+      expect(result.manifestKind).toBe('module');
+    },
+    SLOW_TEST_TIMEOUT_MS,
+  );
 
-  it('reads and respects a scoped, private-registry .npmrc entry — not the project default registry', async () => {
-    const defaultRegistry = await startNpmFixtureRegistry([]); // hosts nothing at all
-    const privateRegistry = await startNpmFixtureRegistry([
-      {
-        scope: 'priv',
-        name: 'internal-standards',
-        version: '3.0.0',
-        files: { 'overlay.yaml': 'name: internal-standards\nversion: 3.0.0\n' },
-      },
-    ]);
-    registries.push(defaultRegistry, privateRegistry);
-    const projectDir = await projectWithNpmrc(
-      `registry=${defaultRegistry.url}\n@priv:registry=${privateRegistry.url}\n`,
-    );
-    const workDir = await freshDir();
+  it(
+    'reads and respects a scoped, private-registry .npmrc entry — not the project default registry',
+    async () => {
+      const defaultRegistry = await startNpmFixtureRegistry([]); // hosts nothing at all
+      const privateRegistry = await startNpmFixtureRegistry([
+        {
+          scope: 'priv',
+          name: 'internal-standards',
+          version: '3.0.0',
+          files: { 'overlay.yaml': 'name: internal-standards\nversion: 3.0.0\n' },
+        },
+      ]);
+      registries.push(defaultRegistry, privateRegistry);
+      const projectDir = await projectWithNpmrc(
+        `registry=${defaultRegistry.url}\n@priv:registry=${privateRegistry.url}\n`,
+      );
+      const workDir = await freshDir();
 
-    const result = await fetchNpmOverlay('npm:@priv/internal-standards@3.0.0', {
-      workDir,
-      cwd: projectDir,
-    });
+      const result = await fetchNpmOverlay('npm:@priv/internal-standards@3.0.0', {
+        workDir,
+        cwd: projectDir,
+      });
 
-    expect(result.manifestKind).toBe('overlay');
-    // The scoped registry's own request log actually saw this fetch...
-    expect(
-      privateRegistry.requestLog.some(
-        (entry) => decodeURIComponent(entry) === '/@priv/internal-standards',
-      ),
-    ).toBe(true);
-    // ...and the default registry (which hosts nothing) never did — proving the scoped `.npmrc`
-    // entry was read and respected, not silently ignored in favour of the project default.
-    expect(defaultRegistry.requestLog.length).toBe(0);
-  }, SLOW_TEST_TIMEOUT_MS);
+      expect(result.manifestKind).toBe('overlay');
+      // The scoped registry's own request log actually saw this fetch...
+      expect(
+        privateRegistry.requestLog.some(
+          (entry) => decodeURIComponent(entry) === '/@priv/internal-standards',
+        ),
+      ).toBe(true);
+      // ...and the default registry (which hosts nothing) never did — proving the scoped `.npmrc`
+      // entry was read and respected, not silently ignored in favour of the project default.
+      expect(defaultRegistry.requestLog.length).toBe(0);
+    },
+    SLOW_TEST_TIMEOUT_MS,
+  );
 
-  it('fails with a named error when the configured registry does not host the package', async () => {
-    const registry = await startNpmFixtureRegistry([]); // hosts nothing
-    registries.push(registry);
-    const projectDir = await projectWithNpmrc(`registry=${registry.url}\n`);
-    const workDir = await freshDir();
+  it(
+    'fails with a named error when the configured registry does not host the package',
+    async () => {
+      const registry = await startNpmFixtureRegistry([]); // hosts nothing
+      registries.push(registry);
+      const projectDir = await projectWithNpmrc(`registry=${registry.url}\n`);
+      const workDir = await freshDir();
 
-    await expectForgeError(
-      fetchNpmOverlay('npm:@nope/does-not-exist@1.0.0', { workDir, cwd: projectDir }),
-      'CFG-030',
-    );
-  }, SLOW_TEST_TIMEOUT_MS);
+      await expectForgeError(
+        fetchNpmOverlay('npm:@nope/does-not-exist@1.0.0', { workDir, cwd: projectDir }),
+        'CFG-030',
+      );
+    },
+    SLOW_TEST_TIMEOUT_MS,
+  );
 
-  it('refuses a fetched package with no overlay.yaml/module.yaml, leaving no leaked scratch directory', async () => {
-    const registry = await startNpmFixtureRegistry([
-      {
-        scope: 'fixture',
-        name: 'no-manifest',
-        version: '1.0.0',
-        files: { 'README.md': 'not a manifest\n' },
-      },
-    ]);
-    registries.push(registry);
-    const projectDir = await projectWithNpmrc(`registry=${registry.url}\n`);
-    const workDir = await freshDir();
+  it(
+    'refuses a fetched package with no overlay.yaml/module.yaml, leaving no leaked scratch directory',
+    async () => {
+      const registry = await startNpmFixtureRegistry([
+        {
+          scope: 'fixture',
+          name: 'no-manifest',
+          version: '1.0.0',
+          files: { 'README.md': 'not a manifest\n' },
+        },
+      ]);
+      registries.push(registry);
+      const projectDir = await projectWithNpmrc(`registry=${registry.url}\n`);
+      const workDir = await freshDir();
 
-    await expectForgeError(
-      fetchNpmOverlay('npm:@fixture/no-manifest@1.0.0', { workDir, cwd: projectDir }),
-      'CFG-027',
-    );
+      await expectForgeError(
+        fetchNpmOverlay('npm:@fixture/no-manifest@1.0.0', { workDir, cwd: projectDir }),
+        'CFG-027',
+      );
 
-    // No `npm-pack-*`/`npm-content-*` scratch directory left behind under `workDir` — the identical
-    // "clean up on any failure past mkdtemp" discipline the git channel's own gauntlet round
-    // established (`GAUNTLET-LOG.md`'s M11 P1 entry, finding 1).
-    expect(await readdir(workDir)).toEqual([]);
-  }, SLOW_TEST_TIMEOUT_MS);
+      // No `npm-pack-*`/`npm-content-*` scratch directory left behind under `workDir` — the identical
+      // "clean up on any failure past mkdtemp" discipline the git channel's own gauntlet round
+      // established (`GAUNTLET-LOG.md`'s M11 P1 entry, finding 1).
+      expect(await readdir(workDir)).toEqual([]);
+    },
+    SLOW_TEST_TIMEOUT_MS,
+  );
 });
