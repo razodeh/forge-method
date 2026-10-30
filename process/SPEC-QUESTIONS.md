@@ -32831,3 +32831,64 @@ self-inflicted, 100%-reproduced regression in Q373's own landing, consistent wit
 risk-scaled gauntlet practice for this category of change. The floor/seed capacity-persistence
 finding (Decision 3) is disclosed, not fixed, pending an owner decision on real sharding vs. larger
 runners.
+
+
+## Q375 — Q374's own fix validated (heavy-subprocess went from 0/6 to passing on most legs); its
+first full-OS-matrix run exposed 2 more real, previously-latent defects — a genuine Windows
+path-comparison bug (fixed here) and a too-tight timing bound (widened here) — plus 2 more Windows-
+only failures disclosed, not guessed at (owner-directed scope expansion, 2026-10-30)
+
+**What this closes.** Q374's `--no-file-parallelism` fix was pushed (`c8ffa1af`) and validated by a
+fresh run (`41135486573`). The core fix worked: `heavy-subprocess` legs that were 0/6 passing
+before are now passing on 3 of 4 completed non-Windows legs (node24-ubuntu, node24-macos,
+node22-macos all clean), with `Duration` now matching cumulative `tests` time exactly (confirming
+true sequential execution, not the old contention-driven overlap). That run also, for the first
+time this milestone, let both Windows legs of this job run to completion — Windows `floor`/`seed`
+legs have a documented history (`Q372`) of being cancelled by an overall gate before finishing,
+so this is the first real evidence of what these specific tests do on Windows at all. It exposed
+2 more real defects, now fixed, plus 2 more disclosed, not fixed.
+
+**Decision 1 — FIXED: a real Windows path-comparison bug in the tsconfig-coverage check.**
+`test/workspace-floor-heavy-subprocess.test.ts`'s "has no file outside the tsconfig project" test
+failed identically on both completed Windows legs, reporting ~1586 files "outside the tsconfig
+project" — essentially the whole repo. Traced to `line.startsWith(repoRoot)`, a naive absolute-
+path string-prefix check gating which `tsc --listFiles` output lines get added to the `listed` Set.
+Confirmed the exact failure class directly with a synthetic `path.win32` check (not guessed at):
+a `tsc`-style line using forward slashes against a backslash-built `repoRoot`, and a lowercase-
+drive-letter line against an uppercase `repoRoot`, both fail the old check and both correctly
+match under `path.relative` + `path.isAbsolute`, which resolves both sides through Node's own
+platform-aware path parsing rather than raw string comparison. Fixed by replacing the check with
+exactly that — a drop-in replacement, verified to behave identically on POSIX (where the mismatch
+cannot occur) via a real local run.
+
+**Decision 2 — FIXED: `bin.test.ts`'s own lock-poll bound was genuinely too tight, independent of
+the file-parallelism contention Q374 already fixed.** The "reports the real pid in `forge pause`/
+`forge abort`" test's bounded wait for a child's lock file (100 attempts x 20ms, 2s total) still
+missed on 3 of 6 completed non-Windows legs and both completed Windows legs in this same run, even
+with nothing else to contend with sequentially. This is real evidence the bound itself, not only
+the earlier concentrated contention, was marginal under genuine CI conditions. Widened to 750
+attempts (15s total) — a change that can only make the test MORE lenient toward real timing, never
+less correct (it still requires the real lock to genuinely appear), comfortably inside the suite's
+own 60s default `testTimeout`.
+
+**Decision 3 — disclosed, deliberately NOT fixed: 2 more Windows-only `bin.test.ts` failures with
+no verified root cause yet.** The same Windows legs also failed `forge test run --json` (exit 1
+instead of 0 against "a real, clean vitest fixture") and `forge test run --timeout-ms` (its own
+killed-command problem list missing a "timed out" message) — both real, both new to this
+milestone's observed history, neither diagnosed to a confirmed cause the way Decisions 1 and 2
+were. Either could be the same timing-margin fragility class, or a genuine Windows-specific
+behavioral difference in the spawned nested vitest run or its own timeout-kill detection — and
+this session has no Windows machine to reproduce directly. Consistent with this project's own
+real-repro-before-fix discipline (the opposite of what produced Decision 1's bug in the first
+place — a plausible-sounding assumption never checked against real behavior), left open rather
+than guessed at. Flagged for a dedicated follow-up once a real Windows repro is available.
+
+**Verification.** Both fixes verified locally (POSIX): the tsconfig test passes unchanged; the
+widened lock-poll test passes in 2.16s. `pnpm typecheck`: 21/21 clean. `eslint`/`prettier --check`
+on both touched files: clean. Neither fix touches production code.
+
+**Gauntlet:** none — landed directly (2 test files, no production code, each fix independently
+verified against a concrete, reproduced failure mode — the Windows path bug via a synthetic
+`path.win32` repro, the timing bound via real CI failure-rate evidence), consistent with this
+session's risk-scaled gauntlet practice for this category of change. Decision 3's 2 Windows-only
+failures remain open and disclosed, not silently dropped.
