@@ -79,6 +79,53 @@ jobs:
           restore-keys: |
             turbo-${{ runner.os }}-node${{ matrix.node }}-tz${{ matrix.tz }}-
       - run: pnpm install --frozen-lockfile
+      # `test/commands/loop/test/reporter.test.ts`'s own `runAndNormalize — python (real pytest)`
+      # describe block runs a real, bare `pytest -q` against real fixtures (never a mocked test-tool
+      # output, the same real-subprocess convention this file's own vitest/tsc steps already use) --
+      # CI had no Python/pytest provisioning at all, confirmed directly from run `40886563796`'s own
+      # logs, which is a gap in this workflow, not in the test.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest
+      # `packages/cli/test/commands/dispatch/init.test.ts` runs the real `@forge/adapter-claude-code`
+      # preflight (`probeCliVersion`, `adapter-claude-code/src/version.ts`) through a real `forge init`
+      # -- confirmed from the same CI run's logs to fail with `ENV-004` because `execa('claude',
+      # ['--version'])` (`adapter-claude-code/src/process.ts`) finds no real `claude` binary anywhere on
+      # CI's PATH; `withFakeCredential`'s own `ANTHROPIC_API_KEY` only satisfies the credential half of
+      # preflight, not the CLI-version half. A trivial stub that only answers `--version` is enough: no
+      # other real invocation of `claude` happens in this job, and every test that specifically exercises
+      # "claude is genuinely absent" isolates its own empty `PATH` fixture rather than relying on the
+      # ambient one this step extends (`adapter-claude-code/test/{preflight,version,cli/spawn}.test.ts`).
+      # `shell: bash` (Git Bash on `windows-latest`) keeps this one step identical across the whole OS
+      # matrix, writing a POSIX script almost everywhere and a `.cmd` shim only where Windows' own
+      # process creation actually needs one (an extension-less shebang script is not executable there).
+      - name: Install a stub claude CLI so adapter-claude-code's real preflight check passes
+        shell: bash
+        run: |
+          stub_dir="$RUNNER_TEMP/forge-claude-stub"
+          mkdir -p "$stub_dir"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cat > "$stub_dir/claude.cmd" <<'EOF'
+          @echo off
+          if "%~1"=="--version" goto version
+          exit /b 1
+          :version
+          echo 2.99.99 (forge-ci-stub)
+          exit /b 0
+          EOF
+          else
+            cat > "$stub_dir/claude" <<'EOF'
+          #!/bin/sh
+          if [ "$1" = "--version" ]; then
+            echo "2.99.99 (forge-ci-stub)"
+            exit 0
+          fi
+          exit 1
+          EOF
+            chmod +x "$stub_dir/claude"
+          fi
+          echo "$stub_dir" >> "$GITHUB_PATH"
       - run: pnpm build
       - run: pnpm typecheck
       # Real root cause of the macOS legs' own failure, confirmed from the actual job log (not
@@ -123,6 +170,39 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # See the `floor` job's own identically-named steps above for why both of these exist: a real
+      # `pytest -q` (`reporter.test.ts`) and a real `claude --version` (`dispatch/init.test.ts`'s own
+      # preflight) each need something this job's PATH does not otherwise provide.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest
+      - name: Install a stub claude CLI so adapter-claude-code's real preflight check passes
+        shell: bash
+        run: |
+          stub_dir="$RUNNER_TEMP/forge-claude-stub"
+          mkdir -p "$stub_dir"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cat > "$stub_dir/claude.cmd" <<'EOF'
+          @echo off
+          if "%~1"=="--version" goto version
+          exit /b 1
+          :version
+          echo 2.99.99 (forge-ci-stub)
+          exit /b 0
+          EOF
+          else
+            cat > "$stub_dir/claude" <<'EOF'
+          #!/bin/sh
+          if [ "$1" = "--version" ]; then
+            echo "2.99.99 (forge-ci-stub)"
+            exit 0
+          fi
+          exit 1
+          EOF
+            chmod +x "$stub_dir/claude"
+          fi
+          echo "$stub_dir" >> "$GITHUB_PATH"
       # QUALITY-BAR.md R10: a suite whose result depends on file or test ordering is not
       # deterministic. Shuffling under a fixed seed makes an order dependency fail here rather than
       # intermittently on someone's branch.
