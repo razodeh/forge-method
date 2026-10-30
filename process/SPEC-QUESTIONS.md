@@ -32736,3 +32736,98 @@ given this piece's CI-infrastructure-wide blast radius) — both returned "land 
 Both real findings (the silent-skip regression, the documentation loss) were fixed directly before
 landing, verified, and folded into the landed commit; the one remaining disclosed gap (Windows
 timing margin) was left open, disclosed, not silently dropped.
+
+
+## Q374 — Q373's own first real CI validation found a self-inflicted regression in the new
+`heavy-subprocess` job (fixed here) and confirmed, rather than resolved, Q372's deeper floor/seed
+capacity problem (owner-directed scope expansion, 2026-10-30)
+
+**What this closes.** The 4 commits landed since Q371 (kb/db FTS5 fix, Q372 docs, the
+`heavy-subprocess` isolation fix, Q373 docs) were pushed to `origin/next` (`897d6380..f3a6b94c`)
+for the first real CI validation since Q373 landed. The run (`41127527425`) found two distinct
+things, one a real defect in that very landing, the other a confirmation of an already-disclosed,
+deeper problem.
+
+**Decision 1 — FIXED HERE: `test:heavy-subprocess` concentrated exactly the contention it was
+built to relieve.** Every one of 6 completed `heavy-subprocess` legs (node20/22/24-ubuntu,
+node20/24-macos, node20-windows) failed `bin.test.ts`'s own "reports the real pid in `forge
+pause`/`forge abort`" test identically: a bounded, real poll (100 attempts x 20ms, 2s total) for a
+backgrounded child's lock file to appear never saw it. Root cause, traced directly: `test:heavy-
+subprocess` (`package.json`) never got `--no-file-parallelism`, unlike `test:lock-stress`'s own
+established precedent. With only 3 files left in this job (`bin.test.ts`, `run-inputs-
+compile.test.ts`, `workspace-floor-heavy-subprocess.test.ts`) and nothing else to interleave with,
+vitest's default file-parallelism scheduled all 3 — each spawning its own real, heavy subprocesses
+— fully concurrently against each other for nearly their whole duration, on a 3-4 vCPU runner.
+Previously, as part of the ~754-file main suite, this same concentration essentially never
+happened: file-level parallelism there drew from hundreds of mostly-cheap files, naturally diluting
+real-subprocess load rather than stacking 3 of the heaviest files on top of each other from the
+first moment. That starved the slow-workflow child's own real startup/lock-acquisition path enough
+to miss its 2-second budget deterministically — despite passing locally (292/292, confirmed in
+Q373's own verification) where more CPU cores absorb the same concurrency without issue. A real
+instance of the already-known dev-shell-vs-headless verification gap: a clean local run never
+exercised the actual CI resource ceiling this job runs under, because the gap is about CPU
+contention breadth, not an environment variable.
+
+Fixed by adding `--no-file-parallelism` to `test:heavy-subprocess`, matching `test:lock-stress`
+exactly — a one-line, scheduling-only change; zero test or production code touched.
+
+**Decision 2 — the fix has a real, measured timeout cost, resized against real data, not guessed.**
+Forcing these 3 files sequential moves the job's wall-clock from roughly the slowest single file's
+duration to roughly their sum. Real per-leg cumulative test-time samples from that same failed run
+(vitest's own reported `tests` duration, summed across the 3 concurrently-run files, still under
+the OLD un-fixed script): 1673s (node22-ubuntu), 2680s (node24-ubuntu), 3676s (node20-ubuntu),
+3613s (node20-macos) — up to 61.3 minutes under that run's own contention. The real Windows sample
+was worse and directly confirmed the gap Q373 had already disclosed but left open: node20-windows
+hit 4487s (74.8 min) of cumulative test time with 4 real failures (the lock-poll one plus 2 more
+real `bin.test.ts` cases plus 1 in `workspace-floor-heavy-subprocess.test.ts`), while a second
+Windows leg (node24-windows) ran out its entire old 40-minute `timeout-minutes` budget and was
+killed outright (`started_at`→`completed_at` ≈ 40m9s) without even completing. Since sequential
+execution removes the cross-file contention layer but not Windows's own inherent, well-documented
+higher per-spawn `child_process` overhead, the 74.8-minute figure is treated as a conservative floor
+for sequential Windows timing, not assumed to shrink. Raised `timeout-minutes` from 40 to 120 (above
+`floor`'s own 90-minute stopgap value, the same "generous, not precise, revisit once a real sample
+exists" reasoning that already justifies `seed`'s 180 relative to `floor`'s 90) — comfortable margin
+over the 74.8-minute figure plus install/build overhead, while disclosing directly in `ci.yml`'s own
+comment that no real sequential-execution sample exists yet for any OS, since today's run entirely
+predates this fix.
+
+**Decision 3 — NOT a new defect, a confirmation: `floor`/`seed`'s own capacity-driven flaky-test
+cluster persists, because this piece could never have fixed it.** The same run's `floor`/`seed` jobs
+(12, 12, 11, and 7 failed files out of 754, varying per leg) showed the identical cluster of
+recurring failures Q372 already catalogued and disclosed as "presumed casualties of the [capacity]
+problem, not independently diagnosed" — `test/lint-rules.test.ts` (5 sub-cases), `confined-
+command.test.ts`, `fetch-npm.test.ts`'s `fetchNpmOverlay` block, `stream-view.test.tsx`/
+`specs.test.tsx`/`kb.test.tsx` (TUI), `run-doctor.test.ts`, `http-server.test.ts`, `observe.test.ts`,
+`coverage.test.ts`, `gate-integration.test.ts`, `reporter.test.ts`, `bin-exempt.test.ts`, `bin-
+binding-hunks-mutation.test.ts`, `command-steps.test.ts`, `intake-workflow.test.ts`, `network-
+guard.test.ts`, `scripted-binary.test.ts`, plus a different `command-steps.test.ts` timeout. No two
+legs shared an identical failure set, but membership overlapped heavily — the classic signature of
+genuine resource-contention-driven flakiness, not a single systematic cause (unlike Decision 1's
+100%-reproducible single assertion). This is the real answer to the question Q372 left open
+("expected to be re-assessed once the isolation fix lands and a fresh CI run shows what, if
+anything, still fails"): removing `floor`/`seed`'s 3 heaviest files shortens their total `pnpm test`
+wall-clock by the already-measured ~35-40%, but does NOT reduce their *peak* per-core contention at
+any given moment, because vitest's fork-pool width is capped by CPU count regardless of how many
+files are queued behind it — shortening the queue doesn't widen the pool. This was always a
+duration fix, never a peak-contention fix; `Q370`'s own un-acted-on critic warning already pointed
+at the actual remaining options (real sharding, which reduces concurrent fork count rather than
+total duration, or bigger runners) — neither attempted by this piece or any piece to date. Not
+fixed here; this is an owner-level decision (real cost: either CI-minutes spend on larger hosted
+runners, or a substantial new sharding redesign), not something to pick unilaterally.
+
+**Also noted, procedural.** The doomed run (`41127527425`) was cancelled once its `heavy-subprocess`
+and several `floor`/`seed` legs had already failed deterministically and no further diagnostic value
+remained in letting the rest run out — freeing this personal account's concurrent-job capacity for
+the next, fixed push rather than letting ~15 more legs run to completion for no benefit.
+
+**Verification.** Real `pnpm test:heavy-subprocess` (sequential, exactly as CI will now run it)
+locally: 292/292 passing, 1118.01s (18.6 min) with zero local contention — a sanity floor, not a
+CI-equivalent sample (CI's own sequential timing remains unmeasured until the next real run).
+`pnpm typecheck`: 21/21 clean. YAML parses cleanly. `prettier --check` on both touched files: clean.
+
+**Gauntlet:** none — landed directly (one `package.json` script flag, one `.github/workflows/
+ci.yml` timeout/comment update; no production or test-file code touched), fixing a same-day,
+self-inflicted, 100%-reproduced regression in Q373's own landing, consistent with this session's
+risk-scaled gauntlet practice for this category of change. The floor/seed capacity-persistence
+finding (Decision 3) is disclosed, not fixed, pending an owner decision on real sharding vs. larger
+runners.
