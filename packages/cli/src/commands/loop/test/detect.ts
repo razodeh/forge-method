@@ -138,12 +138,18 @@ function mochaCommand(): StructuredTestCommand {
 }
 
 function nodeTestCommand(): StructuredTestCommand {
+  // `--test-reporter=tap` is passed explicitly on every variant here, never left to Node's own
+  // default-reporter auto-selection: a real investigation reproduced directly that Node 24 changed
+  // what that default picks for a non-TTY stdout -- Node 22 still defaults to TAP (what `format:
+  // 'tap'` below assumes), but Node 24 defaults to the human-readable "spec" reporter instead, which
+  // this piece's own TAP parser cannot read at all. Supported across this repo's targeted Node range
+  // (`specs/02` §2.1, >=20.10) -- `--test-reporter` shipped well before 20.10 (Node 18.17.0/19.9.0).
   return {
-    run: 'node --test',
+    run: 'node --test --test-reporter=tap',
     output: { source: 'stdout' },
     format: 'tap',
-    scope: 'node --test {files}',
-    filter: 'node --test --test-name-pattern={name:regex}',
+    scope: 'node --test --test-reporter=tap {files}',
+    filter: 'node --test --test-reporter=tap --test-name-pattern={name:regex}',
   };
 }
 

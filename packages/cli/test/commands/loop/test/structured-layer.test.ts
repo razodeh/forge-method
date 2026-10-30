@@ -47,7 +47,7 @@ test('AC-014-3 fails on purpose', () => { assert.strictEqual(1, 2); });
       'utf8',
     );
     const command: StructuredTestCommand = {
-      run: `${process.execPath} --test sample.test.js`,
+      run: `${process.execPath} --test --test-reporter=tap sample.test.js`,
       output: { source: 'stdout' },
       format: 'tap',
     };

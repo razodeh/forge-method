@@ -70,7 +70,18 @@ shell operator), never in the command text you report.
 - **Conventional invocation, conventional output.** If the runner's own real invocation is already
   one of your granted patterns AND its output already fits one of FORGE's built-in formats
   (`junit-xml`, `tap`, `forge-json`, `vitest-json`, `jest-json`, `go-test-json`), propose `run` as
-  that invocation directly — no translator needed.
+  that invocation directly — no translator needed. **Node's own built-in `node --test` runner is a
+  real exception to "propose it directly, unmodified": always propose `--test-reporter=tap` as an
+  explicit flag (`run: "node --test --test-reporter=tap"`, and the same flag on any `scope`/`filter`
+  variant you give), never the bare `node --test` with no reporter named.** Node's own TAP output is
+  real and `format: 'tap'` genuinely fits it, but which reporter prints by default when nothing is
+  named is Node's own version-dependent, auto-detected choice, not a fixed contract — confirmed
+  live, side by side, same command, only the Node binary changed: Node 22 still defaults to TAP
+  against a non-TTY stdout, but Node 24 changed that default to its human-readable "spec" reporter
+  instead (✖/ℹ symbols, no `ok`/`not ok` lines), which FORGE's TAP parser cannot read at all — the
+  run would then report nothing parseable and never be noticed as broken until a user is already on
+  Node 24. Naming `--test-reporter=tap` explicitly pins the real output shape regardless of Node
+  version or TTY-ness, and is supported across this project's own targeted Node range.
 - **Conventional invocation, unfamiliar output.** If the runner's own real invocation is already one
   of your granted patterns but its output does not fit a built-in format, propose `run` as that same
   real invocation, and write a translator script, committed to the project at exactly

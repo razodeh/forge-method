@@ -113,7 +113,11 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
       'utf8',
     );
     const result = await runTranslatorProof({
-      command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+      command: {
+        run: `${process.execPath} --test --test-reporter=tap`,
+        output: { source: 'stdout' },
+        format: 'tap',
+      },
       cwd: dir,
       paths: new ProjectPaths(dir),
       createTempPath: () => path.join(dir, 'tmp-output-fresh.raw'),

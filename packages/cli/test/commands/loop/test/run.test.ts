@@ -100,7 +100,13 @@ test('AC-920-2 also passes', () => { assert.ok(true); });
       'utf8',
     );
     const result = await testRun(
-      ctx(dir, { unit: { run: `${NODE} --test`, output: { source: 'stdout' }, format: 'tap' } }),
+      ctx(dir, {
+        unit: {
+          run: `${NODE} --test --test-reporter=tap`,
+          output: { source: 'stdout' },
+          format: 'tap',
+        },
+      }),
       {},
       UNUSED_TEMP_PATH,
     );
@@ -132,10 +138,10 @@ test('AC-920-2 also passes', () => { assert.ok(true); });
     const result = await testRun(
       ctx(dir, {
         unit: {
-          run: `${NODE} --test`,
+          run: `${NODE} --test --test-reporter=tap`,
           output: { source: 'stdout' },
           format: 'tap',
-          scope: `${NODE} --test {files}`,
+          scope: `${NODE} --test --test-reporter=tap {files}`,
         },
       }),
       { files: ['a.test.js'] },
@@ -161,7 +167,11 @@ test('AC-920-2 also passes', () => { assert.ok(true); });
     );
     const result = await testRun(
       ctx(dir, {
-        unit: { run: `${NODE} --test`, output: { source: 'stdout' }, format: 'tap' },
+        unit: {
+          run: `${NODE} --test --test-reporter=tap`,
+          output: { source: 'stdout' },
+          format: 'tap',
+        },
       }),
       { files: ['a.test.js'] },
       UNUSED_TEMP_PATH,
@@ -193,7 +203,7 @@ test('AC-923-1 flakes on the first real invocation only', () => { assert.ok(coun
     const result = await testRun(
       ctx(dir, {
         unit: {
-          run: `${NODE} --test`,
+          run: `${NODE} --test --test-reporter=tap`,
           output: { source: 'stdout' },
           format: 'tap',
           // `{name:regex}` is used BARE, never wrapped in an extra pair of quotes: the placeholder
@@ -203,7 +213,7 @@ test('AC-923-1 flakes on the first real invocation only', () => { assert.ok(coun
           // spaces into several stray positional arguments. A critic round found exactly that
           // mistake in an earlier draft of this fixture: it still happened to "pass" only because
           // the resulting truncated, unanchored pattern coincidentally still matched this one test.
-          filter: `${NODE} --test --test-name-pattern={name:regex} flakes.test.js`,
+          filter: `${NODE} --test --test-reporter=tap --test-name-pattern={name:regex} flakes.test.js`,
         },
       }),
       {},
@@ -229,7 +239,13 @@ test('AC-923-1 flakes on the first real invocation only', () => { assert.ok(coun
       'utf8',
     );
     const result = await testRun(
-      ctx(dir, { unit: { run: `${NODE} --test`, output: { source: 'stdout' }, format: 'tap' } }),
+      ctx(dir, {
+        unit: {
+          run: `${NODE} --test --test-reporter=tap`,
+          output: { source: 'stdout' },
+          format: 'tap',
+        },
+      }),
       {},
       UNUSED_TEMP_PATH,
     );

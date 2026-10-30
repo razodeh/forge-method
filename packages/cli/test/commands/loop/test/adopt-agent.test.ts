@@ -131,8 +131,16 @@ async function commitRealFile(dir: string, relativePath: string, content: string
 // interpreter path, which matches no `ADOPT_TESTS_EXEC_PATTERNS` entry (`node --test*` is anchored to
 // the literal word `node`). `node` resolves on `PATH` in this test environment the identical way the
 // test runner's own `node scripts/run-tests.mjs` invocation already did.
+//
+// `--test-reporter=tap` is pinned explicitly -- a real, side-by-side repro (identical command, only
+// the Node binary changed) confirmed Node's own default reporter for a non-TTY stdout is version-
+// dependent: Node 22 still defaults to TAP, but Node 24 defaults to the human-readable "spec"
+// reporter instead (no `ok`/`not ok` lines), which this suite's real `node --test` subprocess runs
+// would otherwise feed straight into a TAP parser expecting TAP. Without the explicit flag here,
+// every one of this file's real, live `node --test` runs silently breaks on Node 24, the identical
+// gap `detect.ts`'s own `nodeTestCommand()` had.
 const NODE_TEST_COMMAND = {
-  run: 'node --test',
+  run: 'node --test --test-reporter=tap',
   output: { source: 'stdout' as const },
   format: 'tap' as const,
 };

@@ -78,7 +78,7 @@ describe('detectTestRunners -- JavaScript/TypeScript, package.json (specs/22 M17
     expect(candidate?.command).toMatchObject({ run: 'npx mocha --reporter tap', format: 'tap' });
   });
 
-  it('a "scripts.test" that already runs "node --test" proposes it directly, needing no dependency', async () => {
+  it('a "scripts.test" that already runs "node --test" proposes it with --test-reporter=tap pinned explicitly, needing no dependency', async () => {
     const dir = await tempDir();
     await write(
       dir,
@@ -87,7 +87,14 @@ describe('detectTestRunners -- JavaScript/TypeScript, package.json (specs/22 M17
     );
     const [candidate] = await detectTestRunners(new ProjectPaths(dir));
     expect(candidate).toMatchObject({ runner: 'node-test', confident: true });
-    expect(candidate?.command).toMatchObject({ run: 'node --test', format: 'tap' });
+    // `--test-reporter=tap` is pinned explicitly, never left to Node's own default-reporter
+    // auto-selection -- a real investigation confirmed live that this default is version-dependent
+    // (Node 22 defaults to TAP against a non-TTY stdout; Node 24 defaults to the human-readable
+    // "spec" reporter instead), which this repo's own TAP parser cannot read at all.
+    expect(candidate?.command).toMatchObject({
+      run: 'node --test --test-reporter=tap',
+      format: 'tap',
+    });
   });
 
   it('vitest wins over jest when both are declared -- the first checked, deterministically', async () => {

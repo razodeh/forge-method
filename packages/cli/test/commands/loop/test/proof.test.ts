@@ -99,7 +99,7 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
       'utf8',
     );
     const command: StructuredTestCommand = {
-      run: `${process.execPath} --test`,
+      run: `${process.execPath} --test --test-reporter=tap`,
       output: { source: 'stdout' },
       format: 'tap',
     };
@@ -144,7 +144,7 @@ describe('runTranslatorProof -- check 1, schema validity (specs/22 M17 P6)', () 
       'utf8',
     );
     const command: StructuredTestCommand = {
-      run: `${process.execPath} --test`,
+      run: `${process.execPath} --test --test-reporter=tap`,
       output: { source: 'stdout' },
       format: 'forge-json', // Real output is TAP, not forge-json -- a real mismatch, not contrived.
     };
@@ -185,7 +185,7 @@ ${body}
 function translatorCommand(runExitsNonZeroOnProbe: boolean): StructuredTestCommand {
   return {
     run: runExitsNonZeroOnProbe
-      ? `${process.execPath} --test`
+      ? `${process.execPath} --test --test-reporter=tap`
       : `${process.execPath} -e "process.stdout.write('ran'); process.exit(0)"`,
     output: { source: 'stdout' },
     format: 'tap',
@@ -375,7 +375,11 @@ process.stdout.write(JSON.stringify({
     await baselineTestFile(dir);
     const probeWithFile: InjectedProbe = { ...REAL_PROBE, expectedFile: 'does/not/matter.js' };
     const result = await runTranslatorProof({
-      command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+      command: {
+        run: `${process.execPath} --test --test-reporter=tap`,
+        output: { source: 'stdout' },
+        format: 'tap',
+      },
       cwd: dir,
       paths: new ProjectPaths(dir),
       createTempPath: makeCreateTempPath(dir),
@@ -670,7 +674,11 @@ describe('runTranslatorProof -- the probe is refused, never silently overwritten
     );
     await expect(
       runTranslatorProof({
-        command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+        command: {
+          run: `${process.execPath} --test --test-reporter=tap`,
+          output: { source: 'stdout' },
+          format: 'tap',
+        },
         cwd: dir,
         paths: new ProjectPaths(dir),
         createTempPath: makeCreateTempPath(dir),
@@ -713,7 +721,11 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
       'utf8',
     );
     const result = await runTranslatorProof({
-      command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+      command: {
+        run: `${process.execPath} --test --test-reporter=tap`,
+        output: { source: 'stdout' },
+        format: 'tap',
+      },
       cwd: dir,
       paths: new ProjectPaths(dir),
       createTempPath: makeCreateTempPath(dir),
@@ -744,7 +756,11 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
 `,
     );
     const result = await runTranslatorProof({
-      command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+      command: {
+        run: `${process.execPath} --test --test-reporter=tap`,
+        output: { source: 'stdout' },
+        format: 'tap',
+      },
       cwd: dir,
       paths: new ProjectPaths(dir),
       createTempPath: makeCreateTempPath(dir),
@@ -782,7 +798,11 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
     );
     await expect(
       runTranslatorProof({
-        command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+        command: {
+          run: `${process.execPath} --test --test-reporter=tap`,
+          output: { source: 'stdout' },
+          format: 'tap',
+        },
         cwd: dir,
         paths: new ProjectPaths(dir),
         createTempPath: makeCreateTempPath(dir),
@@ -823,7 +843,11 @@ test('baseline passes', () => { assert.strictEqual(1 + 1, 2); });
     await mkdir(path.join(dir, 'probe.test.js'));
     await expect(
       runTranslatorProof({
-        command: { run: `${process.execPath} --test`, output: { source: 'stdout' }, format: 'tap' },
+        command: {
+          run: `${process.execPath} --test --test-reporter=tap`,
+          output: { source: 'stdout' },
+          format: 'tap',
+        },
         cwd: dir,
         paths: new ProjectPaths(dir),
         createTempPath: makeCreateTempPath(dir),
