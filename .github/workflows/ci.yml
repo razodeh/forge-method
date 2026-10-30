@@ -209,6 +209,116 @@ jobs:
       - run: pnpm test -- --sequence.shuffle --sequence.seed 20260304
       - run: pnpm test -- --sequence.shuffle --sequence.seed 99999999
 
+  # `floor`/`seed`'s own `pnpm test` (above) ALSO excludes 3 more files -- packages/cli/test/
+  # bin.test.ts, test/run-inputs-compile.test.ts, and the new test/workspace-floor-heavy-subprocess.
+  # test.ts (split out of test/workspace-floor.test.ts's own 3 real-subprocess tests) -- moved into
+  # the dedicated `heavy-subprocess` job below, run with `pnpm test:heavy-subprocess`. This is a
+  # SEPARATE fix from `lock-stress`: those 5 files' own problem was cross-process lock *correctness*
+  # under real multi-process contention; these 3 files' problem is plain CI-SCALE SCHEDULING CAPACITY
+  # -- each is independently one of the heaviest handful of files in the whole ~761-file suite (real
+  # evidence from 3 independently-contended CI job logs for run `41063683416`: bin.test.ts alone
+  # 1276-1463s across node22/24-ubuntu and node20-macos; test/run-inputs-compile.test.ts 511.8-927.6s;
+  # the original, unsplit workspace-floor.test.ts 618.2-890.6s), together accounting for roughly a
+  # third of the suite's total cumulative file-level duration in that run. `SPEC-QUESTIONS.md` Q370
+  # Decision 4 already disclosed that a 3rd timeout bump on workspace-floor.test.ts's own 3 heaviest
+  # tests "mirrors a broader, repeating pattern... that should eventually be replaced by the already-
+  # disclosed real fix (sharding `pnpm test` across jobs), not papered over indefinitely with ever-
+  # larger margins" -- this is that fix, applied with the same real-measurement discipline `Q365`
+  # Decision 3 already established: `fetch-npm.test.ts`'s own `fetchNpmOverlay` describe block (next
+  # heaviest candidate by the same evidence) was measured, not assumed, and found to drop
+  # `packages/extensions/src/install/fetch-npm.ts` (a `CRITICAL_PACKAGES` module) to 64-80% across all
+  # 4 coverage metrics against a 85-90% hard floor if isolated -- unlike these 3 files, it has no
+  # "ordinary, ordinary-cost sibling test of the same function" to fall back on (every one of its own
+  # tests needs the real npm-pack-plus-HTTP-registry round trip), so it is deliberately left in the
+  # main run, NOT isolated this round.
+  #
+  # Plain vitest `--shard` was rejected for the identical reason `Q365` Decision 1 already rejected it
+  # for the lock-stress files: a real simulation of this repo's actual alphabetically-sorted file set
+  # at shard count=2 put the `packages/cli/test/bin-*.test.ts` family (several more of this table's own
+  # other heavy files) in the same shard as `bin.test.ts` itself (they sort adjacently), a 73% size
+  # imbalance between the two shards -- sharding only relocates imbalance when heavy files cluster, it
+  # does not fix it.
+  heavy-subprocess:
+    name: heavy-subprocess (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Mirrors `floor`'s own full (os x node) matrix, deliberately NOT narrowed the way `lock-stress`'s
+    # own matrix is (Decision 2 there: 2 OSes, node 22 only). `lock-stress` could narrow because the
+    # underlying lock LOGIC was already established cross-platform-correct by 7+ critic rounds before
+    # that job existed -- there is no equivalent evidence here. These 3 files exercise ordinary real
+    # CLI-subprocess dispatch (`bin.test.ts`), real workflow compilation via the real launcher
+    # (`run-inputs-compile.test.ts`), and real `tsc`/`vitest list` subprocess shelling (`workspace-
+    # floor-heavy-subprocess.test.ts`) -- exactly the class of code this milestone's own history shows
+    # IS node- and OS-sensitive (`SPEC-QUESTIONS.md` Q368's Node-24 TAP-reporter regression; Q340/Q353's
+    # own Windows-only spawn/path regressions), so dropping node or OS breadth here would be a real,
+    # unjustified new gap, not a narrow, evidence-backed one. The Kathmandu TZ variant is not
+    # duplicated here: nothing in these 3 files is TZ-sensitive, unlike the determinism-focused tests
+    # that variant exists for in `floor`.
+    #
+    # Disclosed cost tradeoff: this adds 9 more concurrent jobs on top of `floor`'s 10 + `seed`'s 1 +
+    # `lock-stress`'s 2 (13 already), which may exceed this personal account's default concurrent-job
+    # ceiling and cause some legs to queue rather than run immediately -- slower wall-clock CI, not a
+    # correctness problem (`concurrency.cancel-in-progress` above still dedupes superseded pushes).
+    # Not resolved here; flagged for the critic round and, if it bites in practice, a future follow-up
+    # (e.g. dropping one node version) rather than silently narrowed now on no real queuing evidence.
+    #
+    # Disclosed evidentiary gap on `timeout-minutes` below: the 1276-1463s real bin.test.ts samples it
+    # was sized against (see the comment above this job) come from node22/24-ubuntu and node20-macos
+    # legs only -- none from a real `windows-latest` run. Node's own `child_process` spawn path on
+    # Windows is known to carry materially higher per-spawn overhead than POSIX fork/exec, and
+    # bin.test.ts does 196 real subprocess dispatches, so this margin is not evidence-backed on that
+    # OS the same way it is on the other two. Not resolved here (no real Windows sample exists yet for
+    # this specific job); flagged for the critic round and a real Windows timing sample before
+    # concluding the margin is actually safe there.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # See the `floor` job's own identically-named step for why this exists: bin.test.ts's own real
+      # "forge init, real preflight" end-to-end test (`REAL_ADAPTER_CLI`, `packages/cli/test/
+      # bin.test.ts`) needs a `claude` binary genuinely resolvable on PATH to run for real rather than
+      # self-skip -- moving bin.test.ts into this job without this step would silently downgrade that
+      # test from "runs for real" (as it does today on `floor`) to "always skipped" on every leg here,
+      # with CI staying green either way. `pytest`/`setup-python` is NOT needed here: none of this
+      # job's 3 files shell out to pytest.
+      - name: Install a stub claude CLI so adapter-claude-code's real preflight check passes
+        shell: bash
+        run: |
+          stub_dir="$RUNNER_TEMP/forge-claude-stub"
+          mkdir -p "$stub_dir"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cat > "$stub_dir/claude.cmd" <<'EOF'
+          @echo off
+          if "%~1"=="--version" goto version
+          exit /b 1
+          :version
+          echo 2.99.99 (forge-ci-stub)
+          exit /b 0
+          EOF
+          else
+            cat > "$stub_dir/claude" <<'EOF'
+          #!/bin/sh
+          if [ "$1" = "--version" ]; then
+            echo "2.99.99 (forge-ci-stub)"
+            exit 0
+          fi
+          exit 1
+          EOF
+            chmod +x "$stub_dir/claude"
+          fi
+          echo "$stub_dir" >> "$GITHUB_PATH"
+      - run: pnpm build
+      - run: pnpm test:heavy-subprocess
+
   # `floor`/`seed`'s own `pnpm test` (above) now excludes 5 files that each spawn a real,
   # multi-process stress test (up to 28 real child OS processes) to exercise a cross-process file
   # lock's own correctness: packages/cli/test/commands/kb-disclosures-lock-stress.test.ts,
@@ -275,10 +385,10 @@ jobs:
   ci-ok:
     name: ci
     if: always()
-    needs: [floor, seed, lock-stress]
+    needs: [floor, seed, lock-stress, heavy-subprocess]
     runs-on: ubuntu-latest
     steps:
       # `skipped` must not count as success: a floor job that never ran would otherwise make the
       # single required status check green and open an unguarded path to main.
       - run: |
-          [ "${{ join(needs.*.result, ',') }}" = "success,success,success" ]
+          [ "${{ join(needs.*.result, ',') }}" = "success,success,success,success" ]

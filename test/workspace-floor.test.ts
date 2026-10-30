@@ -5,302 +5,39 @@
  * exists because a plausible, well-intentioned change would otherwise silently disable a guarantee
  * the rest of the suite assumes.
  *
+ * This file's own 3 real-subprocess-heavy tests (`vitest list` twice, `tsc --listFiles` once per
+ * tsconfig) now live in `test/workspace-floor-heavy-subprocess.test.ts`, split out for the identical
+ * "CI capacity, not lock correctness" reason `SPEC-QUESTIONS.md` Q365 already isolated 5 real
+ * multi-process lock-stress files for: run together with the other ~750 files in `vitest.config.ts`'s
+ * single shared fork pool, these 3 tests' own real elapsed time repeatedly outpaced even a generously
+ * widened timeout under genuine CI contention (`Q370` Decision 4's own disclosed note that a 3rd
+ * timeout bump "mirrors a broader, repeating pattern... that should eventually be replaced by the
+ * already-disclosed real fix," not papered over indefinitely). Every OTHER test in this file —
+ * including `findTestFiles`'s own real filesystem walk, which neither shells out nor is itself
+ * heavyweight — stays here, in the main, coverage-measured run: this file imports no `src/**` module
+ * of any workspace package at all (it only walks the real filesystem and shells out to `node`/`git`/
+ * `tsc`), so there is no coverage-floor risk on either side of the split — confirmed by inspection and
+ * by the fact that no package's coverage report has ever carried an entry for this file.
+ *
  * @see specs/21 §21.1
  * @see specs/02 §2.2
+ * @see SPEC-QUESTIONS.md Q365
  */
-import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-/**
- * Shared timeout for this file's 3 real-subprocess tests (`vitest list` twice, `tsc --listFiles`
- * once per tsconfig) — deliberately one constant, not three separately-tuned numbers, so a future
- * drift in any one measurement does not need re-deriving individually (the same reasoning each of
- * the 3 call sites below already gives). Module-scoped rather than local to one `describe` block
- * because the third test lives in a different one (`every source file in the repository is
- * typechecked`).
- *
- * Previously `100_000` (3x the slowest of the three's own isolated measurement, ~30s, plus margin;
- * see `M14-AGENT-NOTES.md`, `M14 P45`) — real evidence, not a guess, but still hit for real: CI run
- * `40886563796` (every `floor` matrix leg, plus `seed`) shows these tests' own real elapsed time
- * (the clean, ANSI-stripped per-test duration vitest's reporter prints next to each `×`, not the
- * generic "Test timed out in 100000ms" message, which only ever echoes the configured ceiling, never
- * the real elapsed time) reaching as high as 452540ms under the genuine contention of the full,
- * unscoped monorepo suite running concurrently — the identical "real execution cost outpacing the
- * old ceiling" class commit `40519da` already fixed once this session for two other, unrelated,
- * real-subprocess-heavy tests. Sized at roughly 2.5x that worst real observed value, the same margin
- * ratio `.github/workflows/ci.yml`'s own `floor` job `timeout-minutes` comment already uses for the
- * identical problem, rather than the bare next multiple of 10_000.
- */
-const SUBPROCESS_HEAVY_TEST_TIMEOUT_MS = 1_200_000;
-
-/** Workspace roots declared in `pnpm-workspace.yaml`, per `specs/02` §2.2. */
-const WORKSPACE_ROOTS = ['packages', 'tools', 'modules'] as const;
-
-/** Build output, skipped at any depth. Never contains a source of record. */
-const IGNORED_DIRECTORIES = new Set(['node_modules', 'dist', 'coverage', '.git', '.turbo']);
-
-/**
- * The single path excluded by name, mirroring `vitest.config.ts`. `test/lint-rules.test.ts` writes a
- * fixture here for the duration of a lint call, and this file's walks run in parallel with it.
- *
- * Excluding *all* dot-directories was tried and is a defect: it put a failing test in `test/.hidden/`
- * beyond both the collection globs and this walk simultaneously, which is precisely the shared blind
- * spot the set-equality assertion exists to rule out.
- */
-// `packages/kb/test/lint/factories.ts` (PLAN-M3.md P10): shared, schema-validated `KbEntry`/`ADR`/
-// `Component`/... builder functions, imported by four real `*.test.ts` files in the same directory —
-// genuinely test-only code (it constructs adversarial/minimal fixtures, nothing else ever imports it),
-// just structured as a plain importable module rather than a runnable suite, so `TEST_FILE`'s own
-// `.test.`/`.spec.` naming heuristic — a proxy for "this is test code," not the actual invariant this
-// walk enforces — never recognises it. Listed individually, the same as this set's one other entry,
-// rather than exempting `test/` directories wholesale, which would blind this check to a real stray
-// production file hiding there instead.
-// `packages/telemetry/test/fixtures/append-and-hang.ts` (PLAN-M5.md P6): a standalone fixture *process*
-// `events.test.ts` spawns via `child_process` (with `--experimental-strip-types`, this repository's own
-// no-build-step convention) to prove the event log's `fsync`-before-return guarantee against a real
-// `SIGKILL`, not merely "no error was thrown." It cannot be named `*.test.ts`/`*.spec.ts` without
-// vitest's own collection glob trying to run it directly as a suite — it has no `describe`/`it` blocks,
-// awaits at the top level, and ends in a deliberately never-resolving `setInterval`, so that attempt
-// would hang the whole run. Genuinely test-only for the same reason as the `kb` entry above; listed
-// individually for the same reason too.
-// `packages/telemetry/test/fixtures/append-many.ts` (specs/22 M15 P14): the identical shape, one
-// directory over — a standalone fixture process `events.test.ts` spawns, several at once via
-// `child_process`, to prove `appendEvent`'s real cross-process file lock against genuinely concurrent
-// OS processes, not merely concurrent in-process promises. Cannot be named `*.test.ts`/`*.spec.ts` for
-// the same reason as `append-and-hang.ts` above (it has no `describe`/`it` blocks of its own); listed
-// individually for the same reason too.
-// `packages/engine/test/dispatch/helpers.ts` (PLAN-M5.md P15): a real `ExecuteStepContext` builder and
-// `StepNode` fixture builder, imported by five real `*.test.ts` files in the same directory — the same
-// "shared, importable module rather than a runnable suite" shape as the `kb` entry above, for the same
-// reason unrecognised by `TEST_FILE`'s naming heuristic. Listed individually for the same reason too.
-// `packages/engine/test/e2e/fixture-workflow.ts` (PLAN-M5.md P20): the shared fixture workflow, gate
-// registry, and `RunEngineContext` builder every `test/e2e/*.test.ts` and `test/run/*.test.ts` file
-// imports — the identical "shared, importable module, not a runnable suite" shape as the two entries
-// above. `packages/engine/test/e2e/fixtures/run-engine-child.ts` (PLAN-M5.md P20): the real-child-
-// process fixture `crash-resume.test.ts` spawns via `node --experimental-strip-types` (never imported,
-// never run as a vitest suite) — the identical "genuinely test-only, unrecognised by `TEST_FILE`'s
-// naming heuristic" shape `append-and-hang.ts` above is already listed for, and for the same reason.
-// `packages/methods/test/fixtures/repo-strategy.ts` (PLAN-M6.md M2): the shared verbatim `11` §11.0
-// `repo-strategy` YAML fixture string, imported by `test/schema/load.test.ts` and `test/score/*.test.ts`
-// — the identical "shared, importable module, not a runnable suite" shape as the `kb`/`engine` entries
-// above, for the same reason unrecognised by `TEST_FILE`'s naming heuristic.
-// `packages/catalog/test/fixtures/postgresql.ts` (PLAN-M6.md C1): the shared verbatim `12` §12.2
-// `postgresql` YAML fixture string, imported by `test/schema/load.test.ts`,
-// `test/registry/registry.test.ts`, and `test/registry/validate.test.ts` — the identical shape as the
-// `methods` entry above, for the same reason.
-// `packages/agents/test/fixtures/architect.ts` (PLAN-M6.md A1): the shared verbatim `05` §5.3
-// `architect` YAML fixture string, imported by `test/schema/load.test.ts`,
-// `test/registry/registry.test.ts`, and `test/registry/resolve-extends.test.ts` — the identical shape.
-// `packages/cli/test/entry/fixtures/node-version-guard.ts` (PLAN-M6.md C1): a standalone fixture
-// *process* `test/entry/node-version.subprocess.test.ts` spawns via `child_process` (with
-// `--experimental-strip-types`, this repository's own no-build-step convention) to prove `03` §3.1's
-// exit(5) as a real, observable process exit code rather than a mocked function call — the identical
-// "genuinely test-only, unrecognised by `TEST_FILE`'s naming heuristic" shape `append-and-hang.ts`
-// above is already listed for, and for the same reason.
-const IGNORED_PATHS = new Set([
-  'tools/lint-fixture/.fixtures',
-  'packages/kb/test/lint/factories.ts',
-  'packages/telemetry/test/fixtures/append-and-hang.ts',
-  'packages/telemetry/test/fixtures/append-many.ts',
-  'packages/engine/test/dispatch/helpers.ts',
-  'packages/engine/test/e2e/fixture-workflow.ts',
-  'packages/engine/test/e2e/fixtures/run-engine-child.ts',
-  'packages/methods/test/fixtures/repo-strategy.ts',
-  'packages/catalog/test/fixtures/postgresql.ts',
-  'packages/agents/test/fixtures/architect.ts',
-  'packages/cli/test/entry/fixtures/node-version-guard.ts',
-  // `packages/cli/test/commands/helpers.ts` (PLAN-M6.md C3): shared, real test-project scaffolding
-  // (a temp `ProjectPaths`, small real KB-entry/diagram fixtures) imported by every
-  // `test/commands/*.test.ts` file — the identical "shared, importable module, not a runnable suite"
-  // shape as the `kb`/`engine`/`methods`/`catalog`/`agents` entries above, for the same reason
-  // unrecognised by `TEST_FILE`'s naming heuristic.
-  'packages/cli/test/commands/helpers.ts',
-  // `packages/cli/test/commands/run/helpers.ts` (PLAN-M6.md C4): the identical shape, one directory
-  // deeper — shared real git-repo/workflow/gate fixture scaffolding for `test/commands/run/*.test.ts`.
-  'packages/cli/test/commands/run/helpers.ts',
-  // `packages/cli/test/commands/run/fixtures/run-child.ts` (PLAN-M6.md C4): the real crash-then-resume
-  // child-process fixture `resume.test.ts` spawns and `SIGKILL`s — the identical "real child process
-  // driven via `node --experimental-strip-types`, not a runnable suite" shape
-  // `packages/engine/test/e2e/fixtures/run-engine-child.ts` above already establishes, for the
-  // identical reason unrecognised by `TEST_FILE`'s naming heuristic.
-  'packages/cli/test/commands/run/fixtures/run-child.ts',
-  // `packages/cli/test/commands/loop/helpers.ts` (PLAN-M6.md C5): the identical shape as
-  // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real git-repo/
-  // fixture-workflow/Story/agent scaffolding for `test/commands/loop/*.test.ts`.
-  'packages/cli/test/commands/loop/helpers.ts',
-  // `packages/cli/test/init/tier-stubs.ts` (PLAN-M13.md P5b): minimal `PlatformAdapter` stand-ins shared
-  // by the tier-map, init and doctor test files — the identical "shared, importable module, not a
-  // runnable suite" shape as the helper entries above.
-  'packages/cli/test/init/tier-stubs.ts',
-  // `packages/cli/test/commands/doctor/helpers.ts` (PLAN-M6.md C6): the identical shape as
-  // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real git-repo/
-  // config/manifest fixture scaffolding for `test/commands/doctor/*.test.ts`.
-  'packages/cli/test/commands/doctor/helpers.ts',
-  // `packages/cli/test/commands/upgrade/helpers.ts` (PLAN-M6.md C7): the identical shape as
-  // `packages/cli/test/commands/run/helpers.ts` above, one directory over — shared real
-  // `runInit`-produced project fixture scaffolding for `test/commands/upgrade/*.test.ts`.
-  'packages/cli/test/commands/upgrade/helpers.ts',
-  // `packages/cli/test/commands/dispatch/dispatch-test-helpers.ts` (`specs/22` M17 P2): the
-  // identical shape as `packages/cli/test/commands/helpers.ts` above, one directory over — shared
-  // real `captureLogs`/`createConfiguredProject` fixture scaffolding (plus a re-export of
-  // `../helpers.ts`'s own bare project and constants) imported by most `test/commands/
-  // dispatch/*.test.ts` files, for the identical reason unrecognised by `TEST_FILE`'s naming
-  // heuristic.
-  'packages/cli/test/commands/dispatch/dispatch-test-helpers.ts',
-  // `packages/cli/bin/` (PLAN-M6.md C9): the real `forge` CLI's own launcher, `bin/forge.mjs` — a
-  // thin process-spawn wrapper (the identical shape `scripts/run-tests.mjs` already establishes at
-  // the repo root), deliberately outside `src/` since it is not itself covered code (nothing calls
-  // into it as a module; it only ever spawns a real child process) and, unlike `scripts/`, it lives
-  // inside a real workspace package, so this walk would otherwise flag it as a stray. Still real,
-  // typechecked source — `tsconfig.json`'s own root `include` array covers it directly, the identical
-  // "typechecked by the root project, not a package project" precedent `scripts/**/*.mjs` already
-  // sets, confirmed by the *other* real floor check in this file (`every source file in the
-  // repository is typechecked`) still finding it.
-  'packages/cli/bin',
-  // `packages/adapter-claude-code/test/conformance/fixtures/mcp-server.ts` (PLAN-M7.md P9): a real,
-  // standalone MCP stdio server *process* -- C16 (MCP grant fidelity)'s own conformance fixture,
-  // spawned directly by the real Claude Code CLI/SDK under test (`command: process.execPath, args:
-  // ['--experimental-strip-types', thisFile]`), never imported by any `*.test.ts` file and never run
-  // as a vitest suite itself. Unlike the other entries in this set, this one *is* typechecked (a real
-  // `.ts` file matched by `test/**/*.ts`) -- it is listed here only because it still needs the
-  // identical "outside src/" exemption `run-child.ts` below already establishes, for the identical
-  // "real child process run via `node --experimental-strip-types`, unrecognised by `TEST_FILE`'s
-  // naming heuristic" reason.
-  'packages/adapter-claude-code/test/conformance/fixtures/mcp-server.ts',
-  // `packages/adapter-claude-code/test/conformance/live-gate.ts`,
-  // `packages/adapter-claude-code/test/conformance/fixture-options.ts`, and
-  // `packages/adapter-claude-code/test/conformance/create-warmed-adapter.ts` (PLAN-M7.md P9): three
-  // shared, importable helper modules -- the live-run gate, the real `ConformanceOptions` fixture
-  // builder, and the warm-up-session adapter factory -- imported by both `sdk.conformance.test.ts`
-  // and `cli.conformance.test.ts`, never run as a suite of their own. The identical "shared,
-  // importable module, not a runnable suite" shape `packages/kb/test/lint/factories.ts` above already
-  // establishes, for the identical reason unrecognised by `TEST_FILE`'s naming heuristic.
-  'packages/adapter-claude-code/test/conformance/live-gate.ts',
-  'packages/adapter-claude-code/test/conformance/fixture-options.ts',
-  'packages/adapter-claude-code/test/conformance/create-warmed-adapter.ts',
-  // `packages/methods/test/fixtures/dod-profiles.ts` (PLAN-M8.md P1): the shared verbatim `09` §9.8
-  // `dod-profiles.yaml` `backend-default` worked example, imported by `test/dod/load.test.ts` and
-  // `test/dod/evaluate.test.ts` — the identical "shared, importable module, not a runnable suite"
-  // shape `packages/methods/test/fixtures/repo-strategy.ts` above already establishes, for the same
-  // reason unrecognised by `TEST_FILE`'s naming heuristic.
-  'packages/methods/test/fixtures/dod-profiles.ts',
-  // `packages/kb/test/adopt/fixtures.ts`, `packages/engine/test/adopt/fixtures.ts` (`PLAN-M10.md`
-  // P15/P16): shared, importable SURVEY/INVENTORY/CARTOGRAPHY/INFERENCE fixture repositories and
-  // scripted-adapter builders, imported across several `test/adopt/*.test.ts` files each — the
-  // identical "shared, importable module, not a runnable suite" shape `packages/kb/test/lint/
-  // factories.ts` above already establishes, for the same reason unrecognised by `TEST_FILE`'s
-  // naming heuristic.
-  'packages/kb/test/adopt/fixtures.ts',
-  'packages/engine/test/adopt/fixtures.ts',
-  // `packages/adapter-generic/test/fixtures/scripted-binary.ts` (`PLAN-M11.md` P8): a real,
-  // standalone scripted external binary fixture -- the `07` §7.5/§7.6 conformance suite's own
-  // spawned-process stand-in for a real external CLI tool (`node --experimental-strip-types`,
-  // never imported by any `*.test.ts` file and never run as a vitest suite itself). The identical
-  // "outside src/" exemption `mcp-server.ts` above already establishes, for the identical "real
-  // child process run via `node --experimental-strip-types`, unrecognised by `TEST_FILE`'s naming
-  // heuristic" reason. `scripted-binary-protocol.ts` is its sibling, shared types-plus-pure-matcher
-  // module (imported by both the fixture itself and `scripted-binary-protocol.test.ts`) -- the
-  // identical "shared, importable module, not a runnable suite" shape `packages/kb/test/lint/
-  // factories.ts` above already establishes.
-  'packages/adapter-generic/test/fixtures/scripted-binary.ts',
-  'packages/adapter-generic/test/fixtures/scripted-binary-protocol.ts',
-  // `packages/extensions/test/install/npm-fixture-registry.ts` (`PLAN-M11.md` P2): a real, local
-  // HTTP server speaking minimal npm-registry protocol for `fetch-npm.test.ts`'s own npm-channel
-  // round trip -- the identical "genuinely test-only, shared, importable module, unrecognised by
-  // `TEST_FILE`'s naming heuristic" shape `packages/cli/test/commands/helpers.ts` above already
-  // establishes, for a fixture rather than a suite.
-  'packages/extensions/test/install/npm-fixture-registry.ts',
-  // `packages/engine/test/e2e/crash-helpers.ts` (`PLAN-M11.md` P12): shared spawn/kill helpers
-  // extracted so the new S12 orphan-free-crash adversarial test and the pre-existing E3
-  // `crash-resume.test.ts` don't each hand-roll their own real child-process kill machinery -- the
-  // identical "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming
-  // heuristic" shape every other entry in this set already establishes.
-  'packages/engine/test/e2e/crash-helpers.ts',
-  // `packages/engine/test/dispatch/artifact-fixtures.ts` (`PLAN-M13.md` P7): valid on-disk artifact
-  // builders shared by the output-contract tests, so a fake session can write a schema-valid
-  // document -- the identical "genuinely test-only, shared, importable module, unrecognised by
-  // `TEST_FILE`'s naming heuristic" shape every other entry in this set already establishes.
-  'packages/engine/test/dispatch/artifact-fixtures.ts',
-  // `packages/cli/test/commands/loop/test/fixtures/binding-check-child.ts` (`specs/22` M15 P3): the
-  // real `runBindingCheck` fixture child `binding-sigkill.test.ts` spawns via `node
-  // --experimental-strip-types` and `SIGKILL`s as a process group -- the identical "real child process,
-  // never imported, never run as a vitest suite, unrecognised by `TEST_FILE`'s naming heuristic" shape
-  // `packages/engine/test/e2e/fixtures/run-engine-child.ts` above already establishes, for the
-  // identical reason.
-  'packages/cli/test/commands/loop/test/fixtures/binding-check-child.ts',
-  // `packages/cli/test/commands/parity/fixtures.ts` (`specs/22` M16 P2): shared, minimal
-  // `ParityDeclaration`/`ParityCapture` builders imported by this directory's own test files -- the
-  // identical "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming
-  // heuristic" shape every other entry in this set already establishes.
-  'packages/cli/test/commands/parity/fixtures.ts',
-  // `packages/cli/test/commands/loop/test/fixtures/hunk-mutation-check-child.ts` (`specs/22` M16
-  // P12): the real `runHunkMutationCheck` fixture child `hunk-mutation-sigkill.test.ts` spawns via
-  // `node --experimental-strip-types` and `SIGKILL`s as a process group -- the identical "real child
-  // process, never imported, never run as a vitest suite, unrecognised by `TEST_FILE`'s naming
-  // heuristic" shape `binding-check-child.ts` above already establishes, for the identical reason.
-  'packages/cli/test/commands/loop/test/fixtures/hunk-mutation-check-child.ts',
-  // `packages/cli/test/commands/parity/http-fixtures.ts` (`specs/22` M16 P8): shared real-subprocess
-  // HTTP server fixtures (a free-port picker, a parameterised `node:http` server script builder)
-  // imported by this directory's own `http-server.test.ts`/`observe-http.test.ts` -- the identical
-  // "genuinely test-only, shared, importable module, unrecognised by `TEST_FILE`'s naming heuristic"
-  // shape `fixtures.ts` immediately above already establishes, for the identical reason.
-  'packages/cli/test/commands/parity/http-fixtures.ts',
-  // `packages/cli/test/commands/loop/test/fixtures/proof-sigkill-child.ts` (`specs/22` M17 P6): the
-  // real `runTranslatorProof` fixture child `proof-sigkill.test.ts` spawns via `node
-  // --experimental-strip-types` and `SIGKILL`s -- the identical "real child process, never imported,
-  // never run as a vitest suite, unrecognised by `TEST_FILE`'s naming heuristic" shape
-  // `binding-check-child.ts`/`hunk-mutation-check-child.ts` above already establish, for the
-  // identical reason.
-  'packages/cli/test/commands/loop/test/fixtures/proof-sigkill-child.ts',
-  // `packages/cli/test/commands/parity/fixtures/crashing-no-handler-worker.ts` and
-  // `.../crashing-normalize-worker.ts` (`specs/22` M17 P14): real worker-thread fixtures
-  // `normalize-budget.test.ts` loads BY PATH (a `workerUrl` test seam), never imported by any
-  // `*.test.ts` file and never run as a vitest suite themselves -- the identical "real child
-  // process/thread, unrecognised by `TEST_FILE`'s naming heuristic" shape every sigkill-child entry
-  // in this set already establishes, for the identical reason.
-  'packages/cli/test/commands/parity/fixtures/crashing-no-handler-worker.ts',
-  'packages/cli/test/commands/parity/fixtures/crashing-normalize-worker.ts',
-  // `packages/cli/test/commands/parity/fixtures/isolation-signal-harness.ts` (`specs/22` M17 P14): a
-  // standalone child-process harness `candidate-isolation.test.ts` spawns to receive a real signal on
-  // a SEPARATE process from the test runner's own -- the identical "real child process, never
-  // imported, never run as a vitest suite" shape the sigkill-child entries above already establish,
-  // for the identical reason.
-  'packages/cli/test/commands/parity/fixtures/isolation-signal-harness.ts',
-  // `packages/cli/test/commands/parity/fixtures/crashing-no-handler-library-worker.ts` and
-  // `.../crashing-normalize-library-worker.ts` (`specs/22` M17 P14 follow-up, Q317 Decision 8): real
-  // worker-thread fixtures `normalize-library-budget.test.ts` loads BY PATH (a `workerUrl` test
-  // seam), never imported by any `*.test.ts` file and never run as a vitest suite themselves -- the
-  // identical "real child process/worker thread, never imported, never run as a vitest suite,
-  // unrecognised by `TEST_FILE`'s naming heuristic" shape `crashing-no-handler-worker.ts`/
-  // `crashing-normalize-worker.ts` above already establish, for the identical reason.
-  'packages/cli/test/commands/parity/fixtures/crashing-no-handler-library-worker.ts',
-  'packages/cli/test/commands/parity/fixtures/crashing-normalize-library-worker.ts',
-]);
-
-/**
- * Directories skipped only at the repository root, mirroring `vitest.config.ts`'s root-anchored
- * exclusions. Anchoring matters: skipping `specs`/`fixtures` at *any* depth is what let a failing
- * test in `packages/<pkg>/specs/` hide from the globs and from this walk simultaneously.
- *
- * `.claude` holds this repo's own `worktrees/` cache -- dozens of full nested checkouts of this
- * same repo, each with its own copy of every `*.test.ts` file. Collected by neither mechanism
- * before this entry existed: a real CI investigation found a local, unscoped `pnpm test` run
- * re-running one file 70-81 times, once per live worktree, which both masks real throughput
- * numbers and risks double-counting coverage/pass counts. A fresh CI checkout never has this
- * directory at all, so this is a local-dev-only fix, not a CI behavior change.
- */
-const IGNORED_ROOT_DIRECTORIES = new Set(['specs', 'fixtures', '.claude']);
-
-/** Source and test file extensions, matching the collection globs in `vitest.config.ts`. */
-const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
-
-/** Test files, which `vitest.config.ts` collects and coverage excludes. */
-const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
+import {
+  IGNORED_DIRECTORIES,
+  IGNORED_PATHS,
+  IGNORED_ROOT_DIRECTORIES,
+  SOURCE_FILE,
+  TEST_FILE,
+  WORKSPACE_ROOTS,
+  findTestFiles,
+  repoRoot,
+} from './workspace-floor-helpers.ts';
 
 /**
  * Lists workspace-relative paths of files directly inside a workspace package whose name matches.
@@ -341,68 +78,6 @@ describe('the deterministic floor cannot be opted out of', () => {
 });
 
 describe('no test file can escape collection', () => {
-  /**
-   * Every `*.{test,spec}.*` file in the repository, at any extension and any depth.
-   *
-   * Walks from the repository root rather than from a list of workspace roots. The previous version
-   * scanned exactly the four roots the collection globs used, so it shared their blind spot and
-   * could never observe a file outside them — a failing test at the repo root or in `scripts/` was
-   * invisible to both.
-   */
-  function findTestFiles(relativeDir: string): readonly string[] {
-    const found: string[] = [];
-    for (const entry of readdirSync(path.join(repoRoot, relativeDir), { withFileTypes: true })) {
-      if (IGNORED_DIRECTORIES.has(entry.name)) continue;
-      if (relativeDir === '' && IGNORED_ROOT_DIRECTORIES.has(entry.name)) continue;
-      const relative = relativeDir === '' ? entry.name : `${relativeDir}/${entry.name}`;
-      if (IGNORED_PATHS.has(relative)) continue;
-      if (entry.isDirectory()) {
-        found.push(...findTestFiles(relative));
-      } else if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name)) {
-        found.push(relative);
-      }
-    }
-    return found.sort();
-  }
-
-  function collectedTestFiles(): readonly string[] {
-    const listed = JSON.parse(
-      execFileSync('node', ['scripts/run-tests.mjs', 'list', '--json'], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        // Node's own default `maxBuffer` (1 MB) — fine when this repo had a few dozen test files, but
-        // `vitest list --json` emits one entry per *test*, not per file, and the repo has grown past
-        // 4600 tests across 200+ files. A first version of this call with no explicit `maxBuffer` hit
-        // `ENOBUFS` here, not as a real regression in this piece's own content but because the suite
-        // itself had grown enough to cross Node's default ceiling. 64 MB is a wide margin above the
-        // current real output size, not a number tuned to just barely fit today's count.
-        maxBuffer: 64 * 1024 * 1024,
-      }),
-    ) as readonly { file: string }[];
-    // `vitest list --json` emits one entry per *test*, not per file, so the paths must be deduped
-    // before they can be compared with a file walk.
-    return [
-      ...new Set(
-        listed.map((entry) => path.relative(repoRoot, entry.file).split(path.sep).join('/')),
-      ),
-    ].sort();
-  }
-
-  // `collectedTestFiles` shells out to `vitest list`; measured isolated duration ~24s (its higher
-  // sample; see `M14-AGENT-NOTES.md`, `M14 P45`). The explicit timeout below (`SUBPROCESS_HEAVY_TEST_TIMEOUT_MS`,
-  // defined at module scope so the third subprocess-heavy test in the other `describe` block below can
-  // share it too) is shared, deliberately, across all 3 of this file's subprocess-heavy tests — see
-  // that constant's own comment for why 100_000 (its previous value) was not enough.
-  it(
-    'collects exactly the test files that exist, so a green run cannot mean "found nothing"',
-    () => {
-      // Set equality, not a subset check: a subset check passes when the globs and the walk share
-      // the same blind spot, which is precisely how the previous version failed.
-      expect(collectedTestFiles()).toEqual(findTestFiles(''));
-    },
-    SUBPROCESS_HEAVY_TEST_TIMEOUT_MS,
-  );
-
   it('has no symlinks, which specs/02 §2.7 forbids and which this walk cannot follow', () => {
     const symlinks: string[] = [];
     const walk = (relative: string): void => {
@@ -417,11 +92,12 @@ describe('no test file can escape collection', () => {
     };
     walk('');
     // A symlink is reported as neither file nor directory, so it would make the set-equality
-    // assertion above fail with a message naming neither symlinks nor the file.
+    // assertion in `workspace-floor-heavy-subprocess.test.ts` fail with a message naming neither
+    // symlinks nor the file.
     expect(symlinks.sort()).toEqual([]);
   });
 
-  it('finds test files at all, so the equality above is not vacuous', () => {
+  it('finds test files at all, so the equality assertion in workspace-floor-heavy-subprocess.test.ts is not vacuous', () => {
     expect(findTestFiles('').length).toBeGreaterThan(0);
   });
 
@@ -455,49 +131,6 @@ describe('no test file can escape collection', () => {
       rmSync(path.dirname(file), { recursive: true, force: true });
     }
   });
-
-  // Also shells out to `collectedTestFiles` (`vitest list`); measured isolated duration ~28s (its
-  // higher sample; `M14-AGENT-NOTES.md`, `M14 P45`). Shares the file's uniform timeout — see the
-  // comment on "collects exactly the test files..." above for why it isn't computed from this
-  // test's own number.
-  it(
-    'collects a test planted anywhere a future piece might put one',
-    () => {
-      // PLAN-M1.md P2 and P3 add scripts under `scripts/`; a test beside one of them landed squarely
-      // in the previous globs' blind spot.
-      const planted = [
-        'probe-root.test.ts',
-        'scripts/probe.test.ts',
-        'test/probe.test.mts',
-        // A package-level `specs/` directory: previously excluded at any depth, so a failing test here
-        // was invisible to the globs and to this walk at the same time.
-        'tools/lint-fixture/specs/probe.test.ts',
-        // A dot-directory: excluded wholesale by both mechanisms until this case was added.
-        'test/.hidden-probe/probe.test.ts',
-        // `.mjs`, which PLAN-M1 P1b names explicitly and no case previously covered.
-        'test/probe-planted.test.mjs',
-      ];
-      try {
-        for (const file of planted) {
-          mkdirSync(path.dirname(path.join(repoRoot, file)), { recursive: true });
-          writeFileSync(
-            path.join(repoRoot, file),
-            "import { it } from 'vitest';\nit('planted', () => undefined);\n",
-          );
-        }
-        const collected = new Set(collectedTestFiles());
-        expect(planted.filter((file) => !collected.has(file))).toEqual([]);
-      } finally {
-        // Remove the directories too: an empty directory is invisible to `git status`, so residue
-        // would survive review and change what a later walk sees.
-        for (const file of planted) rmSync(path.join(repoRoot, file), { force: true });
-        for (const directory of ['tools/lint-fixture/specs', 'test/.hidden-probe']) {
-          rmSync(path.join(repoRoot, directory), { recursive: true, force: true });
-        }
-      }
-    },
-    SUBPROCESS_HEAVY_TEST_TIMEOUT_MS,
-  );
 });
 
 describe('production source lives where the coverage globs look', () => {
@@ -591,88 +224,6 @@ describe('workspace packages ship TypeScript only', () => {
     }
     expect(offenders.sort()).toEqual([]);
   });
-});
-
-describe('every source file in the repository is typechecked', () => {
-  /** Every workspace-package tsconfig, so the assertion below scales past the first package. */
-  function findTsconfigs(relative: string): readonly string[] {
-    const found: string[] = [];
-    for (const entry of readdirSync(path.join(repoRoot, relative), { withFileTypes: true })) {
-      if (IGNORED_DIRECTORIES.has(entry.name)) continue;
-      const next = relative === '' ? entry.name : `${relative}/${entry.name}`;
-      if (IGNORED_PATHS.has(next)) continue;
-      if (entry.isDirectory()) {
-        if (
-          relative === '' &&
-          !WORKSPACE_ROOTS.includes(entry.name as (typeof WORKSPACE_ROOTS)[number])
-        )
-          continue;
-        found.push(...findTsconfigs(next));
-      } else if (entry.name === 'tsconfig.json') {
-        found.push(next);
-      }
-    }
-    return found.sort();
-  }
-
-  // Runs a real `tsc --listFiles --noEmit` per tsconfig — real, heavyweight compiler subprocesses,
-  // the same class of cost `pnpm typecheck` itself pays. Measured isolated duration ~30s (its
-  // higher sample; `M14-AGENT-NOTES.md`, `M14 P45`). Shares `SUBPROCESS_HEAVY_TEST_TIMEOUT_MS`
-  // (module scope, above) with the other 2 subprocess-heavy tests in this file — see that
-  // constant's own comment for the real CI evidence behind its current value.
-  it(
-    'has no file outside the tsconfig project, since an unchecked file is outside the discipline',
-    () => {
-      // Every tsconfig in the repository, not only the root one. Requiring each file to appear in the
-      // *root* project would mean the first real package (`PLAN-M1.md` P2) could not be added without
-      // editing this test — an invariant that blocks the plan is a broken invariant.
-      //
-      // `--noEmit` still exits non-zero on a type error, which would surface here as an unhelpful set
-      // difference. Capture the output either way and let the diagnostics be the failure message.
-      const projects = ['tsconfig.json', ...findTsconfigs('')];
-      const listed = new Set<string>();
-      for (const project of projects) {
-        let output: string;
-        try {
-          output = execFileSync(
-            'node',
-            ['node_modules/typescript/bin/tsc', '-p', project, '--listFiles', '--noEmit'],
-            { cwd: repoRoot, encoding: 'utf8' },
-          );
-        } catch (error) {
-          const diagnostics = (error as { stdout?: string }).stdout ?? String(error);
-          throw new Error(
-            `tsc reported errors in ${project}, so its file list cannot be trusted:\n${diagnostics
-              .split('\n')
-              .filter((line) => line.includes('error TS'))
-              .join('\n')}`,
-          );
-        }
-        for (const line of output.split('\n')) {
-          if (!line.startsWith(repoRoot) || line.includes('node_modules')) continue;
-          listed.add(path.relative(repoRoot, line.trim()).split(path.sep).join('/'));
-        }
-      }
-
-      const onDisk: string[] = [];
-      const walk = (relative: string): void => {
-        for (const entry of readdirSync(path.join(repoRoot, relative), { withFileTypes: true })) {
-          if (IGNORED_DIRECTORIES.has(entry.name)) continue;
-          if (relative === '' && IGNORED_ROOT_DIRECTORIES.has(entry.name)) continue;
-          const next = relative === '' ? entry.name : `${relative}/${entry.name}`;
-          if (IGNORED_PATHS.has(next)) continue;
-          if (entry.isDirectory()) walk(next);
-          else if (SOURCE_FILE.test(entry.name)) onDisk.push(next);
-        }
-      };
-      walk('');
-
-      // A file typechecked by nothing is outside the discipline this floor exists to install — which
-      // is how `scripts/` and then `eslint.config.js` each slipped through in turn.
-      expect(onDisk.filter((file) => !listed.has(file)).sort()).toEqual([]);
-    },
-    SUBPROCESS_HEAVY_TEST_TIMEOUT_MS,
-  );
 });
 
 describe('every workspace package is reached by the floor commands', () => {
