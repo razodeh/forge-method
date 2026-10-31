@@ -33121,3 +33121,67 @@ specific production value.
 directly on Q378's already-verified, already-landed change.
 
 **Gauntlet:** none — no code change to review.
+
+
+## Q380 — investigated the node-20-specific angle Q379 flagged; found no reproducible local
+mechanism and no real statistical basis for it, concluding the investigation has reached its
+limit without live CI access; recommend treating Q379's recommendation as still the best
+available call (owner-directed scope expansion, 2026-10-31)
+
+**What this closes.** Q379's data (2 pause-timing failures in run `41165682309`, both on node 20
+— ubuntu and macOS — while node 22/24 stayed clean) raised a specific, checkable hypothesis: is
+Node 20 itself measurably slower at the relevant operations (process spawn, signal delivery) than
+22/24? Owner direction: investigate that angle before deciding whether to widen further or accept
+the residual rate.
+
+**Decision 1 — built a direct local benchmark of the actual mechanism (signal-delivery latency
+under contention), not assumption.** Wrote a child process that installs a `SIGTERM` handler
+(mirroring `run.ts`'s real `handleSigterm`) and timestamps the instant it fires; a driver that
+spawns it under each of the 3 real Node binaries this project tests (20.19.6 / 22.14.0 / 24.21.0,
+all present on this machine), waits briefly, sends a real `SIGTERM`, and measures wall-clock delay
+to the handler firing. Tested under two real contention proxies: (a) up to 60 concurrent sibling
+processes doing genuine async file I/O (the same shape of load `run.ts`'s own pre-handler-install
+git/file-write window creates), and (b) up to 64 concurrent CPU-bound sibling processes on this
+machine's 16 real cores (4x oversubscription, a rough proxy for "far more runnable work than a
+GitHub-hosted runner's 3-4 vCPUs"). Result, 8 runs per condition: every single measurement across
+both conditions and all 3 Node versions was 0-3ms — no meaningful delay under either contention
+proxy, and no measurable difference between Node 20, 22, or 24 at all. This is a real negative
+result, not an absence of effort: it means ordinary multi-process contention, at levels this
+local machine can produce, does not reproduce anything resembling the multi-second CI delays this
+whole thread has been chasing.
+
+**Decision 2 — checked for an external explanation instead, found real incidents but the wrong
+shape.** GitHub's own status history shows 3 real hosted-runner performance incidents in October
+2026 alone (Oct 1: hosted-runner throttling traced to an upstream Azure dependency; Oct 5: a
+partial on-prem-to-cloud networking failure, 14.3% of workflow runs and 26.5% of jobs failing to
+start within 5 minutes; Oct 19: degraded Actions/Pages/Webhooks availability, root cause
+unconfirmed in public sources). All 3, as documented, describe delays in JOB START/PROVISIONING
+(a workflow or job not beginning to run promptly) — a different failure shape than this
+investigation's own symptom (a delay occurring deep inside an already-running, already-executing
+test, well after the job started). Real, documented, but not a confirmed match for this specific
+symptom.
+
+**Decision 3 — the node-20-specific pattern itself is not statistically established and should
+not be treated as a real, distinguishing finding on 2 data points.** With exactly 2 occurrences,
+both on node 20, "node 20 is measurably more susceptible" and "this run's own random variance
+happened to land on node 20 twice" are not distinguishable from each other on the evidence in
+hand — confirming or refuting this needs many more real CI runs' worth of data, which is itself a
+real cost (CI minutes, wall-clock time) to spend chasing a hypothesis this session cannot actually
+test any other way.
+
+**Conclusion, not a unilateral decision.** This investigation has reached the limit of what can
+be checked without either (a) live access to a representative, loaded GitHub-hosted runner at the
+moment of failure (not available this session), or (b) spending substantially more real CI cycles
+purely to build up a statistically meaningful sample on the node-20 question specifically (a real
+cost, and still might resolve to "coincidence" after all that spend). No further mechanism was
+found that changes Q379's own underlying recommendation — accept the current, sharply-reduced
+rate (vs. the pre-fix 100%) as disclosed, tolerated flakiness on this one real-subprocess test,
+the same category this project already accepts for `floor`/`seed`'s own capacity-driven cluster —
+this session's recommendation remains that one, now on a fuller, not weaker, evidentiary basis.
+Still the owner's call, not assumed: no further change made to `maxWaitMs` or to CI without
+explicit direction.
+
+**Verification.** No code changed in this entry. Benchmark scripts and their output were run and
+discarded (scratch files removed after use, never part of the repository).
+
+**Gauntlet:** none — no code change to review.
