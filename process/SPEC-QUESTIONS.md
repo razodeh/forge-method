@@ -32892,3 +32892,64 @@ verified against a concrete, reproduced failure mode — the Windows path bug vi
 `path.win32` repro, the timing bound via real CI failure-rate evidence), consistent with this
 session's risk-scaled gauntlet practice for this category of change. Decision 3's 2 Windows-only
 failures remain open and disclosed, not silently dropped.
+
+
+## Q376 — Q375's 2 fixes both confirmed working on real CI; digging into the 2 disclosed Windows-only
+`bin.test.ts` failures surfaced a THIRD failure mode in the same lock-poll test that traces to a
+real PRODUCTION timing default, not a test bug — disclosed, deliberately not changed without an
+owner decision (owner-directed scope expansion, 2026-10-30)
+
+**What this closes.** Run `41143127999` (the validation after Q375) confirmed both of that
+piece's fixes hold on real CI: the Windows tsconfig path-comparison bug (Decision 1) did not
+recur on either completed Windows leg in this run — the "has no file outside the tsconfig
+project" test passed on both. The lock-poll widening (Decision 2) also measurably helped: the
+specific `bin.test.ts:1281` `existsSync(lockPath)` assertion that failed on 4+ legs before Q375
+now only fails on 1 of 8 completed `heavy-subprocess` legs (node20-ubuntu, its heaviest-contended
+leg at 2378s/39.6 min cumulative test time — notably longer than every leg that passed).
+
+**Decision 1 — investigated, NOT fixed: a third failure mode in the SAME lock-poll test, which
+traces to a real production default (`stopLockedProcess`'s `maxWaitMs = 5000`), not a test
+assumption.** On `heavy-subprocess (node 22, windows-latest)`, the same test now fails at a
+DIFFERENT line than before (1292, `expect(result.status).toBe(0)` after `forge pause --json`,
+`received 2`) — meaning Q375's widened lock-existence check (line 1281) now PASSES on this leg,
+but the test fails one step later. Traced directly: `runPauseCommand` (`commands/dispatch/run-
+and-gates.ts`) calls `pauseRun` -> `stopLockedProcess` (`commands/run/lock.ts`), which sends a
+real `SIGTERM` and then polls (20ms interval) for the target process to actually die, bounded by
+a `maxWaitMs` DEFAULT PARAMETER of 5000ms — not a test-only value, the real one `forge pause`/
+`forge abort` ship with. If the target is still alive after 5s, `assertStopped` throws `RUN-049`,
+which this codebase maps to exit code 2 — exactly the observed failure. `stopLockedProcess` itself
+is already carefully written (a doc comment there even records an earlier critic-caught `ESRCH`
+race, already handled) — this is not a naive bug, it is a real, bounded grace period that this
+one CI leg's own extreme contention (among the longest-running legs observed, 3295s/54.9 min
+cumulative for only 292 tests) apparently exceeded.
+
+Deliberately NOT widened here, unlike Q375's own lock-poll fix: that fix only widened a TEST's own
+poll bound, which can only make an assertion more lenient, never incorrect. Widening
+`stopLockedProcess`'s own `maxWaitMs` default changes real, user-facing `forge pause`/`forge
+abort` behavior — how long a real user's own invocation blocks before giving up and reporting
+`RUN-049` — a genuine UX tradeoff, not a free lunch, and this run's own contention (a sequential CI
+job deliberately isolating the 3 heaviest files in the whole suite, on a shared, frequently-
+overloaded hosted runner) is not obviously representative of a real user's own machine. Changing a
+production default on CI-only evidence, without the usual real-world-representative justification
+this codebase otherwise insists on, is exactly the kind of unverified guess this investigation
+exists to avoid repeating. Left open for an owner decision: accept this specific CI leg's rare
+failure as a disclosed, inherent limit of real-subprocess-plus-real-signal testing under worst-
+case shared-runner contention, OR deliberately raise the production default with the user's own
+sign-off on the resulting UX tradeoff.
+
+**Decision 2 — the 2 other Windows-only `bin.test.ts` failures (`forge test run --json` exit 1
+instead of 0; `--timeout-ms`'s problems list missing a "timed out" message) recurred again,
+unchanged, on both completed Windows legs in this run — still not diagnosed.** Both are
+consistent with this same "real timing margin exceeded under extreme contention" family (a nested
+real vitest invocation timing out or behaving unexpectedly under host starvation), but neither has
+been traced to a confirmed root cause the way Decision 1 and Q375's own 2 fixes were. Still no
+Windows machine available this session to reproduce directly. Left open, same as Q375 recorded.
+
+**Verification.** No code changed in this entry — pure investigation and disclosure. The reasoning
+above was checked directly against `stopLockedProcess`'s real source (`packages/cli/src/commands/
+run/lock.ts`) and its real caller chain (`control.ts` -> `run-and-gates.ts`), not inferred from the
+test alone.
+
+**Gauntlet:** none — no code change to review. This entry exists to disclose a real, owner-level
+decision point surfaced by investigation, consistent with this session's practice of disclosing
+rather than guessing at production-behavior changes.
