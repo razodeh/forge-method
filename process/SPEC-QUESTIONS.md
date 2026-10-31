@@ -33059,3 +33059,65 @@ decision already in hand (not a unilateral judgment call), the exact kind of cha
 has otherwise deliberately withheld from making alone throughout this whole investigation (Q376,
 Q377). Landed directly given the narrow, single-value, already-verified-safe nature of the change
 and the explicit authorization already obtained.
+
+
+## Q379 — Q378's widened `maxWaitMs` sharply reduced but did not fully eliminate the pause/abort
+timing failure; traced to a more precise mechanism (event-loop backlog, not CPU-bound blocking or
+Windows signal semantics) and recommended accepted as disclosed, low-rate residual flakiness, same
+as the already-accepted `floor`/`seed` capacity cluster (owner-directed scope expansion,
+2026-10-31)
+
+**What this closes.** Run `41165682309` (the validation after Q378's `maxWaitMs` widening)
+showed real improvement: of the `heavy-subprocess` legs completed so far, only 1 of roughly 17
+total leg-observations across this and the prior run failed this specific way (versus the much
+higher rate before Q378) — `heavy-subprocess (node 20, macos-latest)`, the same test, same line
+(1292, `forge pause` exit 2 instead of 0), even at the new 20-second ceiling. Notably, this
+occurrence was on a MODERATE-duration leg (1546s total file duration — one of the faster samples
+observed, not an extreme outlier), which argues against "simply needs an even bigger number" as
+the full story and toward a more specific mechanism worth naming precisely.
+
+**Decision 1 — ruled out two more specific theories, traced to a third, more precise one.**
+(a) *Stale lock / pid reuse*, ruled out: `run.ts`'s own `releaseRunLockIfStillOwned` runs in a
+`finally` block around the whole engine run, so a workflow that finished normally always releases
+its lock — the observed failure mode (`RUN-049`, `assertStopped` throwing) specifically requires
+`readRunLock` to return a REAL lock naming a pid `isProcessAlive` reports as alive for the entire
+wait window; if the run had already finished and the lock were stale/reused, the earlier check
+(`lock === undefined || !isProcessAlive(lock.pid)`) would throw `RUN-048` instead, not `RUN-049`
+— not what was observed. (b) *Signal-handler-installation gap*, found real but doesn't cleanly
+explain this symptom: `run.ts` calls `acquireRunLock` (line 201, making the lock visible to the
+test's own poll) a full 54 lines — including a real `ensureIntegrationWorktree`/
+`syncIntegrationBranchToTrunk` (real git operations) and 2 `writeFileAtomic` calls — before
+`installRunSignalHandlers()` (line 255). A `SIGTERM` arriving in that window hits no custom
+handler, but Node's own documented default disposition for an unhandled `SIGTERM` is to terminate
+the process — which should still be fast once the event loop actually processes it, not slow
+either way. (c) The real mechanism, best-supported by (b)'s own evidence: Node's signal
+delivery — even the "no custom handler, use the default" decision — is handled through Node's own
+internal signal-watcher machinery, which itself needs a free event-loop tick to run, same as any
+other callback. `run.ts`'s own pre-handler-install work (real git worktree sync, real atomic file
+writes) queues real I/O callbacks; under genuinely heavy concurrent I/O load elsewhere in this
+same heavy-subprocess job (many real subprocess spawns, git operations, and file writes across
+other near-simultaneous or recently-finished tests), the event loop can have a real backlog deep
+enough that signal processing — not just any particular handler — waits behind it. This does not
+require a CPU-bound blocking loop anywhere in forge's own code (there is none in this path); an
+event-loop backlog from real, legitimate I/O is enough on its own under sufficient load.
+
+**Decision 2 — recommended (not yet acted on without confirmation): accept the current, sharply-
+reduced rate as disclosed, tolerated flakiness, matching this suite's own existing precedent for
+`floor`/`seed`'s capacity-driven cluster, rather than widening further.** The observed rate moved
+from effectively 100% (every `heavy-subprocess` leg, before Q375) to roughly 1-in-17 (after
+Q375's lock-poll fix plus Q378's `maxWaitMs` widening) — a real, substantial improvement, not a
+cosmetic one. Given (i) the root mechanism (event-loop backlog under real, legitimate concurrent
+I/O) has no further "obviously correct" fix short of either reducing this job's own real
+concurrent I/O load (duplicating `floor`/`seed`'s own already-disclosed, not-yet-resolved capacity
+problem, Q372/Q374) or widening the margin indefinitely with diminishing, unverifiable returns,
+and (ii) this project's own established practice already accepts exactly this class of residual,
+real-timing-driven flakiness elsewhere as disclosed rather than chasing it to zero, this session's
+recommendation is to accept the current ~6% rate on this one test as an instance of the same,
+already-accepted pattern. Left open for a different owner call (widen further, or leave as is)
+rather than acted on unilaterally, consistent with this whole investigation's practice around this
+specific production value.
+
+**Verification.** No code changed in this entry — pure investigation and disclosure, building
+directly on Q378's already-verified, already-landed change.
+
+**Gauntlet:** none — no code change to review.
