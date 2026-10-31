@@ -320,22 +320,57 @@ async function readOwnerMarker(markerPath: string): Promise<MarkerRead> {
   }
 }
 
-/** Whether `dir` is exclusively this OS user's own — the one check that actually CLOSES, not merely
- * narrows, the cross-user attack two independent critic rounds demonstrated live against an earlier
- * draft of this sweep (one reproduced a real file deletion entirely outside the shim tree, via a
- * symlink-swap race timed against this sweep's own directory walk). An attacker cannot forge a
- * directory owned by this process's own real uid, so requiring an exact uid match before this sweep
- * so much as looks inside `dir` rules out every cross-user scenario outright, not merely makes it
- * harder. `(mode & 0o077) === 0` additionally refuses a directory this OS user owns but left group-
- * or other-accessible (defense in depth, not the primary control — `createLauncherShim` already
- * creates every real shim `0700`). Windows has no POSIX uid/mode model and was independently
- * confirmed not exposed to the attack this exists for (`%TEMP%` is already per-user there), so this
- * is unconditionally `true` on win32. */
+/** Whether `dir` is exclusively this OS user's own — closes everything INSIDE `dir` once
+ * confirmed: another user cannot write into a directory this check has confirmed is this user's
+ * own (`0700` or stricter), so nothing inside it can be swapped out from under this sweep (two
+ * independent critic rounds demonstrated live, against an earlier draft with no such check at all,
+ * a real file deletion entirely outside the shim tree via exactly that swap). `(mode & 0o077) ===
+ * 0` refuses a directory this OS user owns but left group- or other-accessible (`createLauncherShim`
+ * already creates every real shim `0700`). Windows has no POSIX uid/mode model and was
+ * independently confirmed not exposed to the attack this exists for (`%TEMP%` is already per-user
+ * there), so this is unconditionally `true` on win32.
+ *
+ * **Does NOT by itself close a swap of `dir`'s own top-level entry** — a THIRD critic round,
+ * verifying this exact fix, correctly found that every operation after this check still re-resolves
+ * `dir` by path (the marker open, the final `unlink`/`rmdir` calls), so a race swapping the entry
+ * `tmpRoot/forge-launcher-X` names (not anything inside it) for a symlink, between this check and
+ * those later calls, is not closed by this function alone. `sweepOrphanedLauncherShims`'s own
+ * `isSafeToSweepInside` check on `tmpRoot` itself is what closes THAT gap (the standard OS-level
+ * protection — a shared directory's own sticky bit — already exists for exactly this, this code
+ * only needs to require it rather than invent an equivalent). */
 async function isExclusivelyOurs(dir: string): Promise<boolean> {
   if (process.platform === 'win32') return true;
   try {
     const info = await lstat(dir);
     return info.isDirectory() && info.uid === process.getuid?.() && (info.mode & 0o077) === 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether `tmpRoot` itself is safe to sweep inside at all — the top-level half of the cross-user
+ * protection {@link isExclusivelyOurs} provides for everything below it. A critic round verifying
+ * that fix correctly found it does not, by itself, stop another user from swapping `dir`'s own
+ * top-level entry (`tmpRoot/forge-launcher-X`, not anything inside it) for a symlink between the
+ * ownership check and this sweep's later, still path-based operations — UNLESS `tmpRoot` itself
+ * refuses that: a world-writable directory with its sticky bit set (POSIX's own, OS-enforced rule,
+ * not anything this code re-implements) permits only a directory's own owner, the entry's own
+ * owner, or root to rename or remove that entry — exactly the protection a shared, world-writable
+ * `/tmp` already carries by default on every real system this matters for. Checked once per sweep,
+ * not once per candidate directory: this is a property of the root, not of any one shim. A
+ * world-writable root with NO sticky bit (unusual; not `/tmp`'s own real-world default anywhere
+ * this was checked) is not trusted at all — the whole sweep declines to run rather than accept that
+ * residual risk, a safe, conservative fallback to "nothing swept this pass," never to "swept
+ * anyway." Windows has no sticky-bit concept and was independently confirmed not exposed to this
+ * class of attack (`%TEMP%` is already per-user there), so this is unconditionally `true` on
+ * win32. */
+async function isSafeToSweepInside(tmpRoot: string): Promise<boolean> {
+  if (process.platform === 'win32') return true;
+  try {
+    const info = await lstat(tmpRoot);
+    const worldWritable = (info.mode & 0o002) !== 0;
+    const stickyBitSet = (info.mode & 0o1000) !== 0;
+    return !worldWritable || stickyBitSet;
   } catch {
     return false;
   }
@@ -404,6 +439,7 @@ export async function sweepOrphanedLauncherShims(
   tmpRoot: string = systemTempRoot(),
   clock: Clock = SYSTEM_CLOCK,
 ): Promise<void> {
+  if (!(await isSafeToSweepInside(tmpRoot))) return;
   const entries = await listTempDirEntries(tmpRoot);
   for (const entry of entries) {
     if (!entry.isDirectory || !entry.name.startsWith('forge-launcher-')) continue;

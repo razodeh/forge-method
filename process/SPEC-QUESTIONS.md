@@ -33462,3 +33462,51 @@ Fix 2, plus the pid-reuse hazard in Fix 1 and every test-quality gap listed abov
 from both rounds was independently verified against this codebase's own source before being acted
 on (not accepted on report alone) and fixed; this entry's own verification section reflects the
 state AFTER both critic rounds and the resulting fixes, not the first draft they reviewed.
+
+**Round 3 — a dedicated verification pass (not a fresh review) confirmed Fixes 2 and 3 above are
+now genuinely closed, live, via real mutation and real timing (not merely re-read), and found one
+more real residual gap in Fix 2's own `isExclusivelyOurs` plus two more test-quality gaps.**
+
+- **Fix 2 (the FIFO/symlink marker hardening) and Fix 3 (the pid-reuse guard): CONFIRMED CLOSED.**
+  A FIFO `owner.pid` inside a real `0700` shim now resolves in under 1ms instead of hanging;
+  reverting the `O_NONBLOCK` flag alone reproduces the original hang directly (over 3s, process
+  unkillable except by force) — the existing FIFO test catches this reversion on its own. Every real
+  `killGroup(` call site in the repo (`shell.ts`, `confined-command.ts`, `http-server.ts`,
+  `migrate/run.ts`) was enumerated and confirmed to see a non-null `exitCode`/`signalCode` by the
+  time it could possibly run post-exit, closing the pid-reuse window completely on the Node/libuv
+  internals actually involved (Windows does not recycle a pid while any process still holds an open
+  handle to it, and Node's own exit bookkeeping runs before `await subprocess` ever resolves).
+- **Fix 1 (the cross-user TOCTOU fix): real residual gap found, now fixed.** `isExclusivelyOurs`
+  closes everything INSIDE a confirmed-own directory, but does not by itself stop a race against
+  `dir`'s own TOP-LEVEL entry (`tmpRoot/forge-launcher-X` itself, swapped for a symlink between the
+  ownership check and this sweep's later, still path-based operations) — a narrower variant of the
+  original exploit, requiring an unusual (non-default) world-writable temp root with no sticky bit
+  set, versus the original's "any shared `/tmp`." **Fixed**: a new `isSafeToSweepInside` check,
+  run once per sweep (not per candidate directory) against `tmpRoot` itself, requires either "not
+  world-writable" or "world-writable WITH the sticky bit set" — the standard, OS-enforced
+  protection against exactly this (only an entry's own owner, the directory's owner, or root may
+  rename/remove it under a sticky bit, regardless of the directory's own write permissions) — before
+  the sweep touches anything at all. A non-sticky, world-writable root (unusual; not the real-world
+  default anywhere checked) makes the WHOLE sweep decline to run, a safe conservative fallback, not
+  a partial one. Doc comments overclaiming "rules out every cross-user scenario outright" (true only
+  for content INSIDE an already-confirmed-own directory, not the entry naming it) were corrected to
+  describe both layers precisely.
+- **Two more test-quality gaps, both fixed.** `isExclusivelyOurs`'s own uid check (the actual
+  control that rules out a different OS user, as opposed to the mode check's defense-in-depth) had
+  no test of its own — removing it from the implementation left all 44 then-existing tests passing.
+  Fixed with a new test stubbing `process.getuid` (a real different uid cannot be created without
+  elevated privileges a test must not require) — confirmed, via the identical mutation, to now fail.
+  Separately, the "plain file ignored" test's own comment overclaimed what the far-future clock
+  proved: the main loop's own `entry.isDirectory` check filters a non-directory entry out before
+  age (or anything else) is ever consulted, so no clock choice could have exposed a real gap there —
+  the comment was corrected and the far-future clock dropped as irrelevant to that specific test.
+- **Also added**: two new tests proving the sticky-bit fix itself — a non-sticky world-writable
+  root leaves even a dead-owner directory alone (confirmed via mutation to fail without the fix);
+  a STICKY-bit world-writable root (matching `/tmp`'s own real default) sweeps normally.
+
+**Verification (round 3).** `pnpm typecheck` (21/21), `eslint`, `prettier --check` clean.
+`launcher-shim.test.ts`: 47/47 (44 prior + 3 new: the uid-mismatch test and both sticky-bit tests —
+all 3 independently confirmed, via real mutation of the production code, to fail without the fix
+each proves). `node scripts/check-boundaries.mjs` clean. Full re-run of every directly-touched test
+file (`launcher-shim.test.ts`, `system-temp.test.ts`, `shell.test.ts`, `confined-command.test.ts`):
+289/289.

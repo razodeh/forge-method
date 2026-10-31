@@ -13,7 +13,7 @@ import { promisify } from 'node:util';
 
 import type { Clock } from '@forge/core';
 import { execa } from 'execa';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   commandEnvFor,
@@ -382,13 +382,17 @@ describe('sweepOrphanedLauncherShims', () => {
     ).toBe(true);
   });
 
-  it('ignores a plain file that happens to match the forge-launcher- prefix, even once old enough that a real directory would be swept', async () => {
+  it('ignores a plain file that happens to match the forge-launcher- prefix', async () => {
     const root = await scratch();
     const file = path.join(root, 'forge-launcher-not-a-directory');
     await writeFile(file, 'not a directory', 'utf8');
-    // The far-future clock is what actually distinguishes "this check looks at isDirectory, not just
-    // age" from a regression that swept everything matching the name prefix once old enough.
-    await sweepOrphanedLauncherShims(root, farFutureClock());
+    // A critic round, verifying this test, correctly found its own prior comment overclaimed: the
+    // clock plays no part here at all -- the main loop's own `entry.isDirectory` check (from
+    // `readdir`'s own listing) filters this out before age is ever consulted, so a plain file
+    // structurally cannot reach any marker read or `unlink`/`rmdir` call in the first place (those
+    // would hit `ENOTDIR` against a non-directory path, not succeed). Any clock proves this
+    // identically; the default is used rather than implying age is relevant when it is not.
+    await sweepOrphanedLauncherShims(root);
     expect(existsSync(file)).toBe(true);
   });
 
@@ -410,6 +414,53 @@ describe('sweepOrphanedLauncherShims', () => {
       await chmod(dir, 0o777);
       await sweepOrphanedLauncherShims(root, farFutureClock());
       expect(existsSync(dir), 'a group/other-accessible directory must never be swept').toBe(true);
+    });
+
+    it('leaves a forge-launcher-* directory alone when it is not owned by this process’s own uid, even with a dead-pid marker and well past the age threshold', async () => {
+      if (process.platform === 'win32') return; // No POSIX uid model on win32.
+      // A critic round verifying the mode check above found the uid half of `isExclusivelyOurs` --
+      // the actual control that rules out a cross-user attacker outright, not merely the mode
+      // defense-in-depth -- had no test of its own: removing it left every existing test passing.
+      // A real different uid cannot be created without elevated privileges this test must not
+      // require, so the OS fact itself is stubbed, not the check's own logic.
+      const root = await scratch();
+      const dir = await orphanCandidate(root);
+      await writeFile(path.join(dir, 'owner.pid'), String(await realDeadPid()), 'utf8');
+      vi.spyOn(process, 'getuid').mockReturnValue((process.getuid?.() ?? 0) + 1);
+      await sweepOrphanedLauncherShims(root, farFutureClock());
+      expect(existsSync(dir), 'a directory owned by a different uid must never be swept').toBe(
+        true,
+      );
+    });
+
+    it('declines to sweep at all inside a world-writable tmpRoot that has no sticky bit set, leaving even a dead-owner directory alone', async () => {
+      if (process.platform === 'win32') return; // No sticky-bit concept on win32.
+      // A critic round verifying `isExclusivelyOurs` correctly found it does not, by itself, stop a
+      // race against `dir`'s own TOP-LEVEL entry (as opposed to anything inside it, which it does
+      // close) -- the standard OS-level protection against exactly that (a shared directory's own
+      // sticky bit) is what `isSafeToSweepInside` requires instead of re-implementing.
+      const root = await scratch();
+      const dir = await orphanCandidate(root);
+      await writeFile(path.join(dir, 'owner.pid'), String(await realDeadPid()), 'utf8');
+      await chmod(root, 0o777); // World-writable, sticky bit NOT set.
+      await sweepOrphanedLauncherShims(root, farFutureClock());
+      expect(
+        existsSync(dir),
+        'a non-sticky, world-writable tmpRoot must refuse the whole sweep, not merely this directory',
+      ).toBe(true);
+    });
+
+    it('sweeps normally inside a world-writable tmpRoot that DOES have its sticky bit set (the real, standard shape of a shared /tmp)', async () => {
+      if (process.platform === 'win32') return;
+      const root = await scratch();
+      const dir = await orphanCandidate(root);
+      await writeFile(path.join(dir, 'owner.pid'), String(await realDeadPid()), 'utf8');
+      await chmod(root, 0o1777); // World-writable WITH the sticky bit -- /tmp's own real default.
+      await sweepOrphanedLauncherShims(root);
+      expect(
+        existsSync(dir),
+        'the sticky bit is exactly what makes a shared, world-writable root safe to sweep inside',
+      ).toBe(false);
     });
 
     it('does not hang, and does not delete anything, when owner.pid is a real FIFO with no writer (the live-demonstrated DoS)', async () => {
