@@ -33185,3 +33185,34 @@ explicit direction.
 discarded (scratch files removed after use, never part of the repository).
 
 **Gauntlet:** none — no code change to review.
+
+
+## Q381 — owner approved Q379/Q380's recommendation: the residual `bin.test.ts` pause/abort
+timing flakiness (RUN-049, ~1-in-17 post-Q378) is accepted as disclosed, tolerated flakiness, same
+category as the `floor`/`seed` capacity cluster (owner decision, 2026-10-31)
+
+**What this closes.** Q379 traced the mechanism (event-loop backlog under real concurrent I/O,
+not a code bug) and recommended accepting the residual rate rather than widening `maxWaitMs`
+further or chasing it to zero. Q380 investigated the node-20-specific angle the data seemed to
+suggest, found no reproducible local mechanism and no statistical basis for it on 2 data points,
+and concluded the recommendation stood on a fuller evidentiary basis. Both left the final call to
+the owner rather than acting unilaterally. Asked directly, the owner approved: "Go with 1" (accept
+as disclosed flakiness, per the three options presented — accept / widen further / spend more CI
+cycles investigating).
+
+**Decision.** This specific residual — `packages/cli/test/bin.test.ts`'s "reports the real pid in
+`forge pause`/`forge abort`" test occasionally failing with `RUN-049` under heavy concurrent CI
+load, at the current `stopLockedProcess` `maxWaitMs` default of 20000ms (Q378) — is now disclosed,
+tolerated flakiness. No further change to `maxWaitMs`, to this test, or to CI is planned for this
+specific failure mode absent new evidence. This decision does NOT extend to the other two
+disclosed-but-unresolved clusters, which remain open, separate owner-level questions: (a) the
+`floor`/`seed` capacity-driven flaky cluster (lint-rules, confined-command, scripted-binary,
+fetch-npm's `fetchNpmOverlay`, stream-view, network-guard, intake-workflow, etc. — real fix needs
+either reduced concurrent fork-pool width or bigger/paid runners), and (b) the two Windows-only
+`bin.test.ts` failures (`forge test run --json` exiting 1 instead of 0; `--timeout-ms`'s problems
+list missing a "timed out" message) whose root cause remains unconfirmed absent a Windows machine.
+
+**Verification.** No code changed in this entry — pure disclosure of an owner decision, closing
+the Q379/Q380 thread.
+
+**Gauntlet:** none — no code change to review.
