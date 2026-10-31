@@ -32953,3 +32953,63 @@ test alone.
 **Gauntlet:** none — no code change to review. This entry exists to disclose a real, owner-level
 decision point surfaced by investigation, consistent with this session's practice of disclosing
 rather than guessing at production-behavior changes.
+
+
+## Q377 — investigated and fixed the real design gap Q376 surfaced: `lock.ts`'s own doc comment
+wrongly assumed POSIX SIGTERM semantics hold on Windows; the CI timing question itself remains
+open, now better understood but not resolved without live Windows access (owner-directed scope
+expansion, 2026-10-30)
+
+**What this closes.** Q376 disclosed a 3rd `bin.test.ts` failure mode (`forge pause` exiting 2
+instead of 0, `RUN-049`, after `stopLockedProcess`'s real 5-second grace period was exceeded on
+one heavily-contended Windows CI leg) and left open whether this was pure CI-contention noise or a
+real production concern. Owner direction: investigate the real design gap before deciding.
+
+**Decision 1 — CONFIRMED via Node's own documentation, FIXED: `lock.ts`'s doc comment wrongly
+assumed Windows honors the POSIX SIGTERM/SIGKILL distinction.** Node's own docs state that on
+Windows, `SIGTERM`, `SIGINT`, and `SIGKILL` all cause unconditional, forceful termination of the
+target process — there is no graceful, catchable `SIGTERM` there the way POSIX provides. This
+directly contradicts `lock.ts`'s own prior doc comment, which named "`SIGTERM` asks first, `SIGKILL`
+cannot be caught or ignored at all" as the two commands' real distinction. Practical consequence:
+`run.ts`'s own `handleSigterm` (whose only effect is `removeLiveLauncherShims`, a tiny temp-
+directory cleanup) most likely never actually runs on Windows, regardless of signal type — but this
+is NOT a new correctness gap: `launcher-shim.ts`'s own doc comment already names a `SIGKILL`
+leaving "one small directory in the temp directory" as a known, accepted side effect everywhere,
+and resume correctness is independently proven identical regardless of which signal stopped the
+run (`PLAN-M5.md` P20). `forge pause` on Windows most likely just reaches that same already-
+accepted outcome via a different signal, not a new one. Fixed by correcting `lock.ts`'s doc comment
+to state this directly, with the caveat that "most likely" reflects Node's documented semantics,
+not a live Windows repro this session could run.
+
+**Decision 2 — re-assessed, NOT resolved: the real CI timing delay is NOT explained by Decision
+1 after all, and remains open.** Node's own docs describe the Windows kill path as immediate and
+forceful — there is no cooperative handler for the calling process to wait on, so in principle a
+Windows kill should resolve FASTER than a POSIX graceful SIGTERM, not slower. This means Decision
+1's finding, while real and now fixed, does not actually explain why `stopLockedProcess`'s own
+`isProcessAlive` poll (itself a lightweight `process.kill(pid, 0)`, not an expensive `tasklist`/
+`wmic` subprocess call — checked directly, ruled out as a bottleneck) still took longer than 5
+real seconds to observe the target's death on that one CI leg. The most likely remaining
+explanation is the same one already on the table before this investigation: genuine OS-level
+scheduling/resource starvation under this job's own concentrated real-subprocess load (this
+milestone's own `heavy-subprocess` job, deliberately isolating the 3 heaviest files, running them
+sequentially, is an intentionally extreme contention scenario) — not a design flaw in the
+signaling mechanism itself. Still disclosed, not resolved: no live Windows access this session to
+confirm directly, and the original Q376 decision point (whether to widen `stopLockedProcess`'s
+production `maxWaitMs` default) stands exactly as before, now with slightly more confidence that
+doing so would be treating a real symptom (occasional CI-contention-driven timeout) correctly,
+rather than papering over a deeper signaling bug that does not, on this evidence, actually exist.
+
+**Also noted, not implemented.** A more thorough structural fix — sweeping orphaned launcher-shim
+directories on a later `forge` invocation, rather than relying on cleanup running at all during
+`SIGTERM` handling — would remove this entire question's practical stakes on every platform, not
+just Windows, and would match this codebase's own established self-healing/age-gated-reclaim
+pattern used elsewhere (`FORGE cross-process locking`). Not implemented here: it is new
+functionality, not a fix for a confirmed defect, and the actual stakes (one small, already-
+accepted stray temp directory) do not obviously justify it without the owner weighing in. Flagged
+as a possible future hygiene improvement, not a correctness fix.
+
+**Verification.** Doc-comment-only change (`lock.ts`); `pnpm typecheck` 21/21 clean, `eslint`/
+`prettier --check` clean. No behavior changed.
+
+**Gauntlet:** none — pure documentation correction, no behavior change, verified against Node's
+own documented platform semantics rather than assumed.

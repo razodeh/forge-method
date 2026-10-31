@@ -263,6 +263,16 @@ export async function releaseRunLockIfStillOwned(
  * responds (there is no cooperative pause today, a known, documented simplification — see
  * `SPEC-QUESTIONS.md`) but in the two commands' own real UNIX distinction: SIGTERM asks first,
  * SIGKILL cannot be caught or ignored at all.
+ *
+ * That UNIX distinction does NOT hold on Windows (`SPEC-QUESTIONS.md` Q377): Node's own docs name
+ * `SIGTERM` there, like `SIGKILL`, as an unconditional, forceful termination the target cannot catch
+ * — so `run.ts`'s own `handleSigterm` (whose only real-world effect is `removeLiveLauncherShims`, a
+ * tiny temp-directory cleanup) most likely never runs there either. Not a correctness gap: this
+ * module's own doc comment for `createLauncherShim`/`liveDirs` already accepts a `SIGKILL` leaving
+ * "one small directory in the temp directory" as a known, tolerated side effect everywhere — `forge
+ * pause` on Windows most likely just hits that same already-accepted outcome via a different signal,
+ * not a new one. Still disclosed rather than silently assumed away, since "most likely" here reflects
+ * this session's own reading of Node's documented Windows semantics, not a live Windows repro.
  */
 export async function stopLockedProcess(
   paths: ProjectPaths,
