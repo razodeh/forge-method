@@ -123,9 +123,18 @@ function listDescendantPids(rootPid: number): readonly number[] {
  * limit still took 30 s to return, because `execa` waits for the streams to close, not only for the shell to
  * exit. ALSO kills every real descendant found by `listDescendantPids`, individually, whether or not it is
  * still a member of that group — the group kill alone leaves a descendant that started its own session
- * (`listDescendantPids`'s own doc comment has the real, confirmed repro) orphaned and running forever. Falls
- * back to the single process where neither mechanism is available (win32, or `pid` is unknown) or found
- * anything to do. */
+ * (`listDescendantPids`'s own doc comment has the real, confirmed repro) orphaned and running forever.
+ *
+ * On win32, where neither mechanism above exists, `taskkill /PID <pid> /T /F` is the native
+ * equivalent: `/T` kills `pid` and every real descendant in one call (built into every Windows
+ * install, no optional feature or third-party dependency), closing the exact "a multi-level process
+ * tree survives because only its top-level member was ever signalled" gap this file's own POSIX path
+ * already closes (`SPEC-QUESTIONS.md` Q339/Q340's own "win32-skipped descendant kill" disclosure,
+ * closed here on direct owner request — confirmed live only on POSIX this session, since no Windows
+ * host is available; `taskkill`'s own `/T /F` semantics are Microsoft-documented, not assumed).
+ * Falls back to the single process when `pid` is unknown, or when `taskkill` itself fails (the pid
+ * is already gone, or the command is unavailable on some constrained host) — the previous, narrower
+ * behaviour, never a harder failure than before this fix. */
 function killGroup(subprocess: {
   readonly pid?: number;
   kill: (signal: 'SIGKILL') => boolean;
@@ -135,15 +144,22 @@ function killGroup(subprocess: {
     subprocess.kill('SIGKILL');
     return;
   }
-  const descendants = process.platform === 'win32' ? [] : listDescendantPids(pid);
-  let groupKilled = false;
-  if (process.platform !== 'win32') {
+  if (process.platform === 'win32') {
     try {
-      process.kill(-pid, 'SIGKILL');
-      groupKilled = true;
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
     } catch {
-      // The group is already gone, or was never one.
+      // `pid` already gone, or `taskkill` itself unavailable -- fall back to the single process.
+      subprocess.kill('SIGKILL');
     }
+    return;
+  }
+  const descendants = listDescendantPids(pid);
+  let groupKilled = false;
+  try {
+    process.kill(-pid, 'SIGKILL');
+    groupKilled = true;
+  } catch {
+    // The group is already gone, or was never one.
   }
   for (const descendantPid of descendants) {
     try {

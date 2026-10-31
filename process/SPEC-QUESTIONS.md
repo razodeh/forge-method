@@ -33296,3 +33296,106 @@ session's standing practice around production-code changes.
 **Gauntlet:** test-only change (one file, `packages/cli/test/bin.test.ts`), plus a one-line doc
 comment correction (`posix-shell.ts`) — landed directly per this session's established "test-only/
 docs-only, no production-code change" exception to the 2-critic-worktree gauntlet.
+
+
+## Q383 — owner-directed hardening: closed the win32 `killGroup` descendant-kill gap (Q339/Q340) and
+built the previously-deferred launcher-shim self-healing sweep (Q377), after a real, live incident
+this session surfaced the underlying risk directly (owner-directed scope expansion, 2026-10-31)
+
+**What prompted this.** While verifying Q382's fix locally, a real, live incident on this dev
+machine surfaced the underlying class of risk directly: 5 real `grandchild.cjs` test-fixture
+processes (the `shell.test.ts`/`confined-command.test.ts` kill-group-verification double — a
+deliberate, undying busy loop normally killed by the test itself via `killGroup`) had been running
+continuously for roughly 5 days, each pinned near 100% CPU, after whatever interrupted their own
+test run left before `killGroup` ever got the chance to fire. Separately, 578 stale `forge-shell-*`
+directories and a broader 38,975-entry `forge-*` pollution under the shared system `$TMPDIR` were
+also found and cleaned up (owner-approved, mechanical cleanup only — see this session's memory
+update to `forge-shared-tmpdir-pollution.md` for the full account; not a SPEC-QUESTIONS matter, no
+product code involved). Asked directly whether FORGE itself could leave the same kind of mess
+behind for a real end user, the owner said yes, fix it: "no left processes and no left tmp
+directories behind."
+
+**Scope distinction, made explicit before fixing anything.** The 5 leaked `grandchild.cjs`
+processes were this SESSION's own dev-time test-fixture artifacts (escaped because the hosting test
+*process* was itself interrupted before any of its own in-process cleanup code — `killGroup` — ever
+ran; no amount of improving `killGroup` closes that specific failure mode, since nothing can run
+inside an already-dead process). What IS a real, confirmed, PRODUCT-facing gap in the identical
+general shape — and squarely in scope for "no left processes/directories for a real user" — are two
+already-disclosed, previously-deferred items this incident made concrete enough to finally act on.
+
+**Fix 1 — closed `killGroup`'s win32 descendant-kill gap (`SPEC-QUESTIONS.md` Q339/Q340's own
+"win32-skipped descendant kill" disclosure, confirmed still present in current code before touching
+it).** `packages/engine/src/dispatch/shell.ts` and `packages/engine/src/dispatch/confined-command.ts`
+each carry their own byte-identical `killGroup` (deliberately duplicated, not shared — `Q294`'s own
+"keep this fix scoped to `confined-command.ts` alone" precedent for this exact pair, followed again
+here: both files edited, but as the same fix applied twice, not refactored into one). Both
+unconditionally fell back to killing only the single top-level process on win32 — no group kill (no
+POSIX process groups there), no descendant walk (`listDescendantPids` was hardcoded to `[]` on
+win32) — meaning a real multi-level process tree a real Windows user's own test/build command
+spawns (`npm test` → a test runner → its own forked workers, the ordinary shape of nearly any real
+JS test suite) would leave every descendant below the top-level process ORPHANED AND RUNNING on any
+kill (a timeout, `forge abort`, Ctrl-C) on Windows specifically — the exact class of leak this
+session watched happen live, just for a different (test-fixture) reason. Fixed in both files: on
+win32, `killGroup` now calls `taskkill /PID <pid> /T /F` — the native Windows equivalent of POSIX
+process-group kill (`/T` kills the named pid and every real descendant in one call, built into
+every Windows install, no optional feature or dependency) — falling back to the previous
+single-process kill only if `taskkill` itself fails (pid already gone, or the command unavailable).
+**Disclosed, not resolved this session**: the actual win32 branch cannot be exercised on this
+machine (no Windows host available, the same caveat as every other Windows-only item this session);
+`taskkill /T /F`'s own documented semantics are Microsoft's, not assumed, and the change is narrow
+and fully defensive (any failure falls back to the prior, already-accepted behaviour, never a
+harder failure than before), but it is unconfirmed live.
+
+**Fix 2 — built the launcher-shim self-healing sweep Q377 proposed but explicitly deferred**
+("a possible future hygiene improvement... not implemented here", now built on direct owner
+request). `packages/cli/src/commands/run/launcher-shim.ts`'s `createLauncherShim` now also writes a
+real `owner.pid` marker (this process's own real pid) alongside its launcher script. A new
+`sweepOrphanedLauncherShims` (exported, fully parameterised for tests: `tmpRoot`, `clock`), wired
+into `createLauncherShimOrWarn` — the one real entry point every actual run/ad-hoc-gate-shim
+invocation goes through, not `createLauncherShim` itself, which tests call directly and must stay
+free of a real-tmpdir side effect — scans the OS temp directory for `forge-launcher-*` directories
+and removes any whose recorded owner pid is no longer alive (`lock.ts`'s own `isProcessAlive`,
+reused, not reimplemented; the same pid-reuse caveat already accepted for stale run-locks applies
+identically here, not a new risk). A directory with no readable marker at all (an older `forge`
+version, or a race between `mkdir` and the marker write) is swept only once genuinely old (1 hour —
+comfortably longer than any real run, so nothing legitimate is ever caught mid-flight), never
+assumed orphaned on sight. This turns the previously-permanent "a `SIGKILL`/`forge abort`/crash
+leaves one small directory behind forever" into "...leaves one small directory behind until the
+next real `forge` invocation on this machine," the identical self-healing/age-gated-reclaim pattern
+`lock.ts`'s own stale-lock handling already establishes, applied to the one other place this
+codebase had the same unfixed gap.
+
+**Explicitly NOT built, flagged rather than attempted** — a full reaper for a real, already-running
+USER command surviving `forge` itself being killed too abruptly (`SIGKILL`, a crash, a lost
+terminal) to run ANY of its own cleanup code, cooperative `killGroup` included. This is a
+categorically different, much bigger problem: nothing inside an already-dead process can run
+anything, so the only real fix is an out-of-process mechanism — a persistent registry of every
+subprocess tree a run has ever spawned, checked and reaped by a LATER `forge` invocation the same
+way this entry's own launcher-shim sweep now does for shim directories specifically. That is new
+infrastructure, not a fix for a confirmed defect with an obvious shape, and was not attempted
+unilaterally here. The practical exposure today is narrower than it sounds: forge's own direct
+subprocess tree is bounded by its own real timeouts (`DEFAULT_TEST_RUN_TIMEOUT_MS` and friends) even
+if `forge` itself dies first, UNLESS the spawned command itself detaches into its own session (the
+exact shape this session's own leaked test fixture used) — an ordinary project test/build command
+very rarely does that. Left open for a future, explicitly-scoped piece if the owner wants it built.
+
+**Verification.** `pnpm typecheck` (21/21), `eslint`, and `prettier --check` all clean on every
+touched file. New tests added and passing: `launcher-shim.test.ts` gained 8 new cases covering
+`sweepOrphanedLauncherShims` directly (dead-owner removed regardless of age; live-owner preserved
+regardless of age; no-marker-and-young preserved; no-marker-and-old removed; a non-matching
+directory and a non-directory entry both ignored; a missing `tmpRoot` is a safe no-op) plus one
+integration case proving `createLauncherShimOrWarn` itself invokes the sweep (via the same real
+`TMPDIR`-env-redirection technique an existing test in the same file already used); `system-temp.
+test.ts` gained 2 cases for the new `systemTempRoot` export. Full existing suites re-run clean:
+`shell.test.ts` (20/20), `confined-command.test.ts` (218/218, including both real grandchild-kill
+repros, unaffected on POSIX), `launcher-shim.test.ts` (39/39 total), and the full `packages/cli/
+test/commands/run/` + `packages/engine/test/dispatch/` directories (1560/1560) for a broader
+regression check. `node scripts/check-boundaries.mjs` clean (the new `launcher-shim.ts` ->
+`lock.ts` and `launcher-shim.ts` -> `system-temp.ts` imports stay within `packages/cli`, no
+cross-package boundary crossed).
+
+**Gauntlet:** owner-authorized production-behaviour change (both `killGroup` copies — a core
+process-kill mechanism — and `launcher-shim.ts`'s own creation/cleanup contract), landed directly
+per this session's established pattern for explicit, direct owner authorization (`Q378` precedent),
+not run through the full 2-critic-worktree gauntlet; verification above is real-execution, not
+diff-review-only, on every platform this machine can actually exercise.

@@ -12,7 +12,12 @@
  * The directory is created under the OS temp directory (never the user's project or the repository, which
  * a run must not litter), is private to the user (created `0700`, named by a random UUID, never adopted if it exists), is removed when the run
  * ends, and also synchronously by the `SIGTERM`/`SIGINT`/`SIGHUP` handlers (`run.ts`), which exit without
- * running `finally` blocks. A `SIGKILL` (`forge abort`) leaves one small directory in the temp directory.
+ * running `finally` blocks. A `SIGKILL` (`forge abort`, a crash, a killed terminal) leaves the directory
+ * behind — nothing in a dead process can run its own cleanup. `sweepOrphanedLauncherShims` (below) closes
+ * this the same way `lock.ts`'s own stale-lock reclaim does: a later `forge` invocation checks the real
+ * OS pid recorded in each shim it finds (`owner.pid`) and removes any whose owner is no longer alive, so
+ * this never accumulates indefinitely even though no single run can guarantee its own removal
+ * (`SPEC-QUESTIONS.md` Q377's own "noted, not implemented" proposal, built out on direct owner request).
  *
  * Nothing about the paths is interpolated into a command line the run's shell parses: the launcher script
  * single-quotes each value (and re-quotes any `'` inside it), so a path with spaces, quotes or `$` is data.
@@ -25,13 +30,39 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M13.md P12
  */
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import fsp from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import path from 'node:path';
 
-import { FORGE_RUN_ID, ForgeError, renderCause } from '@forge/core';
+import { SYSTEM_CLOCK, FORGE_RUN_ID, ForgeError, renderCause, type Clock } from '@forge/core';
 
-import { createSystemTempPath } from '../loop/test/system-temp.ts';
+import { createSystemTempPath, systemTempRoot } from '../loop/test/system-temp.ts';
+import { isProcessAlive } from './lock.ts';
+
+/** `tmpRoot`'s own direct entries, sorted by byte value (R10: `readdir`'s order is filesystem-
+ * dependent) — `@forge/core/fs`'s `listDirEntriesSorted` is the sanctioned wrapper for this
+ * everywhere else, but it requires a `ProjectPaths`-derived `AbsolutePath` (specs/02 §2.5's own
+ * project-containment brand), which the OS temp root is not and must never be coerced into. Locally
+ * duplicated instead — the identical, already-established shape `@forge/vcs`'s own `lanes.ts` uses
+ * for the same reason (a directory outside any project root) — rather than widening what
+ * `AbsolutePath` means for every other caller just for this one, narrow, non-project case. Empty
+ * (never throws) when `tmpRoot` cannot be listed at all: `sweepOrphanedLauncherShims` is best-effort
+ * hygiene, never a reason this run's own real work should fail. */
+async function listTempDirEntries(
+  tmpRoot: string,
+): Promise<readonly { readonly name: string; readonly isDirectory: boolean }[]> {
+  let entries;
+  try {
+    // eslint-disable-next-line no-restricted-syntax -- sorted immediately below, see this function's own doc comment
+    entries = await fsp.readdir(tmpRoot, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
 
 /** What replays the running CLI: the node binary, its flags, and the script node executed. */
 export interface LauncherSpec {
@@ -199,6 +230,65 @@ export function removeLiveLauncherShims(): void {
   liveDirs.clear();
 }
 
+/** The marker file inside a shim directory naming the real OS pid of the `forge` process that
+ * created it — `sweepOrphanedLauncherShims`'s own evidence that a directory's owner is (or is not)
+ * still alive. */
+const OWNER_PID_FILENAME = 'owner.pid';
+
+/** How old an owner-less shim directory (no readable `owner.pid` at all — an older `forge` version
+ * that never wrote one, or a write that landed between `mkdir` and the marker write) must be before
+ * `sweepOrphanedLauncherShims` treats it as abandoned rather than possibly still being created by a
+ * sibling `forge` invocation this very instant. A real run's own total lifetime (seconds to a few
+ * hours for a long multi-stage workflow) is comfortably under this; nothing legitimate holds a shim
+ * this long with no marker. */
+const ORPHANED_SHIM_MIN_AGE_MS = 60 * 60 * 1000;
+
+/** Whether `dir` (a `forge-launcher-*` directory found under the OS temp directory) is still owned
+ * by a live process, or safe for `sweepOrphanedLauncherShims` to remove. A present, parseable
+ * `owner.pid` naming a still-alive pid is owned, full stop, however old the directory is — a long-
+ * running real workflow must never have its own in-use shim swept out from under it. Everything
+ * else (no marker, an unreadable one, or one naming a now-dead pid) falls back to `dir`'s own real
+ * mtime, read directly from the filesystem (not a timestamp this function invents): a dead owner is
+ * swept immediately; a missing-but-young marker gets the race-window grace `ORPHANED_SHIM_MIN_AGE_MS`
+ * documents. The same pid-reuse caveat `lock.ts`'s own `isProcessAlive` already accepts elsewhere in
+ * this codebase applies here too — accepted there, so accepted here, not a new risk this adds. */
+async function isOrphanedLauncherShim(dir: string, clock: Clock): Promise<boolean> {
+  try {
+    const ownerPid = Number((await readFile(path.join(dir, OWNER_PID_FILENAME), 'utf8')).trim());
+    if (Number.isInteger(ownerPid)) return !isProcessAlive(ownerPid);
+  } catch {
+    // No marker, or unreadable -- fall through to the age check below.
+  }
+  try {
+    const info = await stat(dir);
+    return Date.parse(clock.now()) - info.mtimeMs >= ORPHANED_SHIM_MIN_AGE_MS;
+  } catch {
+    return false; // Already gone -- nothing for this sweep to do.
+  }
+}
+
+/** Removes every `forge-launcher-*` directory under `tmpRoot` whose own owner is no longer alive
+ * (see {@link isOrphanedLauncherShim}) — the self-healing half of this module's own doc comment:
+ * no single run can guarantee removing ITS OWN shim (a `SIGKILL` leaves nothing alive to run any
+ * cleanup), so a LATER invocation sweeps what an earlier one could not, the same pattern `lock.ts`'s
+ * own stale-lock reclaim already establishes for this codebase. Best-effort end to end: a failure to
+ * list `tmpRoot`, or to remove any one directory, is swallowed rather than surfaced — this is
+ * opportunistic hygiene on every real `forge` invocation's own startup, never allowed to block or
+ * fail the command the user actually asked for. */
+export async function sweepOrphanedLauncherShims(
+  tmpRoot: string = systemTempRoot(),
+  clock: Clock = SYSTEM_CLOCK,
+): Promise<void> {
+  const entries = await listTempDirEntries(tmpRoot);
+  for (const entry of entries) {
+    if (!entry.isDirectory || !entry.name.startsWith('forge-launcher-')) continue;
+    const dir = path.join(tmpRoot, entry.name);
+    if (await isOrphanedLauncherShim(dir, clock)) {
+      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+}
+
 /** Creates the shim directory and its launcher.
  *
  * `runId`, when given, is stamped into `commandEnv` as the FORGE run marker (`commandEnvFor`); omitted
@@ -225,6 +315,12 @@ export async function createLauncherShim(
     const file = path.join(binDir, platform === 'win32' ? 'forge.cmd' : 'forge');
     await writeFile(file, launcherScript(spec, platform), { mode: 0o755 });
     await chmod(file, 0o755);
+    // Read back by `sweepOrphanedLauncherShims`: the one way a LATER `forge` invocation can tell
+    // "this directory's owner is still a live process, leave it" from "its owner died before it
+    // could run its own cleanup, safe to remove" — this process's own real pid, nothing injected
+    // (R10 exempts a real OS fact read once, the same way `isProcessAlive`'s own `process.kill(pid,
+    // 0)` already does; there is no deterministic alternative to "ask the OS for this process's id").
+    await writeFile(path.join(binDir, OWNER_PID_FILENAME), String(process.pid), 'utf8');
   } catch (cause) {
     if (binDir !== undefined) {
       liveDirs.delete(binDir);
@@ -244,13 +340,20 @@ export async function createLauncherShim(
 }
 
 /** `createLauncherShim` for a run: a failure becomes a warning (`warn`) and `undefined`, never a refusal.
- * `runId`, when given, is threaded straight through to `createLauncherShim` (and so to `commandEnvFor`). */
+ * `runId`, when given, is threaded straight through to `createLauncherShim` (and so to `commandEnvFor`).
+ * Also opportunistically sweeps orphaned shims from past runs (`sweepOrphanedLauncherShims`) — this is
+ * the one real entry point every actual `forge run`/ad-hoc gate-shim invocation goes through, so hooking
+ * the sweep here (not into `createLauncherShim` itself, which tests call directly with an injected,
+ * isolated directory and must stay free of a real-tmpdir side effect) reaches every real caller once per
+ * invocation, never per test. A sweep failure is swallowed, same as everything else here: it must never
+ * turn into a reason this run's own shim fails to get made. */
 export async function createLauncherShimOrWarn(
   spec: LauncherSpec | undefined,
   warn: ((message: string) => void) | undefined,
   runId?: string,
 ): Promise<LauncherShim | undefined> {
   if (spec === undefined) return undefined;
+  await sweepOrphanedLauncherShims().catch(() => undefined);
   try {
     return await createLauncherShim(spec, undefined, undefined, runId);
   } catch (error) {

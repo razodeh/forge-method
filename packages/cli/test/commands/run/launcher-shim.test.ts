@@ -4,13 +4,14 @@
  *
  * @see specs/03 §3.2.4
  */
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import type { Clock } from '@forge/core';
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -23,8 +24,27 @@ import {
   launcherScript,
   removeLiveLauncherShims,
   shellQuote,
+  sweepOrphanedLauncherShims,
   type LauncherSpec,
 } from '../../../src/commands/run/launcher-shim.ts';
+
+/** A real, genuinely-dead pid — spawned then confirmed exited — standing in for a shim whose own
+ * owning `forge` process has since died, the identical technique `lock.test.ts`'s own `realDeadPid`
+ * already establishes for this exact anomaly-injection shape (see that file's doc comment for why a
+ * real, once-live pid, never a fabricated number, keeps this honest). */
+async function realDeadPid(): Promise<number> {
+  const child = spawn('node', ['-e', 'process.exit(0)']);
+  const pid = child.pid;
+  if (pid === undefined) throw new Error('child process has no pid');
+  await new Promise((resolve) => child.on('exit', resolve));
+  return pid;
+}
+
+/** A fixed `Clock` for deterministic age-threshold tests — real wall-clock time would make "is this
+ * directory old enough to sweep" flaky by construction. */
+function fixedClock(iso: string): Clock {
+  return { now: () => iso };
+}
 
 const exec = promisify(execFile);
 const cleanup: string[] = [];
@@ -221,6 +241,94 @@ describe('createLauncherShimOrWarn', () => {
     const shim = await createLauncherShimOrWarn(spec(await echoEntry(dir)), undefined);
     expect(shim?.binDir).toBeDefined();
     await shim?.cleanup();
+  });
+
+  it('sweeps an orphaned shim from a prior, now-dead run before creating its own (Q382, owner-directed)', async () => {
+    const root = await scratch();
+    const orphan = path.join(root, 'forge-launcher-orphan');
+    await mkdir(orphan, { mode: 0o700 });
+    await writeFile(path.join(orphan, 'owner.pid'), String(await realDeadPid()), 'utf8');
+    const previous = process.env['TMPDIR'];
+    process.env['TMPDIR'] = root;
+    try {
+      const shim = await createLauncherShimOrWarn(spec(await echoEntry(root)), undefined);
+      expect(existsSync(orphan), 'the dead-owner shim must be swept').toBe(false);
+      await shim?.cleanup();
+    } finally {
+      if (previous === undefined) delete process.env['TMPDIR'];
+      else process.env['TMPDIR'] = previous;
+    }
+  });
+});
+
+describe('sweepOrphanedLauncherShims', () => {
+  async function orphanCandidate(
+    root: string,
+    name = 'forge-launcher-under-test',
+  ): Promise<string> {
+    const dir = path.join(root, name);
+    await mkdir(dir, { mode: 0o700 });
+    return dir;
+  }
+
+  it('removes a forge-launcher-* directory whose owner.pid names a real, now-dead pid', async () => {
+    const root = await scratch();
+    const dir = await orphanCandidate(root);
+    await writeFile(path.join(dir, 'owner.pid'), String(await realDeadPid()), 'utf8');
+    await sweepOrphanedLauncherShims(root);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('leaves a forge-launcher-* directory alone when owner.pid names a real, still-alive pid', async () => {
+    const root = await scratch();
+    const dir = await orphanCandidate(root);
+    await writeFile(path.join(dir, 'owner.pid'), String(process.pid), 'utf8');
+    await sweepOrphanedLauncherShims(root);
+    expect(
+      existsSync(dir),
+      'a live owner must survive the sweep, however old the directory is',
+    ).toBe(true);
+  });
+
+  it('leaves a forge-launcher-* directory with no owner.pid alone while it is still young (a sibling may be mid-creation)', async () => {
+    const root = await scratch();
+    const dir = await orphanCandidate(root);
+    const justCreated = fixedClock(new Date().toISOString());
+    await sweepOrphanedLauncherShims(root, justCreated);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  it('removes a forge-launcher-* directory with no owner.pid once it is old enough', async () => {
+    const root = await scratch();
+    const dir = await orphanCandidate(root);
+    const farFuture = fixedClock(new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString());
+    await sweepOrphanedLauncherShims(root, farFuture);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it('ignores entries that do not match the forge-launcher- prefix, even one with a dead-pid marker inside', async () => {
+    const root = await scratch();
+    const unrelated = path.join(root, 'forge-shell-unrelated');
+    await mkdir(unrelated, { mode: 0o700 });
+    await writeFile(path.join(unrelated, 'owner.pid'), String(await realDeadPid()), 'utf8');
+    await sweepOrphanedLauncherShims(root);
+    expect(
+      existsSync(unrelated),
+      'a non-launcher-shim directory is never this sweep’s concern',
+    ).toBe(true);
+  });
+
+  it('ignores a plain file that happens to match the forge-launcher- prefix', async () => {
+    const root = await scratch();
+    const file = path.join(root, 'forge-launcher-not-a-directory');
+    await writeFile(file, 'not a directory', 'utf8');
+    await sweepOrphanedLauncherShims(root);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it('does nothing, and does not throw, when tmpRoot itself does not exist', async () => {
+    const root = path.join(await scratch(), 'does', 'not', 'exist');
+    await expect(sweepOrphanedLauncherShims(root)).resolves.toBeUndefined();
   });
 });
 

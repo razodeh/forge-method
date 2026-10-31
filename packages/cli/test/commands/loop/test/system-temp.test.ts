@@ -8,7 +8,20 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createSystemTempPath } from '../../../../src/commands/loop/test/system-temp.ts';
+import {
+  createSystemTempPath,
+  systemTempRoot,
+} from '../../../../src/commands/loop/test/system-temp.ts';
+
+describe('systemTempRoot', () => {
+  it('is a real, absolute path (R11: no `/`-literal assertion, see createSystemTempPath above)', () => {
+    expect(path.isAbsolute(systemTempRoot())).toBe(true);
+  });
+
+  it('is the real directory createSystemTempPath builds its own paths under', () => {
+    expect(createSystemTempPath('forge-test').startsWith(systemTempRoot())).toBe(true);
+  });
+});
 
 describe('createSystemTempPath', () => {
   it('produces a real, absolute path under the OS temp directory', () => {

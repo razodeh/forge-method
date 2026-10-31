@@ -17,3 +17,12 @@ import path from 'node:path';
 export function createSystemTempPath(prefix: string): string {
   return path.join(tmpdir(), `${prefix}-${randomUUID()}`);
 }
+
+/** The bare OS temp directory root, with no path appended — `launcher-shim.ts`'s own
+ * `sweepOrphanedLauncherShims` needs this to know WHERE to look for past `forge-launcher-*`
+ * directories, not a fresh, uniquely-named one of its own. Still just the one host-fact read this
+ * file is narrowly exempted for; listing what is already there stays this file's caller's own job
+ * (`@forge/core/fs`'s sorted wrapper, or a locally-scoped equivalent), never this file's. */
+export function systemTempRoot(): string {
+  return tmpdir();
+}

@@ -1349,8 +1349,16 @@ export function listDescendantPids(rootPid: number): readonly number[] {
  * {@link listDescendantPids}, individually, whether or not it is still a member of that group — the
  * group kill alone leaves a descendant that started its own session orphaned and running forever
  * (M16 P10's own real, confirmed repro; ported here verbatim in shape, `SPEC-QUESTIONS.md` Q296
- * Decision 1 and Decision 5). Falls back to the single process where neither mechanism is available
- * (win32, or `pid` is unknown) or found anything to do.
+ * Decision 1 and Decision 5).
+ *
+ * On win32, where neither mechanism above exists, `taskkill /PID <pid> /T /F` is the native
+ * equivalent — `/T` kills `pid` and every real descendant in one call, built into every Windows
+ * install. Byte-identical port of `shell.ts`'s own `killGroup` fix for the identical gap
+ * (`SPEC-QUESTIONS.md` Q339/Q340's own "win32-skipped descendant kill" disclosure, closed on direct
+ * owner request); kept as a separate, duplicated edit rather than a shared import, matching `Q294`'s
+ * own "keep this fix scoped to `confined-command.ts` alone" precedent for this exact pair of
+ * functions. Falls back to the single process when `pid` is unknown, or when `taskkill` itself
+ * fails.
  *
  * **Exported as of `specs/22` M16 P8** — see {@link listDescendantPids}'s own doc comment for the
  * full reasoning; this function is the other half of the identical reused pair. */
@@ -1363,15 +1371,22 @@ export function killGroup(subprocess: {
     subprocess.kill('SIGKILL');
     return;
   }
-  const descendants = process.platform === 'win32' ? [] : listDescendantPids(pid);
-  let groupKilled = false;
-  if (process.platform !== 'win32') {
+  if (process.platform === 'win32') {
     try {
-      process.kill(-pid, 'SIGKILL');
-      groupKilled = true;
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
     } catch {
-      // The group is already gone, or was never one.
+      // `pid` already gone, or `taskkill` itself unavailable -- fall back to the single process.
+      subprocess.kill('SIGKILL');
     }
+    return;
+  }
+  const descendants = listDescendantPids(pid);
+  let groupKilled = false;
+  try {
+    process.kill(-pid, 'SIGKILL');
+    groupKilled = true;
+  } catch {
+    // The group is already gone, or was never one.
   }
   for (const descendantPid of descendants) {
     try {
