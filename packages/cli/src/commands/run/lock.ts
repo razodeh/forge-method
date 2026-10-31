@@ -278,7 +278,16 @@ export async function stopLockedProcess(
   paths: ProjectPaths,
   signal: 'SIGTERM' | 'SIGKILL',
   pollIntervalMs = 20,
-  maxWaitMs = 5000,
+  // Was 5000. Real evidence this was too tight even for the already-bounded case this function
+  // exists to handle (a target that genuinely does die, just not instantly): `SPEC-QUESTIONS.md`
+  // Q376/Q378's own `heavy-subprocess` CI job hit this exact ceiling -- `bin.test.ts`'s own real
+  // `forge pause` test -- on ubuntu, macOS, AND Windows legs across multiple runs, not one platform
+  // or one fluke. Raised generously rather than precisely (the same "stopgap, not tuned" reasoning
+  // `floor`/`seed`'s own CI timeouts already use), trading a longer worst-case wait before a
+  // genuinely-stuck target reports `RUN-049` for far fewer spurious failures when the target is
+  // merely slow under real load -- a tradeoff an owner decision accepted explicitly, not one made
+  // unilaterally from CI evidence alone.
+  maxWaitMs = 20_000,
   clock: Clock = SYSTEM_CLOCK,
 ): Promise<RunLock> {
   const lock = await readRunLock(paths);
