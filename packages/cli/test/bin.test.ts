@@ -22,6 +22,7 @@ import { pathExists, ProjectPaths } from '@forge/core/fs';
 import { appendEvent, readEvents } from '@forge/telemetry/events';
 
 import { acquireRunLock } from '../src/commands/run/lock.ts';
+import { shellQuote } from '../src/commands/run/launcher-shim.ts';
 import { FakePlatformAdapter } from '@forge/testkit';
 import { KNOWN_ADAPTER_MODULES, loadAdapterFactory } from '@forge/adapter-kit/registry';
 import { DEFAULT_CONFIG } from '@forge/schemas/config';
@@ -252,7 +253,20 @@ function resolveRealVitestEntry(): string {
   return path.join(path.dirname(packageJsonPath), binRelative);
 }
 
-const REAL_VITEST_CMD = `${process.execPath} ${resolveRealVitestEntry()} run --root .`;
+// Both segments are real, absolute filesystem paths, shell-quoted (`shellQuote`, the same POSIX
+// single-quoting `@forge/cli`'s own production shell commands already use for exactly this reason)
+// rather than interpolated bare — confirmed directly: on Windows, `@forge/engine/dispatch`'s own
+// `resolvePosixShell` (`posix-shell.ts`) routes every real shelled test command through a real
+// `bash.exe` (Git for Windows, present on GitHub's own `windows-latest` runners) whenever a real
+// `env` is given, which `forge test run`'s real CLI invocation always does. An UNQUOTED Windows
+// absolute path (`C:\Users\...\node.exe`) handed to that bash as a `-c` script argument is not a
+// CreateProcess-level concern at all — it is bash's OWN shell-syntax tokenizer, which treats a bare
+// backslash outside quotes as an ordinary escape character and silently drops it, turning
+// `C:\Users\runneradmin\node.exe` into the nonexistent `C:Usersrunneradminnode.exe` (reproduced
+// directly with a real local bash). The corrupted command then fails to execute at all — never
+// reaching vitest — which reads as a generic "failed to run"/"zero tests collected" `testCommands`
+// problem, not a real pass, a real vitest failure, or (for the `--timeout-ms` test) a real timeout.
+const REAL_VITEST_CMD = `${shellQuote(process.execPath)} ${shellQuote(resolveRealVitestEntry())} run --root .`;
 
 /** A minimal, real, schema-valid `Story` written directly (not via `specNew`'s id allocator, which
  * this file has no need of) — just enough front matter for `oversized-stories`

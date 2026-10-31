@@ -33216,3 +33216,83 @@ list missing a "timed out" message) whose root cause remains unconfirmed absent 
 the Q379/Q380 thread.
 
 **Gauntlet:** none — no code change to review.
+
+
+## Q382 — root cause found and fixed (test-only) for the 2 disclosed Windows-only `bin.test.ts`
+failures (Q376); confirms and sharpens Q353's own disclosed-but-unverified `resolvePosixShell`
+residual with a concrete, non-adversarial repro (owner-directed scope expansion, 2026-10-31)
+
+**What this closes.** Q376 disclosed two Windows-only `bin.test.ts` failures — `forge test run
+--json` exiting 1 instead of 0 against a clean vitest fixture, and `--timeout-ms`'s problems list
+missing a "timed out" message — consistently reproduced on every completed Windows
+`heavy-subprocess` leg, root cause unconfirmed at the time for lack of a Windows machine.
+
+**Root cause, confirmed without a Windows machine by isolating the one platform-independent half
+of the mechanism.** `packages/engine/src/dispatch/shell.ts`'s `runShellCommand` consults
+`resolvePosixShell(env)` whenever a real `env` is given — which `forge test run`'s real CLI
+invocation always does (`realEnvSnapshot()`, R10) — and on Windows, with Git for Windows present
+(confirmed already true on GitHub's own `windows-latest` runners, `ci.yml`'s own comment), that
+resolves to a real `bash.exe`. `packages/cli/test/bin.test.ts`'s own `REAL_VITEST_CMD` constant
+built its command text by interpolating two real, absolute filesystem paths
+(`process.execPath`, `resolveRealVitestEntry()`) directly into the string, UNQUOTED — both of
+which are backslash-separated on Windows by construction. Node's own Windows argument-escaping
+(building the flat command line `bash.exe -c "<script>"` for `CreateProcess`) does not touch bare
+backslashes — cmd.exe-style escaping has no reason to, a bare backslash means nothing special to
+it — so the backslashes survive that leg of the round-trip intact. The SECOND leg is the one that
+breaks it: bash's OWN shell-syntax tokenizer, parsing its `-c` script argument, treats every bare
+backslash in an unquoted word as an ordinary escape character and drops it. This is bash LANGUAGE
+semantics, not a Windows-specific quirk, so it is directly, locally reproducible without Windows at
+all: a real bash on this machine, given the literal string
+`C:\Users\runneradmin\work\node.exe C:\Users\runneradmin\work\vitest.mjs run --root . --reporter=json`,
+recovers `argv[0]` as `C:Usersrunneradminworknode.exe` — a path that does not exist. The resulting
+command fails to execute at all, never reaching vitest: `runVitest` never sees `result.timedOut ===
+true` (the failure is immediate, not a hang), so `outcomesFromVitestJson('')` throws on the empty
+stdout, `run.ts`'s `!result.ok` branch fires, and the layer is reported via the generic
+"testCommands.unit (...) failed to run: ..." `problems` entry with `failed` forced to 1 — never via
+the `'timeout'`-kind outcome. This explains BOTH symptoms with one mechanism: a clean fixture
+reports `failed: 1`/exit 1 instead of a real pass, and the hang fixture's genuine external timeout
+machinery never even gets exercised, so `problems` never contains "timed out" even though the run
+is (correctly, if for the wrong reason) still classified as failed.
+
+**Scope: a test-fixture defect, not a production one — confirmed by the production code's own
+existing convention, not merely by matching the symptom.** `packages/cli/src/commands/run/
+launcher-shim.ts` (which also embeds `process.execPath` and a real absolute path into a replay
+command for the run's own shell) already single-quotes both values before interpolating them
+(`shellQuote`, its own doc comment: "a path with spaces, quotes or $ is data") — exactly the
+defence this bug was missing. `packages/cli/src/commands/migrate/run.ts`'s own `process.execPath`
+use passes it as a real argv array to `execa`, never through a shell string at all, sidestepping
+the question entirely. `reporter.ts`'s own `fileArg`/`filterFlag` construction in `runVitest`
+already wraps every FORGE-interpolated path segment in `shellQuote` too. `REAL_VITEST_CMD` was the
+one place in the whole codebase that interpolated a raw absolute path into shell-parsed command
+text unquoted — a test-only convenience (embedding the exact local vitest binary, bypassing `PATH`/
+`npx` lookup) that no real project's own `testCommands.unit` value would ordinarily do (an ordinary
+real command — `"npm test"`, `"npx vitest run"` — contains no embedded absolute paths at all, let
+alone unquoted ones).
+
+**Fix (test-only).** `REAL_VITEST_CMD` now wraps both interpolated paths in the same `shellQuote`
+production code already uses for exactly this reason (imported from `launcher-shim.ts`). Verified:
+`pnpm typecheck` clean; `eslint` on the touched file clean; `test:heavy-subprocess` run locally
+(macOS, where this routes through native `/bin/sh`, not bash — quoting an ordinary path with no
+special characters is a no-op there, so this is a regression check, not a repro of the Windows
+path) — [outcome recorded once the background run completes]. The Windows-specific half (does
+quoting the paths actually fix it under a real `bash.exe`) can only be confirmed on the next real
+Windows CI leg.
+
+**Also fixed in passing**: `posix-shell.ts`'s own doc comment cited `SPEC-QUESTIONS.md Q351` for
+this exact residual — a stale/wrong cross-reference (`Q351` is an unrelated, already-closed
+mutation-testing-gap entry); the real entry is `Q353`. Corrected to cite `Q353` and this entry.
+
+**Disclosed, not acted on — the deeper production question Q353 already flagged remains open.**
+This entry CONFIRMS Q353's disclosed "unverified, not confirmed-safe" residual is a real,
+demonstrable hazard — and sharpens it: Q353 framed it as an adversarial/security concern (can a
+crafted input escape `vetProposedCommand`'s vetting through this double round-trip); this finding
+shows the SAME mechanism also breaks on a completely ordinary, non-adversarial input (a bare
+Windows path), with no malicious intent required. Whether `confined-command.ts`'s vetting or
+`posix-shell.ts` itself should additionally guard against (or itself quote) a bare backslash in
+command text bound for the Windows bash fallback is a real design question, and a PRODUCTION
+behaviour change — left to the owner, not acted on unilaterally here, consistent with this
+session's standing practice around production-code changes.
+
+**Gauntlet:** test-only change (one file, `packages/cli/test/bin.test.ts`), plus a one-line doc
+comment correction (`posix-shell.ts`) — landed directly per this session's established "test-only/
+docs-only, no production-code change" exception to the 2-critic-worktree gauntlet.

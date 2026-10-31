@@ -40,7 +40,7 @@
  * trailing backslash-before-quote, spaces) proposed the way a model actually would. Treat this as an
  * open security question this piece's own reasoning could not close, not as confirmed-safe.
  *
- * @see SPEC-QUESTIONS.md Q351
+ * @see SPEC-QUESTIONS.md Q353, Q382
  */
 import { statSync } from 'node:fs';
 import path from 'node:path';
