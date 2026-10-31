@@ -30,9 +30,19 @@
  * @see specs/03 §3.2.4
  * @see PLAN-M13.md P12
  */
-import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  rm,
+  rmdir,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import fsp from 'node:fs/promises';
-import { rmSync } from 'node:fs';
+import { constants, rmSync } from 'node:fs';
 import path from 'node:path';
 
 import { SYSTEM_CLOCK, FORGE_RUN_ID, ForgeError, renderCause, type Clock } from '@forge/core';
@@ -235,46 +245,161 @@ export function removeLiveLauncherShims(): void {
  * still alive. */
 const OWNER_PID_FILENAME = 'owner.pid';
 
-/** How old an owner-less shim directory (no readable `owner.pid` at all — an older `forge` version
- * that never wrote one, or a write that landed between `mkdir` and the marker write) must be before
- * `sweepOrphanedLauncherShims` treats it as abandoned rather than possibly still being created by a
- * sibling `forge` invocation this very instant. A real run's own total lifetime (seconds to a few
- * hours for a long multi-stage workflow) is comfortably under this; nothing legitimate holds a shim
- * this long with no marker. */
-const ORPHANED_SHIM_MIN_AGE_MS = 60 * 60 * 1000;
+/** How old an owner-less shim directory (no valid `owner.pid` at all — an older, pre-this-feature
+ * `forge` version that never wrote one, or a write that landed between `mkdir` and the marker
+ * write) must be before `sweepOrphanedLauncherShims` treats it as abandoned rather than possibly
+ * still being created by a sibling `forge` invocation this very instant. Deliberately generous,
+ * NOT the "comfortably longer than any real run" bound this constant used to claim (two independent
+ * critic rounds caught that framing contradicting itself against this module's own documented "a
+ * few hours for a long multi-stage workflow"): this path exists ONLY for shims predating this
+ * feature at all, a one-time transitional case, not an ongoing budget for every run — every shim
+ * created by this version or later always has a marker and is judged by real pid liveness instead,
+ * never this fallback, regardless of how long the run takes. */
+const ORPHANED_SHIM_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 
-/** Whether `dir` (a `forge-launcher-*` directory found under the OS temp directory) is still owned
- * by a live process, or safe for `sweepOrphanedLauncherShims` to remove. A present, parseable
- * `owner.pid` naming a still-alive pid is owned, full stop, however old the directory is — a long-
- * running real workflow must never have its own in-use shim swept out from under it. Everything
- * else (no marker, an unreadable one, or one naming a now-dead pid) falls back to `dir`'s own real
- * mtime, read directly from the filesystem (not a timestamp this function invents): a dead owner is
- * swept immediately; a missing-but-young marker gets the race-window grace `ORPHANED_SHIM_MIN_AGE_MS`
- * documents. The same pid-reuse caveat `lock.ts`'s own `isProcessAlive` already accepts elsewhere in
- * this codebase applies here too — accepted there, so accepted here, not a new risk this adds. */
-async function isOrphanedLauncherShim(dir: string, clock: Clock): Promise<boolean> {
+/** A valid real OS pid, and nothing else: a positive integer with no sign, no leading zero, no
+ * decimal/scientific notation, within the real 32-bit pid range. Guards `isOrphanedLauncherShim`
+ * against treating a corrupted or empty `owner.pid` (e.g. its own owner SIGKILL'd between the
+ * marker file's `open()` and its write) as a valid pid at all — `Number('')` is `0`, and
+ * `isProcessAlive(0)` signals THIS process's own group and always succeeds, which two independent
+ * critic rounds confirmed live would read a corrupted marker as "alive forever," a permanent (if
+ * safe-direction) leak rather than ever reaching the age fallback below. */
+function parseRealPid(text: string): number | undefined {
+  const trimmed = text.trim();
+  if (!/^[1-9]\d{0,9}$/.test(trimmed)) return undefined;
+  const value = Number(trimmed);
+  return value <= 2 ** 31 - 1 ? value : undefined;
+}
+
+type MarkerRead =
+  | { readonly found: true; readonly text: string }
+  | { readonly found: false; readonly reason: 'missing' | 'unusable' };
+
+/** Reads `markerPath`, refusing anything that is not a small, ordinary, regular file this process
+ * can safely read to completion — two independent critic rounds confirmed LIVE, not hypothetically,
+ * that a plain `readFile` here turns a single planted marker on a shared, world-writable temp
+ * directory into either an information leak (a symlink to a sensitive file — `readFile` follows
+ * symlinks by default) or a hang of the ENTIRE `forge` invocation that reaches this sweep (a FIFO
+ * with no writer blocks `open()` itself indefinitely; `createLauncherShimOrWarn` awaits this whole
+ * sweep before doing anything else, so nothing short of killing the process recovers). `O_NOFOLLOW`
+ * refuses a marker that is itself a symlink. `O_NONBLOCK` is POSIX-documented to make opening a
+ * FIFO's READ end return immediately even with no writer present (only the WRITE end blocks or
+ * fails under `O_NONBLOCK` with none) — confirmed this closes the exact hang both critic rounds
+ * reproduced. Windows has no equivalent flags and was independently confirmed NOT exposed to this
+ * class of attack (`%TEMP%` is per-user there, unlike a shared, `$TMPDIR`-unset `/tmp` on Linux), so
+ * a plain read is kept for that platform rather than reaching for flags with no real effect there.
+ * `'missing'` (a real `ENOENT`) is the only reason `isOrphanedLauncherShim` treats as "no marker,
+ * fall back to age" — every other reason (`'unusable'`: not a regular file, oversized, or any other
+ * read failure — `EACCES`/`EIO`/`EMFILE` included) means "could not determine," never "safe to
+ * guess," per a critic-found gap in an earlier draft that caught everything in one catch-all. */
+async function readOwnerMarker(markerPath: string): Promise<MarkerRead> {
+  if (process.platform === 'win32') {
+    try {
+      return { found: true, text: await readFile(markerPath, 'utf8') };
+    } catch (error) {
+      const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+      return { found: false, reason: missing ? 'missing' : 'unusable' };
+    }
+  }
+  let handle;
   try {
-    const ownerPid = Number((await readFile(path.join(dir, OWNER_PID_FILENAME), 'utf8')).trim());
-    if (Number.isInteger(ownerPid)) return !isProcessAlive(ownerPid);
+    handle = await open(
+      markerPath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > 64) return { found: false, reason: 'unusable' };
+    const buffer = Buffer.alloc(64);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return { found: true, text: buffer.toString('utf8', 0, bytesRead) };
+  } catch (error) {
+    const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+    return { found: false, reason: missing ? 'missing' : 'unusable' };
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
+}
+
+/** Whether `dir` is exclusively this OS user's own — the one check that actually CLOSES, not merely
+ * narrows, the cross-user attack two independent critic rounds demonstrated live against an earlier
+ * draft of this sweep (one reproduced a real file deletion entirely outside the shim tree, via a
+ * symlink-swap race timed against this sweep's own directory walk). An attacker cannot forge a
+ * directory owned by this process's own real uid, so requiring an exact uid match before this sweep
+ * so much as looks inside `dir` rules out every cross-user scenario outright, not merely makes it
+ * harder. `(mode & 0o077) === 0` additionally refuses a directory this OS user owns but left group-
+ * or other-accessible (defense in depth, not the primary control — `createLauncherShim` already
+ * creates every real shim `0700`). Windows has no POSIX uid/mode model and was independently
+ * confirmed not exposed to the attack this exists for (`%TEMP%` is already per-user there), so this
+ * is unconditionally `true` on win32. */
+async function isExclusivelyOurs(dir: string): Promise<boolean> {
+  if (process.platform === 'win32') return true;
+  try {
+    const info = await lstat(dir);
+    return info.isDirectory() && info.uid === process.getuid?.() && (info.mode & 0o077) === 0;
   } catch {
-    // No marker, or unreadable -- fall through to the age check below.
+    return false;
+  }
+}
+
+/** Whether `dir` (a `forge-launcher-*` directory `sweepOrphanedLauncherShims` has already confirmed
+ * is exclusively this OS user's own, via {@link isExclusivelyOurs}) is safe to remove. A present,
+ * valid (`parseRealPid`) `owner.pid` naming a still-alive pid is owned, full stop, however old the
+ * directory is — a long-running real workflow must never have its own in-use shim swept out from
+ * under it. A marker that exists but does not parse as a real pid (corrupted — its own owner
+ * SIGKILL'd mid-write, say) falls back to the same age check a genuinely missing marker gets, never
+ * treated as "alive" by a bare, ungoverned guess. An unusable marker (see {@link readOwnerMarker})
+ * is treated as "cannot tell," not "safe to delete" — this directory is left alone this pass rather
+ * than guessed at either way. The same pid-reuse caveat `lock.ts`'s own `isProcessAlive` already
+ * accepts elsewhere in this codebase applies here too — accepted there, so accepted here, not a new
+ * risk this adds. */
+async function isOrphanedLauncherShim(dir: string, clock: Clock): Promise<boolean> {
+  const marker = await readOwnerMarker(path.join(dir, OWNER_PID_FILENAME));
+  if (marker.found) {
+    const ownerPid = parseRealPid(marker.text);
+    if (ownerPid !== undefined) return !isProcessAlive(ownerPid);
+    // A marker exists but is not a valid pid at all -- fall through to the identical age check a
+    // missing marker gets, below, rather than ever guessing "alive" or "dead" from garbage content.
+  } else if (marker.reason === 'unusable') {
+    return false; // Could not safely determine anything -- never guess; leave this one alone.
   }
   try {
-    const info = await stat(dir);
+    const info = await lstat(dir);
     return Date.parse(clock.now()) - info.mtimeMs >= ORPHANED_SHIM_MIN_AGE_MS;
   } catch {
     return false; // Already gone -- nothing for this sweep to do.
   }
 }
 
-/** Removes every `forge-launcher-*` directory under `tmpRoot` whose own owner is no longer alive
- * (see {@link isOrphanedLauncherShim}) — the self-healing half of this module's own doc comment:
- * no single run can guarantee removing ITS OWN shim (a `SIGKILL` leaves nothing alive to run any
- * cleanup), so a LATER invocation sweeps what an earlier one could not, the same pattern `lock.ts`'s
- * own stale-lock reclaim already establishes for this codebase. Best-effort end to end: a failure to
- * list `tmpRoot`, or to remove any one directory, is swallowed rather than surfaced — this is
- * opportunistic hygiene on every real `forge` invocation's own startup, never allowed to block or
- * fail the command the user actually asked for. */
+/** Removes `dir` by unlinking only the specific files this module itself could ever have created
+ * inside a shim directory (the launcher script, and the owner marker), then `rmdir`-ing the now-
+ * hopefully-empty directory — never `rm(dir, {recursive: true})`'s own internal, repeated lstat-
+ * then-readdir directory walk, which is exactly what two independent critic rounds exploited LIVE
+ * against an earlier draft of this sweep: swapping a real subdirectory for a symlink between that
+ * walk's own steps let a recursive delete reach, and remove, real files entirely outside this
+ * directory (one critic's own repro deleted 11 of 200 planted canary files this way). Unlinking a
+ * SPECIFIC, known name by itself never follows a symlink at that final path component either way —
+ * even a swapped `owner.pid` only ever removes the symlink itself, never whatever it points at.
+ * Plain (non-recursive) `rmdir` on the result fails harmlessly with `ENOTEMPTY` if anything
+ * unrecognised is still inside `dir` (a planted file this sweep does not know about, say) — this
+ * sweep then leaves that one directory alone rather than ever recursing into content it cannot
+ * account for. Combined with {@link isExclusivelyOurs}'s own uid check, `dir` is already confirmed
+ * to be exclusively this OS user's own before this is ever called. */
+async function removeLauncherShimDir(dir: string): Promise<void> {
+  for (const name of ['forge', 'forge.cmd', OWNER_PID_FILENAME]) {
+    await unlink(path.join(dir, name)).catch(() => undefined);
+  }
+  await rmdir(dir).catch(() => undefined);
+}
+
+/** Removes every `forge-launcher-*` directory under `tmpRoot` that is both exclusively this OS
+ * user's own ({@link isExclusivelyOurs}, checked FIRST, before this sweep so much as opens anything
+ * inside `dir`) and orphaned ({@link isOrphanedLauncherShim}) — the self-healing half of this
+ * module's own doc comment: no single run can guarantee removing ITS OWN shim (a `SIGKILL` leaves
+ * nothing alive to run any cleanup), so a LATER invocation sweeps what an earlier one could not, the
+ * same pattern `lock.ts`'s own stale-lock reclaim already establishes for this codebase. Best-effort
+ * end to end: a failure to list `tmpRoot`, or to remove any one directory, is swallowed rather than
+ * surfaced — this is opportunistic hygiene on every real `forge` invocation's own startup, never
+ * allowed to block or fail the command the user actually asked for. */
 export async function sweepOrphanedLauncherShims(
   tmpRoot: string = systemTempRoot(),
   clock: Clock = SYSTEM_CLOCK,
@@ -283,8 +408,9 @@ export async function sweepOrphanedLauncherShims(
   for (const entry of entries) {
     if (!entry.isDirectory || !entry.name.startsWith('forge-launcher-')) continue;
     const dir = path.join(tmpRoot, entry.name);
+    if (!(await isExclusivelyOurs(dir))) continue;
     if (await isOrphanedLauncherShim(dir, clock)) {
-      await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      await removeLauncherShimDir(dir);
     }
   }
 }

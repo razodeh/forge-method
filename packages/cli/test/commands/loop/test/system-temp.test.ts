@@ -18,8 +18,12 @@ describe('systemTempRoot', () => {
     expect(path.isAbsolute(systemTempRoot())).toBe(true);
   });
 
-  it('is the real directory createSystemTempPath builds its own paths under', () => {
-    expect(createSystemTempPath('forge-test').startsWith(systemTempRoot())).toBe(true);
+  it('is exactly the directory createSystemTempPath builds its own paths directly under, not merely an ancestor of it', () => {
+    // A critic round found a `startsWith` assertion here passes for ANY ancestor (`path.dirname(...)`,
+    // even `/`), which is exactly the wrong-rooted-sweep regression `sweepOrphanedLauncherShims`'s own
+    // use of this function needs this test to actually catch. `path.dirname` of the built path is the
+    // one assertion that pins the direct-parent relationship, not merely a containment one.
+    expect(path.dirname(createSystemTempPath('forge-test'))).toBe(systemTempRoot());
   });
 });
 

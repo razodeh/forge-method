@@ -1352,18 +1352,24 @@ export function listDescendantPids(rootPid: number): readonly number[] {
  * Decision 1 and Decision 5).
  *
  * On win32, where neither mechanism above exists, `taskkill /PID <pid> /T /F` is the native
- * equivalent — `/T` kills `pid` and every real descendant in one call, built into every Windows
- * install. Byte-identical port of `shell.ts`'s own `killGroup` fix for the identical gap
- * (`SPEC-QUESTIONS.md` Q339/Q340's own "win32-skipped descendant kill" disclosure, closed on direct
- * owner request); kept as a separate, duplicated edit rather than a shared import, matching `Q294`'s
- * own "keep this fix scoped to `confined-command.ts` alone" precedent for this exact pair of
- * functions. Falls back to the single process when `pid` is unknown, or when `taskkill` itself
- * fails.
+ * equivalent for a process that is still genuinely alive — `/T` kills `pid` and every real
+ * descendant in one call, built into every Windows install. Byte-identical port of `shell.ts`'s own
+ * `killGroup` fix for the identical gap (`SPEC-QUESTIONS.md` Q339/Q340's own "win32-skipped
+ * descendant kill" disclosure, narrowed on direct owner request — see that function's own doc
+ * comment for exactly which cases this does and does not cover, and why liveness is checked first
+ * (two independent critic rounds found a real pid-reuse hazard without it: `killGroup` here is also
+ * called after a subprocess has already exited, e.g. `if (result.isMaxBuffer) killGroup(subprocess)`
+ * below, reached only once `await subprocess` has already resolved)); kept as a separate, duplicated
+ * edit rather than a shared import, matching `Q294`'s own "keep this fix scoped to
+ * `confined-command.ts` alone" precedent for this exact pair of functions. Falls back to the single
+ * process when `pid` is unknown, already dead, or when `taskkill` itself fails.
  *
  * **Exported as of `specs/22` M16 P8** — see {@link listDescendantPids}'s own doc comment for the
  * full reasoning; this function is the other half of the identical reused pair. */
 export function killGroup(subprocess: {
   readonly pid?: number;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
   kill: (signal: 'SIGKILL') => boolean;
 }): void {
   const pid = subprocess.pid;
@@ -1372,10 +1378,15 @@ export function killGroup(subprocess: {
     return;
   }
   if (process.platform === 'win32') {
+    if (subprocess.exitCode !== null || subprocess.signalCode !== null) {
+      subprocess.kill('SIGKILL');
+      return;
+    }
     try {
       execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
     } catch {
-      // `pid` already gone, or `taskkill` itself unavailable -- fall back to the single process.
+      // `pid` died in the gap between the liveness check above and this call, or `taskkill` itself
+      // is unavailable -- fall back to the single process, the previous behaviour.
       subprocess.kill('SIGKILL');
     }
     return;
@@ -1471,7 +1482,12 @@ function decodeLossyWithStrippedFinalNewline(bytes: Uint8Array): string {
  * identically — written once so the two `execa` call shapes below cannot drift apart in anything
  * except the options and the result shape that genuinely differ between them. */
 function armConfinedTimeout(
-  subprocess: { readonly pid?: number; kill: (signal: 'SIGKILL') => boolean },
+  subprocess: {
+    readonly pid?: number;
+    readonly exitCode: number | null;
+    readonly signalCode: NodeJS.Signals | null;
+    kill: (signal: 'SIGKILL') => boolean;
+  },
   timeoutMs: number,
 ): { readonly state: { timedOut: boolean }; readonly disarm: () => void } {
   const state = { timedOut: false };

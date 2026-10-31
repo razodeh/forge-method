@@ -126,17 +126,31 @@ function listDescendantPids(rootPid: number): readonly number[] {
  * (`listDescendantPids`'s own doc comment has the real, confirmed repro) orphaned and running forever.
  *
  * On win32, where neither mechanism above exists, `taskkill /PID <pid> /T /F` is the native
- * equivalent: `/T` kills `pid` and every real descendant in one call (built into every Windows
- * install, no optional feature or third-party dependency), closing the exact "a multi-level process
- * tree survives because only its top-level member was ever signalled" gap this file's own POSIX path
- * already closes (`SPEC-QUESTIONS.md` Q339/Q340's own "win32-skipped descendant kill" disclosure,
- * closed here on direct owner request — confirmed live only on POSIX this session, since no Windows
- * host is available; `taskkill`'s own `/T /F` semantics are Microsoft-documented, not assumed).
- * Falls back to the single process when `pid` is unknown, or when `taskkill` itself fails (the pid
- * is already gone, or the command is unavailable on some constrained host) — the previous, narrower
- * behaviour, never a harder failure than before this fix. */
+ * equivalent for a process that is still genuinely alive: `/T` kills `pid` and every real
+ * descendant in one call (built into every Windows install, no optional feature or third-party
+ * dependency) — narrowing, not closing, `SPEC-QUESTIONS.md` Q339/Q340's own "win32-skipped
+ * descendant kill" disclosure (confirmed live only on POSIX this session; see Q383's own revised
+ * account of exactly which cases this does and does not cover).
+ *
+ * **Only ever attempted while `pid` may still be alive** (`subprocess.exitCode`/`signalCode` both
+ * still `null`) — two independent critic rounds confirmed this matters for real, not hypothetically:
+ * `killGroup` is also called AFTER a subprocess has already exited (`confined-command.ts`'s own
+ * `if (result.isMaxBuffer) killGroup(subprocess)`, reached only once `await subprocess` has already
+ * resolved; `http-server.ts`'s own `hasExited()`-gated calls). The PREVIOUS single-process fallback
+ * was safe to call unconditionally there because Node's own `.kill()` operates on its internal
+ * process handle, already invalidated once the process has exited — a harmless no-op. `taskkill`,
+ * by contrast, operates on the bare numeric pid: once the real process has exited, Windows can
+ * (and does, faster than POSIX) reuse that same pid for a genuinely unrelated process, so an
+ * unconditional `taskkill /PID <pid> /T /F` risks force-killing a stranger's entire process tree.
+ * Checking liveness first closes that hole; it also means an ordinary, already-finished command
+ * never pays for a `taskkill.exe` spawn it could not have helped anyway (Windows does not reparent
+ * an exited process's own children, so `taskkill` could not reach them from a dead root even if it
+ * tried — the normal-exit "something was left behind" case is unaffected by this fix either way,
+ * only the "command killed while still genuinely running" case is). */
 function killGroup(subprocess: {
   readonly pid?: number;
+  readonly exitCode: number | null;
+  readonly signalCode: NodeJS.Signals | null;
   kill: (signal: 'SIGKILL') => boolean;
 }): void {
   const pid = subprocess.pid;
@@ -145,10 +159,15 @@ function killGroup(subprocess: {
     return;
   }
   if (process.platform === 'win32') {
+    if (subprocess.exitCode !== null || subprocess.signalCode !== null) {
+      subprocess.kill('SIGKILL');
+      return;
+    }
     try {
       execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
     } catch {
-      // `pid` already gone, or `taskkill` itself unavailable -- fall back to the single process.
+      // `pid` died in the gap between the liveness check above and this call, or `taskkill` itself
+      // is unavailable -- fall back to the single process, the previous behaviour.
       subprocess.kill('SIGKILL');
     }
     return;

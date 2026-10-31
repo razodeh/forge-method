@@ -4,9 +4,9 @@
  *
  * @see specs/03 §3.2.4
  */
-import { execFile, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -44,6 +44,48 @@ async function realDeadPid(): Promise<number> {
  * directory old enough to sweep" flaky by construction. */
 function fixedClock(iso: string): Clock {
   return { now: () => iso };
+}
+
+/** Well past `ORPHANED_SHIM_MIN_AGE_MS` (24h) — a critic round found the original 25h-future clock
+ * this file used was never actually exercising the "regardless of age" claim on two separate
+ * existing tests (a live owner, and a non-directory entry), since neither test's own directory was
+ * ever made old *and* the sweep ALSO run with a young clock to contrast against. Named for reuse
+ * across every test that needs to prove "this survives even when the sweep believes a lot of time
+ * has passed," not just "this survives right now." */
+function farFutureClock(): Clock {
+  return fixedClock(new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString());
+}
+
+/** Redirects wherever `systemTempRoot()`/`os.tmpdir()` resolves to `root`, on every platform node's
+ * own `tmpdir()` actually reads from (`TMPDIR` on POSIX; `TEMP` then `TMP` on win32 — a critic round
+ * confirmed live, by printing node's own `tmpdir()` source, that setting `TMPDIR` alone leaves a
+ * Windows run still scanning the real `%TEMP%`, never reaching anything under `root`). Restores
+ * every one of the three to its own prior value (`undefined` deleted, not set to the literal string
+ * `"undefined"`) when `run` finishes, success or failure. */
+function restoreEnvVar(name: 'TMPDIR' | 'TEMP' | 'TMP', previous: string | undefined): void {
+  if (previous === undefined) {
+    if (name === 'TMPDIR') delete process.env['TMPDIR'];
+    else if (name === 'TEMP') delete process.env['TEMP'];
+    else delete process.env['TMP'];
+  } else {
+    process.env[name] = previous;
+  }
+}
+
+async function withRedirectedTempRoot<T>(root: string, run: () => Promise<T>): Promise<T> {
+  const previousTmpdir = process.env['TMPDIR'];
+  const previousTemp = process.env['TEMP'];
+  const previousTmp = process.env['TMP'];
+  process.env['TMPDIR'] = root;
+  process.env['TEMP'] = root;
+  process.env['TMP'] = root;
+  try {
+    return await run();
+  } finally {
+    restoreEnvVar('TMPDIR', previousTmpdir);
+    restoreEnvVar('TEMP', previousTemp);
+    restoreEnvVar('TMP', previousTmp);
+  }
 }
 
 const exec = promisify(execFile);
@@ -243,21 +285,16 @@ describe('createLauncherShimOrWarn', () => {
     await shim?.cleanup();
   });
 
-  it('sweeps an orphaned shim from a prior, now-dead run before creating its own (Q382, owner-directed)', async () => {
+  it('sweeps an orphaned shim from a prior, now-dead run before creating its own (Q383, owner-directed)', async () => {
     const root = await scratch();
     const orphan = path.join(root, 'forge-launcher-orphan');
     await mkdir(orphan, { mode: 0o700 });
     await writeFile(path.join(orphan, 'owner.pid'), String(await realDeadPid()), 'utf8');
-    const previous = process.env['TMPDIR'];
-    process.env['TMPDIR'] = root;
-    try {
+    await withRedirectedTempRoot(root, async () => {
       const shim = await createLauncherShimOrWarn(spec(await echoEntry(root)), undefined);
       expect(existsSync(orphan), 'the dead-owner shim must be swept').toBe(false);
       await shim?.cleanup();
-    } finally {
-      if (previous === undefined) delete process.env['TMPDIR'];
-      else process.env['TMPDIR'] = previous;
-    }
+    });
   });
 });
 
@@ -279,11 +316,15 @@ describe('sweepOrphanedLauncherShims', () => {
     expect(existsSync(dir)).toBe(false);
   });
 
-  it('leaves a forge-launcher-* directory alone when owner.pid names a real, still-alive pid', async () => {
+  it('leaves a forge-launcher-* directory alone when owner.pid names a real, still-alive pid, EVEN once it is well past the age threshold', async () => {
     const root = await scratch();
     const dir = await orphanCandidate(root);
     await writeFile(path.join(dir, 'owner.pid'), String(process.pid), 'utf8');
-    await sweepOrphanedLauncherShims(root);
+    // A mutation-testing round found the original version of this test proved nothing: it never
+    // actually made the directory old, so a regression that dropped the "a live owner wins
+    // regardless of age" rule entirely (falling through to the age check unconditionally) still
+    // passed every test here. The far-future clock is what actually exercises that rule.
+    await sweepOrphanedLauncherShims(root, farFutureClock());
     expect(
       existsSync(dir),
       'a live owner must survive the sweep, however old the directory is',
@@ -301,9 +342,32 @@ describe('sweepOrphanedLauncherShims', () => {
   it('removes a forge-launcher-* directory with no owner.pid once it is old enough', async () => {
     const root = await scratch();
     const dir = await orphanCandidate(root);
-    const farFuture = fixedClock(new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString());
-    await sweepOrphanedLauncherShims(root, farFuture);
+    await sweepOrphanedLauncherShims(root, farFutureClock());
     expect(existsSync(dir)).toBe(false);
+  });
+
+  it('treats a malformed owner.pid ("", "-1", out-of-range, non-numeric) as no marker at all, never as "alive forever"', async () => {
+    const root = await scratch();
+    for (const [index, garbage] of [
+      '',
+      '   ',
+      '-1',
+      '0',
+      '99999999999',
+      '1e21',
+      'nope',
+    ].entries()) {
+      const dir = await orphanCandidate(root, `forge-launcher-garbage-${String(index)}`);
+      await writeFile(path.join(dir, 'owner.pid'), garbage, 'utf8');
+      // Young clock: survives, exactly like a genuinely missing marker would (never deleted on sight).
+      await sweepOrphanedLauncherShims(root, fixedClock(new Date().toISOString()));
+      expect(existsSync(dir), `"${garbage}" must not be read as a live pid`).toBe(true);
+      // Far-future clock: swept, exactly like a genuinely missing-and-old marker would (never kept
+      // "alive forever" the way a critic round found `Number('') === 0` -> `isProcessAlive(0)` ->
+      // `true` made an earlier draft of this sweep behave).
+      await sweepOrphanedLauncherShims(root, farFutureClock());
+      expect(existsSync(dir), `"${garbage}" must still be swept once old enough`).toBe(false);
+    }
   });
 
   it('ignores entries that do not match the forge-launcher- prefix, even one with a dead-pid marker inside', async () => {
@@ -318,17 +382,92 @@ describe('sweepOrphanedLauncherShims', () => {
     ).toBe(true);
   });
 
-  it('ignores a plain file that happens to match the forge-launcher- prefix', async () => {
+  it('ignores a plain file that happens to match the forge-launcher- prefix, even once old enough that a real directory would be swept', async () => {
     const root = await scratch();
     const file = path.join(root, 'forge-launcher-not-a-directory');
     await writeFile(file, 'not a directory', 'utf8');
-    await sweepOrphanedLauncherShims(root);
+    // The far-future clock is what actually distinguishes "this check looks at isDirectory, not just
+    // age" from a regression that swept everything matching the name prefix once old enough.
+    await sweepOrphanedLauncherShims(root, farFutureClock());
     expect(existsSync(file)).toBe(true);
   });
 
   it('does nothing, and does not throw, when tmpRoot itself does not exist', async () => {
     const root = path.join(await scratch(), 'does', 'not', 'exist');
     await expect(sweepOrphanedLauncherShims(root)).resolves.toBeUndefined();
+  });
+
+  describe('closing the cross-user and adversarial-filesystem findings two independent critic rounds demonstrated live against an earlier draft', () => {
+    it('leaves a forge-launcher-* directory alone when its mode is not restricted to this user alone, even with a dead-pid marker and well past the age threshold', async () => {
+      if (process.platform === 'win32') return; // No POSIX mode bits to loosen on win32.
+      const root = await scratch();
+      const dir = await orphanCandidate(root);
+      await writeFile(path.join(dir, 'owner.pid'), String(await realDeadPid()), 'utf8');
+      // Group- and other-readable: `createLauncherShim` never creates a real shim this way, but a
+      // planted one (the live, demonstrated cross-user exploit: an attacker who does not own this
+      // directory at all could not pass the uid check regardless, but this also narrows the case
+      // where SOMETHING unexpected loosened a shim's own permissions) must still not be acted on.
+      await chmod(dir, 0o777);
+      await sweepOrphanedLauncherShims(root, farFutureClock());
+      expect(existsSync(dir), 'a group/other-accessible directory must never be swept').toBe(true);
+    });
+
+    it('does not hang, and does not delete anything, when owner.pid is a real FIFO with no writer (the live-demonstrated DoS)', async () => {
+      if (process.platform === 'win32') return; // No FIFOs on win32; independently not exposed.
+      const root = await scratch();
+      const dir = await orphanCandidate(root);
+      execFileSync('mkfifo', [path.join(dir, 'owner.pid')]);
+      // Bounded by a short race, not vitest's own global test timeout: a regression that reintroduces
+      // the blocking `open()` this exists to catch should fail fast and legibly, not hang the whole
+      // suite for 60s before timing out with a much less informative message.
+      const result = await Promise.race([
+        sweepOrphanedLauncherShims(root).then(() => 'completed' as const),
+        new Promise<'hung'>((resolve) => {
+          setTimeout(() => {
+            resolve('hung');
+          }, 2_000);
+        }),
+      ]);
+      expect(result, 'the sweep must not block on a FIFO with no writer').toBe('completed');
+      expect(existsSync(dir), 'an unreadable marker must never be treated as safe to delete').toBe(
+        true,
+      );
+    });
+
+    it('does not follow a symlinked owner.pid (an earlier draft would have read, or leaked the contents of, whatever it points at)', async () => {
+      if (process.platform === 'win32') return; // No POSIX O_NOFOLLOW semantics on win32.
+      const root = await scratch();
+      const dir = await orphanCandidate(root);
+      const secret = path.join(root, 'not-a-shim-secret.txt');
+      await writeFile(secret, String(await realDeadPid()), 'utf8');
+      await symlink(secret, path.join(dir, 'owner.pid'));
+      await sweepOrphanedLauncherShims(root, farFutureClock());
+      expect(existsSync(secret), 'the symlink target must survive untouched').toBe(true);
+      expect(
+        existsSync(dir),
+        'a symlinked marker is "unusable", never "missing" -- it must not fall through to the age check and get swept',
+      ).toBe(true);
+    });
+
+    it('removes only the files this module itself could have created, leaving an unrecognised extra file (and the directory) alone', async () => {
+      const root = await scratch();
+      const dir = await orphanCandidate(root);
+      await writeFile(path.join(dir, 'owner.pid'), String(await realDeadPid()), 'utf8');
+      const planted = path.join(dir, 'something-unexpected.txt');
+      await writeFile(planted, 'not a file this module ever writes', 'utf8');
+      await sweepOrphanedLauncherShims(root);
+      expect(existsSync(path.join(dir, 'owner.pid')), 'the known marker is still unlinked').toBe(
+        false,
+      );
+      expect(
+        existsSync(planted),
+        'unrecognised content must never be deleted by a recursive walk this sweep no longer does',
+      ).toBe(true);
+      expect(
+        existsSync(dir),
+        'rmdir on a non-empty directory fails harmlessly; the directory is left in place',
+      ).toBe(true);
+    });
   });
 });
 
