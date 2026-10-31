@@ -33013,3 +33013,49 @@ as a possible future hygiene improvement, not a correctness fix.
 
 **Gauntlet:** none — pure documentation correction, no behavior change, verified against Node's
 own documented platform semantics rather than assumed.
+
+
+## Q378 — Q376's disclosed production-timeout question resolved with owner authorization, after
+stronger evidence (cross-platform, not Windows-only) made the real tradeoff clear: widened
+`stopLockedProcess`'s `maxWaitMs` default 5000ms -> 20000ms (owner-directed scope expansion,
+2026-10-30)
+
+**What this closes.** Q376 disclosed, and deliberately did not resolve, whether `forge pause`/
+`forge abort`'s real 5-second grace period (`stopLockedProcess`'s `maxWaitMs` default) was too
+tight under real conditions or just an artifact of one extreme CI leg. Q377's investigation ruled
+out a Windows-specific signaling design flaw as the explanation (Node's own docs: Windows kill is
+immediate/forceful, not cooperative, so there is no handler-wait time to account for there) without
+resolving the underlying timing question. The next CI run (`41154717828`) then hit the SAME
+`RUN-049`/exit-2 failure — at line 1292, `expect(result.status).toBe(0)` after `forge pause`, the
+step AFTER Q375's own lock-existence fix, which held — on `heavy-subprocess (node 20, ubuntu-
+latest)` AND `heavy-subprocess (node 20, macos-latest)`, not only Windows. That is the evidence
+Q376 was missing: this is genuine, cross-platform, contention-driven timing, not a Windows-only
+quirk — strengthening the case that a real user's own sufficiently loaded machine could plausibly
+hit the same ceiling, not only this deliberately extreme, sequential CI job.
+
+**Decision — FIXED, with explicit owner sign-off, not a unilateral call.** Presented the full
+picture back (cross-platform recurrence, Q377's own ruled-out hypothesis) and asked directly
+rather than deciding alone, since this changes real `forge pause`/`forge abort` user-facing
+blocking behavior, not just test tolerance. Owner chose: widen the production default. Raised
+`stopLockedProcess`'s `maxWaitMs` default from 5000 to 20_000 (ms) — the same "generous, not
+precise, revisit once better data exists" reasoning already used throughout this thread (`floor`/
+`seed`'s own CI timeouts, `test:heavy-subprocess`'s own job timeout, `bin.test.ts`'s own lock-poll
+widening). `pollIntervalMs` (20ms) left unchanged — only the ceiling moved. The only production
+caller (`control.ts`'s `stop()`, used by both `pauseRun`/`abortRun`) relies on this default and is
+therefore the one real behavior change; every test caller either doesn't reach the poll-wait path
+at all (`RUN-048` early-return cases) or passes its own explicit `maxWaitMs` already (the injected-
+clock test), confirmed by reading every call site before landing, not assumed.
+
+**Verification.** `packages/cli/test/commands/run/lock.test.ts`'s `stopLockedProcess` describe
+block: 4/4 passing, confirmed unaffected by the default change (checked each test's own path:
+2 hit `RUN-048` before any poll; 1 uses a real `SIGKILL` against a process that dies near-instantly
+regardless of the ceiling; 1 passes its own explicit `5000` with an injected clock). `bin.test.ts`'s
+own pause test: 1/1 passing locally, 2.16s, unchanged from before — the raised ceiling only matters
+under real contention this machine doesn't have, so no local behavior difference is expected or
+observed. `pnpm typecheck`: 21/21 clean. `eslint`/`prettier --check`: clean.
+
+**Gauntlet:** none — one production default value changed with an explicit, informed owner
+decision already in hand (not a unilateral judgment call), the exact kind of change this session
+has otherwise deliberately withheld from making alone throughout this whole investigation (Q376,
+Q377). Landed directly given the narrow, single-value, already-verified-safe nature of the change
+and the explicit authorization already obtained.
