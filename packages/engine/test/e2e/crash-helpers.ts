@@ -32,6 +32,7 @@
  * @see specs/20 §20.10
  * @see SPEC-QUESTIONS.md Q149
  * @see SPEC-QUESTIONS.md Q384
+ * @see SPEC-QUESTIONS.md Q387
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
@@ -73,36 +74,44 @@ export async function createTempRepo(prefix: string): Promise<string> {
  * shared decision point `spawnAndKillAfter`'s `'data'` handler below needs, factored out so the
  * platform branch (POSIX negative-pid kill vs. win32 `taskkill /T /F`, Q384 above) lives in one place.
  *
- * POSIX: `process.kill(-pid, 'SIGKILL')`, the POSIX convention for "target every process in this
- * group, not just `pid` itself" — what a real crash actually does (an OOM-killed cgroup, a killed
- * session, or a lost host takes every descendant down together). `SPEC-QUESTIONS.md` Q149 has the
- * full record of the real bug a single-pid kill left behind here. Throws `ESRCH` specifically when
- * this caller itself was starved long enough (Q384) that the group had already exited naturally in
- * the meantime — a genuine, load-dependent race, reported back rather than rethrown.
- *
- * win32: `process.kill(-pid, ...)` has no group-signalling path at all there (Q384's own doc comment
- * above) and would throw every time regardless of load, never genuinely racing — so this branches to
- * `taskkill /PID <pid> /T /F` instead, the identical native tree-kill this same session's own
- * `killGroup` (`packages/engine/src/dispatch/shell.ts`/`confined-command.ts`, Q383) already
- * established. `taskkill` reports "already gone" via a real, confirmed exit code (128, "ERROR: The
- * process ... not found") rather than an exception `code`, so that is the check here instead of
- * `ESRCH`; any other failure is surfaced, not swallowed, the same discipline as the POSIX branch. */
+ * `SPEC-QUESTIONS.md` Q387: a real CI run (`41263303919`) showed this throwing uncaught from a real
+ * `taskkill` failure with exit code 255 — neither the "success" (0) nor the already-handled "not
+ * found" (128) case this function's own first version only checked for. Rather than chase every real
+ * `taskkill` exit code (the 128 convention itself is only community-verified, not an official
+ * Microsoft guarantee — this function's own prior doc comment already said so), this now checks
+ * liveness FIRST with the same portable, pure-existence probe `waitForProcessGone` below already
+ * uses (`process.kill(pid, 0)`, sends no real signal, identical behaviour on POSIX and win32) —
+ * mirroring the exact "never touch `taskkill`/a signal call for a pid already confirmed dead"
+ * discipline this same session's own `killGroup` fix (`packages/engine/src/dispatch/shell.ts`/
+ * `confined-command.ts`, `Q383`) already established for PRODUCTION code, closing the identical
+ * win32 pid-reuse hazard that fix exists to prevent (`Q383`'s own doc comment: once a pid is dead,
+ * Windows can and does reuse it fast, and an unconditional `taskkill /T /F` then risks a stranger's
+ * entire process tree) — a gap this file's own Q384/Q385 versions had not yet closed. The pre-check
+ * narrows, but cannot fully close, the TOCTOU window (the real target could still die in the
+ * narrow gap between the probe and the actual kill call) — so the kill call itself is ALSO wrapped:
+ * any failure there, having JUST confirmed liveness a moment earlier, is overwhelmingly more likely
+ * to mean "it finished in that narrow remaining window" than a genuinely different problem, so it is
+ * treated the same way rather than re-litigating every platform's own exact failure-code vocabulary
+ * a second time. This function now never throws — `spawnAndKillAfter`'s own `'data'` handler can
+ * call it directly with no `try`/`catch` of its own. */
 function killGroupReportingRace(pid: number): boolean {
-  if (process.platform === 'win32') {
-    try {
-      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
-      return false;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException & { status?: number }).status === 128) return true;
-      throw err;
-    }
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return true;
   }
   try {
-    process.kill(-pid, 'SIGKILL');
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      // Negative pid: POSIX's own "signal every process in this group," not just `pid` itself --
+      // see this function's own doc comment for why the group, not the one process, is the real
+      // crash boundary this needs to simulate.
+      process.kill(-pid, 'SIGKILL');
+    }
     return false;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return true;
-    throw err;
+  } catch {
+    return true;
   }
 }
 
@@ -164,7 +173,7 @@ export async function spawnAndKillAfter(
           new KillRaceLostError(
             `the fixture child's whole process group (pid ${String(pid)}) had already exited on its ` +
               `own by the time the group-kill ran (code=${String(code)}, signal=${String(signal)}) -- ` +
-              `a real CI host/platform-latency race (SPEC-QUESTIONS.md Q384/Q386), not a logic bug: ` +
+              `a real CI host/platform-latency race (SPEC-QUESTIONS.md Q384/Q386/Q387), not a logic bug: ` +
               `this caller was starved long enough after seeing the ${String(killAfterEventCount)}th ` +
               `EVENT line that the fixture finished the whole run before the kill signal could be ` +
               `delivered`,

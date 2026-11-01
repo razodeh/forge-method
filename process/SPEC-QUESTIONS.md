@@ -33748,3 +33748,75 @@ that is itself new information (how often, not whether) rather than a sign this 
 **Gauntlet.** Test-only change (both files already test-only by their own doc comments) — landed
 directly per this session's established "test-only/docs-only, no production-code change" exception
 to the 2-critic-worktree gauntlet.
+
+
+## Q387 — Q386's own retry mechanism worked, but exposed a genuinely uncaught `taskkill` failure and
+a latent win32 pid-reuse hazard this session's own `killGroup` fix (Q383) had already warned about;
+fixed by checking liveness before ever touching `taskkill` (owner-directed, 2026-11-01)
+
+**What happened.** CI run `41263303919` (validating `Q386`'s retry push) showed the retry mechanism
+genuinely working: `crash-resume (windows-latest)`'s own logs show 7 separate iterations (0, 3, 8,
+10, 11, 14, 15) each losing the kill race on their first one-to-three attempts and recovering on a
+later one, at a different random event count every single time — exactly the designed behaviour.
+The TEST ITSELF passed (`✓ ... 193927ms`, `Test Files 2 passed (2)`). But the overall job still
+reported `failure`, because vitest separately caught an "Unhandled Error" / "Uncaught Exception"
+AFTER the test had already finished: `Error: Command failed: taskkill /PID 6324 /T /F`, exit status
+255 — not the already-handled "not found" code (128), and not success (0). This was a genuinely new
+failure mode `Q386`'s retry logic never saw before only because `Q385`'s original `killGroupReporting
+Race` re-threw any non-128 `taskkill` failure UNCAUGHT from inside the `'data'` stream listener — the
+exact uncaught-exception shape `Q384` already fixed once for the `ESRCH`/POSIX case, now reproduced
+for a different, previously-unseen win32 failure code.
+
+**Root cause — not merely "chase the missing exit code."** Investigating why `taskkill` would fail
+with 255 rather than 128 surfaced a real, more significant latent defect: `killGroupReportingRace`
+called `taskkill /PID <pid> /T /F` UNCONDITIONALLY, with no liveness check first. This session's own
+`killGroup` fix for PRODUCTION code (`packages/engine/src/dispatch/shell.ts`/`confined-command.ts`,
+`Q383`) already identified and fixed the EXACT same shape of hazard: once a pid has genuinely died,
+Windows can and does reuse that pid number for a completely unrelated process fast, and an
+unconditional `taskkill /PID <pid> /T /F` then risks force-killing a stranger's entire process tree
+— `Q383`'s own fix added a liveness check specifically to prevent this, for production code. This
+test-only mechanism (built across `Q384`/`Q385`, this same session) reproduced the identical
+oversight: no equivalent liveness check before calling `taskkill`. Exit code 255 most plausibly means
+exactly this — `taskkill` was pointed at a pid Windows had already recycled for some other (possibly
+unkillable, possibly already-protected) process, which is a different, likely rarer failure shape
+than the plain "not found" (128) case `Q385` already handled.
+
+**Fix.** Rather than continuing to chase individual `taskkill` exit codes (the `128` convention
+itself is only community-verified, per `Q385`'s own research, not an officially documented Microsoft
+guarantee — betting the whole mechanism on correctly enumerating every real failure code is
+fragile), `killGroupReportingRace` now checks liveness FIRST, using the exact same portable,
+pure-existence probe `waitForProcessGone` (this same file) already relies on: `process.kill(pid, 0)`
+— sends no real signal, works identically on POSIX and win32, and is the one check this file already
+trusted elsewhere. If the pid is already dead, this reports "race lost" directly, WITHOUT ever
+calling `taskkill`/the POSIX group-kill — closing the pid-reuse hazard at its root rather than trying
+to recognise its symptom after the fact. The real kill call is still wrapped afterward for the
+narrower residual TOCTOU window (the target could still die in the gap between the liveness probe
+and the kill itself) — any failure there is now treated as a lost race unconditionally, since
+liveness was JUST independently confirmed moments earlier, making any other explanation far less
+likely than "it finished in that remaining narrow window." This function now provably never throws,
+so `spawnAndKillAfter`'s own `'data'` handler needs no `try`/`catch` around it at all — the uncaught-
+exception shape cannot recur here regardless of which exact failure code a future platform quirk
+produces.
+
+**Verified via the same real mutation-test discipline as `Q386`.** Temporarily forced
+`killGroupReportingRace` to always report a lost race (reverted immediately after): confirmed the
+exhaustion path still throws the expected "lost the kill race 5 times in a row" error, with the real,
+unmutated code's own message correctly citing `Q384/Q386/Q387`. Re-ran the real (unmutated) code
+afterward: both `crash-resume.test.ts` and `s12-orphan-free-crash.test.ts` still pass cleanly
+(35.74s/46.95s combined across repeated local runs), no regression to the POSIX happy path.
+
+**Verification.** `pnpm typecheck` (21/21 clean). `eslint`/`prettier --check` clean. `node
+scripts/check-boundaries.mjs` clean.
+
+**Disclosed, not verified yet.** Whether this specific exit-255/pid-reuse scenario is now fully
+closed on Windows, as opposed to merely the one concretely observed instance, is unconfirmed without
+a real Windows machine; the next real CI run on `next` is the first live proof. The underlying
+TOCTOU window (liveness probe vs. actual kill call) is narrowed, not eliminated — a race landing in
+that specific narrow gap remains theoretically possible and would now be silently folded into
+"killRaceLost" (retried by `Q386`'s mechanism) rather than surfaced as a distinct case, which is the
+intended, disclosed trade-off: broader, more robust failure handling over exhaustively enumerating
+every platform's own exact error vocabulary.
+
+**Gauntlet.** Test-only change, same file as `Q384`/`Q385`/`Q386` — landed directly per this
+session's established "test-only/docs-only, no production-code change" exception to the
+2-critic-worktree gauntlet.
