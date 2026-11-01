@@ -14,6 +14,29 @@
  * See `list-pane.test.tsx`'s own header comment for why every test that presses a key awaits `flush()`
  * once right after `render()`, before the first `stdin.write()`.
  *
+ * **`flush()` itself waits two macrotask ticks, not one** -- a real, CI-reproduced flake (not a
+ * theoretical one): `<Tree>` (`components/tree.tsx`) only ever calls its own `onFocusChange` prop from
+ * inside a `useEffect`, a deferred/passive React effect the `scheduler` package flushes via its own
+ * `setImmediate` call, one macrotask tick after the synchronous commit a plain keypress (or the initial
+ * mount's own default focus) otherwise produces immediately. This screen's own `onFocusChange` handler
+ * calls `setFocusedNodeId`, which triggers a *second* render -- and `ink`'s own `useInput`
+ * (`ink/build/hooks/useInput.js`) re-subscribes its real stdin listener via *another*, separate
+ * `useEffect`, keyed on the `inputHandler` reference. This screen's own `useInput` callback is a fresh
+ * closure every render (it closes over `focusedNodeId`), so the listener that will actually see the
+ * post-focus-change value only attaches once *that* second effect has also flushed. Under light load
+ * both rounds land inside the one scheduler pass a single tick already waits for, which is why this
+ * always passed locally -- but a real CPU-contended repro (not guessed at: a synchronous busy-loop
+ * injected between a focus-changing `stdin.write()` and the following tick, standing in for floor/seed
+ * CI's own ~750-concurrent-file scheduling pressure) reliably starves exactly the second round,
+ * including for the very first, mount-time default focus (`VIS-001`) -- `press(stdin, 't')`/`'n'`/`'e'`
+ * then gets silently swallowed by the *still-subscribed, pre-focus-change* listener, which still reads
+ * `focusedNodeId` as `undefined`. The identical "stale `useInput` closure" hazard `list-pane.test.tsx`'s
+ * own header comment already documents for its own filter-mode closure, one render further away here
+ * (behind a prop callback instead of local state). Waiting two ticks is not an arbitrary extra delay: it
+ * is exactly the number of deferred-effect rounds this chain needs (the focus notification, then the
+ * listener resubscription it triggers) -- verified directly to hold even under a full extra second of
+ * injected contention at the worst point in the chain, repeatably.
+ *
  * @see specs/04 §4.3 S3
  * @see PLAN-M9.md P9
  */
@@ -31,10 +54,16 @@ import { INITIAL_RUN_READ_MODEL } from '../../src/state/run-read-model.ts';
 const DOWN = '\x1B[B';
 const RIGHT = '\x1B[C';
 
-function flush(): Promise<void> {
+function tick(): Promise<void> {
   return new Promise((resolve) => {
     setImmediate(resolve);
   });
+}
+
+/** Two ticks, not one -- see this file's own top doc comment. */
+async function flush(): Promise<void> {
+  await tick();
+  await tick();
 }
 
 interface StdinLike {

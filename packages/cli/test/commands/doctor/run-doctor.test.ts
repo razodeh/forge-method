@@ -151,9 +151,12 @@ owner: architect
 describe('runDoctor — crashed-check degradation via a second, independent crashing check', () => {
   it('degrades a real, corrupted lock file (invalid JSON) into its own failed entry too', async () => {
     const project = await createTestProject();
-    // `readRunLock` does a bare `JSON.parse` with no try/catch of its own — a truncated/corrupted
-    // `.forge/state/lock.json` throws a real `SyntaxError` straight out of `checkStaleLock`, the
-    // second of the four unguarded-throw checks a critic round flagged.
+    // `checkStaleLock` does its own raw read + `JSON.parse` of `.forge/state/lock.json`
+    // (`SPEC-QUESTIONS.md` Q390's own disclosed-but-deferred-from-Q359 fix), deliberately NOT through
+    // the shared `readRunLock` (which swallows a malformed read into `undefined` for
+    // `acquireRunLock`'s own race-safety reasons) — a truncated/corrupted lock file throws a real
+    // `SyntaxError` straight out of `checkStaleLock`, one of the unguarded-throw checks a critic round
+    // flagged.
     await mkdir(path.join(project.dir, '.forge/state'), { recursive: true });
     await writeFile(path.join(project.dir, '.forge/state/lock.json'), '{not valid json');
 

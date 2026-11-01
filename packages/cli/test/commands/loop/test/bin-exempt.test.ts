@@ -36,6 +36,25 @@ function resolveRealVitestEntry(): string {
 
 const TEST_COMMAND = `${process.execPath} ${resolveRealVitestEntry()} run --root .`;
 
+// CI run `41344817586` (`floor (node 22, ubuntu-latest, TZ=UTC)`) showed two of this file's own
+// tests failing with a real exit code 1 where every GATE-515/usage refusal here expects 2 --
+// confirmed live (a real mutation test against this exact value, run alongside this repo's own
+// `*lock-stress*.test.ts` family for genuine contention) that `execFileSync`'s own `timeout` option
+// firing produces EXACTLY that shape: `error.status` is `null`, not the real process's own exit
+// code, and this function's own catch maps that `null` through `execError.status ?? 1` to a bare
+// `1` -- indistinguishable from a genuine generic-failure exit without reading `stderr`. The real
+// `forge` process this spawns is ITSELF a real child-process launcher (`bin/forge.mjs`) around a
+// real TypeScript entry point, and some of this file's own checks (`runRawBindingCheck`) spawn a
+// REAL vitest baseline-then-mutated pair of test runs underneath that -- three to four real,
+// nested OS process spawns per call, each paying real scheduling cost. 30s was comfortably enough
+// in isolation but, confirmed live under real contention from this repo's own heavy subprocess
+// files, is not always enough under the full suite's real host contention -- every one of this
+// file's own `it(...)` blocks already budgets 60s (or, for the heaviest multi-process test, 120s)
+// for exactly this reason, so this inner ceiling must not be the tighter one. Raised to leave real
+// headroom under that outer budget while still firing before it, for the identical "clean,
+// attributable failure, not an opaque hang" reason `SPEC-QUESTIONS.md` Q384 already established.
+const FORGE_SUBPROCESS_TIMEOUT_MS = 55_000;
+
 function run(
   args: readonly string[],
   cwd: string,
@@ -44,7 +63,7 @@ function run(
   try {
     const stdout = execFileSync(process.execPath, [LAUNCHER, ...args, '-C', cwd], {
       encoding: 'utf8',
-      timeout: 30_000,
+      timeout: FORGE_SUBPROCESS_TIMEOUT_MS,
       maxBuffer: 16 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
@@ -339,7 +358,11 @@ describe('forge test exempt — a valid exemption', () => {
     expect(bindingParsed.nonBinding).toEqual([]);
     expect(bindingParsed.exempt).toBe(true);
     expect(bindingParsed.bound).toEqual(['adds']);
-  }, 60_000);
+    // Two sequential `run()` calls above, each now budgeted up to `FORGE_SUBPROCESS_TIMEOUT_MS`
+    // (55s) -- the identical reason the `GATE-515 exempts-a-binding-test` test below doubles its
+    // own `it()` timeout, applied consistently here too so this test's own worst case does not
+    // quietly inherit a tighter ceiling than its own two calls can need.
+  }, 120_000);
 
   it('a structured execution.testCommands.unit entry with a declared "scope" template is routed correctly too (specs/22 M17 P4)', async () => {
     const dir = await freshProject({
@@ -382,7 +405,9 @@ describe('forge test exempt — a valid exemption', () => {
     expect(bindingParsed.passed).toBe(true);
     expect(bindingParsed.exempt).toBe(true);
     expect(bindingParsed.bound).toEqual(['adds']);
-  }, 60_000);
+    // Two sequential `run()` calls above, each now budgeted up to `FORGE_SUBPROCESS_TIMEOUT_MS`
+    // (55s) -- doubled for the identical reason the test above this one now does.
+  }, 120_000);
 
   it('is written to reports/exemptions.md as a real, schema-shaped collection entry', async () => {
     const dir = await freshProject();
@@ -627,7 +652,9 @@ describe('forge test exempt — stale and expired exemptions (checked later, by 
     expect(parsed.ok).toBe(false);
     expect(parsed.problem).toContain('STORY-001: tautology');
     expect(parsed.problem).toContain('stale');
-  }, 60_000);
+    // Two sequential `run()` calls above, each now budgeted up to `FORGE_SUBPROCESS_TIMEOUT_MS`
+    // (55s) -- doubled for the identical reason the earlier two-call tests above this one do.
+  }, 120_000);
 
   it('an expired exemption fails test:binding, naming its expiry and owner', async () => {
     const dir = await freshProject();
@@ -656,7 +683,9 @@ describe('forge test exempt — stale and expired exemptions (checked later, by 
     expect(parsed.problem).toContain('STORY-001: tautology');
     expect(parsed.problem).toContain('alice');
     expect(parsed.problem).toContain('expired');
-  }, 60_000);
+    // Two sequential `run()` calls above, each now budgeted up to `FORGE_SUBPROCESS_TIMEOUT_MS`
+    // (55s) -- doubled for the identical reason the earlier two-call tests above this one do.
+  }, 120_000);
 });
 
 describe('forge test exempt — real cross-process concurrency', () => {
@@ -763,7 +792,12 @@ describe('forge test exempt — a refusal leaves the tree exactly as clean as it
     expect(retried.status).toBe(2);
     const parsed = JSON.parse(retried.stdout) as { readonly error: { readonly code: string } };
     expect(parsed.error.code).toBe('GATE-515');
-  }, 60_000);
+    // Two sequential `run()` calls above, each now budgeted up to `FORGE_SUBPROCESS_TIMEOUT_MS`
+    // (55s) -- 60s total would leave this test racing its own two subprocess calls against the
+    // outer `it()` timeout exactly the way CI run `41344817586` showed happening against the old,
+    // tighter 30s inner ceiling. Doubled instead, the same "generous, not precisely tuned" shape
+    // this file's own 5-concurrent-process test already uses for comparably heavier work above.
+  }, 120_000);
 });
 
 describe('forge test exempt — hostile input the CLI-level checks must themselves catch', () => {

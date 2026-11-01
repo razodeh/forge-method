@@ -5,7 +5,7 @@
  * @see specs/09 §9.5
  * @see PLAN-M8.md P6
  */
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -328,10 +328,19 @@ describe('testCoverage — --rule ratchet (coverage:ratchet)', () => {
 
     it('excludes a file path that escapes the project root, as a real problem, rather than silently merging it into one ".." bucket', async () => {
       const { dir, ctx } = await project();
-      // A non-realpathed key (built from `dir` directly, not `realpath(dir)`) — the exact shape a
-      // collector that never resolves symlinks produces when the project root itself sits behind
-      // one (`mkdtemp`'s own real temp directories do, on macOS).
-      const foreignKey = path.join(dir, 'src/a.ts');
+      // A non-realpathed key (built from the project root AS PASSED IN, not `realpath(...)`) — the
+      // exact shape a collector that never resolves symlinks produces when the project root itself
+      // sits behind one. `mkdtemp`'s own real temp directories happen to sit behind one on macOS
+      // (`/var` -> `/private/var`) but NOT on Linux or Windows — a real CI run on `ubuntu-latest`
+      // proved this directly: with nothing actually escaping, `problems` stayed empty and
+      // `result.problems` came back `undefined`, not the populated array this test means to check.
+      // A symlinked project root is therefore created here deliberately, rather than relying on that
+      // OS-specific coincidence, so this test's own precondition holds on every platform.
+      const projectRootLink = `${dir}-link`;
+      await symlink(dir, projectRootLink, 'junction');
+      dirs.push(projectRootLink);
+      const linkedCtx: TestCoverageContext = { ...ctx, projectRoot: projectRootLink };
+      const foreignKey = path.join(projectRootLink, 'src/a.ts');
       await writeCoverageSummary(dir, {
         total: { lines: { total: 100, covered: 80, skipped: 0, pct: 80 } },
         [foreignKey]: {
@@ -342,7 +351,7 @@ describe('testCoverage — --rule ratchet (coverage:ratchet)', () => {
         },
       });
 
-      const result = await testCoverage(ctx, { rule: 'ratchet' });
+      const result = await testCoverage(linkedCtx, { rule: 'ratchet' });
 
       // Real files (non-realpathed keys) exist, but every one is excluded — never silently merged
       // into a ".."-keyed bucket, which is the specific behaviour this test guards against; with

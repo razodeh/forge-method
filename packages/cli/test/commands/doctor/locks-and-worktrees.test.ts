@@ -66,6 +66,13 @@ describe('checkStaleLock', () => {
     expect(result.ok).toBe(false);
     expect(result.severity).toBe('warning');
   });
+
+  it('throws on a lock file that parses as valid JSON but is not shaped like a real lock (SPEC-QUESTIONS.md Q390) -- a critic-round finding, not merely a theoretical gap', async () => {
+    const project = await createTestProject();
+    await mkdir(path.join(project.dir, '.forge/state'), { recursive: true });
+    await writeFile(path.join(project.dir, '.forge/state/lock.json'), JSON.stringify({}));
+    await expect(checkStaleLock(project.paths)).rejects.toThrow(/does not look like a real lock/);
+  });
 });
 
 describe('checkOrphanedWorktrees', () => {

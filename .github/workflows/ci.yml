@@ -150,7 +150,27 @@ jobs:
       - run: pnpm lint
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-      - run: pnpm test
+      # `SPEC-QUESTIONS.md` Q390: a disclosed-but-unconfirmed hypothesis for `fetch-npm.test.ts`'s own
+      # real-registry-leak flake under this job's full ~750-file concurrent load -- npm's own bundled
+      # `@npmcli/config` silently swallows EVERY error from its ancestor-walk `stat`/`readFile` calls
+      # (not just ENOENT), so a transient EMFILE/ENFILE while reading the project `.npmrc` is
+      # indistinguishable, to npm, from "no project config exists here," falling through to the
+      # builtin default registry. GitHub-hosted ubuntu runners default to a 1024 soft `ulimit -n`,
+      # genuinely low against ~750 concurrently-forked real test workers each holding sockets/pipes/
+      # temp files open. Cheap, safe, reversible: raises the soft ceiling toward the hard one (falls
+      # back silently if the hard ceiling is lower), non-Windows only (`ulimit` is not a real rlimit
+      # under Windows' Git Bash — a no-op there, not harmful, just pointless). `ulimit` only affects
+      # the shell process that sets it and whatever it execs next, never a later, separate `run:` step
+      # — so this MUST stay in the same step as `pnpm test` itself, not a preceding one.
+      # Disclosed, not proven: the investigating agent could not reproduce the real mechanism locally
+      # despite three heavy real-load attempts plus a dedicated fd-starvation harness; this is the one
+      # experiment it flagged as needing real CI access to actually test. The next real `floor`/`seed`
+      # run is that test.
+      - name: pnpm test
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" != "Windows" ]; then ulimit -n 65536 2>/dev/null || true; fi
+          pnpm test
 
   seed:
     name: scheduler seed variation (seed ${{ matrix.seed }})
@@ -212,7 +232,14 @@ jobs:
       # QUALITY-BAR.md R10: a suite whose result depends on file or test ordering is not
       # deterministic. Shuffling under a fixed seed makes an order dependency fail here rather than
       # intermittently on someone's branch.
-      - run: pnpm test -- --sequence.shuffle --sequence.seed ${{ matrix.seed }}
+      #
+      # `SPEC-QUESTIONS.md` Q390: see `floor`'s own identically-named step for why this raises
+      # `ulimit -n` first -- this job is ubuntu-only, so no Windows branch is needed, but the same
+      # ~750-file real concurrent load applies.
+      - name: pnpm test
+        run: |
+          ulimit -n 65536 2>/dev/null || true
+          pnpm test -- --sequence.shuffle --sequence.seed ${{ matrix.seed }}
 
   # `floor`/`seed`'s own `pnpm test` (above) ALSO excludes 3 more files -- packages/cli/test/
   # bin.test.ts, test/run-inputs-compile.test.ts, and the new test/workspace-floor-heavy-subprocess.

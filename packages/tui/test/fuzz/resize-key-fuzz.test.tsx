@@ -46,6 +46,21 @@
  * listeners periodically during the loop, interleaved with the random resize/key chaos -- exercising
  * real timer scheduling/clearing races against both further dispatches and eventual unmount.
  *
+ * **The main run's own explicit timeout is 60s, not the 30s it originally shipped with** -- a real,
+ * CI-reproduced flake (`Error: Test timed out in 30000ms`), not a theoretical one: 10,000 iterations of
+ * real resize/key dispatch against a fully-composed `<AppShell>` is genuinely heavier work than it looks
+ * (every iteration can trigger a real Yoga layout pass and Ink output write), and the suite's own 60s
+ * default (`vitest.config.ts`, "the e2e budget so a hung test fails as a test rather than as a CI job
+ * timeout") already exists for exactly this. The original 30s was tighter than that default for no
+ * documented reason and passes in well under 30s on an idle machine, which is why this was never caught
+ * locally -- but a real, multi-process CPU-contention stress run (standing in for floor/seed CI's own
+ * ~750-concurrent-file scheduling pressure) reproduced it landing consistently at 30.0-30.5s, just over
+ * the old ceiling, the identical "real heavier work, not a hang" shape `test/commands/upgrade/
+ * backup.test.ts` and `run-upgrade.test.ts` already established a precedent for (doubling their own
+ * explicit timeout rather than raising the suite-wide default). Matching that precedent here: explicit
+ * 60s, not a config-wide change, so the real 60s hang-detection floor stays tight everywhere else this
+ * loop's own real duration doesn't apply.
+ *
  * @see specs/04 §4.8
  * @see PLAN-M9.md P16
  */
@@ -74,10 +89,23 @@ import { SessionsScreen } from '../../src/screens/sessions.tsx';
 import { SpecsScreen } from '../../src/screens/specs.tsx';
 import { SpecGraph } from '@forge/core/graph';
 
-function flush(): Promise<void> {
+function tick(): Promise<void> {
   return new Promise((resolve) => {
     setImmediate(resolve);
   });
+}
+
+/** Two ticks, not one -- SPEC-QUESTIONS.md Q390: a deferred-effect race (ink's own useInput
+ * re-subscription, or an async-source consumption effect, needing a further scheduler pass under
+ * real host contention than a single tick allows) already confirmed live in 5 sibling files in this
+ * package (kb.test.tsx/specs.test.tsx/stream-view.test.tsx/app-shell.test.tsx/command-palette.
+ * test.tsx -- see kb.test.tsx's own header comment for the full mechanism). Applied here
+ * precautionarily, not from a confirmed failure in THIS file specifically: harmless for a file that
+ * never needed the second tick (it is strictly more patient, never less), and this exact single-tick
+ * shape is what let 5 other files flake under real CI load for a long time before being caught. */
+async function flush(): Promise<void> {
+  await tick();
+  await tick();
 }
 
 /** A small, deterministic PRNG (mulberry32) -- seeded, so a failure is reproducible from the logged seed
@@ -507,7 +535,7 @@ describe('tui fuzz: resize + key (04 §4.8)', () => {
     // last `flush()` so any still in flight have a chance to actually fire before this assertion runs.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(unhandledRejections).toEqual([]);
-  }, 30_000);
+  }, 60_000);
 
   it('the mutation-tested negative control: a deliberately-reintroduced real bug (a screen that throws under a real, reachable narrow-terminal condition) is actually caught by the identical FuzzErrorBoundary wiring the main fuzz test relies on -- proving detection genuinely works, not merely that the main run never touched a broken path', async () => {
     function BrokenScreen({ mode }: ScreenProps): JSX.Element {

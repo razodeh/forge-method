@@ -280,10 +280,19 @@ async function main(): Promise<void> {
     // ignored (registering a no-op handler, not merely omitting one, since Node's own default action
     // for both is to exit) — only a SIGKILL from the caller can end it, the realistic "no orphan
     // child processes" proof a cooperative-exit fixture could never provide.
-    // omitDone: true, always -- a hang must never send `done` (emitResponse's own default behaviour
-    // otherwise would, once past the text/toolCalls/etc. loops below), regardless of what else this
-    // response scripted.
-    emitResponse({ ...response, omitDone: true }, parsed.cwd);
+    //
+    // The handlers (and the keep-alive interval below) are installed *before* any of this response's
+    // own output is emitted, not after. `SPEC-QUESTIONS.md` Q390: a real CI flake (load-sensitive,
+    // reproduced locally under heavy CPU contention on both Node 22 and Node 24 -- not a Node-24-
+    // specific issue) showed why order matters: the caller only sends SIGTERM once it has observed
+    // this process's own leading output, so once that write happens the signal can arrive at any
+    // time, including before this process's JS has resumed to run its next statement if the OS
+    // scheduler preempts it right after the write syscall. Node has no custom SIGTERM/SIGINT
+    // disposition installed until `process.on` actually runs, so a signal delivered in that gap falls
+    // through to the OS default action (exit) instead of this fixture's own no-op handler. Installing
+    // the handlers first closes the gap: nothing this process does afterwards (output, emitted here
+    // next) can be observed by the caller until the handlers already exist, because both run on this
+    // same synchronous turn with no `await` between them.
     process.on('SIGTERM', () => undefined);
     process.on('SIGINT', () => undefined);
     // A bare `await new Promise(() => {})` is not enough to actually hang: with no other active
@@ -294,6 +303,10 @@ async function main(): Promise<void> {
     // that keeps the loop alive, matching what an actual long-running external tool's own real work
     // (a live subprocess, an open socket) would do.
     setInterval(() => undefined, 2_147_483_647);
+    // omitDone: true, always -- a hang must never send `done` (emitResponse's own default behaviour
+    // otherwise would, once past the text/toolCalls/etc. loops below), regardless of what else this
+    // response scripted.
+    emitResponse({ ...response, omitDone: true }, parsed.cwd);
     await new Promise<never>(() => {
       // Deliberately never settles.
     });

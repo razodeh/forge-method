@@ -11,12 +11,13 @@ import { execa } from 'execa';
 import {
   listDirEntriesSorted,
   pathExists,
+  readTextFile,
   type AbsolutePath,
   type ProjectPaths,
 } from '@forge/core/fs';
 import { listOrphanedWorktrees, parseWorktreeBlocks } from '@forge/vcs';
 
-import { isProcessAlive, readRunLock } from '../run/lock.ts';
+import { isProcessAlive, type RunLock } from '../run/lock.ts';
 import type { CheckSeverity, DoctorCheck } from './types.ts';
 
 function check(
@@ -34,20 +35,43 @@ function check(
  * warning-worthy state `forge run`'s own `acquireRunLock` already reclaims silently on its own next
  * invocation, so this is informational, not `hard`.
  *
- * **Disclosed, not-yet-fixed diagnostic blind spot (round-2 critic finding on the round-1
- * `readRunLock` fix):** `readRunLock` now returns `undefined` uniformly for "genuinely absent,"
- * "removed in a concurrent TOCTOU gap," AND "exists but unreadable/malformed" (its own doc comment,
- * `run/lock.ts`) — the correct call for `acquireRunLock`'s own retry loop, which must not tell those
- * apart to stay safe. But this check reuses the same read for a different purpose (reporting to a
- * human), and collapses the same three cases into one reassuring "No project lock held." message —
- * so a project with a genuinely corrupt `lock.json` (a real on-disk fault, not merely a crashed
- * process) is reported clean here, with no signal that anything is actually wrong. Left unfixed:
- * distinguishing "absent" from "unreadable" needs its own read of the raw file content, a change to
- * this check specifically rather than to the shared, already-reasoned-through `readRunLock`. */
+ * **`SPEC-QUESTIONS.md` Q390: closes the diagnostic blind spot Q359 disclosed and deferred.**
+ * `readRunLock` (`run/lock.ts`) returns `undefined` uniformly for "genuinely absent," "removed in a
+ * concurrent TOCTOU gap," AND "exists but unreadable/malformed" — the correct call for
+ * `acquireRunLock`'s own retry loop, which must not tell those apart to stay safe. This check reused
+ * that same read for a different purpose (reporting to a human) and collapsed the same three cases
+ * into one reassuring "No project lock held." message — a genuinely corrupt `lock.json` (a real
+ * on-disk fault, not merely a crashed process) reported clean, with no signal anything was wrong.
+ * Fixed with its own, separate read: a missing file is still "No project lock held" (the common,
+ * expected case); a file that exists but fails to parse is deliberately left UNGUARDED here, so it
+ * throws a real `SyntaxError` straight out of this function — `run-doctor.ts`'s own existing
+ * per-check crash wrapper (the same mechanism the "diagrams" check already relies on) catches that
+ * and reports it as a crashed check, never aborting any of the other, unrelated checks. A real,
+ * narrow TOCTOU window remains between the existence check and the read below (the identical shape
+ * `readRunLock`'s own doc comment already names) — unlike that function's tight, high-concurrency
+ * retry loop, this check runs once per human-invoked `forge doctor`, so landing in that window only
+ * ever produces a "check crashed" report instead of either clean answer, never silent data loss or a
+ * wedged retry.
+ *
+ * **`pid` is checked to actually be a number before `isProcessAlive` ever sees it** — a critic
+ * round reviewing this fix found a real, separate gap it would otherwise walk straight into:
+ * syntactically valid JSON with the wrong SHAPE (e.g. `{}`, or `pid` as a string) parses cleanly, so
+ * it would never hit the `SyntaxError` path above, yet `process.kill` throws a plain `TypeError` for
+ * a non-number pid — which has no `.code` property, so `isProcessAlive`'s own `code !== 'ESRCH'`
+ * check reads `undefined !== 'ESRCH'` as `true` and misreports a malformed lock as "held by a real,
+ * live pid undefined." Throwing here instead routes this exact case through the identical crashed-
+ * check path the `SyntaxError` above already uses — "unparseable" and "parseable but not a real
+ * lock" are the same kind of corruption to this check, and should surface the same way. */
 export async function checkStaleLock(paths: ProjectPaths): Promise<DoctorCheck> {
-  const lock = await readRunLock(paths);
-  if (lock === undefined) {
+  const resolved = paths.resolveState('lock.json');
+  if (!(await pathExists(resolved))) {
     return check('stale-lock', true, 'warning', 'No project lock held.');
+  }
+  const lock = JSON.parse(await readTextFile(resolved)) as RunLock;
+  if (typeof lock.pid !== 'number') {
+    throw new Error(
+      `.forge/state/lock.json does not look like a real lock (pid: ${String(lock.pid)})`,
+    );
   }
   if (isProcessAlive(lock.pid)) {
     return check(

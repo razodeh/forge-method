@@ -17,10 +17,23 @@ import { Modal, ModalStackContext, useIsBackgrounded } from '../../src/component
 
 const ESC = '\x1B';
 
-function flush(): Promise<void> {
+function tick(): Promise<void> {
   return new Promise((resolve) => {
     setImmediate(resolve);
   });
+}
+
+/** Two ticks, not one -- SPEC-QUESTIONS.md Q390: a deferred-effect race (ink's own useInput
+ * re-subscription, or an async-source consumption effect, needing a further scheduler pass under
+ * real host contention than a single tick allows) already confirmed live in 5 sibling files in this
+ * package (kb.test.tsx/specs.test.tsx/stream-view.test.tsx/app-shell.test.tsx/command-palette.
+ * test.tsx -- see kb.test.tsx's own header comment for the full mechanism). Applied here
+ * precautionarily, not from a confirmed failure in THIS file specifically: harmless for a file that
+ * never needed the second tick (it is strictly more patient, never less), and this exact single-tick
+ * shape is what let 5 other files flake under real CI load for a long time before being caught. */
+async function flush(): Promise<void> {
+  await tick();
+  await tick();
 }
 
 interface StdinLike {

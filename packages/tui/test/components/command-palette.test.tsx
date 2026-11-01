@@ -1,6 +1,20 @@
 /**
  * `<CommandPalette>` -- `04` §4.2's own `:` prompt with fuzzy command matching.
  *
+ * **`flush()` itself waits two macrotask ticks, not one** -- `SPEC-QUESTIONS.md` Q390: the identical
+ * mechanism `kb.test.tsx`/`specs.test.tsx`/`app-shell.test.tsx`'s own header comments document in
+ * full, caught here live under real ambient host contention (not a theoretical worry): `DOWN` moves
+ * the highlighted index via local state, triggering a re-render with a fresh `useInput` closure
+ * (this component closes over the current highlighted index); `ink`'s own `useInput`
+ * (`ink/build/hooks/useInput.js`) re-subscribes its real stdin listener via a *separate*, deferred
+ * `useEffect`, flushed by the `scheduler` package one further `setImmediate` tick after the one a
+ * plain commit already needs, whenever real elapsed time crosses that scheduler's own ~5ms-per-pass
+ * yield budget. Under light load both rounds land inside one scheduler pass, which is why this
+ * always passed on an idle machine -- but under real contention `ENTER` immediately after `DOWN` can
+ * land on the still-subscribed, pre-move listener, submitting the WRONG highlighted command (a real
+ * failure this file's own test suite caught directly: `DOWN` then `ENTER` submitted `'gate approve'`
+ * instead of `'gate reject'`).
+ *
  * @see specs/04 §4.2, §4.5
  * @see PLAN-M9.md P5
  */
@@ -15,10 +29,16 @@ const DOWN = '\x1B[B';
 const ENTER = '\r';
 const BACKSPACE = '\x7F';
 
-function flush(): Promise<void> {
+function tick(): Promise<void> {
   return new Promise((resolve) => {
     setImmediate(resolve);
   });
+}
+
+/** Two ticks, not one -- see this file's own top doc comment. */
+async function flush(): Promise<void> {
+  await tick();
+  await tick();
 }
 
 interface StdinLike {

@@ -213,39 +213,66 @@ describe('runHunkMutationCheck — a real SIGKILL at several real points across 
     // `runBindingCheck` has no hunk loop) both per-hunk mutant runs.
     const proportions = [0.02, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 0.97];
     let killsLanded = 0;
+    // `SPEC-QUESTIONS.md` Q390: a real CI run (`41344817586`) hit `killsLanded` 4 of 8, one short of
+    // the 60% floor below. `killDelayMs` is computed from ONE duration measurement taken at the top
+    // of this test; under real, fluctuating CI-scale host contention a LATER proportion's actual run
+    // can legitimately finish faster than that one earlier measurement predicted, so the scheduled
+    // kill arrives after the run has already finished on its own -- the identical "scheduled kill
+    // raced against the fixture's own natural exit" shape `crash-resume.test.ts`'s own `Q384`/`Q386`
+    // entries already establish and fix the same way: retry on a FRESH repo at the SAME proportion
+    // (never claiming the point itself is suspect, only that this one attempt's timing missed),
+    // bounded, not unconditional -- a proportion whose kill never lands across every attempt still
+    // correctly counts as not landed, it does not silently retry forever.
+    const MAX_KILL_ATTEMPTS = 3;
 
     for (const proportion of proportions) {
       const killDelayMs = Math.max(1, Math.round(durationMs * proportion));
-      const { dir, baseSha } = await freshRepo();
-      const runId = `run-hm-sigkill-${String(Math.round(proportion * 100))}pct`;
-      const { stdout: headBefore } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
-      const implBefore = await readFile(path.join(dir, 'impl.js'), 'utf8');
+      let landed = false;
+      for (let attempt = 0; attempt < MAX_KILL_ATTEMPTS && !landed; attempt += 1) {
+        const { dir, baseSha } = await freshRepo();
+        const runId = `run-hm-sigkill-${String(Math.round(proportion * 100))}pct-attempt${String(attempt)}`;
+        const { stdout: headBefore } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
+        const implBefore = await readFile(path.join(dir, 'impl.js'), 'utf8');
 
-      const { killed } = await spawnKillAndWait(
-        dir,
-        runId,
-        'STORY-HM-SIGKILL',
-        baseSha,
-        killDelayMs,
-      );
-      if (killed) killsLanded += 1;
+        const { killed } = await spawnKillAndWait(
+          dir,
+          runId,
+          'STORY-HM-SIGKILL',
+          baseSha,
+          killDelayMs,
+        );
+        landed = killed;
+        if (!killed && attempt + 1 < MAX_KILL_ATTEMPTS) {
+          // Deliberate CI visibility into retry frequency (mirroring `crash-resume.test.ts`'s own
+          // `Q386`); console is never asserted on, so this cannot mask a real failure.
+          // eslint-disable-next-line no-console -- see comment above
+          console.warn(
+            `[hunk-mutation-sigkill] proportion ${String(proportion)} missed the kill on attempt ` +
+              `${String(attempt)} (the run finished on its own first), retrying on a fresh repo`,
+          );
+        }
 
-      const { stdout: headAfter } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
-      expect(headAfter.trim()).toBe(headBefore.trim());
-      const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: dir });
-      const trackedChanges = status
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line !== '' && !line.endsWith('.forge/'));
-      expect(trackedChanges).toEqual([]);
-      await expect(readFile(path.join(dir, 'impl.js'), 'utf8')).resolves.toBe(implBefore);
+        // Unmutated-repo invariant: checked on every attempt, landed or not -- this is the test's
+        // own real guarantee (`06` §6.10, the file's own header comment), independent of whether the
+        // kill happened to land this time.
+        const { stdout: headAfter } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
+        expect(headAfter.trim()).toBe(headBefore.trim());
+        const { stdout: status } = await execa('git', ['status', '--porcelain'], { cwd: dir });
+        const trackedChanges = status
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line !== '' && !line.endsWith('.forge/'));
+        expect(trackedChanges).toEqual([]);
+        await expect(readFile(path.join(dir, 'impl.js'), 'utf8')).resolves.toBe(implBefore);
 
-      const orphans = await listOrphanedWorktrees(dir);
-      expect(orphans.length).toBeLessThanOrEqual(1);
-      await sweepOrphans(dir);
-      expect(await listOrphanedWorktrees(dir)).toEqual([]);
+        const orphans = await listOrphanedWorktrees(dir);
+        expect(orphans.length).toBeLessThanOrEqual(1);
+        await sweepOrphans(dir);
+        expect(await listOrphanedWorktrees(dir)).toEqual([]);
+      }
+      if (landed) killsLanded += 1;
     }
 
     expect(killsLanded).toBeGreaterThanOrEqual(Math.ceil(proportions.length * 0.6));
-  }, 90_000);
+  }, 180_000);
 });

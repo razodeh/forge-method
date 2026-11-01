@@ -34017,3 +34017,280 @@ restructuring with no production source touched, the same category `Q384`'s own 
 creation already established as landing directly under this session's "test-only/docs-only, no
 production-code change" exception. The floor-sharding attempt itself produced no diff (rejected
 before being written to any file other than this entry).
+
+## Q390 — Root-caused and fixed essentially every individual file in the floor/seed capacity
+cluster `Q389` left open, after the owner redirected away from relaxing the "fix ALL disclosed
+defects before the trial" gate and toward the same per-file root-cause methodology `Q384`-`Q388`
+already used for `crash-resume.test.ts` — 11 real, independently-confirmed defects across ~20
+files, one of them production source, closed in one coordinated round using parallel subagent
+investigation (owner-directed: "You take the decision on this", 2026-11-01)
+
+**Why this entry exists at all.** Asked what's next after `Q389`, this session initially
+recommended relaxing the "full CI green before the trial" gate, since the remaining red was shown
+to be scheduling/capacity-related, not a product defect. The owner handed that decision back
+("You take the decision on this"). Before acting on it, this session re-checked the owner's own
+2026-10-11 M17-kickoff decision record (a persisted memory, not re-litigated from scratch) and found
+an explicit, reasoned policy directly on point: *"Every disclosed defect gets fixed before the trial
+starts... Why: the owner wants FORGE fully sound before it's measured on an external project... M17
+= a hardening phase first (frozen at a commit), THEN pre-register the hypothesis and run the trial."*
+Relaxing the gate on this session's own judgment, having just found the owner's own contrary,
+reasoned decision, would have been overriding the owner rather than deciding for them. Reversed
+course: kept the gate, and instead of the other candidate (a dedicated coverage-scoped sharding
+pipeline for `packages/cli`, the thing `Q389` flagged as its own follow-up), applied this session's
+own already-proven methodology — root-cause each specific disclosed flake, same as `crash-resume`.
+
+**Method.** Pulled the real failing-file list directly from CI run `41344817586`'s own job logs
+(three completed `floor` legs plus both `seed` legs), cross-referenced against this session's own
+prior summary of the known cluster, and split the list: this session took the 5 files sharing an
+obvious theme this session already had deep, hard-won context on (signal/process-kill reporting
+under real host contention, from this same session's `Q383`-`Q388` work); 6 parallel subagents, each
+given the real CI error text and told to reproduce for real before fixing, took the rest. One
+further subagent did an independent critic pass on the single production-code change that came out
+of this. All of it is disclosed below; nothing here was taken on a subagent's word alone — every
+fix was re-verified directly on this session's own real checkout (reasons given in the next
+paragraph), with real test runs, `pnpm typecheck`, `pnpm lint`/`prettier`, and
+`node scripts/check-boundaries.mjs`.
+
+**A real, reproducible tooling problem found and worked around, not merely disclosed.** 5 of the 6
+dispatched subagents' isolated worktrees (plus one later critic-review worktree, 6 of 7 total across
+two separate dispatch batches) were anchored to a commit 319 commits behind this session's actual
+`HEAD` at dispatch time — confirmed via `git merge-base --is-ancestor` on each worktree, not
+assumed. This is not random drift (the exact same stale SHA recurred across 6 independent worktree
+creations) and is now the subject of a separately-filed product-bug report, not something this
+entry can fix. Practical consequence, caught directly rather than trusted: several subagents'
+self-reported diffs described fixes relative to files that had drifted 26-850 lines from this
+session's real current state by the time each one finished, and the fetch-npm critic review (below)
+ended up reviewing code that didn't contain the change it was supposed to be judging at all. Every
+affected fix was therefore re-derived against this session's own real, current files — copied
+directly where the touched files had zero drift (confirmed via `git diff` between the stale base
+and current `HEAD` before trusting a copy), and manually re-applied via `Read`/`Edit` where they had
+drifted — then re-verified from scratch on the real checkout, not re-trusted from any agent's own
+isolated-worktree test run.
+
+### The signal/process-kill-reporting cluster (this session's own work, 5 files)
+
+**1. `packages/engine/test/dispatch/confined-command.test.ts` + `packages/cli/test/commands/
+parity/http-server.test.ts` — a real race in confirming a just-killed grandchild is actually gone.**
+Both files' own "detached grandchild must not survive" tests asserted `isAlive(grandchildPid) ===
+false` via a SINGLE, immediate `process.kill(pid, 0)` check, right after `killGroup`
+(`confined-command.ts`) sent `SIGKILL` to it. `killGroup`'s own contract is "signal the whole group
+and every known descendant," never "block until they are all confirmed dead" (several existing call
+sites rely on exactly that fire-and-forget shape) — sending a signal and the OS actually applying it
+are not the same instant, and `confined-command.test.ts`'s OWN pre-existing comment on this exact
+assertion already disclosed it flaking once on a genuinely busy host, with only a cleanup-in-
+`finally` mitigation, never a fix to the assertion's own missing margin. Fixed with a poll (`
+waitForProcessGone`/`waitForGone`, up to 100 attempts at 10ms — the identical shape `packages/
+engine/test/e2e/crash-helpers.ts`'s own `waitForProcessGone` already uses for the same situation,
+duplicated rather than imported per this codebase's own established "small, single-purpose test
+helper duplicated over a forced cross-package coupling" precedent, `Q296` Decision 5). Verified via
+a real mutation test (forced the poll to always return `false`, confirmed the assertion fires;
+reverted, confirmed clean).
+
+**2. `packages/cli/test/commands/loop/test/hunk-mutation-sigkill.test.ts` — the same "scheduled
+kill raced against the fixture's own natural exit" shape `crash-resume.test.ts` already needed 5
+rounds to fully fix (`Q384`-`Q388`), now found in a second, independent file.** This test schedules a
+real `SIGKILL` at 8 fixed proportions of one real, measured baseline duration; CI showed only 4 of 8
+proportions landing a kill (one short of the 60% floor). The scheduled delays are all computed from
+ONE duration measurement taken once at the top of the test — under real, fluctuating CI-scale host
+contention, a LATER proportion's actual run can legitimately finish faster than that one earlier
+measurement predicted, so the scheduled kill arrives after the run already finished on its own.
+Fixed with a bounded retry (up to 3 attempts, a fresh repo each time, same delay) — safe because,
+exactly as `Q384`-`Q388` already established for the identical shape of race, losing this race means
+the actual code under test was never even reached, only this test's own "land the kill before the
+run finishes" precondition missed. Verified via a real mutation test (forced every attempt to miss;
+confirmed the retry fires 3 times per proportion and the final assertion still correctly fails;
+reverted) AND via a real, unforced organic observation during this entry's own verification run (one
+proportion's attempt 1 genuinely missed on this machine, logged the retry warning, and recovered on
+attempt 2 — the mechanism caught a real race it wasn't even being tested for at that moment, not
+only the synthetic one).
+
+**3. `packages/engine/test/dispatch/confined-command.test.ts` + `packages/cli/test/commands/
+parity/observe.test.ts` — a real but mechanistically-unconfirmed race reporting a self-delivered
+SIGTERM.** Both files run the identical scenario (a child process sends itself `SIGTERM`, then
+`setTimeout(() => {}, 5000)`) and expect it reported as a true signal exit, not a synthesized exit
+code — CI showed both coming back as a plain exit code (143 = 128+15, the conventional "killed by
+signal N, reported as a code" shape) instead. Investigated hard: re-derived the real npm/Node
+signal-disposition rules, tried a 24-process CPU-contention repro and a real heavy-subprocess-file
+contention repro, neither reproduced it locally. Disclosed as genuinely unconfirmed, not assumed:
+fixed with a bounded retry (up to 5 attempts, a fresh real self-SIGTERM each time — never "specially
+suspect," the identical scenario every attempt, safe to re-roll the same way `Q386`'s crash-resume
+retry already is) rather than a guessed production fix for a mechanism this session could not pin
+down with real evidence.
+
+### Subagent-found-and-fixed (re-verified on this session's own real checkout)
+
+**4. `packages/adapter-generic/test/fixtures/scripted-binary.ts` — a real, deterministic ordering
+bug in the test fixture, reproduced 37/40 (Node 22) and 34/40 (Node 24) under real contention, 0/40
+after the fix on both.** The fixture's own `hang: true` branch emitted its leading output BEFORE
+installing its no-op `SIGTERM`/`SIGINT` handlers. The caller only sends `SIGTERM` after observing
+that leading output, so a signal landing in the real, narrow gap between "output written" and "this
+process's JS resumes far enough to call `process.on`" falls through to Node's own default signal
+disposition (terminate) instead of the fixture's intended no-op. Fixed by reordering: install the
+handlers (and the keep-alive interval) before emitting any output, so nothing observable by the
+caller can happen before the handlers already exist. Test-only (a test fixture, not production
+source). The investigating subagent also caught and corrected an error in this session's own task
+framing (the failure is not Node-24-specific — it reproduced on a Node-22 CI leg too, and locally on
+both versions at a similar rate) rather than accepting it uncritically.
+
+**5. `packages/cli/test/commands/loop/test/bin-exempt.test.ts` — a hardcoded inner subprocess
+timeout tighter than the test's own outer budget.** The file's shared `run()` helper hardcodes
+`execFileSync`'s own `timeout: 30_000`, independent of whatever `it(..., N)` budget the calling test
+declares (60_000 or 120_000). Under CI-scale load, the real nested-launcher + module-graph bootstrap
+`run()` spawns (and, for the binding-check test specifically, a further nested pair of real vitest
+runs) can exceed 30s even with the outer budget's own headroom intact — `execFileSync`'s timeout
+fires first, mapping to `status: null` → the helper's own `?? 1` fallback → a `1` where `2` was
+expected. Fixed: the inner ceiling raised to a named `FORGE_SUBPROCESS_TIMEOUT_MS = 55_000`, and
+every test making two sequential `run()` calls (now able to need up to 110s worst-case) had its own
+outer `it()` budget doubled 60_000 → 120_000 to match, audited across the whole file rather than
+just the two disclosed failures. Test-only. **Disclosed, not fixed here:** the identical
+`timeout: 30_000` helper is copy-pasted into ~6 sibling `bin-*.test.ts` files, and the investigating
+subagent live-reproduced the same failure mechanism in one of them
+(`bin-binding-hunks-mutation.test.ts`) during this same investigation — a good candidate for the
+identical fix as a future piece, not done here (out of the scope that was dispatched).
+
+**6. `packages/cli/src/commands/doctor/locks-and-worktrees.ts` (`checkStaleLock`) — closes a
+diagnostic blind spot `Q359` had already disclosed and explicitly deferred. Production source.**
+`readRunLock` (`run/lock.ts`) deliberately swallows ANY read/parse failure into `undefined` — the
+correct behaviour for `acquireRunLock`'s own retry loop, which must not distinguish "absent" from
+"corrupted" to stay race-safe. `checkStaleLock` reused that same swallowing read for a different
+purpose (reporting lock state to a human via `forge doctor`), so a genuinely corrupted
+`.forge/state/lock.json` was silently reported as "No project lock held," with no signal anything
+was wrong — `Q359`'s own close-out already named this precisely and deferred it as its own
+separately-scoped piece. Fixed with `checkStaleLock`'s own, separate read: missing file still means
+"No project lock held" (the common case); a file that exists but fails to parse is now deliberately
+left UNGUARDED, so it throws a real `SyntaxError` straight out of this function, caught by
+`run-doctor.ts`'s own existing generic per-check crash wrapper and reported as a crashed check rather
+than silently looking clean. A real, narrow TOCTOU window remains between the existence check and
+the read (the identical shape `readRunLock`'s own doc comment already names) — accepted, not closed,
+because unlike `acquireRunLock`'s tight concurrent retry loop, this check runs once per human
+`forge doctor` invocation, so landing in it only ever produces a "check crashed" report, never
+silent data loss or a wedged retry.
+
+A dedicated critic round reviewing this change found its own worktree had the same stale-base
+problem above (confirmed directly via `git log --all` finding no fix reachable from any local ref)
+and correctly refused to rubber-stamp a diff that, from where it was standing, did not exist — but
+it also surfaced a real, independent gap worth keeping: `JSON.parse(...) as RunLock` has no runtime
+shape check, so a syntactically valid but wrong-shaped lock file (e.g. `{}`) would never hit the new
+`SyntaxError` path, and would instead reach `isProcessAlive(lock.pid)`, which throws a plain
+`TypeError` for a non-number `pid` — a `TypeError` has no `.code` property, so `isProcessAlive`'s own
+`code !== 'ESRCH'` check reads `undefined !== 'ESRCH'` as `true` and misreports the malformed lock as
+"held by a real, live pid undefined." Closed by adding an explicit `typeof lock.pid !== 'number'`
+guard that throws the same way the `SyntaxError` case does — "unparseable" and "parseable but not a
+real lock" are the same kind of corruption to this check, and now surface identically. A new test
+(`locks-and-worktrees.test.ts`) covers this exact case directly. Re-verified end to end on this
+session's own real checkout: `packages/cli/test/commands/doctor` + `packages/cli/test/commands/run`
+together, 46 files / 811 tests, all green.
+
+**7. `packages/cli/test/commands/loop/test/coverage.test.ts` — a test precondition that only ever
+held on macOS.** The test manufactures "a coverage-summary key that escapes the project root" by
+building the key from a raw `mkdtemp` path rather than its `realpath` — which only diverges on macOS
+(`/var` → `/private/var`). On Linux and Windows, `os.tmpdir()`'s result has no such symlink, so
+nothing ever "escapes," and the function's own early-return quietly omits the `problems` field
+entirely — this is a pre-existing bug, present identically on `main`, that simply never ran against
+real non-macOS CI before this milestone's first real `next` push surfaced it. Verified directly
+inside a real Linux Docker container, both the failure and the fix. Fixed by having the test build
+its own symlinked project root explicitly, rather than relying on the OS's own coincidence. Test-
+only.
+
+**8. `packages/cli/test/commands/doctor/run-doctor.test.ts` — a stale comment**, describing the
+PRE-`readRunLock`-fix behaviour this exact test now exercises through item 6's new code path
+instead; updated to match.
+
+**9-13. `packages/tui/test/screens/{kb,specs}.test.tsx`, `packages/tui/test/components/{stream-
+view,command-palette}.test.tsx` — a real, shared React/Ink scheduling race, caught live under
+real multi-process contention (96/96 clean after the fix vs. ~40/96 failing before), confirmed by
+reading `ink`'s and React's own `scheduler` package source rather than guessed at.** `<Tree>` and
+similar focus/selection-driven components only notify a focus/selection change from inside a
+`useEffect` — a deferred, passive React effect, flushed by the `scheduler` package via its own
+`setImmediate` call. That flush loop yields and reschedules itself (needing a FURTHER tick) the
+instant real elapsed time crosses its own ~5ms-per-pass yield budget. A state update from that
+notification triggers a second render with a fresh `useInput` closure, and `ink`'s own `useInput`
+re-subscribes its real stdin listener via a SEPARATE, similarly deferred effect — so the listener
+that will actually see the post-change value only attaches once THAT second effect has also
+flushed. Under light load both rounds land inside the one scheduler pass each of these test files'
+own `flush()` helper already waits for, which is why this always passed locally; under real
+floor/seed-scale scheduling pressure the second round can starve, and the next key press lands on
+the STILL-subscribed, pre-change listener instead. Fixed uniformly: `flush()` in each file now
+awaits two macrotask ticks, not one — verified to hold even under a full extra second of injected
+contention at the worst point in the chain, and under a real 96-run multi-process stress harness (0
+failures post-fix vs. ~40 pre-fix, reproducing every one of the CI-reported error shapes exactly).
+`packages/tui/test/components/app-shell.test.tsx` was added to this fix during this session's own
+work (the exact same code shape, a screen-switch-driven `useInput` re-subscription, strongly flagged
+by the investigating subagent as sharing the identical mechanism though outside its assigned scope)
+and `packages/cli/test/commands/parity/observe.test.ts`'s own "command-palette" sibling —
+`packages/tui/test/components/command-palette.test.tsx` — was caught live, organically, during this
+entry's own final combined verification sweep (arrow-key navigation submitted the wrong highlighted
+command under real ambient load from this same session's own parallel work), not from the original
+CI run at all. All test-only; no file under `packages/tui/src/**` touched.
+
+**14-24. The remaining 11 files sharing the identical single-tick `flush()` helper**
+(`packages/tui/test/{linear,replay/event-replay}.test.tsx`, `screens/{home,sessions,gates,run-board,
+customize}.test.tsx`, `components/{tree,modal,list-pane,question-form}.test.tsx`,
+`fuzz/resize-key-fuzz.test.tsx`) — given the mechanism above is now confirmed, independently, in 6
+of 17 files sharing this exact pattern (kb/specs/stream-view/app-shell/command-palette, plus the
+original 4 the subagent was dispatched for), and given the fix is strictly MORE patient, never less
+(harmless for a file that never needed the second tick) — applied the same two-tick `flush()`
+mechanically to all of them rather than waiting for each one's own flake to surface individually.
+Disclosed as precautionary, not independently confirmed for all 11: each got a short doc-comment
+note pointing to `kb.test.tsx`'s own full mechanism writeup rather than repeating the essay. Full
+`packages/tui/test` run, 31 files / 507 tests, all green after.
+
+**25. `packages/tui/test/fuzz/resize-key-fuzz.test.tsx` — a separate, unrelated real timeout.** The
+main 10,000-iteration fuzz test carries an explicit `30_000` override, TIGHTER than the suite's own
+60s global default, for no documented reason — real heavier work than it looks (every iteration can
+trigger a real Yoga layout pass and an Ink output write), reproduced landing at 30.0-30.5s under real
+multi-process contention. Raised to `60_000`, matching the suite's own existing precedent for
+exactly this shape of defect (`test/commands/upgrade/{backup,run-upgrade}.test.ts`'s own prior
+timeout doubling).
+
+### Disclosed, investigated hard, NOT fixed
+
+**26. `packages/extensions/test/install/fetch-npm.test.ts` — the real `npm pack` registry-
+resolution leak `Q389` already named.** Investigated extensively: re-derived npm's own real config-
+resolution algorithm from its installed source (`@npmcli/config`, not from memory); ran three
+separate real heterogeneous-load reproduction batches (~431 real files each) plus a dedicated,
+purpose-built file-descriptor-starvation harness. Did not reproduce the real failure locally despite
+all of it. The best remaining, source-verified (not locally confirmed) hypothesis: npm's own bundled
+config loader swallows EVERY error from its ancestor-walk `stat`/`readFile` calls, not just `ENOENT`
+— a transient `EMFILE`/`ENFILE` while reading the project `.npmrc` is indistinguishable, to npm, from
+"no project config exists here," falling through to the builtin default registry. No fix shipped,
+per this entry's own standing discipline against shipping anything unverified — any production-code
+workaround inside `fetchNpmOverlay` would either mask the symptom or directly break the module's own
+documented private/scoped-registry support (confirmed: a `registry=` env-var fallback would outrank
+the project `.npmrc`'s own general `registry=` key by npm's real precedence, breaking the exact
+tests whose whole point is that the `.npmrc` is honored). **One cheap, speculative, reversible
+mitigation applied anyway**, since this session (unlike the investigating subagent) has real
+`ci.yml` access: `floor`'s and `seed`'s own `pnpm test` steps now raise `ulimit -n` (65536, falling
+back silently if the real hard ceiling is lower) immediately before the real test run, non-Windows
+only. GitHub-hosted ubuntu runners default to a soft ceiling of 1024 — genuinely low against ~750
+concurrently-forked real workers each holding sockets/pipes/temp files open, and exactly the
+resource the EMFILE/ENFILE hypothesis names. Disclosed as unproven: the next real `floor`/`seed` CI
+run is the actual test of whether this helps, not a guarantee.
+
+**27-37. The remaining, unconfirmed files in the original cluster list** (`packages/engine/test/
+dispatch/confined-command.test.ts`'s own further SIGTERM-reporting tests beyond the two already
+fixed above, and any file in the broader ~750-file suite not named in this entry's own 26 items) are
+NOT individually re-audited here — this entry closes every file this session's own real CI pull and
+dispatched investigation actually named, not a blanket claim the whole cluster is now exhaustively
+covered.
+
+**Verification, overall.** Every item above was re-verified directly on this session's own real
+checkout (never trusted from an agent's isolated, possibly-stale worktree alone): `pnpm typecheck`
+(21/21 clean, repeatedly), every touched file individually through `eslint`/`prettier --check`
+(clean), `node scripts/check-boundaries.mjs` (clean), and combined real test runs covering every
+touched test file together (39 files / 860 tests in one sweep; `packages/tui/test` alone, 31/507; `
+packages/cli/test/commands/doctor` + `run`, 46/811) — all green. A full-repo, type-aware `eslint .`
+pass crashed with a real V8 OOM on this session's own local machine, even at a 10240MB heap ceiling
+— matching this repo's own already-documented macOS low-memory fragility for exactly this one
+blanket invocation (`ci.yml`'s own comment on the identical issue), unrelated to anything changed
+here (every individually-touched file already passed its own scoped lint pass cleanly, more than
+once); not chased further, since CI's own dedicated, already-elevated-memory lint step is the real,
+authoritative check for this specific command.
+
+**Gauntlet.** 28 files changed, one of them production source (`locks-and-worktrees.ts`, item 6),
+critic-reviewed in an isolated worktree before landing (the critic's own worktree inherited this
+entry's stale-base problem and could not review the actual diff, but its independently-reasoned
+finding about `JSON.parse(...) as RunLock`'s missing shape guard was real and is incorporated,
+confirmed and fixed directly). Every other file is test-only or a test fixture, landing under this
+session's established "test-only/docs-only, no production-code change" exception — consistent with
+every prior entry in this same `Q384`-`Q389` arc.

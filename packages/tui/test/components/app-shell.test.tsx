@@ -6,6 +6,19 @@
  * See `list-pane.test.tsx`'s own header comment for why every test that presses a key awaits `flush()`
  * once right after `render()`, before the first `stdin.write()`.
  *
+ * **`flush()` itself waits two macrotask ticks, not one** -- `SPEC-QUESTIONS.md` Q390: the identical
+ * mechanism `kb.test.tsx`/`specs.test.tsx`'s own header comments document in full for this exact
+ * shape of failure (`expect(seen.has(frame)).toBe(false)` failing because the SAME frame rendered
+ * twice): a screen-switch handler triggers a re-render with a fresh `useInput` closure, and `ink`'s
+ * own `useInput` (`ink/build/hooks/useInput.js`) re-subscribes its real stdin listener via a
+ * *separate*, deferred `useEffect` -- flushed by the `scheduler` package one further `setImmediate`
+ * tick after the one a plain commit already needs, whenever real elapsed time crosses that
+ * scheduler's own ~5ms-per-pass yield budget (`shouldYieldToHost`). Under light load both rounds land
+ * inside one scheduler pass, which is why this always passed locally; under real floor/seed CI's own
+ * ~750-concurrent-file scheduling pressure the second round can starve, and the NEXT key press lands
+ * on the still-subscribed, pre-switch listener instead -- the identical "stale `useInput` closure"
+ * hazard, this file's own top-level screen-router version of it.
+ *
  * @see specs/04 §4.1, §4.2, §4.3
  * @see PLAN-M9.md P6
  */
@@ -35,10 +48,16 @@ const TAB = '\t';
 const SHIFT_TAB = '\x1B[Z';
 const ESC = '\x1B';
 
-function flush(): Promise<void> {
+function tick(): Promise<void> {
   return new Promise((resolve) => {
     setImmediate(resolve);
   });
+}
+
+/** Two ticks, not one -- see this file's own top doc comment. */
+async function flush(): Promise<void> {
+  await tick();
+  await tick();
 }
 
 interface StdinLike {

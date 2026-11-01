@@ -6,6 +6,25 @@
  * the fake stdin's keypress listener) runs asynchronously after the initial commit, so a write issued
  * immediately after `render()` with no tick in between is silently dropped.
  *
+ * **`flush()` itself waits two macrotask ticks, not one** -- a real, CI-reproduced flake (not a
+ * theoretical one): this component's async-source consumption (the `for await` loop in its own
+ * `useEffect`) and `useInput`'s own listener-(re)subscription effect are both deferred, passive React
+ * effects, flushed by the `scheduler` package via its own `setImmediate` call -- and that flush loop
+ * yields and reschedules itself (needing a *further* `setImmediate` tick) the moment real elapsed time
+ * crosses its own ~5ms-per-pass budget (`shouldYieldToHost`, `scheduler/cjs/scheduler.development.js`).
+ * Under light load the whole chain -- mount's effects, an async source's first few values, a keystroke's
+ * resulting re-subscription -- reliably finishes inside the single pass one tick already waits for,
+ * which is why this always passed locally. But real floor/seed CI's own ~750-concurrent-file scheduling
+ * pressure can preempt the process *mid-callback*, not just between callbacks -- real wall-clock time
+ * elapsing with no extra JS work done is exactly what that budget measures, so the identical starvation
+ * this file's own header comment already names for the *first* tick (a write silently dropped because
+ * the subscribing effect hadn't run yet) can equally strand a *later* one. Reproduced directly: a real,
+ * multi-process CPU-contention stress run (not a single-process guess) intermittently left an async
+ * source's own already-queued values ('a', 'b', 'c') uncommitted after the one tick `renderStream()`
+ * waited, exactly this class of failure. Waiting two ticks is not an arbitrary extra delay: it is exactly
+ * the one further scheduler pass this yield-and-reschedule mechanism can need -- verified directly to
+ * hold under the same real multi-process stress that reproduced the original flake.
+ *
  * @see specs/04 §4.1, §4.2, §4.5
  * @see PLAN-M9.md P4
  */
@@ -17,10 +36,16 @@ import { StreamView, type StreamViewProps } from '../../src/components/stream-vi
 const UP = '\x1B[A';
 const DOWN = '\x1B[B';
 
-function flush(): Promise<void> {
+function tick(): Promise<void> {
   return new Promise((resolve) => {
     setImmediate(resolve);
   });
+}
+
+/** Two ticks, not one -- see this file's own top doc comment. */
+async function flush(): Promise<void> {
+  await tick();
+  await tick();
 }
 
 interface StdinLike {

@@ -31,6 +31,24 @@ async function scratchDir(): Promise<string> {
   return dir;
 }
 
+/** `SPEC-QUESTIONS.md` Q390: `isAlive`'s single, immediate `kill -0` is a liveness probe, not a
+ * confirmation that a just-sent `SIGKILL` has actually taken effect -- `stop()`'s own `killGroup`
+ * call (`@forge/engine/dispatch`) only SIGNALS the group and every known descendant; it does not
+ * (and, by its own documented contract, never promises to) block until the OS has actually finished
+ * applying that signal. The gap between "signalled" and "actually gone" is usually sub-millisecond
+ * but not zero, and widens under real host contention -- the identical reasoning `confined-command.
+ * test.ts`'s own analogous grandchild test already documents for the exact same assertion shape.
+ * Polling, not importing that file's helper: deliberately duplicated, the same "small, single-
+ * purpose helper duplicated over a forced cross-package coupling" precedent `killGroup`/
+ * `listDescendantPids`'s own doc comments already establish (`Q296` Decision 5). */
+async function waitForGone(pid: number, maxAttempts = 100): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (!isAlive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -159,9 +177,9 @@ describe('startHttpServer: success (specs/22 M16 P8)', () => {
       expect(isAlive(handle.pid)).toBe(false);
       if (grandchildPid !== undefined) {
         expect(
-          isAlive(grandchildPid),
+          await waitForGone(grandchildPid),
           'the detached grandchild must not survive stop() -- group kill alone leaves it orphaned',
-        ).toBe(false);
+        ).toBe(true);
       }
     } finally {
       forceKill(grandchildPid);
