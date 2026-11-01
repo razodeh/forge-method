@@ -438,7 +438,7 @@ jobs:
   # Real measured combined duration for both files together, `--no-file-parallelism`, on an unloaded
   # sandbox: 48.08s (s12 9.47s, crash-resume 36.57s) -- comfortably inside this job's own 30-minute
   # timeout even with full install/build overhead added; both files also have their own internal test
-  # timeouts (crash-resume 400s as of Q386, s12 120s) as a second, independent backstop.
+  # timeouts (crash-resume 600s as of Q388, s12 120s) as a second, independent backstop.
   crash-resume:
     name: crash-resume (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

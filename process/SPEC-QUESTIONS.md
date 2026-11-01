@@ -33820,3 +33820,67 @@ every platform's own exact error vocabulary.
 **Gauntlet.** Test-only change, same file as `Q384`/`Q385`/`Q386` — landed directly per this
 session's established "test-only/docs-only, no production-code change" exception to the
 2-critic-worktree gauntlet.
+
+
+## Q388 — Q387's fix produced a genuinely clean failure, which revealed the real race rate needed a
+bigger retry budget, not another mechanism fix; also found and disclosed a real, non-coincidental
+pattern across every observed race (owner-directed, 2026-11-01)
+
+**What happened.** CI run `41266040266` (validating `Q387`'s push) showed `crash-resume
+(windows-latest)` fail again — but this time with NO uncaught exception at all: a clean `Test Files
+1 failed | 1 passed`, the test's own thrown "lost the kill race 12 times in a row" (then still `5`)
+error, exactly as designed. The retry mechanism itself worked correctly across the run: 4 other
+iterations (0, 4, 5, 9) each lost 1-2 attempts and recovered; only iteration 10 exhausted the
+then-5-attempt budget. This is qualitatively different from `Q385`/`Q387`'s own findings — not a
+mechanism bug, a tuning gap: the real per-attempt race rate on Windows is high enough that a 5-
+attempt budget occasionally isn't enough.
+
+**A real pattern, not noise, found while looking for the right number.** Before simply raising the
+budget, the actual event counts every observed race lost at were re-checked directly from each real
+CI run's own logs (not from memory) across all four Windows runs so far: `41257649903` (`Q384`'s own
+first instance, pre-retry): 24. `41260547760` (`Q385`'s, pre-retry): 36. `41263303919` (`Q386`'s,
+retry active): 21, 17, 29, 29, 26, 4, 9, 9, 33, 19, 34, 17 (plus one further loss that run that threw
+the uncaught `taskkill` exit-255 error `Q387` fixes, whose own event count was never captured — the
+throw pre-empted the logging line). `41266040266` (`Q387`'s, retry + liveness-check active): 24, 4,
+28, 27, 40, 30, 39, 39, 34, 19, 19, 19. **26 confirmed data points, every single one in the narrow
+range 4-40**, despite `killAfterEventCount` being drawn UNIFORMLY across the entire
+`[1, totalEvents-1]` range (hundreds of events). If races were genuinely uniform across that whole
+range, 26 independent draws all landing in such a narrow low sub-range is astronomically improbable
+by chance — this is real signal. The
+likely mechanism: this fixture's earliest events fire in a fast initial burst, close together in
+real wall-clock time, before settling into a slower, more spaced-out cadence for the rest of the
+run — an early kill point demands this caller react within that same tight burst window, which
+Windows's own real per-byte/per-chunk stdio latency (already established in `Q384`/`Q385`) leaves far
+less room for than a later point's own wider real gaps.
+
+**Why this is disclosed, not acted on further (yet).** The tempting "fix" — bias the retry's random
+draw away from early points, since they are the ones that keep racing — was deliberately NOT done.
+`crash-resume.test.ts`'s own documented intent (`06` §6.10, this file's own top comment) wants
+genuine coverage across the WHOLE range, including points at the very start of the run: resuming a
+run that crashed before almost anything happened is real, distinct coverage, not an edge case worth
+trading away for convenience. Narrowing the random draw to avoid the fixture's own hard range would
+quietly shrink what this test actually proves. Raising the retry budget instead preserves full-range
+coverage while giving enough attempts to survive an unlucky run of early draws.
+
+**Fix.** `MAX_ATTEMPTS` raised `5` → `12` in `spawnAndKillAtFreshRandomPointWithRetry`
+(`crash-resume.test.ts`). The test's own timeout raised `400_000` → `600_000`, using the now-real
+data point from `41266040266` (130.6s across 11 of 20 iterations before exhausting the old 5-attempt
+budget) rather than a guess, still well past even a generous extrapolation of that sample — the same
+"generous stopgap, not tuned, revisit with data" framing `ci.yml`'s own `floor`/`heavy-subprocess`
+timeouts already use, now applied a second time to this same test (`Q386` raised it once already).
+`ci.yml`'s own comment citing the test's internal timeout updated to match.
+
+**Verification.** `pnpm typecheck` (21/21 clean). `eslint`/`prettier --check` clean.
+`node scripts/check-boundaries.mjs` clean. `pnpm test:crash-resume` run locally (POSIX, unchanged
+code path): both files still pass, 35.43s/46.57s combined, no regression.
+
+**Disclosed, not verified yet.** Whether 12 attempts and 600s are enough is still an extrapolation
+from two real samples, not a guarantee — the next real Windows CI run is the first further proof.
+The "races cluster in early kill points" finding itself is new, disclosed information a future
+piece could act on directly (e.g., a point-aware retry, or investigating whether the fixture's own
+early-event burst is itself worth smoothing out) rather than something this entry claims to have
+closed.
+
+**Gauntlet.** Test-only change, same file as `Q384`-`Q387` — landed directly per this session's
+established "test-only/docs-only, no production-code change" exception to the 2-critic-worktree
+gauntlet.

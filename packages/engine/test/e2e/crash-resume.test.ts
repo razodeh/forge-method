@@ -86,13 +86,31 @@ async function integrationCommitCount(projectRoot: string): Promise<number> {
  * bug. Any other error from `spawnAndKillAfter` (a real spawn failure, an unexpected signal/exit
  * mismatch) is NOT this condition and propagates immediately, unretried. Exhausting every attempt
  * throws loudly rather than silently giving up — a test whose kill mechanism races on every single
- * attempt has a real, systemic problem this ought to surface, not hide behind one more retry. */
+ * attempt has a real, systemic problem this ought to surface, not hide behind one more retry.
+ *
+ * `SPEC-QUESTIONS.md` Q388: `MAX_ATTEMPTS` raised 5 → 12 after a real Windows CI run (`41266040266`)
+ * exhausted 5 on one iteration (10 of its 20) while 4 others needed 1-2 retries each. A real,
+ * non-coincidental pattern across every race observed so far (12 data points over two separate CI
+ * runs, `Q387`'s and this one): EVERY SINGLE recorded race landed at an early event count (4-40) —
+ * never mid-range or late, despite `killAfterEventCount` being drawn uniformly across the WHOLE
+ * range. That is not chance (if races were uniform, 12 independent draws all landing in such a
+ * narrow low sub-range would be astronomically unlikely) — the likely real mechanism is that this
+ * fixture emits its earliest handful of events in a fast initial burst (close together in real wall-
+ * clock time) before settling into a slower, more spaced-out cadence, so an early kill point demands
+ * this caller react within that same tight burst window, far less forgiving than a later point's own
+ * wider real gaps. This is disclosed, not acted on further here: the test's own documented intent
+ * (`06` §6.10) wants genuine coverage across the WHOLE range, early points included (resume behaviour
+ * when almost nothing has happened yet is real coverage, not an edge case to avoid), so biasing the
+ * retry's own random draw away from early points would trade real coverage for convenience. Raising
+ * the budget instead preserves full-range coverage while giving enough attempts to get past an
+ * unlucky run of early draws; a future piece could revisit a smarter, point-aware retry if this still
+ * is not enough. */
 async function spawnAndKillAtFreshRandomPointWithRetry(
   iterationLabel: string,
   totalEvents: number,
   seed: string,
 ): Promise<{ projectRoot: string; runId: string; pid: number }> {
-  const MAX_ATTEMPTS = 5;
+  const MAX_ATTEMPTS = 12;
   let lastRaceError: KillRaceLostError | undefined;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
     // Every point strictly before completion, so the child is truly killed mid-run, not merely
@@ -128,12 +146,12 @@ async function spawnAndKillAtFreshRandomPointWithRetry(
 describe('E3 crash-resume', () => {
   // 20 real, independent SIGKILL/resume cycles is inherently heavy (process spawns, git worktrees,
   // real fs work) -- measured isolated duration ranged 49.9s-68.1s across three repeated runs on
-  // this sandbox (`M14-AGENT-NOTES.md`, `M14 P45`). `SPEC-QUESTIONS.md` Q386 raises this further, as
-  // a stopgap, not a tuned number (the same honest framing `ci.yml`'s own `floor`/`heavy-subprocess`
-  // timeouts already use): `spawnAndKillAtFreshRandomPointWithRetry`'s own retries each cost roughly
-  // one full natural run of the fixture (observed ~10s on a real Windows CI leg) when the kill race
-  // is lost, and no real multi-run sample of the NEW retry path's own worst-case total exists yet --
-  // revisit once one does.
+  // this sandbox (`M14-AGENT-NOTES.md`, `M14 P45`). `SPEC-QUESTIONS.md` Q386/Q388 raise this
+  // further, as a stopgap, not a tuned number (the same honest framing `ci.yml`'s own `floor`/
+  // `heavy-subprocess` timeouts already use): a real Windows CI run (`41266040266`) reached 130.6s
+  // across 11 of 20 iterations (several needing multiple retries) before exhausting the then-5-
+  // attempt budget on one pathological iteration -- `Q388` raised that budget to 12; this timeout is
+  // raised well past even a generous extrapolation of that real sample, not a tight fit to it.
   it('a real SIGKILL at 20 randomised points, each followed by resume, reaches the identical final state as an uninterrupted control run -- no duplicated commits, artifacts, or ledger entries', async () => {
     const controlProjectRoot = await createTempRepo('control');
     const controlRunId = 'run-control';
@@ -192,5 +210,5 @@ describe('E3 crash-resume', () => {
       // 20 §20.10 S12: zero orphaned worktrees/processes left behind afterward.
       expect(await listOrphanedWorktrees(projectRoot)).toEqual([]);
     }
-  }, 400_000);
+  }, 600_000);
 });
