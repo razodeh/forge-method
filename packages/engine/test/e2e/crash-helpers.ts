@@ -51,6 +51,15 @@ const FIXTURE_CHILD_PATH = fileURLToPath(
   new URL('./fixtures/run-engine-child.ts', import.meta.url),
 );
 
+/** Thrown by `spawnAndKillAfter` specifically when the group-kill lost the Q384/Q385 race (the
+ * fixture's whole process group had already exited on its own by the time the kill ran) — a
+ * distinct, `instanceof`-checkable type rather than a plain `Error`, so a caller can retry this
+ * specific, recoverable test-infrastructure condition without risking catching (and silently
+ * retrying away) a genuinely different failure. Retrying this condition never masks a production
+ * bug: when it fires, `resumeRun`/`runEngine` — the actual code under test — was never even reached,
+ * only this test's own "kill the fixture mid-flight" precondition failed to land in time. */
+export class KillRaceLostError extends Error {}
+
 /** A fresh, real, empty-initial-commit git repository under a real temp directory. */
 export async function createTempRepo(prefix: string): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), `forge-e2e-crash-${prefix}-`));
@@ -152,12 +161,13 @@ export async function spawnAndKillAfter(
     child.on('exit', (code, signal) => {
       if (killRaceLost) {
         reject(
-          new Error(
+          new KillRaceLostError(
             `the fixture child's whole process group (pid ${String(pid)}) had already exited on its ` +
               `own by the time the group-kill ran (code=${String(code)}, signal=${String(signal)}) -- ` +
-              `a real CI host-contention race (SPEC-QUESTIONS.md Q384), not a logic bug: this caller ` +
-              `was starved long enough after seeing the ${String(killAfterEventCount)}th EVENT line that ` +
-              `the fixture finished the whole run before the kill signal could be delivered`,
+              `a real CI host/platform-latency race (SPEC-QUESTIONS.md Q384/Q386), not a logic bug: ` +
+              `this caller was starved long enough after seeing the ${String(killAfterEventCount)}th ` +
+              `EVENT line that the fixture finished the whole run before the kill signal could be ` +
+              `delivered`,
           ),
         );
         return;

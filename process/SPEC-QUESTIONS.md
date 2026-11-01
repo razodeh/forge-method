@@ -33678,3 +33678,73 @@ next real CI run on `next` is the first live proof.
 **Gauntlet.** Test-only change, same file as `Q384`, same classification: landed directly per this
 session's established "test-only/docs-only, no production-code change" exception to the
 2-critic-worktree gauntlet.
+
+
+## Q386 — Q385's own fix still raced on Windows, but no longer deterministically: added a bounded
+retry at a fresh random point, since losing this specific race never exercises the production code
+the test exists to prove (owner-directed, 2026-11-01)
+
+**What happened.** CI run `41260547760` (validating `Q385`'s push) showed `crash-resume
+(windows-latest)` fail again — but differently this time: a clean `KillRaceLostError`-shaped
+rejection (`Q385`'s fix working as designed: `taskkill` genuinely ran, found the process already
+gone via its own real exit code 128, and reported that back cleanly), on iteration 1's very first
+attempt, after reaching only the 36th event. Two runs in a row, both dying on the first attempt of
+the first iteration, at different early event counts (24th, then 36th) — strong evidence that on
+Windows this is NOT simply "rare host contention," as `Q384`'s own first framing assumed, but a
+structurally tighter margin: Windows's own real, well-documented overhead (chunkier/less frequent
+stdio pipe delivery than POSIX, plus `taskkill.exe`'s own `CreateProcess` cost, now unavoidably part
+of the kill path since `Q385`) leaves this caller meaningfully less margin to react in time there,
+for ANY kill point, not merely late ones.
+
+**Why a retry is the right fix here and not elsewhere in this codebase.** This project's own
+standing practice (`Q379`-`Q381`) is to disclose and accept timing flakes, not retry past them — but
+that practice exists because, in THOSE cases, the flake occurs WHILE exercising the exact behaviour
+under test (a real CLI's own pid-reporting race), so silently retrying risks hiding a genuine
+production bug. This case is categorically different: when `KillRaceLostError` fires, the fixture
+simply finished its OWN run to completion before this test's own kill attempt could land —
+`resumeRun`/`runEngine`, the actual production code `crash-resume.test.ts` exists to exercise, is
+never even reached on that attempt. Retrying with a FRESH random point (never re-attempting the
+exact point that just raced, since that point is not specially suspect — the real timing that raced
+against it is gone, not reproducible) risks nothing about the production system; it only gives the
+test's own orchestration another chance to reach its actual assertions.
+
+**Fix.** `crash-helpers.ts` now exports `KillRaceLostError`, a distinct, `instanceof`-checkable
+type, rather than a plain `Error`, for exactly this condition (any OTHER error from
+`spawnAndKillAfter` is a different failure and is never caught by the new retry logic).
+`crash-resume.test.ts` gains `spawnAndKillAtFreshRandomPointWithRetry`: up to 5 attempts per
+iteration, each at a newly randomised point and a fresh temp repo/run id, logging each retry via
+`console.warn` for real CI visibility into how often this actually fires (never asserted on, so it
+cannot itself mask anything). Exhausting all 5 attempts throws loudly, by design — a test whose kill
+mechanism loses every single attempt has a real, systemic problem this is meant to surface, not
+hide behind one more retry. The test's own timeout is raised `220_000` → `400_000`, disclosed as a
+stopgap (the same "generous, not tuned, revisit with real data" framing `ci.yml`'s own
+`floor`/`heavy-subprocess` timeouts already use): no real multi-run sample of the new retry path's
+own worst-case total cost exists yet.
+
+**Verified the retry mechanism actually works, not merely by inspection.** Real mutation test
+(reverted immediately after): temporarily forced `killGroupReportingRace` to always report a lost
+race, ran `crash-resume.test.ts` directly, and confirmed (a) it retried 5 times, each at a genuinely
+different random event count (41, 5, 34, 34, 8 — confirmed from the real log output, not assumed),
+(b) each retry was logged via the `console.warn` path, and (c) attempt exhaustion threw the exact
+expected "lost the kill race 5 times in a row" error naming the last race's own message. Reverted,
+then re-ran the real (unmutated) code: both `crash-resume.test.ts` and `s12-orphan-free-crash.test.ts`
+still pass cleanly, no regression to the POSIX happy path (33.997s/45.28s combined across two runs,
+consistent with `Q384`/`Q385`'s own earlier measurements — no retries triggered locally, as expected
+on POSIX).
+
+**Verification.** `pnpm typecheck` (21/21 clean). `eslint`/`prettier --check` clean on both touched
+files (two real lint findings surfaced and fixed along the way: a misplaced `eslint-disable-next-
+line` that suppressed the wrong line because an explanatory comment sat between the disable
+directive and the actual `console.warn` call — moved to be the line immediately before it; and a
+`@typescript-eslint/no-unnecessary-template-expression` flag on a `?? '(none captured)'` fallback,
+fixed via the rule's own `--fix` to a plain string concatenation). `node scripts/check-boundaries.mjs`
+clean.
+
+**Disclosed, not verified yet.** Whether 5 attempts and a 400s budget are actually ENOUGH on a real
+Windows CI leg — as opposed to merely plausible from local, POSIX-only measurement — is unconfirmed;
+the next real Windows CI run is the first live proof. If the race recurs even with retries active,
+that is itself new information (how often, not whether) rather than a sign this fix is wrong.
+
+**Gauntlet.** Test-only change (both files already test-only by their own doc comments) — landed
+directly per this session's established "test-only/docs-only, no production-code change" exception
+to the 2-critic-worktree gauntlet.

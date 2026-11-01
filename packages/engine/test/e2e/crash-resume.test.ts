@@ -22,7 +22,12 @@ import { describe, expect, it } from 'vitest';
 
 import { resumeRun, type ResumeContext } from '../../src/resume/orchestrate.ts';
 import { runEngine, type RunEngineContext } from '../../src/run/run-engine.ts';
-import { createTempRepo, spawnAndKillAfter, waitForProcessGone } from './crash-helpers.ts';
+import {
+  createTempRepo,
+  KillRaceLostError,
+  spawnAndKillAfter,
+  waitForProcessGone,
+} from './crash-helpers.ts';
 import {
   FIXTURE_ITEM_IDS,
   fixtureAdapter,
@@ -71,12 +76,64 @@ async function integrationCommitCount(projectRoot: string): Promise<number> {
   return Number(stdout.trim());
 }
 
+/** `SPEC-QUESTIONS.md` Q386: retries `spawnAndKillAfter` at a FRESH random point (never the same one
+ * twice — the point that just raced is not specially suspect, and re-trying it unchanged would only
+ * repeat the identical race against the identical real timing) when it loses the Q384/Q385 kill race,
+ * up to `MAX_ATTEMPTS` times. Safe to retry, unlike almost any other failure in this test: when this
+ * specific error fires, `resumeRun`/`runEngine` — the actual production code this whole test exists to
+ * exercise — was never even reached; only this test's OWN "land the kill before the fixture finishes on
+ * its own" precondition failed to hold in time, a test-infrastructure timing miss, not a production
+ * bug. Any other error from `spawnAndKillAfter` (a real spawn failure, an unexpected signal/exit
+ * mismatch) is NOT this condition and propagates immediately, unretried. Exhausting every attempt
+ * throws loudly rather than silently giving up — a test whose kill mechanism races on every single
+ * attempt has a real, systemic problem this ought to surface, not hide behind one more retry. */
+async function spawnAndKillAtFreshRandomPointWithRetry(
+  iterationLabel: string,
+  totalEvents: number,
+  seed: string,
+): Promise<{ projectRoot: string; runId: string; pid: number }> {
+  const MAX_ATTEMPTS = 5;
+  let lastRaceError: KillRaceLostError | undefined;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    // Every point strictly before completion, so the child is truly killed mid-run, not merely
+    // allowed to finish -- genuinely randomised per attempt (this is test orchestration, not the
+    // production determinism this milestone's own R-rules govern).
+    const killAfterEventCount = 1 + Math.floor(Math.random() * (totalEvents - 1));
+    const attemptLabel = `${iterationLabel}-attempt-${String(attempt)}`;
+    const projectRoot = await createTempRepo(attemptLabel);
+    const runId = `run-${attemptLabel}`;
+    try {
+      const pid = await spawnAndKillAfter(projectRoot, runId, killAfterEventCount, seed);
+      await waitForProcessGone(pid);
+      return { projectRoot, runId, pid };
+    } catch (err) {
+      if (!(err instanceof KillRaceLostError)) throw err;
+      lastRaceError = err;
+      // Deliberate CI visibility into retry frequency (Q386); console is never asserted on, so this
+      // cannot mask a real failure the way a swallowed error would.
+      // eslint-disable-next-line no-console -- see comment above
+      console.warn(
+        `[crash-resume] ${iterationLabel} lost the kill race on attempt ${String(attempt)}, retrying ` +
+          `at a fresh random point: ${err.message}`,
+      );
+    }
+  }
+  throw new Error(
+    `${iterationLabel} lost the kill race ${String(MAX_ATTEMPTS)} times in a row -- no longer a rare ` +
+      `platform-latency miss, something is systematically wrong. Last race error: ` +
+      (lastRaceError?.message ?? '(none captured)'),
+  );
+}
+
 describe('E3 crash-resume', () => {
   // 20 real, independent SIGKILL/resume cycles is inherently heavy (process spawns, git worktrees,
   // real fs work) -- measured isolated duration ranged 49.9s-68.1s across three repeated runs on
-  // this sandbox (`M14-AGENT-NOTES.md`, `M14 P45`); the timeout below is 3x the slowest observed
-  // run, rounded up with real margin (not the bare next multiple of 10_000), replacing the previous
-  // guessed `120_000`, which left under 2x headroom over the slower runs.
+  // this sandbox (`M14-AGENT-NOTES.md`, `M14 P45`). `SPEC-QUESTIONS.md` Q386 raises this further, as
+  // a stopgap, not a tuned number (the same honest framing `ci.yml`'s own `floor`/`heavy-subprocess`
+  // timeouts already use): `spawnAndKillAtFreshRandomPointWithRetry`'s own retries each cost roughly
+  // one full natural run of the fixture (observed ~10s on a real Windows CI leg) when the kill race
+  // is lost, and no real multi-run sample of the NEW retry path's own worst-case total exists yet --
+  // revisit once one does.
   it('a real SIGKILL at 20 randomised points, each followed by resume, reaches the identical final state as an uninterrupted control run -- no duplicated commits, artifacts, or ledger entries', async () => {
     const controlProjectRoot = await createTempRepo('control');
     const controlRunId = 'run-control';
@@ -98,16 +155,11 @@ describe('E3 crash-resume', () => {
 
     const ITERATIONS = 20;
     for (let i = 0; i < ITERATIONS; i += 1) {
-      // Genuinely randomised (this is test orchestration, not the production determinism this
-      // milestone's own R-rules govern) -- every point strictly before completion, so the child is
-      // truly killed mid-run on every one of the 20 iterations, not merely allowed to finish.
-      const killAfterEventCount = 1 + Math.floor(Math.random() * (totalEvents - 1));
-
-      const projectRoot = await createTempRepo(`iter-${String(i)}`);
-      const runId = `run-iter-${String(i)}`;
-
-      const pid = await spawnAndKillAfter(projectRoot, runId, killAfterEventCount, SEED);
-      await waitForProcessGone(pid);
+      const { projectRoot, runId } = await spawnAndKillAtFreshRandomPointWithRetry(
+        `iter-${String(i)}`,
+        totalEvents,
+        SEED,
+      );
 
       const finalRunState = await resumeToCompletion(projectRoot, runId);
 
@@ -140,5 +192,5 @@ describe('E3 crash-resume', () => {
       // 20 §20.10 S12: zero orphaned worktrees/processes left behind afterward.
       expect(await listOrphanedWorktrees(projectRoot)).toEqual([]);
     }
-  }, 220_000);
+  }, 400_000);
 });
