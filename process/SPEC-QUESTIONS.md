@@ -33510,3 +33510,98 @@ all 3 independently confirmed, via real mutation of the production code, to fail
 each proves). `node scripts/check-boundaries.mjs` clean. Full re-run of every directly-touched test
 file (`launcher-shim.test.ts`, `system-temp.test.ts`, `shell.test.ts`, `confined-command.test.ts`):
 289/289.
+
+
+## Q384 — owner-directed: tackled the `floor`/`seed` CI-capacity flaky cluster, specifically its
+single oldest, most-recurring instance (`crash-resume.test.ts`'s real `kill ESRCH`, owner-directed,
+2026-10-31)
+
+**What this is.** The owner asked to "tackle the floor/seed issue" — the long-disclosed CI-scale
+scheduling-capacity cluster (`ci.yml`'s own `floor`/`seed` comments; this session's own prior CI run
+`41240416575` surfaced its latest instance as a real `Error: kill ESRCH` at `crash-helpers.ts:93`,
+during `crash-resume.test.ts`'s own "real SIGKILL at 20 randomised points" test). The real, full fix
+for CI-SCALE CAPACITY in general — sharding/bigger runners — is a cost/infrastructure decision for
+the owner, already flagged as not resolved this session. This entry is the narrower, already-
+precedented piece that fit inside today's authorization: the real root cause specifically behind
+`crash-helpers.ts:93`'s failure, plus the fix.
+
+**Root cause.** `spawnAndKillAfter` (`packages/engine/test/e2e/crash-helpers.ts`) waits for the
+fixture child to emit its target `EVENT` count, then calls `process.kill(-pid, 'SIGKILL')` to crash
+its whole process group. On a sufficiently CPU-starved host, THIS CALLER (not the fixture) can be
+starved long enough between buffering that `EVENT` line and actually getting scheduled to act on it
+that the fixture's whole process group finishes the entire run and exits on its own in the meantime
+— `process.kill(-pid, 'SIGKILL')` then throws `ESRCH` ("no such process"), because there is
+genuinely nothing left to signal. That throw is synchronous, from inside a stream `'data'` listener,
+which crashes the whole vitest worker process (taking down every other, unrelated test file sharing
+it) rather than failing just the one test — this is why the symptom reads as a bare, unlabelled
+`Error: kill ESRCH` rather than a clean, attributable test failure.
+
+This is NOT a new discovery: `crash-resume.test.ts` is this entire milestone's single most
+frequently-cited "known load flake" — `SPEC-QUESTIONS.md` records it failing under heavy concurrent
+load and passing cleanly in isolation dozens of separate times across the project's history, as far
+back as `Q149` itself. What IS new here: unlike `heavy-subprocess`'s 3 files (`Q370`) and
+`lock-stress`'s 5 (`Q359`/`Q365`), this exact problem shape — a real-subprocess-heavy file whose own
+internal timing is sensitive to how many OTHER files are concurrently competing for the host's
+handful of vCPUs — had never actually been moved out of the shared contention pool for this
+specific file; it was only ever re-accepted individually, each time it recurred, for the whole life
+of the milestone.
+
+**Fix, two parts.**
+
+1. **Clean failure, not a crashed worker.** `spawnAndKillAfter` now catches `ESRCH` specifically from
+   the group-kill call and rejects with a distinctly labelled error naming this exact race, instead
+   of letting the throw propagate synchronously out of the stream listener. Any OTHER error code is
+   still rethrown unchanged — never silently swallowed. This alone does not reduce how often the race
+   happens, only how it fails when it does: a normal, attributable test failure instead of an
+   uncaught exception that can take unrelated concurrent tests down with it.
+2. **Reduce how often it happens, by applying the already-proven fix for real.** `crash-resume.test.ts`
+   and `packages/engine/test/security/s12-orphan-free-crash.test.ts` (the only two consumers of
+   `spawnAndKillAfter`) are moved out of the main `pnpm test` run into a new, dedicated `crash-resume`
+   CI job (`ci.yml`), run with `--no-file-parallelism` — the identical shape of fix already validated
+   twice for `heavy-subprocess`/`lock-stress`, applied for the first time to this, the oldest and
+   longest-standing instance of the same problem. `package.json` gains `test:crash-resume`; the main
+   `test` script's `--exclude` list gains both files; `ci-ok`'s `needs:` and its success-string both
+   gain the new job.
+
+**Coverage checked, not assumed (`Q365` Decision 3's own discipline).** `resume/orchestrate.ts`,
+`run/run-engine.ts`, and `@forge/vcs`'s orphan-detection functions all have substantial other test
+coverage across the suite (`packages/engine/test/resume/*.test.ts`, `packages/engine/test/run/
+*.test.ts`, `packages/vcs/test/lanes.test.ts`, several `packages/cli/test/commands/loop/test/
+*.test.ts`, confirmed directly via grep, not assumed). Measured directly: running
+`packages/engine/test` + `packages/vcs/test` with coverage, WITH vs. WITHOUT the 2 target files,
+produced IDENTICAL numbers for every `packages/vcs/src/**` file that showed a shortfall in this
+scoped slice (`worktree-root.ts` 76.47%/72.22%/40%, `lanes.ts` 89.26%/89.5%, `overlay-fetch.ts`
+80.85% branches, all unchanged either way) — proving those pre-existing shortfalls are an artefact
+of this narrower, package-scoped slice missing `packages/cli/test`'s own contribution, not something
+this change causes. `resume/orchestrate.ts`/`run/run-engine.ts` showed zero coverage shortfall in
+either run. Isolating these 2 files creates no coverage-floor gap.
+
+**Disclosed, not fixed — still open.** This narrows the RATE of the race (removing the other ~750
+files' worth of concurrent contention these 2 files used to compete against) but cannot eliminate it
+outright: any wall-clock-dependent signal race in a shared-host CI environment is probabilistic, not
+structurally closed, the same honest framing `Q379`-`Q381` already established for the unrelated
+`bin.test.ts` pause/abort timing flake. If this specific race still recurs after isolation, it
+becomes a new disclosed-and-accepted residual, not a regression. The broader `floor`/`seed` CI-scale
+capacity cluster itself (every OTHER file in the ~750-file main run, and the `floor` job's own
+"no run has yet gone the distance to report a true floor" problem) is explicitly NOT resolved by
+this entry — that still needs the owner-level sharding/bigger-runner decision already flagged.
+
+**Verification.** `pnpm typecheck` (21/21 clean). `node scripts/check-boundaries.mjs` clean.
+`prettier --check` clean on every touched file. `eslint` clean on `crash-helpers.ts` directly (a
+full, unscoped repo-wide `eslint .` pass could not be run in this sandbox at all — a real, OOM
+crash, reproduced locally byte-for-byte against the identical `node::OOMErrorHandler`/`Abort trap: 6`
+signature `ci.yml`'s own header comment already documents for macOS's type-aware single-process
+`eslint .` pass — a pre-existing environmental limitation of this sandbox, unrelated to this change;
+CI's own `floor` job macOS legs apply the already-disclosed `NODE_OPTIONS` workaround and are the
+real gate for this). `.github/workflows/ci.yml` parsed clean (`python3 -c "import yaml; yaml.safe_
+load(...)"`). `pnpm test:crash-resume` run directly: both files pass, real combined duration 48.08s
+(s12 9.47s, crash-resume 36.57s) on an unloaded sandbox. Confirmed via `node scripts/run-tests.mjs
+list` that neither target file appears in the main run's collected set once excluded, and that
+`vitest list`/`list --json` cannot be driven directly (the network guard refuses a bare `vitest`
+invocation by design) — `scripts/run-tests.mjs list` is the correct equivalent, used throughout.
+
+**Gauntlet.** Test-only + CI-infrastructure change (no production `src/` behaviour touched outside
+`crash-helpers.ts`, itself already documented as test-only by its own top-of-file doc comment, with
+no production caller) — landed directly per this session's established "test-only/docs-only, no
+production-code change" exception to the 2-critic-worktree gauntlet, the same classification `Q382`
+already used for an identically-shaped change.

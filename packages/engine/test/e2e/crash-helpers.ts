@@ -46,7 +46,8 @@ export async function createTempRepo(prefix: string): Promise<string> {
  * it has durably written `killAfterEventCount` events, and resolves once the OS confirms the process is
  * genuinely gone — never a simulated crash. Rejects if the child exits on its own before ever reaching
  * that many events (a caller bug: `killAfterEventCount` must be chosen below the fixture's own real
- * total).
+ * total), and also rejects — with a distinctly labelled error, not a crash of the whole test worker —
+ * if the group-kill itself loses a real race against a severely CPU-starved host (see below).
  *
  * `detached: true` makes the fixture child the leader of its own, brand-new process group (its pgid
  * equal to its own pid) — every further descendant it spawns (concretely: the real `git` subprocess
@@ -57,7 +58,16 @@ export async function createTempRepo(prefix: string): Promise<string> {
  * down together. `SPEC-QUESTIONS.md` Q149 has the full record of the real bug a single-pid kill left
  * behind (an orphaned `git worktree add` subprocess finishing *after* the "crash," with no `LaneCreated`
  * event ever durably recorded for it) and the five real leftover shapes that surfaced once group-killing
- * made the test faithful enough to actually reach them. */
+ * made the test faithful enough to actually reach them.
+ *
+ * `SPEC-QUESTIONS.md` Q384: on a severely CPU-starved CI host, this *caller* process (not the fixture)
+ * can be starved long enough between buffering the `killAfterEventCount`-th `EVENT ` line and actually
+ * getting scheduled to act on it that the fixture's whole process group finishes and exits on its own in
+ * the meantime — `process.kill(-pid, 'SIGKILL')` then throws `ESRCH` ("no such process"), because by the
+ * time the signal is actually sent there is genuinely nothing left to receive it. That throw is
+ * synchronous, from inside a stream `'data'` listener, which previously crashed the whole vitest worker
+ * (and every other, unrelated test file sharing it) rather than failing just this one test. Caught here
+ * and turned into a plain rejection instead. */
 export async function spawnAndKillAfter(
   projectRoot: string,
   runId: string,
@@ -75,6 +85,11 @@ export async function spawnAndKillAfter(
     }
     let seenEvents = 0;
     let killed = false;
+    // Set only when the group-kill raced against the fixture's own natural exit (Q384 above) -- kept
+    // distinct from `killed` so the `exit` handler below can tell "a real crash was induced" apart from
+    // "the attempt to induce one lost the race," instead of the latter being silently treated as the
+    // former just because `killed` was already set true before the throw.
+    let killRaceLost = false;
     let stderr = '';
     let stdoutTail = '';
     child.stderr.on('data', (chunk: Buffer) => {
@@ -87,15 +102,37 @@ export async function spawnAndKillAfter(
         seenEvents += 1;
         if (seenEvents >= killAfterEventCount && !killed) {
           killed = true;
-          // Negative pid: POSIX's own "signal every process in this group," not just `pid` itself --
-          // see this function's own doc comment for why the group, not the one process, is the real
-          // crash boundary this needs to simulate.
-          process.kill(-pid, 'SIGKILL');
+          try {
+            // Negative pid: POSIX's own "signal every process in this group," not just `pid` itself --
+            // see this function's own doc comment for why the group, not the one process, is the real
+            // crash boundary this needs to simulate.
+            process.kill(-pid, 'SIGKILL');
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === 'ESRCH') {
+              killRaceLost = true;
+            } else {
+              // Anything other than "already gone" is a genuinely unexpected failure to signal a
+              // process this function itself just spawned -- surfaced, never swallowed.
+              throw err;
+            }
+          }
         }
       }
     });
     child.on('error', reject);
     child.on('exit', (code, signal) => {
+      if (killRaceLost) {
+        reject(
+          new Error(
+            `the fixture child's whole process group had already exited on its own by the time ` +
+              `process.kill(-${String(pid)}, 'SIGKILL') ran (code=${String(code)}, signal=${String(signal)}) ` +
+              `-- a real CI host-contention race (SPEC-QUESTIONS.md Q384), not a logic bug: this caller ` +
+              `was starved long enough after seeing the ${String(killAfterEventCount)}th EVENT line that ` +
+              `the fixture finished the whole run before the kill signal could be delivered`,
+          ),
+        );
+        return;
+      }
       if (!killed) {
         reject(
           new Error(

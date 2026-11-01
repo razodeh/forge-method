@@ -408,15 +408,82 @@ jobs:
       - run: pnpm build
       - run: pnpm test:lock-stress
 
+  # `floor`/`seed`'s own `pnpm test` (above) also excludes 2 more files --
+  # packages/engine/test/e2e/crash-resume.test.ts and
+  # packages/engine/test/security/s12-orphan-free-crash.test.ts -- moved into this dedicated job, run
+  # with `pnpm test:crash-resume`. The SAME shape of fix as `heavy-subprocess` above and `lock-stress`
+  # just above (real evidence, not a new theory): both files share `crash-helpers.ts`'s real
+  # `spawn`+group-`SIGKILL`+resume mechanism (`SPEC-QUESTIONS.md` Q149), and `crash-resume.test.ts`
+  # specifically is this whole milestone's single most frequently-cited "known load flake" --
+  # `SPEC-QUESTIONS.md` records it failing under heavy concurrent load and passing cleanly in
+  # isolation dozens of separate times across this project's entire history (first recorded at Q149
+  # itself, still recurring as late as this session's own CI run `41240416575`, where it surfaced as
+  # a real `kill ESRCH`: the fixture's whole process group exiting on its own before this caller --
+  # itself starved by ~750 other concurrently-running files' worth of real subprocess contention --
+  # could get scheduled to deliver the kill signal; fixed separately in `crash-helpers.ts`, see that
+  # file's own Q384 doc comment, to fail cleanly instead of crashing the whole worker) -- yet, unlike
+  # `heavy-subprocess`'s 3 files and `lock-stress`'s 5, it had never actually been moved out of the
+  # shared contention pool, only re-accepted individually each time it recurred. This is that fix,
+  # applied for the first time to the oldest and longest-standing instance of the identical problem
+  # shape.
+  #
+  # Both files' own underlying mechanism (resume/orchestrate.ts, run-engine.ts, and @forge/vcs's
+  # orphan-detection functions) has substantial other test coverage elsewhere in the main suite
+  # (packages/engine/test/resume/*.test.ts, packages/engine/test/run/*.test.ts,
+  # packages/vcs/test/lanes.test.ts, several packages/cli/test/commands/loop/test/*.test.ts, among
+  # others) -- confirmed directly, not assumed, the same discipline `Q365` Decision 3 already
+  # established for `fetch-npm.test.ts`'s own isolation decision -- so removing these 2 files from the
+  # main run does not create a coverage-floor gap the way isolating `fetch-npm.test.ts` would have.
+  #
+  # Real measured combined duration for both files together, `--no-file-parallelism`, on an unloaded
+  # sandbox: 48.08s (s12 9.47s, crash-resume 36.57s) -- comfortably inside this job's own 30-minute
+  # timeout even with full install/build overhead added; both files also have their own internal test
+  # timeouts (220s/120s) as a second, independent backstop.
+  crash-resume:
+    name: crash-resume (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Full OS breadth (unlike `lock-stress`'s own ubuntu+windows-only choice above): `lock-stress`
+    # could narrow because the underlying LOCK LOGIC was already established cross-platform-correct
+    # by 7+ critic rounds before that job existed, so a dedicated macOS leg would add nothing a
+    # `floor` macOS leg running the rest of the suite wouldn't already catch for pure exhaustion.
+    # There is no equivalent independent proof of crash-resume.test.ts/s12-orphan-free-crash.test.ts's
+    # own real group-kill-then-resume correctness on macOS specifically -- these two files ARE the
+    # primary proof of that mechanism, on every OS, not merely a stress overlay on already-proven
+    # logic -- and pulling them out of `floor`'s own shared `pnpm test` run means `floor`'s macOS legs
+    # no longer exercise them at all. Dropping macOS here would be a real, new coverage gap, not a
+    # narrow evidence-backed one, so it stays.
+    #
+    # Node 22 only, not the full `floor`/`heavy-subprocess` matrix: no evidence anywhere in this
+    # milestone's history ties this mechanism's own flakiness to a specific Node version (every one
+    # of the dozens of SPEC-QUESTIONS.md recurrences above is a load/timing story, never a
+    # node-version one) -- unlike `heavy-subprocess`'s own 3 files, which do have that evidence
+    # (Q368's node-24 TAP-reporter regression). Narrowing the node axis while keeping the OS axis full
+    # is the same shape of choice `lock-stress` already made, just on the opposite axis.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test:crash-resume
+
   # Single required status check for branch protection: adding a matrix leg must not silently
   # create an unguarded path to main.
   ci-ok:
     name: ci
     if: always()
-    needs: [floor, seed, lock-stress, heavy-subprocess]
+    needs: [floor, seed, lock-stress, heavy-subprocess, crash-resume]
     runs-on: ubuntu-latest
     steps:
       # `skipped` must not count as success: a floor job that never ran would otherwise make the
       # single required status check green and open an unguarded path to main.
       - run: |
-          [ "${{ join(needs.*.result, ',') }}" = "success,success,success,success" ]
+          [ "${{ join(needs.*.result, ',') }}" = "success,success,success,success,success" ]
