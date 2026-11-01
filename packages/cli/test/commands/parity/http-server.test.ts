@@ -286,7 +286,7 @@ describe('startHttpServer: a server that stays alive but never answers its readi
     const pid = Number((await readFile(markerPath, 'utf8')).trim());
     expect(Number.isInteger(pid)).toBe(true);
     try {
-      expect(isAlive(pid)).toBe(false);
+      expect(await waitForGone(pid)).toBe(true);
     } finally {
       forceKill(pid);
     }
@@ -397,7 +397,7 @@ describe('startHttpServer: a server that stays ALIVE and accepts the connection,
 
     const pid = Number((await readFile(markerPath, 'utf8')).trim());
     try {
-      expect(isAlive(pid)).toBe(false);
+      expect(await waitForGone(pid)).toBe(true);
     } finally {
       forceKill(pid);
     }

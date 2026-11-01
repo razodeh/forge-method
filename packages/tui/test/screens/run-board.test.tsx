@@ -41,8 +41,15 @@ function tick(): Promise<void> {
  * never needed the second tick (it is strictly more patient, never less), and this exact single-tick
  * shape is what let 5 other files flake under real CI load for a long time before being caught. */
 async function flush(): Promise<void> {
-  await tick();
-  await tick();
+  // SPEC-QUESTIONS.md Q391: a real CI run (41358013994) showed 2 ticks was NOT enough margin under
+  // the full ~750-file suite's real worst-case contention (this exact file's own flake, which the
+  // 2-tick fix was specifically meant to close). The scheduler's own yield-and-reschedule mechanism
+  // (see this file's own top doc comment) can need MORE than one extra round under sufficiently
+  // severe preemption -- there is no fixed number of ticks that is provably always enough, only
+  // ever more or less margin. 10 is generous, not tuned: each tick is one cheap setImmediate, near-
+  // free when the second (or third, or tenth) one turns out to be unnecessary, so the cost of this
+  // margin on an unloaded machine is negligible while meaningfully widening the real CI-load case.
+  for (let i = 0; i < 10; i += 1) await tick();
 }
 
 interface StdinLike {

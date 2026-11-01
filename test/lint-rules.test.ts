@@ -12,7 +12,7 @@
  * @see QUALITY-BAR.md R7, R10
  * @see PLAN-M1.md P1b
  */
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ESLint } from 'eslint';
@@ -41,14 +41,24 @@ const fixtureDir = path.join(repoRoot, 'tools', 'lint-fixture', '.fixtures');
  */
 const fsFixtureDir = path.join(fixtureDir, 'src', 'fs');
 
-// Remove only the transient case files; `.fixtures/placeholder.ts` is committed so this project
-// always has a tsc input (see its header). Deleting the directory would take the placeholder with
-// it and reintroduce the TS18003 race.
-afterAll(() => {
-  for (const extension of ['ts', 'mjs']) {
-    rmSync(path.join(fixtureDir, `case.${extension}`), { force: true });
+/** Removes every transient `case*.{ts,mjs}` this file's own `lintProductionSource` may have written
+ * to `dir`, by real directory listing rather than one fixed guessed name — `SPEC-QUESTIONS.md` Q391
+ * made each call's own filename unique (see that function's own doc comment for why), so a crash
+ * mid-test (the one real scenario this cleanup exists for; the normal path already cleans up its own
+ * file in its own `finally`) could otherwise leave any number of differently-named leftovers behind,
+ * not just the one old fixed name this used to check for. `.fixtures/placeholder.ts` is committed so
+ * this project always has a tsc input (see its header) and must never be swept up here. */
+function sweepCaseFiles(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isFile() && /^case-\d+\.(ts|mjs)$/.test(entry.name)) {
+      rmSync(path.join(dir, entry.name), { force: true });
+    }
   }
-  rmSync(path.join(fsFixtureDir, 'case.ts'), { force: true });
+}
+
+afterAll(() => {
+  sweepCaseFiles(fixtureDir);
+  sweepCaseFiles(fsFixtureDir);
 });
 
 /**
@@ -87,14 +97,27 @@ function getSharedEslint(): ESLint {
  * The snippet is written to disk and linted as a *file* rather than passed to `lintText` with a
  * synthetic path, because typescript-eslint's project service resolves a real path against a real
  * tsconfig; a path that does not exist on disk yields a parsing error and no rule ever runs.
- */
+ *
+ * **Each call gets its own, uniquely-numbered filename** (`case-<n>.<ext>`, never the one shared
+ * `case.<ext>` every call used before `SPEC-QUESTIONS.md` Q391) — `getSharedEslint()`'s whole point
+ * (`Q390`/the doc comment above it) is ONE real, persistent `ESLint` instance, with a persistent
+ * typescript-eslint project service, reused across every one of this file's ~140 calls instead of a
+ * fresh one per call. That is correct for the construction-cost problem it fixes, but a persistent,
+ * incrementally-updated language service and a REUSED path are two caches layered on top of each
+ * other: reusing the identical path for call N+1's totally different content relies on that service
+ * noticing the change and invalidating whatever it cached for call N, fast enough and reliably enough
+ * under real CI-scale resource pressure -- not a guarantee this file's own callers should depend on.
+ * A fresh, never-before-seen path removes the ambiguity entirely: there is no stale cache for a path
+ * nothing has ever linted before to possibly return. */
+let caseFileCounter = 0;
 async function lintProductionSource(
   code: string,
   extension = 'ts',
   dir = fixtureDir,
 ): Promise<readonly string[]> {
   mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, `case.${extension}`);
+  caseFileCounter += 1;
+  const file = path.join(dir, `case-${String(caseFileCounter)}.${extension}`);
   writeFileSync(file, code);
   try {
     const eslint = getSharedEslint();

@@ -309,40 +309,65 @@ describe('shipped workflow command steps name commands the CLI accepts (P22 / Q2
     expect(stale, 'no longer in any workflow: delete these from KNOWN_UNACCEPTED').toEqual([]);
   });
 
-  it('the classifier is not vacuous: typos, unknown flags and a missing argument are rejected; a real command is accepted', async () => {
-    for (const bad of [
-      'forge nonsense verify',
-      'forge kb synk',
-      'forge deploy staging --no-such-flag',
-      'forge deploy staging --rollback-check',
-      'forge deploy --dry-run --rollback-check',
-      'forge story verify',
-      'forge story verify STORY-1 --phase bogus',
-      // `03` §3.2.2's own real `spec re-derive [<id>]` takes at most one positional.
-      'forge spec re-derive a b --json',
-      // `03` §3.2.1's own real `forge adopt`'s `--depth` is `quick|standard|deep`, nothing else.
-      'forge adopt --depth bogus',
-    ]) {
-      expect((await ask(bad)).classification, bad).toBe('rejected');
-    }
-    for (const good of [
-      'forge kb sync',
-      'forge spec matrix --json',
-      'forge story verify STORY-1',
-      'forge story verify STORY-1 --phase done',
-      'forge deploy --dry-run --json',
-      'forge deploy --rollback-check --json',
-      // CLOSED by `specs/22` M17 P17: the throwaway probe project has no `docs/forge/specs`/`kb`
-      // at all, so this exits 0, "nothing needs re-deriving" (`KNOWN_UNACCEPTED`'s own comment
-      // above has the full story).
-      'forge spec re-derive --json',
-      // CLOSED by `specs/22` M17 P17: the throwaway probe project is not a git repository at all,
-      // so this is a real, clean `VCS-NOT-A-REPO` refusal (exit 1, no stack trace), not a crash.
-      'forge adopt --json',
-    ]) {
-      expect((await ask(good)).classification, good).toBe('accepted');
-    }
-  });
+  // `SPEC-QUESTIONS.md` Q391: a real CI run reliably timed out at the global 60s default even with
+  // NO deliberate contention -- 14 sequential `ask()` calls, each a real `node --experimental-strip-
+  // types` boot of the whole CLI from TS source against a fresh throwaway project (genuinely heavy:
+  // schemas/engine/templates all load from source, no build step), measured at ~8.1s average in
+  // isolation -- 14 of those back to back is already ~113s, well past 60s before any real CI
+  // contention is even added. Every one of the 14 is fully independent (its own fresh `ask()` call,
+  // no shared state), so there is no reason to run them sequentially at all -- dispatched concurrently
+  // instead, bounding real wall-clock by the SLOWEST single call, not their sum, then asserted in the
+  // original order so a failure still names the right command. `CLASSIFIER_TEST_TIMEOUT_MS` sized the
+  // same measured-not-guessed way this repo's own `SPEC-QUESTIONS.md` precedent already does:
+  // post-fix, isolated samples ran 3.9-5.4s; under real, deliberately heavy multi-process contention,
+  // 5.0-9.4s. Highest real sample (9.4s) x3 rounds up past 28s; set generously above that, not tightly
+  // to it.
+  const CLASSIFIER_TEST_TIMEOUT_MS = 40_000;
+
+  it(
+    'the classifier is not vacuous: typos, unknown flags and a missing argument are rejected; a real command is accepted',
+    async () => {
+      const badCommands = [
+        'forge nonsense verify',
+        'forge kb synk',
+        'forge deploy staging --no-such-flag',
+        'forge deploy staging --rollback-check',
+        'forge deploy --dry-run --rollback-check',
+        'forge story verify',
+        'forge story verify STORY-1 --phase bogus',
+        // `03` §3.2.2's own real `spec re-derive [<id>]` takes at most one positional.
+        'forge spec re-derive a b --json',
+        // `03` §3.2.1's own real `forge adopt`'s `--depth` is `quick|standard|deep`, nothing else.
+        'forge adopt --depth bogus',
+      ];
+      const goodCommands = [
+        'forge kb sync',
+        'forge spec matrix --json',
+        'forge story verify STORY-1',
+        'forge story verify STORY-1 --phase done',
+        'forge deploy --dry-run --json',
+        'forge deploy --rollback-check --json',
+        // CLOSED by `specs/22` M17 P17: the throwaway probe project has no `docs/forge/specs`/`kb`
+        // at all, so this exits 0, "nothing needs re-deriving" (`KNOWN_UNACCEPTED`'s own comment
+        // above has the full story).
+        'forge spec re-derive --json',
+        // CLOSED by `specs/22` M17 P17: the throwaway probe project is not a git repository at all,
+        // so this is a real, clean `VCS-NOT-A-REPO` refusal (exit 1, no stack trace), not a crash.
+        'forge adopt --json',
+      ];
+      const [badResults, goodResults] = await Promise.all([
+        Promise.all(badCommands.map((command) => ask(command))),
+        Promise.all(goodCommands.map((command) => ask(command))),
+      ]);
+      badResults.forEach((result, index) => {
+        expect(result.classification, badCommands[index]).toBe('rejected');
+      });
+      goodResults.forEach((result, index) => {
+        expect(result.classification, goodCommands[index]).toBe('accepted');
+      });
+    },
+    CLASSIFIER_TEST_TIMEOUT_MS,
+  );
 
   it('probing stays inside the throwaway project: nothing is written beside .forge except docs', () => {
     for (const [command, verdict] of verdicts) {

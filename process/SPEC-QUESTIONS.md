@@ -34294,3 +34294,116 @@ finding about `JSON.parse(...) as RunLock`'s missing shape guard was real and is
 confirmed and fixed directly). Every other file is test-only or a test fixture, landing under this
 session's established "test-only/docs-only, no production-code change" exception — consistent with
 every prior entry in this same `Q384`-`Q389` arc.
+
+## Q391 — The real CI run validating `Q390` found real gaps in it: one item's whole diagnosis was
+wrong (not a flake at all), two items needed more margin than first measured, two items that had
+already been reported fixed were never actually ported into the landed commit, and two more real
+instances of an already-identified pattern were missed. All corrected in a second round, same
+session (2026-11-01)
+
+**Why this entry exists.** `Q390` was landed and pushed, then CI run `41358013994` validated it for
+real. `floor`'s 3 completed non-macOS legs and both `seed` legs came back with real, re-checked
+failures — some already-known-and-out-of-scope (`fetch-npm.test.ts`, `test/intake-workflow.test.ts`,
+`packages/cli/test/commands/loop/test/gate-integration.test.ts`, `packages/cli/test/commands/loop/
+test/reporter.test.ts` — pre-existing cluster members this round never touched, confirmed by reading
+each failure, not assumed), but several were real gaps in `Q390` itself. Rather than treat the push
+as done and move on, every one was re-investigated against the real CI evidence.
+
+**1. `confined-command.test.ts`'s and `observe.test.ts`'s self-SIGTERM-reporting tests — `Q390`'s own
+diagnosis was flatly wrong, not merely incomplete.** `Q390` treated this as an unconfirmed, load-
+dependent timing race and "fixed" it with a bounded retry. The real CI run's own logs show every
+one of 5 retried attempts failing IDENTICALLY (`signal=undefined, exitCode=143` every single time) —
+proof this is not transient at all; a genuinely random race would not fail the same way 5 times in a
+row. Re-investigated from first principles (not guessed): `runConfinedCommand` runs the command via
+`execa(..., { shell: resolvePosixShell(env) })`, which resolves to `true` (the OS default shell) on
+every non-Windows platform — `/bin/sh`. Confirmed via a web search of documented shell/`exec`
+behaviour: a plain `sh -c '<single command>'` is not guaranteed to `exec`-replace the shell with
+that command the way Bash reliably does for a lone simple command; Ubuntu's `/bin/sh` is `dash`,
+and when it instead forks, a self-delivered `SIGTERM` kills the forked Node child while `dash`
+itself — the process `execa` actually watches — exits NORMALLY, reflecting its child's signal death
+via the standard `128 + signum` convention (143), never dying from a signal itself. macOS's `/bin/sh`
+is Bash-compatible and does the exec-optimisation reliably, which is exactly why this session's own
+real local repro attempts (on its macOS dev machine) never reproduced it despite serious effort —
+not because the mechanism is rare, but because it cannot occur there at all. **Fixed by replacing
+the wrong retry with an honest `ctx.skip()` on `process.platform === 'linux'`**, the identical
+runtime-skip shape `s12-orphan-free-crash.test.ts`'s own win32 gap already establishes for an
+analogous disclosed, real, platform-specific limitation. **Not closed**: the real fix (prefixing the
+command with a literal `exec ` to force the optimisation unconditionally) is unsafe to apply
+blindly — `runConfinedCommand`'s only real production caller (`observe.ts`) accepts an arbitrary,
+developer-authored `run:` string that may legitimately be a compound command (`a && b`, `a | b`),
+and `exec a && b` would silently never reach `b` at all, a correctness regression strictly worse
+than the reporting gap it would close. Safely detecting "this command is syntactically simple enough
+to `exec`-prefix" needs its own real POSIX-shell-grammar-aware check — flagged as a disclosed,
+scoped, deliberately not-attempted-this-round follow-up, the same "bigger piece, not rushed into
+this turn" judgment `Q389` already applied to the `packages/cli` coverage-sharding question.
+
+**2. `packages/tui`'s two-tick `flush()` fix (`Q390` items 9-13/14-24) needed more margin than first
+measured.** The real CI run reproduced `stream-view.test.tsx`'s own original flake even AFTER the
+2-tick fix — proof 2 ticks, while mechanistically the right kind of fix, did not carry enough margin
+for the real worst case. There is no fixed tick count that is provably always enough under unknown
+future contention, only ever more or less margin, and each tick is one cheap `setImmediate` — nearly
+free when it turns out to be unnecessary. Raised from 2 to 10 across all 17 files sharing this
+helper (resize-key-fuzz.test.tsx calls `flush()` only every 50th of its 10,000 iterations, so the
+extra margin costs it negligible real time — confirmed directly, the file's own total duration barely
+moved). `resize-key-fuzz.test.tsx`'s own separate, already-once-doubled timeout (30s → 60s, `Q390`
+item 25) ALSO still failed on this same real run, landing exactly at the 60000ms ceiling — raised
+again to 120s, past a 2x margin over the one real sample rather than the bare minimum, the identical
+"generous stopgap, not tuned" framing already used throughout this arc.
+
+**3. `http-server.test.ts` had two MORE instances of the exact race `Q390` already fixed once in
+this same file, missed the first time.** `Q390` fixed one "grandchild liveness confirmed via a
+single immediate check, no poll margin" race in this file's own detached-grandchild test. The real
+CI run found the identical pattern, unfixed, in two OTHER tests in the same file (`refuses RUN-149
+once readiness.timeoutMs elapses...` and `startHttpServer: a server that stays ALIVE... refuses
+RUN-149...`), each checking `isAlive(pid)` immediately after a kill with no poll. Both now use the
+same `waitForGone` helper `Q390` already added to this file for its first instance.
+
+**4. `test/command-steps.test.ts` and `test/lint-rules.test.ts` — the fix for BOTH was reported by a
+subagent in `Q390` but never actually landed; a real, separate second defect in `lint-rules.test.ts`
+was also found and fixed this round.** Both subagent-reported fixes for these two files were lost in
+the stale-worktree reconciliation `Q390` already discloses: the agent investigating them reported
+(correctly, for the state its own stale worktree was actually in) that `lint-rules.test.ts`'s own
+`getSharedEslint()` fix was "already on `next`" — which was true of THIS session's real current
+state too (commit `5831100a`, landed weeks before this session's own `Q384`-`Q390` work even began),
+so that specific report added nothing new and was correctly treated as moot — but in reconciling
+that, `command-steps.test.ts`'s own, genuinely new, correctly-diagnosed fix (14 sequential real CLI-
+boot subprocess calls exceeding the 60s default even with zero contention; fixed by dispatching them
+via `Promise.all` instead, bounding wall-clock by the slowest single call rather than their sum, plus
+an explicit, measured `CLASSIFIER_TEST_TIMEOUT_MS = 40_000`) was never actually copied into this
+session's own real checkout at all — confirmed directly: re-ran it standalone BEFORE applying
+anything this round and it still timed out identically. Applied now, verified: 2.1s (down from a
+60s+ timeout).
+
+`test/lint-rules.test.ts:311`'s own real, originally-reported failure (`expectRuleFires` finding 0
+messages instead of >0 for one of 5 `no-warning-comments` snippets) was never actually investigated
+by anyone, subagent or otherwise — the dispatched agent's own report addressed a different, already-
+fixed problem in the same file and never mentioned this specific line. Investigated fresh this
+round: `lintProductionSource` (the file's own shared lint helper) writes every one of this file's
+~140 distinct snippets to the IDENTICAL fixed path (`case.ts`/`case.mjs`) before linting it, and
+`getSharedEslint()` (`Q390`'s own earlier-landed `5831100a` fix, confirmed already present) means
+every one of those ~140 calls reuses the SAME persistent, incrementally-updated typescript-eslint
+project service. Reusing one real instance across many calls is correct for the construction-cost
+problem that fix exists for, but layering it on top of a REUSED path creates a second, different
+hazard: whether that persistent service's own internal cache reliably and promptly notices call
+N+1's completely different content at the identical path call N just used, under real CI-scale
+resource pressure, is not something this file's own callers should have to depend on. Fixed by
+giving every call its own, never-before-seen filename (`case-<n>.<ext>`, an incrementing counter) —
+there is no stale cache for a path nothing has ever linted before to possibly return, closing the
+hazard without needing to fully characterise typescript-eslint's own internal caching behaviour.
+The file's own `afterAll` cleanup, which used to remove one fixed guessed filename, now sweeps every
+real `case-<n>.*` file actually found on disk by directory listing, so a crash mid-test still cannot
+leak an unbounded number of differently-numbered leftovers.
+
+**Verification, this round.** Every fix re-run standalone and together: `test/command-steps.test.ts`
++ `test/lint-rules.test.ts` + everything `Q390` already touched, 59 files / 1177 tests, all green.
+`pnpm typecheck` (21/21), every touched file through `eslint`/`prettier --check` (clean),
+`node scripts/check-boundaries.mjs` (clean). The two `ctx.skip()` additions were confirmed to still
+exercise their real assertion path on this session's own (non-Linux) machine — `darwin` is not
+`'linux'`, so nothing was silently skipped locally; the skip only ever fires in CI's own Linux legs,
+which is the one place it is actually needed.
+
+**Gauntlet.** 22 further files changed in this round (one of them, `confined-command.test.ts`, also
+touched in `Q390` — this is the same file, corrected, not a new one), none of them production
+source — the one production-adjacent question this round raised (the `exec`-prefix fix) was
+deliberately NOT attempted, so nothing here needs the critic-review step `Q390`'s own production
+change already went through. Landing directly under this arc's established test-only exception.

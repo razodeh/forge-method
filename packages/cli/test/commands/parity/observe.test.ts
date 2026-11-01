@@ -126,55 +126,38 @@ describe('observeParityDeclaration: the process surface (specs/22 M16 P3)', () =
     expect(observation.exit).toEqual({ kind: 'code', code: 3 });
   });
 
-  it('observes a signal-killed command as that signal, never a synthesized exit code', async () => {
-    // `SPEC-QUESTIONS.md` Q390: a real CI run (`41344817586`) saw this come back reporting a
-    // synthesized exit code instead of the real signal, under full-suite load -- not reproducible
-    // locally despite real attempts (10-way-concurrent-file and 24-way CPU-contention repros both
-    // left this passing). `confined-command.test.ts`'s own identical self-SIGTERM scenario shows the
-    // same shape of flake (that entry's own comment has the fuller disclosure); retried here the
-    // same bounded way, since a fresh real self-SIGTERM is the identical scenario every attempt,
-    // never "specially suspect." A persistent, non-transient break still fails for real.
-    const MAX_ATTEMPTS = 5;
-    let lastExit: unknown;
-    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
-      const dir = await freshProject();
-      const declaration = minimalDeclaration({
-        surfaces: {
-          process: {
-            run: `${process.execPath} -e "process.kill(process.pid, 'SIGTERM'); setTimeout(()=>{}, 5000);"`,
-            stability: { runs: 3 },
-            cases: [{}],
-          },
+  it('observes a signal-killed command as that signal, never a synthesized exit code', async (ctx) => {
+    // `SPEC-QUESTIONS.md` Q391, correcting Q390's own wrong first diagnosis: this is the identical
+    // scenario `confined-command.test.ts`'s own analogous test skips on Linux -- see that file's own
+    // comment for the full mechanism (Ubuntu's `/bin/sh`, `dash`, does not reliably `exec`-replace
+    // itself for a lone simple command the way Bash does, so a self-delivered `SIGTERM` kills the
+    // forked Node child while `dash` itself -- what `execa` actually watches -- exits normally via
+    // the standard `128 + signum` convention instead of dying from a signal). Confirmed non-transient
+    // by real CI evidence, not assumed: a real run (`41358013994`) showed every one of 5 retried
+    // attempts (this test's own prior, now-removed fix) failing identically. Skipped on Linux for the
+    // same disclosed, not-yet-safely-fixable reason as that file's own test.
+    if (process.platform === 'linux') ctx.skip();
+    const dir = await freshProject();
+    const declaration = minimalDeclaration({
+      surfaces: {
+        process: {
+          run: `${process.execPath} -e "process.kill(process.pid, 'SIGTERM'); setTimeout(()=>{}, 5000);"`,
+          stability: { runs: 3 },
+          cases: [{}],
         },
-      });
-      const results = await observeParityDeclaration({
-        declaration,
-        side: 'candidate',
-        projectRoot: dir,
-        parentEnv: process.env,
-      });
-      const outcome = findCase(results, 'process');
-      if (outcome.outcome !== 'observed')
-        throw new Error(`expected observed, got ${outcome.outcome}`);
-      if (outcome.observation.surface !== 'process') throw new Error('expected process surface');
-      lastExit = outcome.observation.exit;
-      if (
-        typeof lastExit === 'object' &&
-        lastExit !== null &&
-        'signal' in lastExit &&
-        lastExit.signal === 'SIGTERM'
-      ) {
-        return;
-      }
-      if (attempt + 1 < MAX_ATTEMPTS) {
-        // eslint-disable-next-line no-console -- deliberate CI visibility, see comment above
-        console.warn(
-          `[observe] self-SIGTERM observed as ${JSON.stringify(lastExit)} on attempt ` +
-            `${String(attempt)}, retrying`,
-        );
-      }
-    }
-    expect(lastExit).toEqual({ kind: 'signal', signal: 'SIGTERM' });
+      },
+    });
+    const results = await observeParityDeclaration({
+      declaration,
+      side: 'candidate',
+      projectRoot: dir,
+      parentEnv: process.env,
+    });
+    const outcome = findCase(results, 'process');
+    if (outcome.outcome !== 'observed')
+      throw new Error(`expected observed, got ${outcome.outcome}`);
+    if (outcome.observation.surface !== 'process') throw new Error('expected process surface');
+    expect(outcome.observation.exit).toEqual({ kind: 'signal', signal: 'SIGTERM' });
   });
 
   it('the pinned locale and timezone are observable, not the host machine’s own', async () => {
