@@ -33605,3 +33605,76 @@ invocation by design) — `scripts/run-tests.mjs list` is the correct equivalent
 no production caller) — landed directly per this session's established "test-only/docs-only, no
 production-code change" exception to the 2-critic-worktree gauntlet, the same classification `Q382`
 already used for an identically-shaped change.
+
+
+## Q385 — Q384's own fix immediately surfaced a real, 100%-reproducible Windows platform gap, not a
+flake: `crash-resume.test.ts` had never actually exercised the real crash-resume mechanism on win32,
+for this entire milestone's history (owner-directed, 2026-10-31)
+
+**What happened.** CI run `41257649903` (validating Q384's push) showed `crash-resume
+(windows-latest)` — the new dedicated job — FAIL, immediately, 10 seconds into the test's very first
+of 20 iterations, with Q384's own newly-added, clearly-labelled error: `the fixture child's whole
+process group (pid 7064) had already exited on its own by the time the group-kill ran ... a real CI
+host-contention race (SPEC-QUESTIONS.md Q384), not a logic bug`. That framing — "host-contention
+race" — is WRONG for this specific case, and this entry corrects it.
+
+**Why Q384's own framing doesn't hold here.** A genuine host-contention race should be intermittent,
+dependent on how loaded the host happens to be at that moment — but this failed on iteration 1 of 1,
+in a job containing only these 2 files (`--no-file-parallelism`, no other files competing for the
+runner's vCPUs), after only 10 seconds. That is not what resource starvation looks like. Checked
+externally rather than assumed: `process.kill(-pid, ...)` (negative pid, the POSIX group-signal
+convention `spawnAndKillAfter` relies on) has no group-signalling implementation on Windows at all —
+confirmed via `nodejs/node#3617`, where libuv's Windows `uv_kill` path has no group-signal
+equivalent; a negative pid passed there becomes, after implicit signed-to-unsigned conversion, a
+huge, nonexistent Windows `DWORD` pid that `OpenProcess`/`TerminateProcess` can never find — so the
+call throws `ESRCH` EVERY time on win32, unconditionally, regardless of load. This was not a novel
+discovery: `packages/engine/test/security/s12-orphan-free-crash.test.ts`'s OWN doc comment already
+states "negative-pid process-group signalling is itself a POSIX-only concept `spawnAndKillAfter`'s
+own doc comment already relies on" and self-skips its entire test on win32 because of it —
+`crash-resume.test.ts`, sharing the identical `spawnAndKillAfter` call, was simply never given the
+same treatment. The practical consequence: for this entire milestone's history, every Windows
+`floor` leg's run of `crash-resume.test.ts` has silently never validated the real crash-resume
+mechanism on that OS at all — either crashing the whole vitest worker uncaught (before Q384's fix)
+or, after Q384's fix lands, failing cleanly but with a misleading "host contention" diagnosis, on
+literally every run, not merely load-sensitive ones.
+
+**Fix.** `crash-helpers.ts`'s group-kill is now platform-branched, factored into a new
+`killGroupReportingRace(pid)` helper: POSIX keeps the existing `process.kill(-pid, 'SIGKILL')` +
+`ESRCH`-catch path unchanged (genuinely load-dependent there); win32 now uses `taskkill /PID <pid>
+/T /F` — the identical native tree-kill this same session's own `killGroup` fix already established
+for production code (`packages/engine/src/dispatch/shell.ts`/`confined-command.ts`, `Q383`) — and
+detects "already gone" via `taskkill`'s own real, externally-confirmed exit code for that case (128,
+"ERROR: The process ... not found"; checked online against independent, cross-corroborating sources
+— a curl maintainer PR, a Stack Overflow answer, and PDQ Deploy's own deployment-tooling docs — since
+no single authoritative Microsoft document states it, but three independent sources agree). Any
+other `taskkill` failure is rethrown, never swallowed, the same discipline the POSIX branch already
+had. `spawnAndKillAfter`'s own doc comment and the rejection message are both updated to stop
+assuming the POSIX-only call text.
+
+**Why this is the right fix, not just a Windows skip.** `s12-orphan-free-crash.test.ts` already
+accepts not running on Windows at all (its own `ps`-based process-table check has no Windows
+equivalent either, a separate, still-open gap). Extending that same skip to `crash-resume.test.ts`
+would have been the cheaper fix, but unlike `s12`, `crash-resume.test.ts` needs no `ps`/process-table
+read — only a working group-kill, which `taskkill /T /F` already genuinely provides, matching
+production code's own already-proven Windows fallback. A skip would have left `crash-resume.test.ts`
+untested on Windows forever, by choice, when a real, already-precedented fix exists. The owner's own
+standing "fix ALL disclosed defects before the trial" directive weighed directly here: this gap had
+never been disclosed as a defect before this session (buried under the generic "known load flake"
+label for the whole milestone), and now that it has been, a real fix was preferred over a work-around.
+
+**Disclosed, not verified yet.** Whether `resumeRun`/`runEngine`'s own resume logic is itself
+genuinely cross-platform-correct on Windows was never actually tested by this file before (the real
+crash-resume mechanism never ran there) — this fix only repairs the ABILITY to crash the fixture
+faithfully on Windows; whether the FULL test then passes end-to-end there (resume reaching the
+identical final state, zero orphaned worktrees) is unverified locally (no Windows machine in this
+sandbox) and can only be confirmed by the next real Windows CI leg.
+
+**Verification.** `pnpm typecheck` (21/21 clean). `eslint`/`prettier --check` clean on the touched
+file. `pnpm test:crash-resume` run locally (POSIX branch, unchanged code path): both files still
+pass, 45.39s combined (crash-resume 34.10s, s12 9.58s) — no regression to the already-working POSIX
+path. The win32 branch itself cannot be exercised locally (no Windows machine in this sandbox); the
+next real CI run on `next` is the first live proof.
+
+**Gauntlet.** Test-only change, same file as `Q384`, same classification: landed directly per this
+session's established "test-only/docs-only, no production-code change" exception to the
+2-critic-worktree gauntlet.

@@ -7,16 +7,33 @@
  * the POSIX process-*group*-kill convention) has exactly one place to fix if it ever regresses again,
  * not two.
  *
+ * `SPEC-QUESTIONS.md` Q384: negative-pid group-signalling is POSIX-only — confirmed externally
+ * (`nodejs/node#3617`: libuv's Windows `uv_kill` has no group-signalling path at all; a negative pid
+ * there just becomes a huge, nonexistent `DWORD` pid that `OpenProcess`/`TerminateProcess` can never
+ * find) and already independently known inside this very file's own caller set (`s12-orphan-free-
+ * crash.test.ts`'s own doc comment already states this and self-skips its whole test on win32
+ * because of it) — but `spawnAndKillAfter` itself had never actually branched on it, so every one of
+ * `crash-resume.test.ts`'s own Windows runs, for the entire history of this milestone, has silently
+ * never exercised the real crash-resume mechanism on that OS at all: the negative-pid kill call
+ * always throws `ESRCH` there regardless of host load (not the genuine, load-dependent POSIX race
+ * this file's own `killRaceLost` handling below exists for), previously crashing the whole vitest
+ * worker uncaught, and after this entry's own first fix, failing cleanly on EVERY run instead of
+ * occasionally — which is what first surfaced this as a 100%-reproducible platform gap rather than a
+ * rare flake. Fixed below using the identical `taskkill /PID <pid> /T /F` tree-kill this same
+ * session's own `killGroup` (`packages/engine/src/dispatch/shell.ts`/`confined-command.ts`, Q383)
+ * already established as the native Windows equivalent.
+ *
  * Not in `@forge/testkit` or any package's own `src/`: `node:os`'s `tmpdir` is R10-restricted in
  * production code (`packages/engine/test/dispatch/helpers.ts`'s own doc comment has the fuller
- * reasoning), and this whole mechanism (real `spawn`/`SIGKILL`/POSIX process groups) is test-only by
+ * reasoning), and this whole mechanism (real `spawn`/`SIGKILL`/process-tree kill) is test-only by
  * nature — there is no production caller that would ever want it.
  *
  * @see specs/06 §6.10
  * @see specs/20 §20.10
  * @see SPEC-QUESTIONS.md Q149
+ * @see SPEC-QUESTIONS.md Q384
  */
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
 // Genuinely test-only, the identical exemption `packages/cli/test/commands/helpers.ts` already
 // documents for its own `tmpdir` import (this file is not itself a `*.test.ts`/`test/**/*.ts`-glob
@@ -42,32 +59,57 @@ export async function createTempRepo(prefix: string): Promise<string> {
   return dir;
 }
 
+/** Kills the whole process group `pid` leads, exactly once, and reports whether that kill genuinely
+ * raced against the group's own natural exit rather than reaching a still-live process — the single
+ * shared decision point `spawnAndKillAfter`'s `'data'` handler below needs, factored out so the
+ * platform branch (POSIX negative-pid kill vs. win32 `taskkill /T /F`, Q384 above) lives in one place.
+ *
+ * POSIX: `process.kill(-pid, 'SIGKILL')`, the POSIX convention for "target every process in this
+ * group, not just `pid` itself" — what a real crash actually does (an OOM-killed cgroup, a killed
+ * session, or a lost host takes every descendant down together). `SPEC-QUESTIONS.md` Q149 has the
+ * full record of the real bug a single-pid kill left behind here. Throws `ESRCH` specifically when
+ * this caller itself was starved long enough (Q384) that the group had already exited naturally in
+ * the meantime — a genuine, load-dependent race, reported back rather than rethrown.
+ *
+ * win32: `process.kill(-pid, ...)` has no group-signalling path at all there (Q384's own doc comment
+ * above) and would throw every time regardless of load, never genuinely racing — so this branches to
+ * `taskkill /PID <pid> /T /F` instead, the identical native tree-kill this same session's own
+ * `killGroup` (`packages/engine/src/dispatch/shell.ts`/`confined-command.ts`, Q383) already
+ * established. `taskkill` reports "already gone" via a real, confirmed exit code (128, "ERROR: The
+ * process ... not found") rather than an exception `code`, so that is the check here instead of
+ * `ESRCH`; any other failure is surfaced, not swallowed, the same discipline as the POSIX branch. */
+function killGroupReportingRace(pid: number): boolean {
+  if (process.platform === 'win32') {
+    try {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+      return false;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException & { status?: number }).status === 128) return true;
+      throw err;
+    }
+  }
+  try {
+    process.kill(-pid, 'SIGKILL');
+    return false;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return true;
+    throw err;
+  }
+}
+
 /** Spawns the real child-process fixture (`./fixtures/run-engine-child.ts`), `SIGKILL`s it the moment
  * it has durably written `killAfterEventCount` events, and resolves once the OS confirms the process is
  * genuinely gone — never a simulated crash. Rejects if the child exits on its own before ever reaching
  * that many events (a caller bug: `killAfterEventCount` must be chosen below the fixture's own real
  * total), and also rejects — with a distinctly labelled error, not a crash of the whole test worker —
- * if the group-kill itself loses a real race against a severely CPU-starved host (see below).
+ * if the group-kill itself loses a real race against a severely CPU-starved host (see
+ * `killGroupReportingRace` above).
  *
  * `detached: true` makes the fixture child the leader of its own, brand-new process group (its pgid
- * equal to its own pid) — every further descendant it spawns (concretely: the real `git` subprocess
- * `@forge/vcs`'s own `createLaneWorktree` shells out to via `execa`, e.g. `git worktree add -b ...`)
- * inherits that same group, not the caller's own. Killing the *group* (`process.kill(-pid, 'SIGKILL')`,
- * the POSIX convention for "target every process in this group," not just `pid` itself) is what a real
- * crash actually does: an OOM-killed cgroup, a killed session, or a lost host takes every descendant
- * down together. `SPEC-QUESTIONS.md` Q149 has the full record of the real bug a single-pid kill left
- * behind (an orphaned `git worktree add` subprocess finishing *after* the "crash," with no `LaneCreated`
- * event ever durably recorded for it) and the five real leftover shapes that surfaced once group-killing
- * made the test faithful enough to actually reach them.
- *
- * `SPEC-QUESTIONS.md` Q384: on a severely CPU-starved CI host, this *caller* process (not the fixture)
- * can be starved long enough between buffering the `killAfterEventCount`-th `EVENT ` line and actually
- * getting scheduled to act on it that the fixture's whole process group finishes and exits on its own in
- * the meantime — `process.kill(-pid, 'SIGKILL')` then throws `ESRCH` ("no such process"), because by the
- * time the signal is actually sent there is genuinely nothing left to receive it. That throw is
- * synchronous, from inside a stream `'data'` listener, which previously crashed the whole vitest worker
- * (and every other, unrelated test file sharing it) rather than failing just this one test. Caught here
- * and turned into a plain rejection instead. */
+ * equal to its own pid on POSIX; the win32 equivalent `CREATE_NEW_PROCESS_GROUP` flag) — every further
+ * descendant it spawns (concretely: the real `git` subprocess `@forge/vcs`'s own `createLaneWorktree`
+ * shells out to via `execa`, e.g. `git worktree add -b ...`) inherits that same group, not the
+ * caller's own. */
 export async function spawnAndKillAfter(
   projectRoot: string,
   runId: string,
@@ -102,20 +144,7 @@ export async function spawnAndKillAfter(
         seenEvents += 1;
         if (seenEvents >= killAfterEventCount && !killed) {
           killed = true;
-          try {
-            // Negative pid: POSIX's own "signal every process in this group," not just `pid` itself --
-            // see this function's own doc comment for why the group, not the one process, is the real
-            // crash boundary this needs to simulate.
-            process.kill(-pid, 'SIGKILL');
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === 'ESRCH') {
-              killRaceLost = true;
-            } else {
-              // Anything other than "already gone" is a genuinely unexpected failure to signal a
-              // process this function itself just spawned -- surfaced, never swallowed.
-              throw err;
-            }
-          }
+          killRaceLost = killGroupReportingRace(pid);
         }
       }
     });
@@ -124,9 +153,9 @@ export async function spawnAndKillAfter(
       if (killRaceLost) {
         reject(
           new Error(
-            `the fixture child's whole process group had already exited on its own by the time ` +
-              `process.kill(-${String(pid)}, 'SIGKILL') ran (code=${String(code)}, signal=${String(signal)}) ` +
-              `-- a real CI host-contention race (SPEC-QUESTIONS.md Q384), not a logic bug: this caller ` +
+            `the fixture child's whole process group (pid ${String(pid)}) had already exited on its ` +
+              `own by the time the group-kill ran (code=${String(code)}, signal=${String(signal)}) -- ` +
+              `a real CI host-contention race (SPEC-QUESTIONS.md Q384), not a logic bug: this caller ` +
               `was starved long enough after seeing the ${String(killAfterEventCount)}th EVENT line that ` +
               `the fixture finished the whole run before the kill signal could be delivered`,
           ),
