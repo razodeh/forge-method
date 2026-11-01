@@ -153,15 +153,21 @@ jobs:
       - run: pnpm test
 
   seed:
-    name: scheduler seed variation
+    name: scheduler seed variation (seed ${{ matrix.seed }})
     runs-on: ubuntu-latest
-    # See the floor job's own comment -- this job runs the full suite twice (two shuffled seeds),
-    # sequentially, so it needs roughly double one floor leg's own single-pass headroom. Confirmed
-    # directly: the 2026-10-27 run's first shuffled pass alone took ~44 minutes (and finished, with
-    # real content failures already tracked separately) -- comfortably within a single floor leg's
-    # own 90-minute allowance, but the OLD 60-minute total budget here would not have fit a second
-    # pass at all. Raised to 180 (2x floor's 90, same stopgap-not-tuned reasoning as that comment).
-    timeout-minutes: 180
+    # SPEC-QUESTIONS.md Q389: split into one matrix leg per shuffle seed, instead of one job running
+    # both shuffled passes back-to-back. This repo is public, so standard GitHub-hosted runner
+    # minutes are free -- 2 parallel legs cost nothing extra in CI minutes over the 1 job that used
+    # to run both passes sequentially, only wall-clock improves (roughly halved, modulo scheduling).
+    # Timeout mirrors `floor`'s own single-pass 90-minute stopgap value (identical reasoning, same
+    # evidence: the 2026-10-27 run's first shuffled pass alone took ~44 minutes) now that each leg
+    # here is also exactly one pass, not the old job's 180 (2x, sized for the previous sequential
+    # double-pass shape this job no longer has).
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [20260304, 99999999]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -206,8 +212,7 @@ jobs:
       # QUALITY-BAR.md R10: a suite whose result depends on file or test ordering is not
       # deterministic. Shuffling under a fixed seed makes an order dependency fail here rather than
       # intermittently on someone's branch.
-      - run: pnpm test -- --sequence.shuffle --sequence.seed 20260304
-      - run: pnpm test -- --sequence.shuffle --sequence.seed 99999999
+      - run: pnpm test -- --sequence.shuffle --sequence.seed ${{ matrix.seed }}
 
   # `floor`/`seed`'s own `pnpm test` (above) ALSO excludes 3 more files -- packages/cli/test/
   # bin.test.ts, test/run-inputs-compile.test.ts, and the new test/workspace-floor-heavy-subprocess.

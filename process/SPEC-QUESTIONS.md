@@ -33884,3 +33884,136 @@ closed.
 **Gauntlet.** Test-only change, same file as `Q384`-`Q387` — landed directly per this session's
 established "test-only/docs-only, no production-code change" exception to the 2-critic-worktree
 gauntlet.
+
+## Q389 — Tackled the floor/seed CI-scale capacity cluster directly (owner's own framing: "sharding
+or vertical scaling of runners, or a mix"); landed the one free, zero-risk win, and found real
+evidence that both naive vertical scaling AND naive floor-sharding are the wrong next move for this
+account — `packages/cli`'s heaviest files are not safely extractable the way the three already-
+isolated clusters (`lock-stress`/`heavy-subprocess`/`crash-resume`) were (owner-directed, 2026-11-01)
+
+**Vertical scaling ruled out, with a repo-specific reason, not a general preference.** This repo
+(`razodeh/forge-method`) is PUBLIC — confirmed via `gh repo view`. Standard GitHub-hosted runners
+(the 4-vCPU ubuntu/windows, 3-vCPU macos boxes `floor`/`seed`/`heavy-subprocess` already use) are
+free and unlimited for public repos, but GitHub's "larger runners" product is billed per-minute
+*even on public repos* and is typically plan-gated (Team/Enterprise)
+(https://docs.github.com/en/actions/reference/usage-limits-billing-and-administration). Buying
+bigger machines here means putting this project on a recurring CI bill for the first time to solve
+a problem the owner explicitly wants solved for free ("should be free tier anyways"). Vertical
+scaling also would not touch `lock-stress`/`heavy-subprocess`/`crash-resume` at all — all three
+deliberately run with `--no-file-parallelism` for cross-process-lock correctness, so more cores sit
+idle there by design; only `floor`'s/`seed`'s own file-parallel `pnpm test` runs would benefit.
+
+**A real, measured concurrency-ceiling finding, not assumed.** Free-plan GitHub accounts get 20
+total concurrent Actions jobs and only 5 concurrent macOS jobs, with the rest silently queued, not
+rejected (same billing doc as above). Pulled real job timestamps for CI run `41268423051` via
+`gh api repos/razodeh/forge-method/actions/runs/41268423051/jobs` and diffed `created_at` vs
+`started_at` per job: this workflow already schedules **26 jobs per push** (`floor` 10 + `seed` 1 +
+`lock-stress` 2 + `heavy-subprocess` 9 + `crash-resume` 3 + `ci-ok` 1), of which **7 are macOS legs**
+(`floor`×3 + `heavy-subprocess`×3 + `crash-resume`×1) — already above a 5-job macOS cap if this
+personal account is on the Free plan (the account's own `plan` field was not retrievable via `gh api
+user` to confirm the exact tier, but the owner's own prior "should be free tier anyways" is taken as
+confirmation). Real queue times observed: `heavy-subprocess (node 22, macos-latest)` queued **1091
+seconds (~18 minutes)** before it even started; two `floor` windows legs queued 72-129s; everything
+else started within a few seconds. This is real wall-clock being lost to account-level scheduling,
+not test content, and — critically — it is a wall neither lever in the owner's own framing fixes by
+itself: larger runners still count against the same concurrency caps, and *naive* sharding (more
+jobs) makes it strictly worse by raising how many jobs compete for the same scarce slots.
+
+**Landed: split `seed` into one matrix leg per shuffle seed.** `seed`'s old single job ran both
+shuffled passes back-to-back, sequentially (`pnpm test -- --sequence.shuffle --sequence.seed
+20260304` then `...99999999`), needing ~2x one `floor` leg's own headroom (hence its own 180-minute
+timeout). Changed to a 2-value `strategy.matrix.seed` (`[20260304, 99999999]`), each leg running
+exactly one pass, timeout dropped to 90 (mirroring `floor`'s own single-pass stopgap value — same
+evidence, same reasoning). This is unambiguously free and safe: `seed` is ubuntu-only (no macOS
+impact), the job only runs MORE of the SAME already-free standard runner, and — confirmed directly,
+not assumed — `ci-ok`'s own gate (`join(needs.*.result, ',')` against a fixed 5-job success string)
+is unaffected by matrix expansion, since GitHub Actions' `needs.*.result` context collapses a
+matrixed job back to one aggregate result keyed by job name regardless of leg count (verified the
+YAML still parses correctly and the job graph is unchanged via `python3 -c "import yaml; ..."`).
+Nets +1 job total (1 → 2), not the explosive growth a naive "add more shards" move would cause.
+
+**Attempted and rejected: duration-aware extraction of `floor`'s heaviest files, the same shape as
+`lock-stress`/`heavy-subprocess`/`crash-resume`, just bigger.** Measured real per-file durations for
+all 752 of `floor`'s remaining files locally (`node scripts/run-tests.mjs run --reporter=json
+--outputFile=...`, no `--coverage` for speed, 16-core unloaded sandbox, 23 minutes total) — a real
+proxy for relative weight, not CI-absolute timing. Found a heavily skewed distribution: top 5 files
+= 20.5% of total duration, top 20 = 48.1%, top 50 = 72.4%, top 200 = 98.5% (median file: 107ms; mean:
+24.1s). `packages/cli/test/**` alone — 254 of the 752 files — accounts for **77.2%** of the entire
+remaining floor suite's duration, confirming the already-extracted `heavy-subprocess` 3 files were
+only the tip of a much larger iceberg of the same "ordinary real CLI-subprocess dispatch" category
+its own doc comment already names.
+
+Picked the next real cluster by the same method: the 34 `packages/cli/test/**` files at ≥100s local
+duration (55.8% of the whole suite's total duration on their own), intending to extract them into
+one new job exactly like the three precedents — no coverage carried over, relying on a one-time
+"doesn't create a floor gap" check the way `Q365` Decision 3 and `Q384` already did for their own
+extractions. **That check failed, for real, measured reasons.** Ran the main suite's coverage with
+these 34 files ALSO excluded (on top of the already-excluded 10) and diffed the resulting
+`coverage/coverage-summary.json`: **over 190 distinct `packages/cli/src/**` files dropped to 0%**
+(`commands/dispatch/plan-and-loop.ts`, `commands/report.ts`, `commands/config.ts`, `entry/node-
+version.ts`, `init/run-init.ts`, and roughly 185 more), immediately failing the global per-file floor
+(`vitest.config.ts`: 85% lines/statements/functions, 80% branches, `perFile: true` — `cli` is not one
+of the 6 `CRITICAL_PACKAGES` but is still bound by this default). The real, disclosed reason this is
+qualitatively different from the three already-isolated clusters: `bin.test.ts`/`run-inputs-
+compile.test.ts`/`workspace-floor-heavy-subprocess.test.ts` and the 5 `*-lock-stress.test.ts`/
+`events.test.ts` files were all deliberately chosen because they carry NO unique per-module
+coverage — thin process wrappers already excluded from `coverage.include`, or cross-cutting
+integration concerns independently proven by other, ordinary sibling tests. `packages/cli`'s ~254
+command test files are not built that way: each one is overwhelmingly the SOLE real coverage source
+for its own same-named `src/commands/**` module, with essentially no cross-file redundancy to fall
+back on. Picking files by duration alone, blind to this coverage topology, breaks the per-file floor
+the instant any of them move out.
+
+**A real mechanism DOES exist for this, verified mechanically before being set aside.** Vitest 4.1.11
+(the installed version) ships an official shard/merge workflow for exactly this situation:
+`--reporter=blob` (per shard, with `--coverage`) + `--mergeReports=<dir>` (one final step, re-running
+no tests, only re-emitting whatever reporters/coverage are requested from the recorded blobs) —
+confirmed via `vitest --help` and independently via a real local experiment, not assumed: ran 2
+small disjoint shards of `packages/vcs`'s own test files with `--reporter=blob --coverage`, merged
+them with `--mergeReports`, and the merged `coverage-summary.json` reproduced `worktree-root.ts`'s
+real coverage (76.47% lines / 72.22% statements / 40% branches) as an EXACT match to this same
+session's own earlier, independently-measured baseline for that file. This proves real, duration-
+aware sharding of `packages/cli` (not just moving heavy files aside unmeasured) is mechanically
+possible without breaking coverage correctness.
+
+**Why this is disclosed, not built, this round.** Doing it correctly is a materially bigger piece
+than today's `seed` split or any of the three prior single-job extractions: it needs a coverage-
+scoped pipeline (most plausibly a second vitest config that excludes `packages/cli/src/**` from
+`floor`'s own thresholds — mirroring the existing `vitest.boundaries-coverage.config.ts` precedent
+for "a dedicated secondary coverage concern") PLUS a new sharded job set for `packages/cli`'s own
+254 files PLUS a merge-and-ratchet job that owns `cli`'s coverage independently — genuinely new
+release-gating architecture, not a reorganization of existing jobs. Given this same entry's own
+confirmed, measured concurrency-ceiling finding above, every new job this adds is a real cost against
+an already-tight budget, which argues for getting the shard COUNT and topology right in one
+considered pass rather than iterating live on `next` the way `Q384`-`Q388`'s crash-resume chain did
+— that chain's own files never carried unique coverage, so its 5 rounds of live iteration were safe
+to run on the real gate; a coverage-merge bug here could silently hide a real regression, which is a
+worse failure than leaving `floor` slow. Flagged as its own dedicated, critic-reviewed follow-up
+piece, not attempted further here.
+
+**Also found, not fixed here (pre-existing, not a regression from this entry).** `coverage-
+ratchet.json` has not been updated since commit `869c6fb2` (a Milestone 5-era commit, confirmed via
+`git log --oneline -- coverage-ratchet.json`) and has never recorded a `packages/cli` mark at all —
+`evaluateRatchet`'s own logic (`scripts/lib/coverage-ratchet.mjs`) only flags a regression when a
+prior mark exists (`mark !== undefined && now < mark - TOLERANCE`), so `cli`'s package-level
+coverage has never actually been ratcheted, only floor'd per-file. This is what let the 190-file
+regression above surface immediately as a hard per-file failure rather than a ratchet warning — the
+ratchet would have said nothing either way. Not acted on here (out of scope for this entry; a
+future piece should run `pnpm coverage:ratchet -- --update` once and confirm it starts covering
+every current package, `cli` included).
+
+**Verification.** `seed` split: YAML re-parsed clean (`python3 -c "import yaml; yaml.safe_load(...)"`,
+printed job list and the new `strategy.matrix` unchanged otherwise), `npx prettier --check
+.github/workflows/ci.yml` clean, `ci-ok`'s join-string logic confirmed unaffected by matrix expansion
+(read directly, not assumed). The rejected 34-file extraction was validated as unsafe by a real local
+coverage run excluding those files (not assumed from file names) — `cov-without-heavy-cli.log`'s own
+190+ `ERROR: Coverage ... does not meet ... threshold` lines are the actual evidence, not a
+projection. The `--mergeReports` mechanism was validated by a real local experiment on 4 disjoint
+`packages/vcs` test files, cross-checked against an independently-recorded baseline number from
+earlier this session, not merely read from vitest's own documentation.
+
+**Gauntlet.** `.github/workflows/ci.yml` only (the `seed` split) — a CI/test-infrastructure
+restructuring with no production source touched, the same category `Q384`'s own dedicated-job
+creation already established as landing directly under this session's "test-only/docs-only, no
+production-code change" exception. The floor-sharding attempt itself produced no diff (rejected
+before being written to any file other than this entry).
