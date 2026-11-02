@@ -34555,3 +34555,95 @@ hunks-mutation.test.ts`), none production source. The `ci.yml` change is itself 
 `Q390` mistake, not new production-behavior logic needing a fresh critic round — it restores
 Windows to its exact pre-`Q390` behavior and only changes what already-reviewed non-Windows behavior
 runs under. Landing directly under this arc's established test-only/CI-config exception.
+
+## Q394 — Attempted a production fix for the large, pre-existing Windows `floor` defect `Q393`
+surfaced (109-113 of 752 files failing); a critic round found the diagnosis itself was wrong, the
+proposed fix did not address the real failures and introduced new real bugs of its own (a symlink-
+following vulnerability among them) — reverted, not shipped, and the REAL picture is messier and
+bigger than either version of this entry first claimed (owner-directed: "investigate and fix now",
+2026-11-02)
+
+**What this corrects.** `Q393` reported the Windows `floor` legs "back to normal" based on the
+non-Windows legs alone, without re-checking Windows' own file-failure count after its own fix
+landed — the very next run (`41373690386`) showed Windows still failing 108-113 of 752 files.
+Checking the pre-session baseline (`41268423051`) confirmed this count predates this entire
+session's `Q384`-`Q393` work: a real, severe, long-standing Windows defect, never specifically
+investigated because it was always lumped into the generic "floor/seed capacity cluster."
+
+**This session's own first diagnosis was wrong, and a dispatched critic round caught it before it
+shipped — exactly the scenario this project's own critic-review process exists for.** The initial
+theory: `resolvePosixShell`'s own Git-Bash path hands `execa` a shell STRING, which (the theory
+went) skips Node's own Windows argument-escaping and gets corrupted a second time by MSYS2's own
+non-standard command-line re-parsing. A fix was built and locally verified (no Windows machine
+available) around that theory: write `command` to a real file inside `cwd` and have `bash` execute
+the file by path instead of ever placing it on a command line. **The critic round, dispatched for
+exactly this reason given the security/correctness sensitivity, found the diagnosis itself does not
+match the real evidence:**
+  - Pulling the FULL real CI log (not the truncated `gh run view --log-failed` output this session's
+    own earlier checks had been reading) showed every bash-level error is backslash-STRIPPING from
+    an UNQUOTED Windows path interpolated into a command string (e.g. a test fixture building
+    `` `${process.execPath} ...` `` without quoting it) — `C:\hostedtoolcache\...\node.exe` becomes
+    `C:hostedtoolcachenode.exe` because POSIX shells treat an unquoted `\` as an escape character.
+    This happens identically whether the command text reaches bash via argv (the old code) or via a
+    file (the proposed fix) — **the fix could not have closed this**, because the corruption is in
+    the COMMAND TEXT ITSELF, built before either delivery mechanism ever sees it.
+  - This session's own cited claim ("`execa`/Node's `shell: <path>` skips Node's own Windows argv-
+    escaping") was independently checked against Node 22's real source and found factually wrong:
+    Node DOES build `args = ['-c', command]` and DOES apply the standard `quote_cmd_arg` escaping
+    for a non-cmd shell path. `posix-shell.ts`'s own pre-existing header comment already said this
+    correctly; this session's own new doc comment, added alongside the (wrong) fix, contradicted it.
+  - Of the 109 failing files: roughly 120 individual test failures are the parity engine's own
+    DELIBERATE win32 refusal (`Q294`/`Q295`) — by design, not a bug, though whether that many files
+    hitting it is itself expected or a separate, real scope question was not resolved here. Roughly
+    89 bypass `resolvePosixShell` entirely (`execa(x, { shell: true })` directly, which is `cmd.exe`
+    on Windows, never touching the code this session's fix changed). Several more are real,
+    distinct issues each needing their own investigation: literal, unexpanded `$VAR` references
+    (commands that ran under `cmd.exe`, which doesn't do POSIX variable expansion, either because no
+    bash was found or `env` was `undefined`), CRLF line-ending mismatches, `C:/` vs `C:\` path-
+    separator mismatches, a SEPARATE recurrence of the `D:\D:\` doubled-drive-letter shape `Q393`
+    already fixed one instance of (suggesting more than one source of that exact corruption class),
+    real `EBUSY`/`EISDIR` filesystem races, and a YAML `\h` escape issue. The MSYS2-re-parsing
+    mechanism this session's own fix targeted is real and plausible in the abstract (the critic
+    found it consistent with Cygwin's own `build_argv`/`globify` source) — but genuinely does not
+    appear as the cause of ANY of the actual failures in this real run.
+  - The proposed fix also introduced its own new, real bugs, independently verified by the critic on
+    this session's own (POSIX) machine using the identical code branch: a **symlink-following
+    vulnerability** (`writeFileSync`'s default `'w'` flag follows a symlink an attacker (or a prior
+    run) planted at the predictable next scratch-file name and overwrites ITS target); a broken
+    "never rejects" contract (`runShellCommand`'s own documented behavior, now throwing `ENOENT`/
+    `EACCES` for a missing/read-only `cwd` instead of resolving with a failed result); a real git-
+    tree-pollution risk (the scratch file is visible to `git status`/`git add -A` while it exists,
+    and `forge run` itself refuses to start when untracked files are present — `write-tree.ts`'s own
+    documented behavior); and cleanup that never runs on a `SIGINT`/`SIGTERM`/process-exit path in
+    either module (both already re-raise the signal or exit before reaching their own `finally`),
+    leaking the scratch file on exactly the kind of abrupt termination this whole area of the
+    codebase already spends real effort handling correctly elsewhere (`Q383`'s own launcher-shim
+    sweep exists for an analogous leaked-artifact class).
+
+**Verdict and action taken: reverted, not shipped.** All 4 touched files
+(`packages/engine/src/dispatch/{posix-shell,shell,confined-command}.ts` and the one updated test in
+`confined-command.test.ts`) restored to their pre-this-entry state via `git checkout --`, confirmed
+clean (`git status`). Nothing from this entry's own attempted fix landed on `main`/`next`.
+
+**What's actually still true and still open.** The Windows `floor` defect this entry set out to
+close is real, large (100+ of 752 files), and still completely unfixed — this entry closes nothing,
+it only corrects this session's own understanding of it and disclosed the critic's own, more
+accurate breakdown of its real sub-causes (above) for whoever picks this up next. That real
+breakdown is itself likely incomplete: the critic's own report says explicitly that roughly 390 of
+the failing tests showed no visible stderr in the log and were not individually attributed to any
+of the categories above. A genuine fix needs, at minimum: auditing test fixtures that interpolate
+`process.execPath`/other Windows paths into unquoted shell command strings (the dominant, confirmed-
+real cause); finding and fixing whatever is STILL producing the `D:\D:\` doubled-drive-letter shape
+after `Q393`'s own fix for one instance of it; and deciding whether the parity engine's win32
+refusal firing across ~120 files is itself correctly scoped. None of this was attempted here.
+
+**Why this is being landed as a correction, not quietly dropped.** This project's own established
+culture (`Q371`, `Q374`, and others in this same arc) is to disclose a wrong diagnosis by name, not
+bury it — this entry follows that same precedent for this session's own mistake, the same way
+`Q391`/`Q392`/`Q393` already corrected several of this session's own earlier missteps in this exact
+investigation. The critic round that caught this is itself the system working as intended: a
+genuinely uncertain, security-adjacent production change got independent, evidence-based scrutiny
+BEFORE landing, not after.
+
+**Gauntlet.** No change lands from this entry. The 4 files this entry touched and then reverted are
+confirmed byte-identical to their pre-entry state.
