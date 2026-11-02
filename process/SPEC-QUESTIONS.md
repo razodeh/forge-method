@@ -34473,3 +34473,85 @@ own item 2 was. Flagged for anyone revisiting this area, not re-verified here.
 **Gauntlet.** 5 further files changed (`stream-view.test.tsx` again — the same file `Q390`/`Q391`
 already touched, corrected further, not new), all test-only. Landing directly under this arc's
 established test-only exception.
+
+## Q393 — `Q392`'s own validation run found a real, self-inflicted CI regression (108 of 752 files
+failed on one Windows leg alone) from this same session's own `Q390` `ulimit` experiment, plus one
+assertion `Q392` missed fixing in the exact file it was already editing, plus one more real,
+previously-disclosed-but-deferred sibling defect now confirmed firing for real (2026-11-02)
+
+**1. `floor`'s own `ulimit` experiment (`Q390`) broke Windows for real — a serious, self-inflicted
+regression, found and fixed before it could do more damage.** `floor (node 24, windows-latest)`
+failed **108 of 752 files** in the real CI run validating `Q392` (`41367483997`) — an order of
+magnitude beyond anything else this whole arc has seen. Root cause, found immediately from the real
+error text rather than guessed: `ForgeError: Filesystem operation "listDirEntriesSorted" failed for
+D:\D:\a\forge-method\forge-method\modules` — a doubled drive letter. `Q390`'s own `ulimit`-prefix fix
+set `shell: bash` on the WHOLE `pnpm test` step, for every OS including Windows, reasoning that the
+`ulimit` line itself was already `if`-guarded out there — but that still forced `windows-latest` to
+run `pnpm test` itself through Git Bash instead of its own native default shell (`pwsh`), and Git
+Bash's own MSYS2 path translation genuinely mangles a Windows path round-tripped through it under
+real conditions — exactly the open, "not something... could fully settle... treat as an open
+question, not confirmed-safe" risk `packages/engine/src/dispatch/posix-shell.ts`'s own doc comment
+already named for a DIFFERENT (but related) reason, now independently confirmed real by this
+mistake. **Fixed by splitting the step in two**, each gated by `if: runner.os == / != 'Windows'`:
+Windows gets the exact, byte-for-byte original step back (no shell override, no `ulimit`, nothing
+this whole `ulimit` experiment ever should have touched), and only non-Windows gets the `ulimit`-
+prefixed version — where `shell: bash` changes nothing at all, since that is already every non-
+Windows runner's own default shell, and the one real risk this mistake just proved is not Windows-
+specific in general, just specific to running `pnpm test`'s own nested module graph through a
+non-native shell on Windows.
+
+**Why this matters beyond the one bug.** This is the second time in this same arc that a fix aimed
+at ONE narrow, disclosed problem (`fetch-npm.test.ts`'s registry leak) carried a real, unexamined
+cross-platform side effect — `Q391`/`Q392` already corrected two wrong diagnoses; this is a wrong
+IMPLEMENTATION of a correctly-scoped idea, a different class of mistake, caught the same way:
+reading the real CI evidence from the validating run rather than assuming green-until-proven-
+otherwise. The `ulimit`-for-`fetch-npm` hypothesis itself remains exactly as unconfirmed as `Q390`
+left it — `fetch-npm.test.ts` is still failing in every leg that reached it in this same run; this
+entry only fixes the NEW, unrelated damage the attempt caused along the way.
+
+**2. `stream-view.test.tsx` had a SECOND vulnerable assertion in the exact same test `Q392` had
+already edited, missed because only the first of its two `toBe('first')` checks was polled.** The
+real CI run reproduced the identical flake again, this time at the test's OWN second assertion
+(after `unmount()`/`resolveNext()`/`flush()`, confirming "second" never arrived) rather than the
+first (the initial post-mount render) `Q392` had already fixed. Given this is now the THIRD time
+this exact file has needed a correction in three consecutive rounds, read the entire file end to
+end this time, line by line, rather than patching reactively — every remaining
+`expect(lastFrame())` assertion was individually checked against whether its preceding render
+involves a real async-generator consumption (vulnerable) or a static, synchronous source (safe,
+already covered by the file's own generous `flush()`). Fixed the one genuinely missed assertion;
+confirmed every other async-source assertion in the file already has its own `waitForFrame` call
+from `Q392`, and every remaining bare `flush()`-then-assert call is a static-source test with no
+real async dependency to race against.
+
+**3. `packages/cli/test/commands/loop/test/bin-binding-hunks-mutation.test.ts` — the `bin-exempt.
+test.ts`-shaped `execFileSync` inner-timeout-vs-outer-budget defect `Q390` had already disclosed as
+a known, deferred sibling gap (found live-reproduced by that round's own investigating subagent, but
+explicitly left unfixed as out of that piece's dispatched scope) is now confirmed failing in a real
+CI run, for real.** Applied the identical, already-proven fix: the hardcoded `timeout: 30_000` on
+`execFileSync` raised to a named `FORGE_SUBPROCESS_TIMEOUT_MS = 55_000` (matching `bin-exempt.
+test.ts`'s own value and reasoning), and every two-`run()`-call test's own outer `it()` budget
+(6 of this file's 10 tests, all previously at `30_000` — tighter than even the OLD single-call inner
+ceiling once two calls are summed) doubled to `120_000`. The file's other 4, single-`run()`-call
+tests (fast-failing usage-refusal checks, nowhere near even the original 30s in practice) were left
+unchanged, matching `bin-exempt.test.ts`'s own identical reasoning for its own single-call test.
+
+**Disclosed, deliberately not investigated this round:** `test/intake-workflow.test.ts` (two
+instances) and `test/network-guard.test.ts` (one instance) both failed again in this same real CI
+run with plain `Error: Test timed out` — checked directly, not assumed, that neither uses the
+process-liveness-check pattern this arc has been closing (`grep` for `process.kill(.*, 0)`/
+`isAlive`/`isProcessAlive` in both files: zero matches) and both were already named in this
+session's own pre-`Q384` summary as pre-existing, out-of-scope capacity-cluster members — genuinely
+a different, related-in-shape (real subprocess work exceeding its budget under load) but
+independently-rooted class of problem from everything `Q390`-`Q393` has fixed, not yet investigated.
+
+**Verification.** `.github/workflows/ci.yml` re-parsed clean (`python3 -c "import yaml; ..."`,
+confirmed the two new conditional steps and their `if:` expressions). `stream-view.test.tsx`:
+17/17. `bin-binding-hunks-mutation.test.ts`: 10/10, including the specific test the real CI run
+named. `pnpm typecheck` (21/21), `eslint`/`prettier --check` on every touched file (clean),
+`node scripts/check-boundaries.mjs` (clean).
+
+**Gauntlet.** 3 files changed (`ci.yml`, `stream-view.test.tsx` again, and the new `bin-binding-
+hunks-mutation.test.ts`), none production source. The `ci.yml` change is itself a correction of a
+`Q390` mistake, not new production-behavior logic needing a fresh critic round — it restores
+Windows to its exact pre-`Q390` behavior and only changes what already-reviewed non-Windows behavior
+runs under. Landing directly under this arc's established test-only/CI-config exception.

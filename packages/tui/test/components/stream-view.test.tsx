@@ -223,7 +223,9 @@ describe('StreamView', () => {
     expect(lastFrame()).toBe('first');
     unmount();
     resolveNext?.();
-    await flush();
+    // `SPEC-QUESTIONS.md` Q393: this assertion itself showed the identical flake, missed in `Q392` --
+    // that round only polled the FIRST of this test's two `toBe('first')` checks, not this second one.
+    await waitForFrame(lastFrame, (frame) => frame === 'first');
     // No throw, no unhandled rejection reached this point; the cleanup flag stopped the loop before
     // "second" ever reached a `setLines` call, so the last captured frame is still just "first".
     expect(lastFrame()).toBe('first');

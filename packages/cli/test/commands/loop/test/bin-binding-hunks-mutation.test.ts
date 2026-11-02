@@ -41,6 +41,16 @@ function resolveRealVitestEntry(): string {
 
 const TEST_COMMAND = `${process.execPath} ${resolveRealVitestEntry()} run --root .`;
 
+/** `SPEC-QUESTIONS.md` Q393: raised from the file's original `30_000`, which Q390 already disclosed
+ * (not fixed, out of scope at the time) as the identical `bin-exempt.test.ts` defect copy-pasted
+ * into this sibling file — a real CI run (`41367483997`) then confirmed it actually fires here too.
+ * Same root cause, same fix: `execFileSync`'s own hardcoded inner timeout was tighter than this
+ * file's own `it(..., 30_000)` outer budget for every two-`run()`-call test, so under real CI-scale
+ * load the inner timeout fires first, mapping to `status: null` -> this helper's own `?? 1` fallback
+ * -> a generic `1` where a specific refusal code was expected. See `bin-exempt.test.ts`'s own comment
+ * for the fuller measured reasoning behind this exact value. */
+const FORGE_SUBPROCESS_TIMEOUT_MS = 55_000;
+
 function run(
   args: readonly string[],
   cwd: string,
@@ -48,7 +58,7 @@ function run(
   try {
     const stdout = execFileSync(process.execPath, [LAUNCHER, ...args, '-C', cwd], {
       encoding: 'utf8',
-      timeout: 30_000,
+      timeout: FORGE_SUBPROCESS_TIMEOUT_MS,
       maxBuffer: 16 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -319,7 +329,7 @@ describe('forge test binding --hunks — the golden, through the real CLI (specs
     expect(invalidHunks).toBe(0);
     expect(timeoutHunks).toBe(0);
     expect(skippedHunks).toBe(0);
-  }, 30_000);
+  }, 120_000);
 
   it('exit code is identical with and without --hunks: a passing story', async () => {
     const plain = await freshProject({});
@@ -333,7 +343,7 @@ describe('forge test binding --hunks — the golden, through the real CLI (specs
 
     expect(plainResult.status).toBe(hunkedResult.status);
     expect(plainResult.status).toBe(0);
-  }, 30_000);
+  }, 120_000);
 
   /** Builds a project whose SINGLE named test binds the whole change (so the change-level check
    * passes with `nonBinding: []`, `restoreVerified: true`, exit 0) while ONE of its two real hunks is
@@ -408,7 +418,7 @@ describe('forge test binding --hunks — the golden, through the real CLI (specs
     // Confirms the fixture genuinely has an uncovered hunk to leak -- otherwise this test would pass
     // vacuously regardless of whether `incomplete` ever reads it.
     expect(parsed.uncoveredHunks).toBe(1);
-  }, 30_000);
+  }, 120_000);
 
   it('exit code is identical with and without --hunks: an incomplete story (a non-binding test)', async () => {
     const tautologyBody =
@@ -424,7 +434,7 @@ describe('forge test binding --hunks — the golden, through the real CLI (specs
 
     expect(plainResult.status).toBe(hunkedResult.status);
     expect(plainResult.status).toBe(1);
-  }, 30_000);
+  }, 120_000);
 
   it('exit code is identical with and without --hunks: a refusal (baseline-not-green)', async () => {
     const alreadyBrokenBody =
@@ -449,7 +459,7 @@ describe('forge test binding --hunks — the golden, through the real CLI (specs
     const parsed = JSON.parse(hunkedJson.stdout.trim()) as Envelope;
     expect(parsed.hunks).toBeUndefined();
     expect(parsed.granularity).toBeUndefined();
-  }, 30_000);
+  }, 120_000);
 });
 
 describe('forge test binding --hunks — --max-hunks reaches the real engine (specs/22 M16 P12)', () => {
@@ -516,5 +526,5 @@ describe('forge test binding --hunks — --max-hunks reaches the real engine (sp
     const parsed = JSON.parse(result.stdout.trim()) as Envelope;
     expect(parsed.granularity).toBe('file');
     expect(parsed.hunks).toHaveLength(2);
-  }, 30_000);
+  }, 120_000);
 });
