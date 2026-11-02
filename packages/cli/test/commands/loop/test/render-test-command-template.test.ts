@@ -84,7 +84,7 @@ describe('renderTestCommandTemplate -- {name} (specs/22 M17 P4) (18 §18.3)', ()
     ['$`', 'contains the literal backtick token $`'],
     ["$'", "contains the literal tail token $'"],
     ['$$', 'contains the literal doubled-dollar token $$'],
-  ])(
+  ] as const)(
     'a name that %s round-trips, through a real shell, to exactly the original name (%s)',
     ([token], ctx) => {
       // `shellDecodesToOneArgument` hardcodes a real `/bin/sh`, which does not exist on win32.
