@@ -388,6 +388,13 @@ describe('fetchNpmOverlay', () => {
         }),
         'CFG-030',
       );
+      // The fixture registry's own request log actually saw this fetch -- proving CFG-030 came
+      // from ITS real "not found," not from some other failure (the real, previously-reproduced
+      // shape: `npm pack` silently reaching the real registry.npmjs.org instead, network-guard-
+      // refused into the identical CFG-030 code for an entirely different, wrong reason).
+      expect(
+        registry.requestLog.some((entry) => decodeURIComponent(entry) === '/@nope/does-not-exist'),
+      ).toBe(true);
     },
     SLOW_TEST_TIMEOUT_MS,
   );

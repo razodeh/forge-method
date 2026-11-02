@@ -489,9 +489,13 @@ export interface FetchInstallBundleOptions {
   /** The directory whose own `.npmrc` governs which registry an `npm:` source resolves against —
    * ignored for a `git+`/local-path `source`. */
   readonly npmCwd: string;
-  /** The real parent environment an `npm:` source's `npm pack` child process runs with — ignored for
-   * a `git+`/local-path `source`. Caller-supplied (`dispatch/shared.ts`'s `realEnvSnapshot`), never
-   * read from `process.env` here (`QUALITY-BAR.md` R10). */
+  /** The real, COMPLETE parent environment an `npm:` source's `npm pack` child process runs with —
+   * every real key `process.env` carries, never a sparse overlay (`fetchNpmOverlay`'s own `execa`
+   * call passes this straight through with `extendEnv: false`, so a partial object here would
+   * become the child's ENTIRE environment, missing `PATH`/`HOME`/Windows's `SystemRoot`) — ignored
+   * for a `git+`/local-path `source`. Caller-supplied (`dispatch/shared.ts`'s `realEnvSnapshot`,
+   * which already returns a full snapshot), never read from `process.env` here (`QUALITY-BAR.md`
+   * R10). */
   readonly npmEnv: Readonly<Record<string, string | undefined>>;
 }
 
