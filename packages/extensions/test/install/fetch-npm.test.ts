@@ -43,6 +43,29 @@ async function projectWithNpmrc(npmrcContent: string): Promise<string> {
   return dir;
 }
 
+/** `process.env` with every `npm_config_*` variable removed — makes this file's own `npm pack`
+ * calls hermetic against the fixture registries it starts itself. `pnpm run test`/`pnpm test`
+ * (how this suite always actually runs) injects `npm_config_registry` and friends into every
+ * script's own environment, mirroring pnpm's own resolved config — confirmed directly (`pnpm run
+ * <script>` dumps `npm_config_registry=https://registry.npmjs.org/` with no such setting anywhere
+ * in this repo). Those env vars outrank a project `.npmrc` in npm's own real config precedence
+ * (`default < builtin < global < user < project < env < cli`, confirmed against npm 11.1.0's own
+ * `@npmcli/config`), so without this, every one of this file's own `.npmrc`-scoped fixture-registry
+ * overrides is silently ignored and `npm pack` always reaches the real `registry.npmjs.org`
+ * instead, which the network guard (specs/21 §21.1) then correctly refuses. Scoped to this test file
+ * only — `fetchNpmOverlay` itself does no such filtering in production (its own real callers'
+ * `npm_config_*` vars, including env-supplied registry/auth-token config a real CI setup like
+ * `actions/setup-node` relies on, are deliberately left untouched; see `fetch-npm.ts`'s own top doc
+ * comment). */
+function hermeticNpmEnv(): Readonly<Record<string, string | undefined>> {
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (/^npm_config_/i.test(key)) continue;
+    env[key] = value;
+  }
+  return env;
+}
+
 async function expectForgeError(promise: Promise<unknown>, code: string): Promise<void> {
   try {
     await promise;
@@ -269,7 +292,7 @@ describe('fetchNpmOverlay', () => {
       const result = await fetchNpmOverlay('npm:@fixture/overlay-fixture@1.0.0', {
         workDir,
         cwd: projectDir,
-        env: process.env,
+        env: hermeticNpmEnv(),
       });
 
       expect(result.manifestKind).toBe('overlay');
@@ -303,7 +326,7 @@ describe('fetchNpmOverlay', () => {
       const result = await fetchNpmOverlay('npm:@fixture/latest-fixture', {
         workDir,
         cwd: projectDir,
-        env: process.env,
+        env: hermeticNpmEnv(),
       });
 
       expect(result.manifestKind).toBe('module');
@@ -332,7 +355,7 @@ describe('fetchNpmOverlay', () => {
       const result = await fetchNpmOverlay('npm:@priv/internal-standards@3.0.0', {
         workDir,
         cwd: projectDir,
-        env: process.env,
+        env: hermeticNpmEnv(),
       });
 
       expect(result.manifestKind).toBe('overlay');
@@ -361,7 +384,7 @@ describe('fetchNpmOverlay', () => {
         fetchNpmOverlay('npm:@nope/does-not-exist@1.0.0', {
           workDir,
           cwd: projectDir,
-          env: process.env,
+          env: hermeticNpmEnv(),
         }),
         'CFG-030',
       );
@@ -388,7 +411,7 @@ describe('fetchNpmOverlay', () => {
         fetchNpmOverlay('npm:@fixture/no-manifest@1.0.0', {
           workDir,
           cwd: projectDir,
-          env: process.env,
+          env: hermeticNpmEnv(),
         }),
         'CFG-027',
       );
