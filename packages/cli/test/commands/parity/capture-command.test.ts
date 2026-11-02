@@ -18,7 +18,7 @@ import path from 'node:path';
 
 import { listOrphanedWorktrees } from '@forge/vcs';
 import { execa } from 'execa';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   captureFileName,
@@ -147,6 +147,11 @@ async function capturedFiles(dir: string): Promise<readonly string[]> {
 }
 
 describe('runParityCapture: a stable fixture is captured, and an identical re-capture is a no-op (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('writes exactly one new content-addressed capture file on the first run', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'sample');
@@ -220,6 +225,11 @@ describe('runParityCapture: a stable fixture is captured, and an identical re-ca
 });
 
 describe('runParityCapture: a differing re-capture under the same key is refused, never overwritten (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('refuses RUN-135 and names the existing capture file when the reference now behaves differently', async () => {
     const dir = await freshProject();
     // The marker lives in its OWN `mkdtemp` directory, tracked in `dirs` exactly like `dir` itself —
@@ -258,6 +268,11 @@ describe('runParityCapture: a differing re-capture under the same key is refused
 });
 
 describe('runParityCapture: an unstable reference is refused and writes nothing (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('refuses RUN-134 for a case whose reference disagrees with itself across stability runs', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'flaky', { run: UNSTABLE_RUN });
@@ -314,6 +329,11 @@ describe(
   'runParityCapture (specs/22 M17 P14): a surface declared "unobservable" is never observed at ' +
     'all [#13], mirroring forge parity check',
   () => {
+    // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+    beforeEach((ctx) => {
+      if (process.platform === 'win32') ctx.skip();
+    });
+
     it(
       "the exempt surface's own command is genuinely never run -- it is wired to fail loudly " +
         '(exit 3) if it ever is, and capture still succeeds because it never does',
@@ -435,6 +455,11 @@ describe('runParityCapture: the rest of the suite (specs/22 M16 P6)', () => {
 });
 
 describe('runParityCapture: a reference that did not do what was expected is refused (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('refuses RUN-137 when the reference exits with a code other than its declared "expect" (default 0)', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'wrongexit', { run: `node -e "process.exit(7)"` });
@@ -510,6 +535,11 @@ describe('runParityCapture: FORGE_RUN_ID refuses before any real work (specs/22 
 });
 
 describe('runParityCapture: a declared file output absent from the reference is refused (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('refuses RUN-138 when a declared "file" output never materialises in the reference observation', async () => {
     const dir = await freshProject();
     const ref = await commitSha(dir);
@@ -540,6 +570,11 @@ surfaces:
 });
 
 describe('runParityCapture: the library and file surfaces convert and digest correctly (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('captures a "library" surface case, converting its probe result into the stored shape', async () => {
     const dir = await freshProject();
     const ref = await commitSha(dir);
@@ -707,6 +742,11 @@ surfaces:
 });
 
 describe('runParityCapture: surfaces with different "stability.runs" share observation rounds (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it("a surface whose own stability.runs is smaller than its sibling's still captures correctly", async () => {
     const dir = await freshProject();
     const ref = await commitSha(dir);
@@ -749,6 +789,11 @@ surfaces:
 });
 
 describe('runParityCapture: partial progress across multiple declarations is visible on a later refusal (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('a thrown error carries every declaration already captured before the one that failed, and gamma is never reached', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'alpha'); // succeeds
@@ -800,6 +845,11 @@ describe('runParityCapture: partial progress across multiple declarations is vis
 });
 
 describe('runParityCapture: two pre-existing, mutually differing captures under one key are ambiguous (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('refuses RUN-135 naming both conflicting capture files, writing nothing new', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'ambig');
@@ -851,6 +901,11 @@ describe('runParityCapture: two pre-existing, mutually differing captures under 
 });
 
 describe('runParityCapture: a "library" surface\'s own "setup" probe paths are gathered too (specs/22 M16 P6)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('a library surface with a probe named in "run" and a different one named in "setup" still captures', async () => {
     const dir = await freshProject();
     await mkdir(path.join(dir, '.forge/parity/probes'), { recursive: true });
@@ -907,6 +962,11 @@ surfaces:
 });
 
 describe("runParityCapture: a case's own observation failure is propagated directly, never wrapped (specs/22 M16 P6)", () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it("a reference case that times out surfaces the engine's own RUN-118 unchanged", async () => {
     const dir = await freshProject();
     const ref = await commitSha(dir);

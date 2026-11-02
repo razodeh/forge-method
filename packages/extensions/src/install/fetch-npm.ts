@@ -31,6 +31,30 @@ import { vcsFailureDetails } from './vcs-error.ts';
 
 const NPM_PREFIX = 'npm:';
 
+/** `env` with every inherited `npm_config_*`/`NPM_CONFIG_*` variable removed, for the real `npm
+ * pack` child process below. pnpm injects these into every `pnpm run`/`pnpm test` script's own
+ * environment (mirroring its own resolved config, `npm_config_registry` among them) — inherited
+ * as-is, they out-rank this module's own documented `.npmrc`-only config resolution (env vars beat
+ * project config in npm's own precedence order), silently sending every unscoped-registry fetch to
+ * the real `registry.npmjs.org` instead of whatever `options.cwd`'s own `.npmrc` configures. A real
+ * CI run surfaced this for real: a fixture-registry integration test's `npm pack` reached the live
+ * registry, which the network guard (specs/21 §21.1) then correctly refused.
+ *
+ * Takes `env` as a parameter — never `process.env` itself (QUALITY-BAR.md R10) — the identical
+ * "one real ambient-environment read per fact, threaded through from there on" discipline
+ * `dispatch/shared.ts`'s own `realEnvSnapshot` doc comment already establishes for every other real
+ * caller of this package. */
+function npmEnvWithoutInheritedConfig(
+  env: Readonly<Record<string, string | undefined>>,
+): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (/^npm_config_/i.test(key)) continue;
+    result[key] = value;
+  }
+  return result;
+}
+
 /** `@scope`/`name` segments: lowercase letters, digits, `.`, `_`, `-`, matching real npm package-name
  * rules closely enough for this parser's own purpose (refusing an obviously-malformed spec before it
  * ever reaches `execa`) without re-deriving npm's full, considerably longer validation. */
@@ -252,6 +276,12 @@ export interface FetchNpmOverlayOptions {
    * resolves against — required, rather than defaulting to `process.cwd()`, so this module never
    * reads that host fact itself (`QUALITY-BAR.md` R10). */
   readonly cwd: string;
+  /** The real parent environment the `npm pack` child process runs with, minus every inherited
+   * `npm_config_*` variable (`npmEnvWithoutInheritedConfig`'s own doc comment) — required, rather
+   * than read from `process.env` here, for the identical `QUALITY-BAR.md` R10 reason `cwd`'s own doc
+   * comment above already gives; the real caller already has it via `dispatch/shared.ts`'s
+   * `realEnvSnapshot`. */
+  readonly env: Readonly<Record<string, string | undefined>>;
 }
 
 export interface NpmOverlayFetchResult {
@@ -299,7 +329,7 @@ export async function fetchNpmOverlay(
       ({ stdout } = await execa(
         'npm',
         ['pack', npmArg, '--json', `--pack-destination=${packDir}`],
-        { cwd: options.cwd },
+        { cwd: options.cwd, env: npmEnvWithoutInheritedConfig(options.env) },
       ));
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : String(cause);

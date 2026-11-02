@@ -14,7 +14,7 @@ import path from 'node:path';
 
 import { listOrphanedWorktrees, removeLaneWorktree, worktreesRootFor } from '@forge/vcs';
 import { execa } from 'execa';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { TS_NODE_FLAG } from '../../../../../scripts/lib/node-ts-flag.mjs';
 import { computeParityDeclarationDigest } from '../../../src/commands/parity/digest.ts';
@@ -99,6 +99,15 @@ function findCase(
 }
 
 describe('observeParityDeclaration: the process surface (specs/22 M16 P3)', () => {
+  // `observeParityDeclaration` throws a deliberate, typed ENV-007 refusal on real win32
+  // (process/SPEC-QUESTIONS.md Q294/Q295) rather than composing an unproven cmd.exe-safe command
+  // line -- every test below needs a real, successful observation, which win32 cannot give it.
+  // The refusal itself is covered separately, under a simulated platform, by the dedicated
+  // "refuses win32 outright" describe block further down this file.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('observes stdout, stderr and exit code exactly, byte for byte', async () => {
     const dir = await freshProject();
     const declaration: ParityDeclaration = minimalDeclaration({
@@ -515,6 +524,11 @@ describe('observeParityDeclaration: the process surface (specs/22 M16 P3)', () =
 });
 
 describe('observeParityDeclaration: the file surface (specs/22 M16 P3)', () => {
+  // See the identical guard's own doc comment on the "process surface" describe above.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('observes a declared output file’s full bytes in text mode', async () => {
     const dir = await freshProject();
     const declaration = minimalDeclaration({
@@ -808,6 +822,11 @@ describe('observeParityDeclaration: the file surface (specs/22 M16 P3)', () => {
 });
 
 describe('observeParityDeclaration: the library surface (specs/22 M16 P3)', () => {
+  // See the identical guard's own doc comment on the "process surface" describe above.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   async function projectWithProbe(
     probeSource: string,
   ): Promise<{ dir: string; probeRelative: string }> {
@@ -988,6 +1007,11 @@ describe('observeParityDeclaration: refuses win32 outright rather than composing
 });
 
 describe('observeParityDeclaration: the observed root, as given and resolved (specs/22 M16 P3)', () => {
+  // See the "process surface" describe's own doc comment, above, for why this guard is here.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   // P4's own always-on root-path normalisation step (`13` F-TEST-9's Normalisation bullet) needs
   // the exact pair this `root` field supplies; these tests prove it is the REAL pair, not merely a
   // string this piece happens to already have lying around.
@@ -1057,6 +1081,11 @@ describe('observeParityDeclaration: the observed root, as given and resolved (sp
 });
 
 describe('observeParityDeclaration: the reference side (a scratch worktree) (specs/22 M16 P3)', () => {
+  // See the "process surface" describe's own doc comment, above, for why this guard is here.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('observes the reference at its OWN declared ref, not at the candidate’s current HEAD', async () => {
     const { dir, oldSha } = await repoWithTwoRevisions();
     const declaration = minimalDeclaration({
@@ -1334,6 +1363,12 @@ describe(
     "whether THIS CASE'S OWN command references a .forge/parity/probes/ path, never to the " +
     'surface kind',
   () => {
+    // See the "process surface" describe's own doc comment, near the top of this file, for why
+    // this guard is here.
+    beforeEach((ctx) => {
+      if (process.platform === 'win32') ctx.skip();
+    });
+
     it(
       'a "process" surface (not "library") whose own run invokes a real, committed script at ' +
         '.forge/parity/probes/ is correctly exempted too -- a real regression a gauntlet round ' +

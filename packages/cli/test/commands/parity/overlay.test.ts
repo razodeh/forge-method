@@ -65,7 +65,12 @@ describe('probeSourcePaths (specs/22 M16 P3)', () => {
 });
 
 describe('writeOverlayFile (specs/22 M16 P3)', () => {
-  it('writes the exact given bytes at the declared destination, creating parent directories, mode 0644 regardless of platform default', async () => {
+  it('writes the exact given bytes at the declared destination, creating parent directories, mode 0644 regardless of platform default', async (ctx) => {
+    // Windows has no POSIX permission-bit model: `chmod` there only toggles the read-only
+    // attribute, and `stat().mode` reports Windows' own synthesized value, never a real `0644` --
+    // the production `chmod(absolute, 0o644)` call this test exercises is still correct, intentional
+    // behavior there, just not one this exact assertion can observe. POSIX-only assertion.
+    if (process.platform === 'win32') ctx.skip();
     const root = await scratchRoot();
     await writeOverlayFile(root, 'nested/dir/input.txt', Buffer.from('hello overlay', 'utf8'));
     const full = path.join(root, 'nested', 'dir', 'input.txt');
@@ -110,7 +115,9 @@ describe('writeOverlayFile (specs/22 M16 P3)', () => {
 });
 
 describe('writeProbeOverlay (specs/22 M16 P3)', () => {
-  it('writes the exact given bytes at the destination, mode 0644, overwriting an existing file rather than refusing it', async () => {
+  it('writes the exact given bytes at the destination, mode 0644, overwriting an existing file rather than refusing it', async (ctx) => {
+    // See the identical guard's own doc comment on writeOverlayFile's "mode 0644" test, above.
+    if (process.platform === 'win32') ctx.skip();
     const root = await scratchRoot();
     await mkdir(path.join(root, '.forge', 'parity', 'probes'), { recursive: true });
     const probePath = path.join(root, '.forge', 'parity', 'probes', 'probe.mjs');

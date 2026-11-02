@@ -22,7 +22,7 @@ import { pathExists, ProjectPaths } from '@forge/core/fs';
 import { readEvents } from '@forge/telemetry/events';
 import { SYSTEM_CLOCK } from '@forge/core';
 import { execa } from 'execa';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   runParityCapture,
@@ -170,6 +170,11 @@ async function evidenceFiles(dir: string): Promise<readonly string[]> {
 }
 
 describe('runParityCheck: a candidate that matches its capture exits clean (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('reads match, failing 0, passing 1, and exits 0', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'sample');
@@ -190,6 +195,11 @@ describe('runParityCheck: a candidate that matches its capture exits clean (spec
 });
 
 describe('runParityCheck: a changed candidate exits failing, naming the surface, case and stream, never the text (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('reads mismatch and exits 1, with no field anywhere carrying the differing output', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'sample');
@@ -269,6 +279,11 @@ describe('runParityCheck: zero declarations is one failing with reason no-declar
 });
 
 describe('runParityCheck: the seven non-match, non-stop verdicts F-TEST-9 names are each independently reachable (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('missing: a declaration with no capture at all, naming the platform it looked for', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'sample');
@@ -377,6 +392,11 @@ describe('runParityCheck: the seven non-match, non-stop verdicts F-TEST-9 names 
 });
 
 describe('runParityCheck: the trust anchor, checked before any declaration runs (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('a rewritten .forge/parity/ reads oracle-changed for every declaration, naming the differing path, and observes nothing', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'sample');
@@ -420,6 +440,11 @@ describe('runParityCheck: the trust anchor, checked before any declaration runs 
 });
 
 describe('runParityCheck: the ParityEvidence record (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('writes exactly one schema-valid record per invocation, and its id is in the envelope', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'sample');
@@ -504,6 +529,11 @@ describe('runParityCheck: the ParityEvidence record (specs/22 M16 P7)', () => {
 });
 
 describe('runParityCheck: telemetry CheckRun{kind:"parity"} (specs/22 M16 P15)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   async function readParityCheckRuns(
     dir: string,
     runId: string,
@@ -664,6 +694,11 @@ describe('runParityCheck: telemetry CheckRun{kind:"parity"} (specs/22 M16 P15)',
 });
 
 describe("runParityCheck: telemetryProjectRoot sends the CheckRun{kind:'parity'} event to the REAL project root, never wherever the check itself ran (specs/22 M17 P12) (defect B)", () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('writes the event under telemetryProjectRoot, not under projectRoot, when the two differ -- the in-run gate shape, where projectRoot is really the integration worktree', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'sample');
@@ -735,6 +770,11 @@ describe("runParityCheck: telemetryProjectRoot sends the CheckRun{kind:'parity'}
 });
 
 describe('runParityCheck: the envelope passes a real evaluateGate with failOn "failing > 0" (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('a matching candidate passes the gate; a mismatching one fails it', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'sample');
@@ -775,6 +815,11 @@ async function writeRawDeclaration(dir: string, name: string, yaml: string): Pro
 }
 
 describe('runParityCheck: declaration-level edge cases (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('a reference.ref that names a real branch reads invalid, never resolved as if it were a tag', async () => {
     const dir = await freshProject();
     await execa('git', ['branch', 'feature-branch'], { cwd: dir });
@@ -998,6 +1043,11 @@ surfaces:
 });
 
 describe('runParityCheck: the file surface, including a declared output the candidate never writes (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   async function writeFileDeclaration(dir: string, ref: string): Promise<void> {
     await writeRawDeclaration(
       dir,
@@ -1049,6 +1099,11 @@ surfaces:
 });
 
 describe('runParityCheck: an exit-code-only mismatch (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('reports the mismatch location as "its exit" when neither stream differs', async () => {
     const dir = await freshProject();
     await writeFile(
@@ -1092,6 +1147,11 @@ surfaces:
 });
 
 describe('runParityCheck: the oracle rewritten mid-run (after the first case, before the last comparison) (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it(
     'specs/22 M17 P14: a case that tries to rewrite .forge/parity/ itself now fails outright (the ' +
       'directory is absent for the duration of its own run), so the rewrite never happens at all -- ' +
@@ -1154,6 +1214,11 @@ describe(
   'runParityCheck (specs/22 M17 P14): a case that tries to tamper with .forge/parity/ and ' +
     'restore it is refused outright, closing the self-reverting-tamper gap (Q294 Decision 7)',
   () => {
+    // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+    beforeEach((ctx) => {
+      if (process.platform === 'win32') ctx.skip();
+    });
+
     it(
       'reads mismatch, never match: the always-on isolation makes the read this tamper depends on ' +
         'fail before the write-then-restore can ever happen, so the gap this test used to document ' +
@@ -1260,6 +1325,11 @@ surfaces:
 );
 
 describe('runParityCheck: the library surface (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it("matches a returned value and mismatches once the candidate's own value changes", async () => {
     const dir = await freshProject();
     await mkdir(path.join(dir, '.forge/parity/probes'), { recursive: true });
@@ -1312,6 +1382,11 @@ surfaces:
 });
 
 describe('runParityCheck: a process surface that declares only one stream (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('an unlisted stream stays unobserved on the candidate side too', async () => {
     const dir = await freshProject();
     await writeFile(
@@ -1356,6 +1431,11 @@ surfaces:
 });
 
 describe('runParityCheck: deleting every declaration since the trusted commit reads oracle-changed, never no-declarations (specs/22 M16 P7)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('zero declarations on disk, with a trust anchor that disagrees, still names the deleted paths rather than reading no-declarations', async () => {
     const dir = await freshProject();
     await writeDeclaration(dir, 'sample');

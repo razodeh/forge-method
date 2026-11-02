@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { execa } from 'execa';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { TS_NODE_FLAG } from '../../../../../scripts/lib/node-ts-flag.mjs';
 import type { HttpObservation } from '../../../src/commands/parity/capture.ts';
@@ -123,6 +123,11 @@ async function observeOneHttp(
 }
 
 describe('observeAgainstRoot — http branch: matching responses match, a changed status/header/body mismatches (specs/22 M16 P8)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('two observations of the identical real server are byte-identical and read match through the real comparison pipeline', async () => {
     const dir = await freshProject();
     const port = await pickFreePort();
@@ -219,6 +224,11 @@ describe('observeAgainstRoot — http branch: matching responses match, a change
 });
 
 describe('observeAgainstRoot — http branch: a held port makes EVERY case of the surface error, and the held server is never read (specs/22 M16 P8)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('two cases both report the identical RUN-147 failure, and the decoy server receives zero requests', async () => {
     const dir = await freshProject();
     const port = await pickFreePort();
@@ -279,6 +289,11 @@ describe('observeAgainstRoot — http branch: a held port makes EVERY case of th
 });
 
 describe('observeAgainstRoot — http branch: a surface setup failure propagates to every http case, identically to every other surface (specs/22 M16 P8)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('a reference-side setup that fails means no http case runs, and every case reports the identical RUN-127', async () => {
     const dir = await freshProject();
     const { stdout: headSha } = await execa('git', ['rev-parse', 'HEAD'], { cwd: dir });
@@ -313,6 +328,11 @@ describe('observeAgainstRoot — http branch: a surface setup failure propagates
 });
 
 describe('observeAgainstRoot — http branch: a case’s own overlaid inputs are written before the request and removed after (specs/22 M16 P8)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('an http case’s own declared input is readable by the server at request time, and gone from the tree afterward', async () => {
     const dir = await freshProject();
     const parityDir = path.join(dir, '.forge', 'parity');
@@ -360,6 +380,11 @@ describe('observeAgainstRoot — http branch: a case’s own overlaid inputs are
 });
 
 describe('observeAgainstRoot — http branch: a secret-shaped or lossy-UTF-8 response body is refused, identically to every other surface’s own text content (specs/22 M16 P8)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('refuses RUN-121 when the response body contains a secret-shaped value', async () => {
     const dir = await freshProject();
     const port = await pickFreePort();
@@ -398,6 +423,11 @@ describe('observeAgainstRoot — http branch: a secret-shaped or lossy-UTF-8 res
 });
 
 describe('observeHttpSurfaceCases: a malformed case fails ITSELF, scoped, never crashing its sibling cases on the same surface (specs/22 M16 P8) (round-2 fix pass, MUST-FIX 1)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('a case whose request path contains a literal space makes `http.request` throw synchronously inside sendHttpRequest -- that case reports a scoped RUN-150, and the surface’s OTHER case still observes normally', async () => {
     const dir = await freshProject();
     const port = await pickFreePort();
@@ -497,6 +527,11 @@ describe('observeHttpSurfaceCases: the two "already-validated by declaration.ts"
 });
 
 describe('observeAgainstRoot — http branch: the server process group is really gone (real OS checks), under all three real lifecycles (specs/22 M16 P8)', () => {
+  // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+  beforeEach((ctx) => {
+    if (process.platform === 'win32') ctx.skip();
+  });
+
   it('is gone after an ordinary successful observation', async () => {
     const dir = await freshProject();
     const port = await pickFreePort();
@@ -722,6 +757,11 @@ describe(
   'observeHttpSurfaceCases (specs/22 M17 P14): candidate-side isolation genuinely brackets the ' +
     "server's WHOLE lifetime, not merely proven by reading the code",
   () => {
+    // See the identical guard's own doc comment in observe.test.ts's "process surface" describe.
+    beforeEach((ctx) => {
+      if (process.platform === 'win32') ctx.skip();
+    });
+
     it(
       '.forge/parity/ is absent from before the server starts, through a real mid-request check, ' +
         'and is restored again once the server stops',

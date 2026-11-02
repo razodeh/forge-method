@@ -227,7 +227,11 @@ describe('takeTreeSnapshot (specs/22 M16 P3)', () => {
     await expect(takeTreeSnapshot(dir)).rejects.toMatchObject({ code: 'RUN-126' });
   });
 
-  it('throws RUN-126 when git status itself fails even though HEAD resolved (a real permission failure on .git/index)', async () => {
+  it('throws RUN-126 when git status itself fails even though HEAD resolved (a real permission failure on .git/index)', async (ctx) => {
+    // `chmod(..., 0o000)` only toggles the read-only attribute on win32, never a real POSIX
+    // permission-denied -- `git status` would simply still succeed there, not fail as this test
+    // requires. POSIX-only; no faithful win32 equivalent.
+    if (process.platform === 'win32') ctx.skip();
     const dir = await freshRepo();
     await writeFile(path.join(dir, 'a.txt'), 'one\n', 'utf8');
     await commitAll(dir, 'init');
@@ -239,7 +243,12 @@ describe('takeTreeSnapshot (specs/22 M16 P3)', () => {
     }
   });
 
-  it('rethrows a non-ENOENT lstat failure rather than reporting absent (a path component replaced by a plain file, giving a real ENOTDIR)', async () => {
+  it('rethrows a non-ENOENT lstat failure rather than reporting absent (a path component replaced by a plain file, giving a real ENOTDIR)', async (ctx) => {
+    // Confirmed directly against real win32 CI: `lstat` on a path with a non-directory path
+    // component (`blocker/inner.txt` where `blocker` is a plain file) reports `ENOENT` there, not
+    // `ENOTDIR` -- Windows has no clean equivalent of POSIX's "not a directory" errno, so the
+    // promise resolves with `inner.txt` correctly read as "absent" instead of rejecting. POSIX-only.
+    if (process.platform === 'win32') ctx.skip();
     const dir = await freshRepo();
     await mkdir(path.join(dir, 'blocker'), { recursive: true });
     await writeFile(path.join(dir, 'blocker', 'inner.txt'), 'one\n', 'utf8');
@@ -249,7 +258,9 @@ describe('takeTreeSnapshot (specs/22 M16 P3)', () => {
     await expect(takeTreeSnapshot(dir)).rejects.toThrow(/ENOTDIR/);
   });
 
-  it('reports a non-regular, non-symlink, non-directory entry (a real FIFO) as "other"', async () => {
+  it('reports a non-regular, non-symlink, non-directory entry (a real FIFO) as "other"', async (ctx) => {
+    // `mkfifo` is a POSIX-only command with no Windows equivalent at all.
+    if (process.platform === 'win32') ctx.skip();
     // `git status` genuinely never lists a bare, untracked FIFO at all (confirmed directly): the one
     // real way to make `git status` name a path that is now a FIFO on disk is to replace an already
     // TRACKED file with one, which status reports as "modified" (its blob no longer matches).

@@ -489,6 +489,10 @@ export interface FetchInstallBundleOptions {
   /** The directory whose own `.npmrc` governs which registry an `npm:` source resolves against —
    * ignored for a `git+`/local-path `source`. */
   readonly npmCwd: string;
+  /** The real parent environment an `npm:` source's `npm pack` child process runs with — ignored for
+   * a `git+`/local-path `source`. Caller-supplied (`dispatch/shared.ts`'s `realEnvSnapshot`), never
+   * read from `process.env` here (`QUALITY-BAR.md` R10). */
+  readonly npmEnv: Readonly<Record<string, string | undefined>>;
 }
 
 /** Dispatches `source` to whichever of `19` §19.5's own three real channels its literal prefix names
@@ -510,7 +514,11 @@ export async function fetchInstallBundle(
     };
   }
   if (source.startsWith('npm:')) {
-    const result = await fetchNpmOverlay(source, { workDir: options.workDir, cwd: options.npmCwd });
+    const result = await fetchNpmOverlay(source, {
+      workDir: options.workDir,
+      cwd: options.npmCwd,
+      env: options.npmEnv,
+    });
     return {
       path: result.path,
       manifestKind: result.manifestKind,
@@ -663,6 +671,9 @@ export async function installBundleTree(destAbs: AbsolutePath, bundlePath: strin
 export interface InstallOptions {
   readonly workDir: string;
   readonly npmCwd: string;
+  /** The real parent environment an `npm:` source's `npm pack` child process runs with — see
+   * `FetchInstallBundleOptions.npmEnv`'s own doc comment. */
+  readonly npmEnv: Readonly<Record<string, string | undefined>>;
   /** The FORGE version actually running, checked against the fetched bundle's own `forgeVersion`
    * range — caller-injected rather than read from a hidden global, the identical determinism
    * reasoning `ResolveInstalledModulesOptions.forgeVersion`'s own doc comment already gives (`@forge/

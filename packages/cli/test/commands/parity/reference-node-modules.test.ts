@@ -231,7 +231,11 @@ describe('linkReferenceNodeModules: a project that tracks its own node_modules i
 });
 
 describe('linkReferenceNodeModules: a genuine failure (RUN-163) (specs/22, Q314 follow-up)', () => {
-  it('fails typed (RUN-163) when the symlink cannot be created for a reason other than the destination already existing (a read-only worktree root)', async () => {
+  it('fails typed (RUN-163) when the symlink cannot be created for a reason other than the destination already existing (a read-only worktree root)', async (ctx) => {
+    // `chmod(..., 0o555)` only toggles the read-only attribute on win32, never a real POSIX
+    // permission-denied -- the real `symlink()` call would not fail there the way this test needs.
+    // POSIX-only; no faithful win32 equivalent.
+    if (process.platform === 'win32') ctx.skip();
     const projectRoot = await freshDir('forge-q314-fail-project-');
     await mkdir(path.join(projectRoot, 'node_modules'), { recursive: true });
     const worktreeRoot = await freshDir('forge-q314-fail-worktree-');

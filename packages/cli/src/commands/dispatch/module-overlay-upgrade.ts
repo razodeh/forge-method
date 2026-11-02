@@ -94,6 +94,7 @@ function buildInstallOptions(projectRoot: string, yes: boolean, json: boolean): 
   return {
     workDir: createSystemTempPath('forge-install'),
     npmCwd: projectRoot,
+    npmEnv: realEnvSnapshot(),
     forgeVersion: readPackageVersion('@forge/agents'),
     consent: { yes, json },
   };

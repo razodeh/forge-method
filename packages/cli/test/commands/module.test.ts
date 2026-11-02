@@ -119,6 +119,7 @@ function installOptions(overrides: Partial<InstallOptions> = {}): InstallOptions
   return {
     workDir: '',
     npmCwd: '',
+    npmEnv: process.env,
     forgeVersion: FORGE_VERSION,
     ...overrides,
     ...(consent === undefined ? {} : { consent }),

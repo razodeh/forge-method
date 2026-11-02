@@ -222,7 +222,11 @@ describe(
       'a real SIGINT delivered mid-observation (an ordinary Ctrl+C, not an adversarial scenario) ' +
         'restores .forge/parity/ before the process exits, with the shell’s own conventional 130 ' +
         'exit code',
-      async () => {
+      async (ctx) => {
+        // Real POSIX signal delivery and the shell's "128+signum" exit-code convention (130 for
+        // SIGINT) have no faithful win32 equivalent: Node's own `child.kill('SIGINT')` there is an
+        // emulation with different, unreliable exit-code behavior. POSIX-only.
+        if (process.platform === 'win32') ctx.skip();
         const root = await freshRoot();
         await mkdir(path.join(root, '.forge', 'parity'), { recursive: true });
         await writeFile(

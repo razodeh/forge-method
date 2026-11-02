@@ -68,27 +68,36 @@ describe('renderTestCommandTemplate -- {name} (specs/22 M17 P4) (18 §18.3)', ()
     );
   });
 
-  it('a name containing an embedded single quote decodes, through a real shell, to exactly the original name', () => {
+  it('a name containing an embedded single quote decodes, through a real shell, to exactly the original name', (ctx) => {
+    // `shellDecodesToOneArgument` hardcodes a real `/bin/sh`, which does not exist on win32.
+    if (process.platform === 'win32') ctx.skip();
     const name = "don't fail";
     const rendered = renderTestCommandTemplate('{name}', { name });
     expect(shellDecodesToOneArgument(rendered)).toBe(name);
   });
 
-  it.each([
+  // `it.for` (not `it.each`): only `it.for`'s own handler receives a real `TestContext` (`ctx`,
+  // needed for `ctx.skip()` below) -- `it.each`'s own wrapper calls its handler with zero arguments
+  // of its own, discarding whatever context `test()` would otherwise have supplied.
+  it.for([
     ['$&', 'contains the literal match token $&'],
     ['$`', 'contains the literal backtick token $`'],
     ["$'", "contains the literal tail token $'"],
     ['$$', 'contains the literal doubled-dollar token $$'],
   ])(
     'a name that %s round-trips, through a real shell, to exactly the original name (%s)',
-    (token) => {
+    ([token], ctx) => {
+      // `shellDecodesToOneArgument` hardcodes a real `/bin/sh`, which does not exist on win32.
+      if (process.platform === 'win32') ctx.skip();
       const name = `weird ${token} in the middle`;
       const rendered = renderTestCommandTemplate('{name}', { name });
       expect(shellDecodesToOneArgument(rendered)).toBe(name);
     },
   );
 
-  it("text following the placeholder is never duplicated, and the closing quote is never eaten, for a name ending in the magic tail $'", () => {
+  it("text following the placeholder is never duplicated, and the closing quote is never eaten, for a name ending in the magic tail $'", (ctx) => {
+    // `shellDecodesToOneArgument` hardcodes a real `/bin/sh`, which does not exist on win32.
+    if (process.platform === 'win32') ctx.skip();
     const name = "ends in dollar-quote $'";
     const rendered = renderTestCommandTemplate('-k {name} --rest', { name });
     // The literal text "--rest" appears in the rendered command exactly once, not duplicated.
@@ -121,7 +130,9 @@ describe('renderTestCommandTemplate -- {name:regex} (specs/22 M17 P4) (18 §18.3
     );
   });
 
-  it('a regex-anchored name containing literal GetSubstitution-magic sequences decodes, through a real shell, to the anchored-and-escaped regex -- never corrupted or duplicated', () => {
+  it('a regex-anchored name containing literal GetSubstitution-magic sequences decodes, through a real shell, to the anchored-and-escaped regex -- never corrupted or duplicated', (ctx) => {
+    // `shellDecodesToOneArgument` hardcodes a real `/bin/sh`, which does not exist on win32.
+    if (process.platform === 'win32') ctx.skip();
     const name = "weird $& and $` and $' and $$ test";
     const rendered = renderTestCommandTemplate('{name:regex}', { name });
     // `$` is itself one of `escapeRegExp`'s own escaped regex metacharacters: every literal `$` in

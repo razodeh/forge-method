@@ -269,6 +269,7 @@ describe('fetchNpmOverlay', () => {
       const result = await fetchNpmOverlay('npm:@fixture/overlay-fixture@1.0.0', {
         workDir,
         cwd: projectDir,
+        env: process.env,
       });
 
       expect(result.manifestKind).toBe('overlay');
@@ -302,6 +303,7 @@ describe('fetchNpmOverlay', () => {
       const result = await fetchNpmOverlay('npm:@fixture/latest-fixture', {
         workDir,
         cwd: projectDir,
+        env: process.env,
       });
 
       expect(result.manifestKind).toBe('module');
@@ -330,6 +332,7 @@ describe('fetchNpmOverlay', () => {
       const result = await fetchNpmOverlay('npm:@priv/internal-standards@3.0.0', {
         workDir,
         cwd: projectDir,
+        env: process.env,
       });
 
       expect(result.manifestKind).toBe('overlay');
@@ -355,7 +358,11 @@ describe('fetchNpmOverlay', () => {
       const workDir = await freshDir();
 
       await expectForgeError(
-        fetchNpmOverlay('npm:@nope/does-not-exist@1.0.0', { workDir, cwd: projectDir }),
+        fetchNpmOverlay('npm:@nope/does-not-exist@1.0.0', {
+          workDir,
+          cwd: projectDir,
+          env: process.env,
+        }),
         'CFG-030',
       );
     },
@@ -378,7 +385,11 @@ describe('fetchNpmOverlay', () => {
       const workDir = await freshDir();
 
       await expectForgeError(
-        fetchNpmOverlay('npm:@fixture/no-manifest@1.0.0', { workDir, cwd: projectDir }),
+        fetchNpmOverlay('npm:@fixture/no-manifest@1.0.0', {
+          workDir,
+          cwd: projectDir,
+          env: process.env,
+        }),
         'CFG-027',
       );
 

@@ -178,7 +178,14 @@ async function realDeadPid(): Promise<number> {
 }
 
 function installOptions(overrides: Partial<InstallOptions> = {}): InstallOptions {
-  return { workDir: '', npmCwd: '', forgeVersion: '1.4.0', consent: { yes: true }, ...overrides };
+  return {
+    workDir: '',
+    npmCwd: '',
+    npmEnv: process.env,
+    forgeVersion: '1.4.0',
+    consent: { yes: true },
+    ...overrides,
+  };
 }
 
 function ctxFor(project: {
