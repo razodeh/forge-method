@@ -635,6 +635,22 @@ async function waitForFile(filePath: string, timeoutMs: number): Promise<string>
   }
 }
 
+/** `SPEC-QUESTIONS.md` Q392: polls instead of a single immediate liveness check -- sending a kill
+ * only SIGNALS the target; the OS still has to schedule and apply it, a gap that's usually sub-
+ * millisecond but not zero and widens under real host contention. Identical poll shape to
+ * `confined-command.test.ts`'s own `waitForProcessGone` (duplicated, not imported, across packages
+ * -- the same "small, single-purpose test helper duplicated over a forced cross-package coupling"
+ * precedent `killGroup`/`listDescendantPids`'s own doc comments already establish, `Q296` Decision
+ * 5). Used only where this file checks a kill actually landed; the "still alive right after spawn"
+ * checks below have no such race and keep using `isProcessAlive` directly. */
+async function waitForProcessGone(pid: number, maxAttempts = 100): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (!isProcessAlive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
 /** Whether a process is still alive, by the standard `kill -0` probe (sends no real signal) — the OS
  * itself is the oracle here, not a trust in whether `runAndNormalize` merely claims to have killed
  * something. */
@@ -878,7 +894,7 @@ describe('runAndNormalize — per-run timeout (specs/22 M16 P10)', () => {
     if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
     expect(result.report.outcomes).toHaveLength(1);
     expect(result.report.outcomes[0]).toMatchObject({ status: 'fail', kind: 'timeout' });
-    expect(isProcessAlive(pid)).toBe(false);
+    expect(await waitForProcessGone(pid)).toBe(true);
   }, 30_000);
 
   it('a real, genuinely hung pytest run is killed within the override timeout, reports a typed "timeout" outcome, and leaves no process behind', async () => {
@@ -911,7 +927,7 @@ describe('runAndNormalize — per-run timeout (specs/22 M16 P10)', () => {
     if (result.outcome !== 'ran') throw new Error(`expected 'ran', got ${result.outcome}`);
     expect(result.report.outcomes).toHaveLength(1);
     expect(result.report.outcomes[0]).toMatchObject({ status: 'fail', kind: 'timeout' });
-    expect(isProcessAlive(pid)).toBe(false);
+    expect(await waitForProcessGone(pid)).toBe(true);
   }, 30_000);
 });
 

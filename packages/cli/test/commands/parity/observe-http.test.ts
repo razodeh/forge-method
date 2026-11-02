@@ -72,6 +72,21 @@ function isAlive(pid: number): boolean {
   }
 }
 
+/** `SPEC-QUESTIONS.md` Q392: polls instead of a single immediate liveness check -- sending a kill
+ * only SIGNALS the target; the OS still has to schedule and apply it, a gap that's usually sub-
+ * millisecond but not zero and widens under real host contention. Identical poll shape to
+ * `confined-command.test.ts`'s own `waitForProcessGone` (duplicated, not imported, across packages
+ * -- the same "small, single-purpose test helper duplicated over a forced cross-package coupling"
+ * precedent `killGroup`/`listDescendantPids`'s own doc comments already establish, `Q296` Decision
+ * 5). */
+async function waitForGone(pid: number, maxAttempts = 100): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (!isAlive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
 function forceKill(pid: number | undefined): void {
   if (pid === undefined) return;
   try {
@@ -474,7 +489,7 @@ describe('observeHttpSurfaceCases: the two "already-validated by declaration.ts"
     ).rejects.toThrow(/unreachable.*request/);
     const pid = Number((await readFile(markerPath, 'utf8')).trim());
     try {
-      expect(isAlive(pid)).toBe(false);
+      expect(await waitForGone(pid)).toBe(true);
     } finally {
       forceKill(pid);
     }
@@ -510,7 +525,7 @@ describe('observeAgainstRoot — http branch: the server process group is really
     await observeOneHttp(dir, declaration);
     const pid = Number((await readFile(markerPath, 'utf8')).trim());
     try {
-      expect(isAlive(pid)).toBe(false);
+      expect(await waitForGone(pid)).toBe(true);
     } finally {
       forceKill(pid);
     }
@@ -560,7 +575,7 @@ describe('observeAgainstRoot — http branch: the server process group is really
     if (outcome.outcome === 'failed') expect(outcome.failure.error.code).toBe('RUN-150');
     const pid = Number((await readFile(markerPath, 'utf8')).trim());
     try {
-      expect(isAlive(pid)).toBe(false);
+      expect(await waitForGone(pid)).toBe(true);
     } finally {
       forceKill(pid);
     }

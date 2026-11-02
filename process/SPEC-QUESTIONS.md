@@ -34407,3 +34407,69 @@ touched in `Q390` — this is the same file, corrected, not a new one), none of 
 source — the one production-adjacent question this round raised (the `exec`-prefix fix) was
 deliberately NOT attempted, so nothing here needs the critic-review step `Q390`'s own production
 change already went through. Landing directly under this arc's established test-only exception.
+
+## Q392 — `Q391`'s own validation run found one more real gap (a fixed tick count is not immune to
+unbounded host contention either) and, while chasing it, a full sweep found 5 MORE real instances of
+the single-immediate-liveness-check race `Q390`/`Q391` had already fixed 4 times without ever
+searching for the rest of them — closed exhaustively this round, via a real pattern search rather
+than waiting for each one to fail its own CI run in turn (2026-11-02)
+
+**1. `stream-view.test.tsx` reproduced its own original flake a SECOND time, even at 10 ticks — a
+real conceptual gap in "more ticks," not a tuning miss.** A `setImmediate`-based tick bounds the
+NUMBER of event-loop rounds a wait gets, never the real WALL-CLOCK time each one takes. If the whole
+process is starved badly enough between any two rounds, 10 ticks can span barely more real time than
+2 did — no fixed tick count is provably enough against unbounded contention, the same shape of limit
+`crash-resume.test.ts`'s own `MAX_ATTEMPTS` already has (`Q388`), just for ticks instead of retries.
+Fixed with a genuine condition-based poll (`waitForFrame`): repeatedly yields control AND waits a
+real, short delay, re-checking the actual expected frame content after each round, bounded by a real
+wall-clock deadline (2s) rather than a round count — the async work gets more real TIME under worse
+contention, not just more (possibly still-starved) logical turns. Applied to every async-source
+assertion in the file (6 call sites), not only the one the real CI run happened to catch this time —
+the other 5 share the identical structural dependency (a source's own yielded values each need their
+own effect-triggered re-render) and were simply not the one unlucky enough to be hit.
+
+**2. A direct pattern search — not waiting for each file to fail in its own future CI run — found 5
+more real instances of the exact "single immediate liveness check, no poll margin" race `Q390`/`Q391`
+had already fixed 4 times (`confined-command.test.ts`, `http-server.test.ts` ×3, `observe.test.ts`)
+without ever searching the rest of the codebase for the same shape.** `grep`-ing for the exact
+`process.kill(pid, 0)` probe across every test file surfaced 12 files total; most already poll
+correctly (a recursive `setTimeout(check, N)` loop, or awaiting a real `'exit'` event — Node's own
+`'exit'` firing IS the OS's confirmation the process has been reaped, so no race there), narrowing to
+5 real, unfixed instances:
+  - `packages/cli/test/commands/migrate/run.test.ts` — confirmed failing in the real CI run
+    (`41363853369`) that prompted this search.
+  - `packages/engine/test/dispatch/shell.test.ts` — two instances, one `process.kill(pid, 0)`-based
+    (identical shape) and one `pgrep`-based (the identical race, just probed through a different real
+    command).
+  - `packages/cli/test/commands/loop/test/reporter.test.ts` — two instances. This file's own
+    `reporter.test.ts:914` failure had been seen in an earlier run and provisionally classified as an
+    "already-known, out-of-scope cluster item" (`Q391`) — that classification was wrong, not merely
+    imprecise; it is the identical bug this whole thread has been fixing, simply not yet searched for.
+  - `packages/cli/test/commands/parity/observe-http.test.ts` — three instances.
+  All five fixed with the same `waitForProcessGone`/`waitForGone`-shaped poll already established in
+  `Q390`, duplicated per-file per that fix's own "small, single-purpose helper duplicated over a
+  forced cross-package coupling" precedent (`Q296` Decision 5) rather than centralised.
+
+**Why a direct search, not another round of reactive one-file-at-a-time fixes.** Every prior round in
+this arc (`Q390`, `Q391`) fixed exactly the files a given real CI run happened to name, then moved on
+— and each time, the NEXT real run found more instances of a pattern already known to be real and
+already fixed elsewhere. Continuing that way would cost one more multi-hour CI round-trip per
+remaining instance. A `grep` across the whole suite for the exact probe shape found all of them in
+minutes, at zero CI cost, and is the more consistent instinct to lead with: once a bug's exact shape
+is confirmed real in more than one place, searching for every other instance of that EXACT shape is
+cheap and should happen before, not after, the next CI run finds the next one.
+
+**Verification.** Every fix re-run standalone and together with everything `Q390`/`Q391` already
+touched: 63 files / 1287 tests, all green. `pnpm typecheck` (21/21), every touched file through
+`eslint`/`prettier --check` (clean), `node scripts/check-boundaries.mjs` (clean).
+
+**Disclosed, not done: the same pattern search was not repeated for the `dash`-vs-`bash` self-signal
+gap `Q391` scoped to just two files (`confined-command.test.ts`, `observe.test.ts`).** Given
+`preserveRawOutput`'s only real production caller is `observe.ts`, and every OTHER file in this
+codebase that reports a signal does so through a DIFFERENT mechanism (not `preserveRawOutput`), this
+is believed to be exhaustive already — but it was reasoned, not grep-confirmed the way this entry's
+own item 2 was. Flagged for anyone revisiting this area, not re-verified here.
+
+**Gauntlet.** 5 further files changed (`stream-view.test.tsx` again — the same file `Q390`/`Q391`
+already touched, corrected further, not new), all test-only. Landing directly under this arc's
+established test-only exception.

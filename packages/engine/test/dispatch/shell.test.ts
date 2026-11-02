@@ -15,6 +15,25 @@ import { describe, expect, it } from 'vitest';
 import { TS_NODE_FLAG } from '../../../../scripts/lib/node-ts-flag.mjs';
 import { runShellCommand } from '../../src/dispatch/shell.ts';
 
+/** `SPEC-QUESTIONS.md` Q392: polls instead of a single immediate liveness check -- sending a kill
+ * only SIGNALS the target; the OS still has to schedule and apply it, a gap that's usually sub-
+ * millisecond but not zero and widens under real host contention. Identical poll shape to
+ * `confined-command.test.ts`'s own `waitForProcessGone` (duplicated, not imported, across packages
+ * -- the same "small, single-purpose test helper duplicated over a forced cross-package coupling"
+ * precedent `killGroup`/`listDescendantPids`'s own doc comments already establish, `Q296` Decision
+ * 5). */
+async function waitForGone(pid: number, maxAttempts = 100): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
 describe('runShellCommand', () => {
   it('captures stdout, stderr, and exit code for a successful command', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'forge-shell-'));
@@ -141,11 +160,18 @@ describe('runShellCommand limits (M13 P25: a caller that must not hang on, or bu
     );
     expect(result.timedOut).toBe(true);
     expect(Date.now() - started).toBeLessThan(8_000);
-    const stillAlive = await execa('pgrep', ['-f', `^sleep ${marker}$`], { reject: false });
-    expect(
-      stillAlive.exitCode,
-      'the setsid-detached grandchild must not survive the kill',
-    ).not.toBe(0);
+    // `SPEC-QUESTIONS.md` Q392: polled, not a single immediate `pgrep` -- see `waitForGone`'s own
+    // doc comment above for why a just-sent kill needs real time to actually take effect.
+    let stillAliveExitCode: number | undefined;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const probe = await execa('pgrep', ['-f', `^sleep ${marker}$`], { reject: false });
+      stillAliveExitCode = probe.exitCode;
+      if (stillAliveExitCode !== 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(stillAliveExitCode, 'the setsid-detached grandchild must not survive the kill').not.toBe(
+      0,
+    );
   });
 
   it('kills a Node grandchild that detaches into its own session before it starts busy-looping (specs/22 M16 P10)', async () => {
@@ -188,14 +214,8 @@ describe('runShellCommand limits (M13 P25: a caller that must not hang on, or bu
     expect(Date.now() - started).toBeLessThan(10_000);
     const pid = Number((await readFile(markerPath, 'utf8')).trim());
     expect(Number.isInteger(pid)).toBe(true);
-    // `kill -0`: the standard liveness probe, sends no real signal.
-    let alive = true;
-    try {
-      process.kill(pid, 0);
-    } catch {
-      alive = false;
-    }
-    expect(alive, `detached grandchild pid ${String(pid)} must not survive the kill`).toBe(false);
+    const gone = await waitForGone(pid);
+    expect(gone, `detached grandchild pid ${String(pid)} must not survive the kill`).toBe(true);
   }, 15_000);
 
   for (const signal of ['SIGTERM', 'SIGHUP'] as const) {

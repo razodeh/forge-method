@@ -47,6 +47,25 @@ function ctx(project: TestProject): SpecCommandContext {
   return { paths: project.paths, specsRoot: SPECS_ROOT, kbRoot: KB_ROOT };
 }
 
+/** `SPEC-QUESTIONS.md` Q392: polls instead of a single immediate liveness check -- sending a kill
+ * only SIGNALS the target; the OS still has to schedule and apply it, a gap that's usually sub-
+ * millisecond but not zero and widens under real host contention. Identical poll shape to
+ * `confined-command.test.ts`'s own `waitForProcessGone` (duplicated, not imported, across packages
+ * -- the same "small, single-purpose test helper duplicated over a forced cross-package coupling"
+ * precedent `killGroup`/`listDescendantPids`'s own doc comments already establish, `Q296` Decision
+ * 5). */
+async function waitForGone(pid: number, maxAttempts = 100): Promise<boolean> {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return false;
+}
+
 const FAKE_CLOCK: Clock = { now: () => '2026-01-01T00:00:00.000Z' };
 
 async function put(project: TestProject, relative: string, text: string): Promise<void> {
@@ -529,15 +548,9 @@ describe('migrateRun: per-entry failure modes (QUALITY-BAR.md R6) (specs/22 M17 
     const markerPath = path.join(project.dir, markerRelativePath);
     const pid = Number((await readFile(markerPath, 'utf8')).trim());
     expect(Number.isInteger(pid)).toBe(true);
-    // `kill -0`: the standard liveness probe, sends no real signal.
-    let alive = true;
-    try {
-      process.kill(pid, 0);
-    } catch {
-      alive = false;
-    }
-    expect(alive, `detached grandchild pid ${String(pid)} must not survive the timeout kill`).toBe(
-      false,
+    const gone = await waitForGone(pid);
+    expect(gone, `detached grandchild pid ${String(pid)} must not survive the timeout kill`).toBe(
+      true,
     );
   }, 15_000);
 });

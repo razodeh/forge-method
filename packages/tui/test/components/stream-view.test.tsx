@@ -70,6 +70,32 @@ async function renderStream(props: StreamViewProps) {
   return result;
 }
 
+/** `SPEC-QUESTIONS.md` Q392: a real CI run reproduced the ORIGINAL flake this file's own two-tick
+ * `flush()` fix (`Q390`) was meant to close -- even after raising to a generous 10 ticks (`Q391`) --
+ * specifically for a source's FIRST yielded value, exposing a real conceptual gap in "more ticks":
+ * a `setImmediate`-based tick bounds the NUMBER of event-loop rounds, never the real WALL-CLOCK time
+ * each one takes. If the whole process is starved badly enough between any two rounds, 10 ticks can
+ * span barely more real time than 2 did, and no fixed tick count is provably enough against
+ * unbounded host contention. This polls instead: repeatedly yields control AND waits a short real
+ * delay, re-checking `predicate` after each round, bounded by a real wall-clock deadline rather than
+ * a round count -- so the async work genuinely gets more real time under worse contention, not just
+ * more (possibly still-starved) logical turns. Returns normally the moment the predicate holds;
+ * never throws on timeout (the caller's own assertion is what should fail, with a useful message,
+ * not this helper with a generic one). */
+async function waitForFrame(
+  lastFrame: () => string | undefined,
+  predicate: (frame: string) => boolean,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (predicate(lastFrame() ?? '')) return;
+    if (Date.now() >= deadline) return;
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 function lines(count: number): string[] {
   return Array.from({ length: count }, (_, index) => `line-${String(index)}`);
 }
@@ -122,6 +148,10 @@ describe('StreamView', () => {
       height: 5,
       focused: false,
     });
+    // `SPEC-QUESTIONS.md` Q392: every line of a real async source needs its own effect-triggered
+    // re-render; polled, not trusted to `flush()`'s own fixed round count, for the same real reason
+    // that file's own top doc comment gives.
+    await waitForFrame(lastFrame, (frame) => frame === 'a\nb\nc');
     expect(lastFrame()).toBe('a\nb\nc');
   });
 
@@ -132,6 +162,7 @@ describe('StreamView', () => {
       height: 4,
       focused: false,
     });
+    await waitForFrame(lastFrame, (frame) => frame === 'line-6\nline-7\nline-8\nline-9');
     expect(lastFrame()).toBe('line-6\nline-7\nline-8\nline-9');
   });
 
@@ -141,6 +172,10 @@ describe('StreamView', () => {
       height: 5,
       focused: true,
     });
+    await waitForFrame(
+      lastFrame,
+      (frame) => frame === 'line-15\nline-16\nline-17\nline-18\nline-19',
+    );
     expect(lastFrame()).toBe('line-15\nline-16\nline-17\nline-18\nline-19');
   });
 
@@ -184,6 +219,7 @@ describe('StreamView', () => {
       height: 5,
       focused: false,
     });
+    await waitForFrame(lastFrame, (frame) => frame === 'first');
     expect(lastFrame()).toBe('first');
     unmount();
     resolveNext?.();
@@ -220,11 +256,11 @@ describe('StreamView', () => {
       height: 10,
       focused: false,
     });
-    await flush();
+    await waitForFrame(lastFrame, (frame) => frame === 'laneA-1\nlaneA-2');
     expect(lastFrame()).toBe('laneA-1\nlaneA-2');
 
     rerender(<StreamView source={laneLines('laneB')} height={10} focused={false} />);
-    await flush();
+    await waitForFrame(lastFrame, (frame) => frame === 'laneB-1\nlaneB-2');
     expect(lastFrame()).toBe('laneB-1\nlaneB-2');
     expect(lastFrame() ?? '').not.toContain('laneA');
   });
@@ -237,6 +273,7 @@ describe('StreamView', () => {
       maxLines: 100,
       focused: false,
     });
+    await waitForFrame(lastFrame, (frame) => frame === 'a\nb\nc');
     expect(lastFrame()).toBe('a\nb\nc');
 
     rerender(<StreamView source={source} height={10} maxLines={50} focused={false} />);
