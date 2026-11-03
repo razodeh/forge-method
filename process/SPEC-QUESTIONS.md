@@ -34780,3 +34780,63 @@ passed either way. `module.test.ts`/`overlay.test.ts`/`module-install-fence-real
 difference to any real production call path. One critic round (opus, isolated worktree, confirmed
 non-stale) dispatched specifically for the production-behavior change, which caught both the
 `extendEnv` no-op and the production-scope regression risk before either shipped.
+
+## Q396 — Decision: Windows dropped as a supported platform entirely (owner: "Yes, unsupport
+windows", 2026-11-03), closing every Windows-only item `Q395`'s own "what this does NOT close"
+section left open, since none of it can be fixed without real Windows hardware this project never had
+
+**What prompted this.** `Q395` disclosed that the remaining Windows `floor` failures all needed real
+Windows+Git-for-Windows hardware to actually close, not further reasoning from source: `resolvePosixShell`'s
+own Git-Bash/MSYS2 command-execution semantics (`structured-layer.test.ts`,
+`packages/engine/test/plan/command-quoting.test.ts`), the launcher-shim PATH/`forge.cmd` resolution gap
+(`command-env.test.ts`, `bin-run-failures.test.ts`), a second, distinct `D:\D:\` doubled-drive-letter
+recurrence (`ParityEvidence.md`/`EvidenceBundle.md` template-path resolution), and an untriaged cascade
+of assertion mismatches across `gate-commands.test.ts`/`binding.test.ts`/`lane-integration.test.ts` and
+more. Rather than carry that list open indefinitely against hardware access that may never
+materialize, the owner chose to drop Windows as a target rather than keep fixing it piecemeal.
+
+**What this decision closes.** Every item `Q395`'s own "what this does NOT close" paragraph left open
+is now moot, not merely deferred — the four items listed above. The parity engine's `Q294`/`Q295`
+win32 `ENV-007` refusal is no longer a gap to eventually close either: it is now simply the correct,
+by-design behavior for an unsupported platform, not a limitation to someday lift.
+
+**Spec changes.** `specs/02` §2.7's "Windows: first-class" line reversed to unsupported. `specs/21`
+§21.6's CI matrix (`windows-latest` row removed) and its "Windows is not optional... loses a large
+share of its audience silently" rationale paragraph reversed, with the original stance quoted and
+superseded rather than deleted. `specs/22`: the M12 exit criterion's "Windows CI green" dropped; the
+M17 Phase A piece list's `P16` ("Windows support for parity, binding and test adoption") struck;
+Phase A's own exit test narrowed from `CI on next: every leg green (Linux, macOS, Windows)` to
+`(Linux, macOS)`; core principle 6 ("Windows from M1, not retrofitted at M12") marked superseded in
+place rather than renumbered, to avoid breaking any existing reference to principle 6 by number.
+`README.md`'s "cross-platform CI (Linux/macOS/Windows) is still being hardened" claim corrected to
+state Windows is unsupported.
+
+**CI changes.** `.github/workflows/ci.yml`: `windows-latest` removed from all 4 matrices that had it
+(`floor`, `heavy-subprocess`, `lock-stress` — which drops to a single ubuntu-latest leg since its only
+other OS was windows-latest, `crash-resume`). The `floor` job's `pnpm test (Windows)`/`pnpm test
+(non-Windows)` step split — added by `Q393` specifically to route the `ulimit`-prefixed `shell: bash`
+version around a Windows-only Git-Bash doubled-drive-letter bug — merged back into one unconditional
+step, since the platform that bug applied to is no longer in the matrix. The 3 copies of the "stub
+claude CLI" step's `if [ "$RUNNER_OS" = "Windows" ]` branch (one each in `floor`, `seed`,
+`heavy-subprocess` — the `seed` job's copy was already dead code, since that job has always been
+ubuntu-only) simplified to the POSIX-only form unconditionally. Every comment block whose own
+rationale explicitly depended on a Windows leg existing (the file's own header, the `lock-stress`/
+`crash-resume` OS-breadth justifications, the `heavy-subprocess` OS-sensitivity note) updated to
+reflect the drop rather than left asserting something no longer true; comment blocks that are purely
+historical record (real past CI timing numbers, incident narratives) were left as-is. Re-validated as
+parseable YAML after every edit (`python3 -c "import yaml; yaml.safe_load(open('.github/workflows/
+ci.yml'))"`, clean) and by grepping for every remaining `windows`/`Windows` mention and confirming
+each is historical record, not a live claim.
+
+**What this does NOT do.** Existing `win32`-aware production code (`posix-shell.ts`'s Git-Bash/MSYS2
+handling, `crash-helpers.ts`'s win32 pid/group-kill branches, the launcher-shim's Windows path logic,
+the parity engine's `ENV-007` refusal itself, etc.) was left in place, not ripped out — removing
+working platform branches is a separate, larger, riskier change this decision does not ask for and
+was not scoped to attempt. It is simply no longer tested, fixed on regression, or guaranteed:
+"unsupported," not "actively removed." The already-landed `ctx.skip()` win32 guards `Q395` added stay
+as they are — harmless now that no CI leg can trigger them, still correct if anyone runs the suite on
+Windows anyway.
+
+**Gauntlet.** Spec, CI-config, and doc changes only; no production or test source touched, so
+`pnpm test`/`typecheck`/`lint` were not re-run for this entry — nothing under those gates changed.
+`.github/workflows/ci.yml` confirmed to still parse as valid YAML after every edit.

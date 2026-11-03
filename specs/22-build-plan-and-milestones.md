@@ -296,9 +296,9 @@ pnpm test -- --grep "E10 doctor"
 ## M12 — Release readiness
 
 **Build:** `forge upgrade` with the full migration path and backups; `forge export` (markdown-bundle,
-html); the performance benchmark suite with ratchets; Windows CI green; documentation (README,
-getting-started, the method guide, the authoring guide, the adapter guide); changesets release
-pipeline with provenance.
+html); the performance benchmark suite with ratchets; documentation (README, getting-started, the
+method guide, the authoring guide, the adapter guide); changesets release pipeline with provenance.
+(Windows CI green dropped from this criterion — Windows is unsupported, `SPEC-QUESTIONS.md` Q396.)
 
 **Acceptance — the v1.0 success criteria from `01` §1.8**
 - SC1–SC11 all demonstrably met, each with the command that proves it.
@@ -584,9 +584,9 @@ user's cache directory (P8); the adapter reporting several events per raw result
 `structured_output`, and honest cache-token accounting (P11, `07` §7.2/§7.3); engine messages and
 telemetry that reach the right place, and CLI clarity fixes (P12, P13); parity oracle hardening — the
 root-token/`replace` interaction, self-reverting-tamper isolation, capture/check symmetry and a bounded
-normalisation budget (P14, `13` F-TEST-9); in-lane commits honouring the write claim (P15); Windows
-support for parity, binding and test adoption (P16); `forge adopt` and `forge spec re-derive` wired end
-to end (P17); `forge migrate run` built, and `migrate`'s own parity gate made reachable (P18); the
+normalisation budget (P14, `13` F-TEST-9); in-lane commits honouring the write claim (P15);
+~~Windows support for parity, binding and test adoption (P16)~~ — **struck, `SPEC-QUESTIONS.md`
+Q396: Windows is unsupported**; `forge adopt` and `forge spec re-derive` wired end to end (P17); `forge migrate run` built, and `migrate`'s own parity gate made reachable (P18); the
 pin-test gaps this milestone's own P1 leaves open (P19); docs for all of the above (P20); and a real,
 owner-authorized live run exercising every path above across fresh fixture projects, then the
 `m17-hardened` tag (P21).
@@ -606,7 +606,7 @@ forge test adopt --json                          # each recognised-runner fixtur
 forge test run --json                            # node --test, custom-runner and no-config fixtures: real outcomes
 forge test binding --story <id> --json           # same, under a non-Vitest runner
 forge refactor <target> --goal <text>            # master-trunk fixture: reaches commit, lands on trunk
-CI on `next`: every leg green (Linux, macOS, Windows)
+CI on `next`: every leg green (Linux, macOS)      # Windows dropped, SPEC-QUESTIONS.md Q396
 ```
 
 Every M17 test's `describe` name carries `(specs/22 M17 P<n>)`, which is what `-t "M17"` selects on,
@@ -644,7 +644,10 @@ forge report --json --since <trial start>   # against the external project, comp
    review — this is the difference between a tool people can use and a tool people abandon.
 4. **`--json` output is a stable contract** from M6 onward; changing it is a breaking change.
 5. **Determinism is a feature.** Injected clock, seeded RNG, `TZ=UTC`, no filesystem-order reliance.
-6. **Windows from M1**, not retrofitted at M12.
+6. ~~**Windows from M1**, not retrofitted at M12.~~ **Superseded (`SPEC-QUESTIONS.md` Q396):
+   Windows is unsupported.** Every disclosed defect still open at M17 clustered on Windows and
+   needed real Windows+Git-for-Windows hardware this project never had; rather than carry them open
+   indefinitely, Windows was dropped as a target rather than fixed.
 7. **Dependencies are justified in the PR.** The dependency list in `02` §2.1 is close to complete;
    additions need a reason.
 8. **When the spec and your instinct disagree, implement the spec and record the disagreement** in

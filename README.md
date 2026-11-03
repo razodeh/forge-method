@@ -114,9 +114,9 @@ story counts as done (`forge test binding`, `forge report`). A `refactor` is now
 different kind of evidence too: a reviewed reference oracle
 (`forge parity capture`/`forge parity check`) wired into `refactor`'s own gates and enforced
 strictly — a project with no declaration comparing at least one real surface cannot pass a refactor
-at all. What's not true yet: it hasn't been published to npm, and cross-platform CI
-(Linux/macOS/Windows) is still being hardened. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
-detailed, warts-and-all build history.
+at all. What's not true yet: it hasn't been published to npm. CI runs Linux and macOS; Windows is
+not a supported platform. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the detailed, warts-and-all
+build history.
 
 ## Contributing
 

@@ -176,12 +176,15 @@ unpleasant.
 
 | Axis | Values |
 |---|---|
-| OS | ubuntu-latest, macos-latest, **windows-latest** |
+| OS | ubuntu-latest, macos-latest |
 | Node | 20, 22, 24 |
 | Suites | unit + integration everywhere; e2e on ubuntu only (all Node versions); live nightly on ubuntu |
 
-Windows is not optional. Path handling, worktrees, process trees and line endings all differ, and a
-tool that fails on Windows loses a large share of its audience silently.
+**Windows dropped (Decision, `SPEC-QUESTIONS.md` Q396), reversing this section's original stance**
+("Windows is not optional... a tool that fails on Windows loses a large share of its audience
+silently" — still true in principle, but every disclosed defect left in this milestone's own
+`Q395` clustered on Windows and needed real Windows+Git-for-Windows hardware this project never had
+access to to close). Not in the CI matrix; not a target for bug fixes going forward.
 
 Additional CI jobs: `forge compile --check` on fixtures, dependency-boundary lint (`02` §2.2),
 `pnpm audit`, mutation testing (nightly), bundle-size check, and a **schema-drift check** asserting

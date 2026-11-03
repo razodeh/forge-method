@@ -1,5 +1,6 @@
-# specs/02 §2.1 pins Node >= 20.10 tested on 20/22/24; §2.7 makes Windows a first-class target from
-# milestone 1, so it is in the matrix from the first commit rather than added as a retrofit.
+# specs/02 §2.1 pins Node >= 20.10 tested on 20/22/24. Windows was a first-class target from
+# milestone 1 until `SPEC-QUESTIONS.md` Q396 dropped it: every disclosed defect still open at M17
+# clustered on Windows and needed real Windows+Git-for-Windows hardware this project never had.
 #
 # TZ is deliberately NOT forced to UTC here. Doing so would make every timezone assertion in
 # test/determinism.test.ts pass because the runner is UTC, not because test/setup.ts pinned it —
@@ -42,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]  # Windows dropped, SPEC-QUESTIONS.md Q396
         node: ['20', '22', '24']
         tz: [UTC]
         include:
@@ -97,25 +98,15 @@ jobs:
       # other real invocation of `claude` happens in this job, and every test that specifically exercises
       # "claude is genuinely absent" isolates its own empty `PATH` fixture rather than relying on the
       # ambient one this step extends (`adapter-claude-code/test/{preflight,version,cli/spawn}.test.ts`).
-      # `shell: bash` (Git Bash on `windows-latest`) keeps this one step identical across the whole OS
-      # matrix, writing a POSIX script almost everywhere and a `.cmd` shim only where Windows' own
-      # process creation actually needs one (an extension-less shebang script is not executable there).
+      # `shell: bash` keeps this one step identical across the OS matrix (ubuntu/macos only since
+      # Windows was dropped, `SPEC-QUESTIONS.md` Q396 -- this step used to also write a `.cmd` shim
+      # for Windows' own process creation, now removed).
       - name: Install a stub claude CLI so adapter-claude-code's real preflight check passes
         shell: bash
         run: |
           stub_dir="$RUNNER_TEMP/forge-claude-stub"
           mkdir -p "$stub_dir"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cat > "$stub_dir/claude.cmd" <<'EOF'
-          @echo off
-          if "%~1"=="--version" goto version
-          exit /b 1
-          :version
-          echo 2.99.99 (forge-ci-stub)
-          exit /b 0
-          EOF
-          else
-            cat > "$stub_dir/claude" <<'EOF'
+          cat > "$stub_dir/claude" <<'EOF'
           #!/bin/sh
           if [ "$1" = "--version" ]; then
             echo "2.99.99 (forge-ci-stub)"
@@ -123,8 +114,7 @@ jobs:
           fi
           exit 1
           EOF
-            chmod +x "$stub_dir/claude"
-          fi
+          chmod +x "$stub_dir/claude"
           echo "$stub_dir" >> "$GITHUB_PATH"
       - run: pnpm build
       - run: pnpm typecheck
@@ -150,21 +140,12 @@ jobs:
       - run: pnpm lint
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-      # `SPEC-QUESTIONS.md` Q393: the previous version of this step forced `shell: bash` for EVERY
-      # OS, including Windows, to let the `ulimit` line below parse there too (a no-op, since the
-      # `if` guards it out on Windows) -- that forced Git-Bash to run `pnpm test` itself on
-      # `windows-latest`, which a real CI run (`41367483997`) showed breaks Windows path resolution
-      # for real: `ForgeError: Filesystem operation "listDirEntriesSorted" failed for D:\D:\a\
-      # forge-method\forge-method\modules` -- a doubled drive letter, the exact class of MSYS2/
-      # Git-Bash path-mangling gap `packages/engine/src/dispatch/posix-shell.ts`'s own doc comment
-      # already flags as "not something... could fully settle... treat as an open question, not
-      # confirmed-safe" -- 108 of 752 files failed on that leg alone. Split into two OS-conditioned
-      # steps instead: Windows keeps the exact, unmodified original step (no shell override, no
-      # ulimit, byte-for-byte what ran before `Q390` ever touched this job), and only non-Windows
-      # gets the `ulimit`-prefixed version, where `shell: bash` changes nothing (already the default
-      # there) and the one real path-mangling risk this mistake just proved real does not apply.
-      - name: pnpm test (non-Windows)
-        if: runner.os != 'Windows'
+      # `SPEC-QUESTIONS.md` Q393: this step used to split into Windows/non-Windows variants, because
+      # forcing `shell: bash` on `windows-latest` (a real CI run, `41367483997`) broke Windows path
+      # resolution via a Git-Bash doubled-drive-letter bug. Moot now that Windows is unsupported
+      # (`Q396`) and dropped from this job's own `os:` matrix above -- back to one step, `shell: bash`
+      # unconditionally (needed for the `ulimit` line below).
+      - name: pnpm test
         shell: bash
         # `SPEC-QUESTIONS.md` Q390: a disclosed-but-unconfirmed hypothesis for `fetch-npm.test.ts`'s
         # own real-registry-leak flake under this job's full ~750-file concurrent load -- npm's own
@@ -183,9 +164,6 @@ jobs:
         run: |
           ulimit -n 65536 2>/dev/null || true
           pnpm test
-      - name: pnpm test (Windows)
-        if: runner.os == 'Windows'
-        run: pnpm test
 
   seed:
     name: scheduler seed variation (seed ${{ matrix.seed }})
@@ -223,17 +201,7 @@ jobs:
         run: |
           stub_dir="$RUNNER_TEMP/forge-claude-stub"
           mkdir -p "$stub_dir"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cat > "$stub_dir/claude.cmd" <<'EOF'
-          @echo off
-          if "%~1"=="--version" goto version
-          exit /b 1
-          :version
-          echo 2.99.99 (forge-ci-stub)
-          exit /b 0
-          EOF
-          else
-            cat > "$stub_dir/claude" <<'EOF'
+          cat > "$stub_dir/claude" <<'EOF'
           #!/bin/sh
           if [ "$1" = "--version" ]; then
             echo "2.99.99 (forge-ci-stub)"
@@ -241,8 +209,7 @@ jobs:
           fi
           exit 1
           EOF
-            chmod +x "$stub_dir/claude"
-          fi
+          chmod +x "$stub_dir/claude"
           echo "$stub_dir" >> "$GITHUB_PATH"
       # QUALITY-BAR.md R10: a suite whose result depends on file or test ordering is not
       # deterministic. Shuffling under a fixed seed makes an order dependency fail here rather than
@@ -296,7 +263,8 @@ jobs:
     # (`run-inputs-compile.test.ts`), and real `tsc`/`vitest list` subprocess shelling (`workspace-
     # floor-heavy-subprocess.test.ts`) -- exactly the class of code this milestone's own history shows
     # IS node- and OS-sensitive (`SPEC-QUESTIONS.md` Q368's Node-24 TAP-reporter regression; Q340/Q353's
-    # own Windows-only spawn/path regressions), so dropping node or OS breadth here would be a real,
+    # own Windows-only spawn/path regressions -- Windows itself since dropped project-wide, `Q396`), so
+    # dropping node breadth, or OS breadth beyond that project-wide decision, would be a real,
     # unjustified new gap, not a narrow, evidence-backed one. The Kathmandu TZ variant is not
     # duplicated here: nothing in these 3 files is TZ-sensitive, unlike the determinism-focused tests
     # that variant exists for in `floor`.
@@ -348,7 +316,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]  # Windows dropped, SPEC-QUESTIONS.md Q396
         node: ['20', '22', '24']
     steps:
       - uses: actions/checkout@v4
@@ -370,17 +338,7 @@ jobs:
         run: |
           stub_dir="$RUNNER_TEMP/forge-claude-stub"
           mkdir -p "$stub_dir"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cat > "$stub_dir/claude.cmd" <<'EOF'
-          @echo off
-          if "%~1"=="--version" goto version
-          exit /b 1
-          :version
-          echo 2.99.99 (forge-ci-stub)
-          exit /b 0
-          EOF
-          else
-            cat > "$stub_dir/claude" <<'EOF'
+          cat > "$stub_dir/claude" <<'EOF'
           #!/bin/sh
           if [ "$1" = "--version" ]; then
             echo "2.99.99 (forge-ci-stub)"
@@ -388,8 +346,7 @@ jobs:
           fi
           exit 1
           EOF
-            chmod +x "$stub_dir/claude"
-          fi
+          chmod +x "$stub_dir/claude"
           echo "$stub_dir" >> "$GITHUB_PATH"
       - run: pnpm build
       - run: pnpm test:heavy-subprocess
@@ -425,25 +382,21 @@ jobs:
   lock-stress:
     name: lock-stress (sequential, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Two OS legs (ubuntu-latest + windows-latest), node 22 only -- not the full `floor` matrix. A
-    # single ubuntu-only leg was this job's first cut, but a re-review critic correctly pushed back:
-    # the real contention failures this job exists to catch were originally observed on ubuntu-latest,
-    # windows-latest, AND macos-latest, and this exact spawn/process-management code path has a real,
-    # repeated history of Windows-ONLY regressions this milestone (`SPEC-QUESTIONS.md` Q340's drive-
-    # letter/pathToFileURL + worker_threads breakage, Q353's own 4-round Windows-hardening saga --
-    # shell resolution, PATH casing, process-group kill, env threading) -- all in this same spawn/
-    # process-management layer. "The lock LOGIC is cross-platform-correct" (already established via
-    # 7+ critic reviews, `Q359`/`Q364`) does not imply "the CI-scale SCHEDULING margin holds on
-    # Windows" (never established) -- `CreateProcess`'s own overhead/scheduling characteristics differ
-    # fundamentally from POSIX fork. macos-latest is deliberately left out of this job's own matrix:
-    # unlike ubuntu/windows, it gets only 3 vCPUs instead of 4 on this public repo's free-tier runners,
-    # so its own real exhaustion risk is covered by -- and would surface loudest in -- the main
-    # `floor` matrix's own macos legs regardless of what this isolated job does.
+    # Single ubuntu-latest leg, node 22 only -- not the full `floor` matrix. Was ubuntu-latest +
+    # windows-latest (a re-review critic had pushed back on an ubuntu-only first cut, since this
+    # exact spawn/process-management code path had a real, repeated history of Windows-ONLY
+    # regressions this milestone -- `SPEC-QUESTIONS.md` Q340's drive-letter/pathToFileURL +
+    # worker_threads breakage, Q353's own 4-round Windows-hardening saga); Windows dropped
+    # project-wide (`Q396`), so that leg is gone too. macos-latest stays out of this job's own matrix
+    # for the original, still-valid reason: unlike ubuntu, it gets only 3 vCPUs instead of 4 on this
+    # public repo's free-tier runners, so its own real exhaustion risk is covered by -- and would
+    # surface loudest in -- the main `floor` matrix's own macos legs regardless of what this isolated
+    # job does.
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]  # was ubuntu-latest + windows-latest; Windows dropped, SPEC-QUESTIONS.md Q396
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -489,7 +442,7 @@ jobs:
   crash-resume:
     name: crash-resume (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Full OS breadth (unlike `lock-stress`'s own ubuntu+windows-only choice above): `lock-stress`
+    # Full (remaining) OS breadth (unlike `lock-stress`'s own ubuntu-only choice above): `lock-stress`
     # could narrow because the underlying LOCK LOGIC was already established cross-platform-correct
     # by 7+ critic rounds before that job existed, so a dedicated macOS leg would add nothing a
     # `floor` macOS leg running the rest of the suite wouldn't already catch for pure exhaustion.
@@ -510,7 +463,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]  # Windows dropped, SPEC-QUESTIONS.md Q396
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

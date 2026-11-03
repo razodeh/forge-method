@@ -191,8 +191,11 @@ Exit codes: `0` success · `1` generic failure · `2` usage error · `3` gate fa
 - `postinstall` MUST be a no-op (npx-friendly, avoids sandbox failures).
 - Optional deps: `better-sqlite3` marked optional; on failure fall back to `node:sqlite` if present,
   else a JSON-file index with a warning.
-- Windows: first-class. Use `path.posix` only for repo-relative artifact IDs; all disk paths via
-  `node:path`. Avoid symlinks. Test on `windows-latest` in CI.
+- Windows: **unsupported** (Decision, `SPEC-QUESTIONS.md` Q396 — reverses this line's original
+  "first-class" form). Not tested in CI, not a target for bug fixes; existing `win32`-aware code
+  paths may be left in place as best-effort but carry no guarantee. Use `path.posix` only for
+  repo-relative artifact IDs; all disk paths via `node:path` regardless, since Linux/macOS still
+  need it.
 - Publish workflow: changesets → version PR → tag → `npm publish --provenance`. `@next` from `next`
   branch.
 
