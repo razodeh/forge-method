@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && node scripts/prune-agent-worktrees.mjs",
+            "timeout": 60,
+            "async": true,
+            "statusMessage": "Pruning stale agent worktrees..."
+          }
+        ]
+      }
+    ]
+  }
+}
