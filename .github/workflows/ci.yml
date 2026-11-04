@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]  # Windows dropped, SPEC-QUESTIONS.md Q396
+        os: [ubuntu-latest, macos-latest] # Windows dropped, SPEC-QUESTIONS.md Q396
         node: ['20', '22', '24']
         tz: [UTC]
         include:
@@ -316,7 +316,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]  # Windows dropped, SPEC-QUESTIONS.md Q396
+        os: [ubuntu-latest, macos-latest] # Windows dropped, SPEC-QUESTIONS.md Q396
         node: ['20', '22', '24']
     steps:
       - uses: actions/checkout@v4
@@ -396,7 +396,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]  # was ubuntu-latest + windows-latest; Windows dropped, SPEC-QUESTIONS.md Q396
+        os: [ubuntu-latest] # was ubuntu-latest + windows-latest; Windows dropped, SPEC-QUESTIONS.md Q396
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -463,7 +463,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]  # Windows dropped, SPEC-QUESTIONS.md Q396
+        os: [ubuntu-latest, macos-latest] # Windows dropped, SPEC-QUESTIONS.md Q396
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

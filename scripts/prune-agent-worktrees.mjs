@@ -16,7 +16,11 @@ import { execFileSync } from 'node:child_process';
  * @param {{ cwd?: string }} [options]
  */
 function git(args, options = {}) {
-  return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options });
+  return execFileSync('git', args, {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    ...options,
+  });
 }
 
 /** @param {unknown} err */
@@ -114,7 +118,9 @@ function main() {
           staleLocksCleared += 1;
           continue;
         } catch (unlockErr) {
-          dirty.push(`${worktreePath} (stale lock, but remove still failed: ${firstLine(unlockErr)})`);
+          dirty.push(
+            `${worktreePath} (stale lock, but remove still failed: ${firstLine(unlockErr)})`,
+          );
           continue;
         }
       }
@@ -125,7 +131,8 @@ function main() {
 
   const parts = [];
   if (removed > 0) {
-    const staleNote = staleLocksCleared > 0 ? `, ${staleLocksCleared} had a stale lock from an exited process` : '';
+    const staleNote =
+      staleLocksCleared > 0 ? `, ${staleLocksCleared} had a stale lock from an exited process` : '';
     parts.push(`removed ${removed} clean agent worktree${removed === 1 ? '' : 's'}${staleNote}`);
   }
   if (liveLocked.length > 0) {
