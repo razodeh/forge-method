@@ -11,20 +11,28 @@
  */
 import { execFileSync } from 'node:child_process';
 
+/**
+ * @param {readonly string[]} args
+ * @param {{ cwd?: string }} [options]
+ */
 function git(args, options = {}) {
   return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options });
 }
 
+/** @param {unknown} err */
 function firstLine(err) {
-  return String(err.stderr ?? err.message).split('\n')[0];
+  const failure = /** @type {{ stderr?: string; message?: string }} */ (err);
+  return String(failure.stderr ?? failure.message).split('\n')[0];
 }
 
+/** @param {number} pid */
 function isPidAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return err.code !== 'ESRCH';
+    const failure = /** @type {{ code?: string }} */ (err);
+    return failure.code !== 'ESRCH';
   }
 }
 
@@ -39,14 +47,15 @@ function main() {
   try {
     porcelain = git(['worktree', 'list', '--porcelain']);
   } catch (err) {
-    console.error(`prune-agent-worktrees: could not list worktrees: ${err.message}`);
+    const failure = /** @type {{ message?: string }} */ (err);
+    console.error(`prune-agent-worktrees: could not list worktrees: ${failure.message}`);
     return;
   }
 
   const agentWorktrees = porcelain
     .split('\n\n')
     .map((block) => block.split('\n').find((line) => line.startsWith('worktree ')))
-    .filter(Boolean)
+    .filter((line) => line !== undefined)
     .map((line) => line.slice('worktree '.length))
     .filter((path) => /\.claude\/worktrees\/agent-[^/]+$/.test(path));
 
@@ -77,7 +86,8 @@ function main() {
       removed += 1;
       continue;
     } catch (err) {
-      const stderr = String(err.stderr ?? err.message);
+      const failure = /** @type {{ stderr?: string; message?: string }} */ (err);
+      const stderr = String(failure.stderr ?? failure.message);
       const lockMatch = stderr.match(/cannot remove a locked working tree, lock reason: (.*)/);
       if (!lockMatch) {
         dirty.push(`${worktreePath} (remove failed: ${firstLine(err)})`);
@@ -89,7 +99,10 @@ function main() {
       // this is the exact mechanism that let 13 of the original 106 pollution directories linger
       // even though they were otherwise clean) and it's safe to unlock and remove. If the PID is
       // still alive, this worktree belongs to another currently-running session -- leave it alone.
-      const pidMatch = lockMatch[1].match(/pid (\d+)/);
+      // `lockMatch[1]`'s `(.*)` group always matches (even as '') whenever the outer regex does --
+      // the `?? ''` fallback only satisfies noUncheckedIndexedAccess, it never actually triggers.
+      const lockReason = lockMatch[1] ?? '';
+      const pidMatch = lockReason.match(/pid (\d+)/);
       const pid = pidMatch ? Number(pidMatch[1]) : undefined;
       const isAlive = pid !== undefined && isPidAlive(pid);
 
@@ -106,7 +119,7 @@ function main() {
         }
       }
 
-      liveLocked.push(`${worktreePath} (locked: ${lockMatch[1]})`);
+      liveLocked.push(`${worktreePath} (locked: ${lockReason})`);
     }
   }
 
