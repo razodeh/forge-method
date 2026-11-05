@@ -34840,3 +34840,60 @@ Windows anyway.
 **Gauntlet.** Spec, CI-config, and doc changes only; no production or test source touched, so
 `pnpm test`/`typecheck`/`lint` were not re-run for this entry — nothing under those gates changed.
 `.github/workflows/ci.yml` confirmed to still parse as valid YAML after every edit.
+
+## Q397 — `stream-view.test.tsx`'s own unmount-teardown assertion (`Q390`-`Q393`) was misdiagnosed
+four separate times as scheduler-starvation; the real cause is a structural `ink@5.2.1`/`ink-testing-
+library` interaction, 100% reproducible with zero load (2026-11-04)
+
+**What actually happens.** Real CI (two separate pushes, `41868917256` and `41884991234`) kept
+reproducing this exact same test's own second `expect(lastFrame()).toBe('first')` — the one `Q393`
+added polling for — with the identical `AssertionError: expected '\n' to be 'first'`, in 100% (6/6)
+of the real CI jobs that reached it: every Node version, both timezones, both shuffle seeds. A
+failure rate that high, that consistent, across that much real variation, is not what host
+contention looks like — contention produces a failure RATE, not a failure CERTAINTY. Read real
+`ink@5.2.1`'s own installed source (`node_modules/.pnpm/ink@5.2.1.../build/ink.js`) instead of
+theorizing further: `Ink#unmount()` calls `this.onRender()` once more, then — gated on the `is-in-ci`
+package's own environment check, nothing to do with scheduling — unconditionally runs
+`this.options.stdout.write(this.lastOutput + '\n')`. `this.lastOutput` is only ever assigned inside
+`onRender`'s non-debug branches; `ink-testing-library`'s own `render()` always passes `debug: true`,
+whose branch returns before ever reaching that assignment — so `this.lastOutput` stays `''` for the
+component's ENTIRE lifecycle. The write is therefore always exactly `'' + '\n'` = `'\n'`, clobbering
+`lastFrame()` on every single `unmount()` call, whenever `CI` is set — which real GitHub Actions
+runners always set and a bare local dev shell never does. **Confirmed directly**: reproduced the
+failure locally with nothing but `CI=true node scripts/run-tests.mjs run packages/tui/test/
+components/stream-view.test.tsx -t "unmounting..."` — zero load, zero contention, 100% of runs.
+This single environment variable, not scheduling pressure, is the real reason this file's own doc
+comment's "always passed locally" / "real CI reproduces it" split has held since `Q390` — four
+rounds of increasingly elaborate scheduler-starvation theory (2-tick → 10-tick → wall-clock-bounded
+polling) were chasing the wrong mechanism the whole time, for this specific assertion.
+
+**Why `waitForFrame`'s own wall-clock polling (`Q392`) could never have caught this.** That helper's
+contract is "wait until the predicate becomes true" — exactly backwards for what this assertion
+needed. `lastFrame()` is ALREADY `'first'` the instant `waitForFrame` is called post-unmount (nothing
+has changed it yet), so the predicate holds on its very first, synchronous check and the helper
+returns immediately, waiting precisely zero real time. The actual race is between that instant and
+the very next `expect()` call, once Ink's own `unmount()`-triggered `'\n'` write lands — a window
+`waitForFrame` was never designed to protect, since it only guards against a state arriving LATE,
+never against an already-true state being invalidated.
+
+**Fix.** Not a change to `stream-view.tsx` (the production component's own cancellation logic was
+never the problem) — the test itself asserted the wrong thing. Capture `frames.length` right before
+`unmount()`, and after `unmount(); resolveNext?.(); await flush();`, assert that no frame appended
+since then contains `"second"` — the component's own real correctness property this test exists to
+prove — rather than asserting `lastFrame()` still equals `'first'`, which Ink's own unmount path makes
+structurally unable to hold in CI regardless of whether the component is correct. The stray `'\n'`
+frame Ink appends is harmless to this check; it never contains `"second"`.
+
+**Swept for the same hazard elsewhere.** `grep -rn "unmount()" packages/tui/test/` found 4 other
+call sites (`linear.test.tsx`, `list-pane.test.tsx` ×2, `app-shell.test.tsx`,
+`resize-key-fuzz.test.tsx`); none call `lastFrame()` and assert text equality against it
+immediately after `unmount()` — they check `.not.toThrow()` or an external tracking array instead,
+so none share this exact vulnerability. No further fix needed.
+
+**Verification.** `CI=true node scripts/run-tests.mjs run packages/tui/test/components/stream-view.
+test.tsx` and the same command without `CI=true`: 17/17 both ways (previously: failed 1/17 under
+`CI=true`, the exact condition real CI runs under). `pnpm typecheck` (21/21), `eslint`/
+`prettier --check` on the touched file (clean).
+
+**Gauntlet.** 1 file changed (`stream-view.test.tsx`), test-only, no production source touched —
+landing directly under this arc's established test-only exception (`Q390`-`Q393`).

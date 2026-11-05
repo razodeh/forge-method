@@ -214,21 +214,30 @@ describe('StreamView', () => {
       });
       yield 'second';
     }
-    const { lastFrame, unmount } = await renderStream({
+    const { lastFrame, unmount, frames } = await renderStream({
       source: slowLines(),
       height: 5,
       focused: false,
     });
     await waitForFrame(lastFrame, (frame) => frame === 'first');
     expect(lastFrame()).toBe('first');
+    const framesBeforeTeardown = frames.length;
     unmount();
     resolveNext?.();
-    // `SPEC-QUESTIONS.md` Q393: this assertion itself showed the identical flake, missed in `Q392` --
-    // that round only polled the FIRST of this test's two `toBe('first')` checks, not this second one.
-    await waitForFrame(lastFrame, (frame) => frame === 'first');
-    // No throw, no unhandled rejection reached this point; the cleanup flag stopped the loop before
-    // "second" ever reached a `setLines` call, so the last captured frame is still just "first".
-    expect(lastFrame()).toBe('first');
+    await flush();
+    // `SPEC-QUESTIONS.md` Q393 blamed this on the same scheduler-starvation theory as the rest of
+    // this file -- wrong. Real `ink@5.2.1`'s own `unmount()` unconditionally writes
+    // `this.lastOutput + '\n'` to stdout whenever `is-in-ci` detects CI, and `ink-testing-library`
+    // always passes `debug: true`, whose `onRender` branch never assigns `this.lastOutput` at all --
+    // it stays `''` for the component's entire lifecycle, so that write is always exactly `'\n'`.
+    // Confirmed directly: reproduces 100% of the time locally with only `CI=true` set, zero load.
+    // `lastFrame()` is therefore clobbered by this real Ink/CI interaction on EVERY unmount, which
+    // has nothing to do with this component's own cancellation logic -- asserting on it here can
+    // never pass in CI regardless of correctness. Check the frame history instead: the cleanup flag
+    // stopped the read loop before "second" ever reached a `setLines` call, so no frame appended
+    // after teardown contains it (the stray `'\n'` frame Ink itself appends is harmless here).
+    const framesAfterTeardown = frames.slice(framesBeforeTeardown);
+    expect(framesAfterTeardown.some((frame) => frame.includes('second'))).toBe(false);
   });
 
   it("a static source swap (e.g. switching to a different lane's transcript) replaces the buffer entirely, rather than keeping the previous source's content forever -- a fresh critic round reproduced the original design never resetting `lines` on a `source` change at all, since it was only ever seeded once by a `useState` lazy initializer", async () => {
